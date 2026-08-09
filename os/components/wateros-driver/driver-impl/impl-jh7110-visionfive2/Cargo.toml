@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 api-v0 = { path = "../../driver-api/api-v0", package = "wateros-driver-api-v0" }
-block = { path = "../../driver-block/block-api/api-v0", package = "wateros-driver-block-api-v0" }
+dw-mmc = { path = "../../driver-block/block-impl/impl-dw-mmc", package = "wateros-driver-block-impl-dw-mmc" }
 character = { path = "../../driver-character", package = "wateros-driver-character", features = [
     "impl-null-stub",
     "impl-rtc-stub",

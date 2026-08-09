@@ -1068,3 +1068,43 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[ref] extract shared DesignWare MMC core`
+
+## 2026-08-10：批次 24——VisionFive 2 接入共享 MMC 核心
+
+### 任务与设计
+
+1. 将公共分支的共享 DesignWare MMC/SD crate 合入 VisionFive 2 分支。
+2. 删除平台 crate 内重复的寄存器 PIO 和 SD 协议实现。
+3. 保留 `crate::mmc` / `crate::sd` 兼容路径，降低后续板级接线的改动面。
+4. 将 JH7110 DTB clock/reset/syscon 资源结构明确留在平台层。
+5. 以共享测试、平台测试和 RISC-V 裸机目标检查验证迁移。
+
+平台模块现在是薄门面：`mmc` 保存板级资源描述并重导出共享控制器 API，`sd` 只重导出共享协议 API。没有实板时仍不自动激活卡槽，避免把未验证的时钟、复位和供电顺序变成默认行为。
+
+### 完成内容
+
+- [x] VisionFive 2 分支合入共享 `wateros-driver-block-impl-dw-mmc` crate。
+- [x] 平台 crate 依赖共享 crate，移除不再直接使用的 block API 依赖。
+- [x] 删除约 985 行重复 MMC/SD 实现，仓库中只剩一份 `DwMmc`、`SdTransport` 和 CSD parser 定义。
+- [x] `MmcHostDescription`、`ResourceSpecifier`、`SysregField` 保留在 JH7110 平台层。
+- [x] 原有模块路径通过 `pub use` 保持兼容。
+
+### 验证证据
+
+- 共享核心 12 项 host 单测全部通过。
+- VisionFive 2 平台 7 项 host 单测全部通过，包括 PLIC、IRQ lease 和 DTB topology。
+- `cargo check -p wateros-driver-impl-jh7110-visionfive2 --target riscv64gc-unknown-none-elf` 通过，实际解析并编译共享核心依赖。
+- 全仓搜索确认 `DwMmc`、`SdTransport`、`parse_csd_total_blocks` 各只有共享 crate 中的一处定义。
+- `git diff --check` 通过。
+
+### 已知限制、未验证与后续测试
+
+- [ ] **本批验证的是代码迁移与抽象边界，不代表 VisionFive 2 SD 卡已经可用。**
+- [ ] JH7110 CIU/BIU clock enable/rate、reset deassert、syscon、pinmux、卡供电和 card-detect 顺序仍待真机验证。
+- [ ] 尚未把 topology 中发现的 host 资源转换为安全的分阶段 bring-up 流程，也未注册块设备。
+- [ ] 长响应 RESP 寄存器顺序必须用已知卡的 CID/CSD 对照；host mock 不能证明硬件顺序。
+- [ ] 当前共享路径仍是轮询、PIO、单块只读；IRQ/DMA/写入/多块与 cache 一致性待后续实现和真机压力测试。
+
+### 提交
+
+- `[ref] reuse shared MMC core on VisionFive 2`
