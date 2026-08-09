@@ -10,7 +10,9 @@ pub mod uart;
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use api_v0::{DeviceInfo, DeviceType, DriverError, DriverResult, IrqLine, MmioRegion};
+use api_v0::{
+    DeviceInfo, DeviceType, DriverError, DriverResult, IrqLine, MachineDriver, MmioRegion,
+};
 use block::{
     block_device_count, block_subsystem_claims_device, register_block_device, BlockDevice, Lba,
     VirtioBlkDevice, BLOCK_SIZE,
@@ -54,6 +56,34 @@ static INIT_AFTER_BOOT_DONE: AtomicBool = AtomicBool::new(false);
 /// 与上层 `wateros-driver` 聚合入口的引导约定一致：仅保存 `dtb_pa`。
 pub fn init_when_boot(dtb_pa: usize) {
     DTB_BASE_ADDR.store(dtb_pa, Ordering::Release);
+}
+
+/// 当前 QEMU RISC-V profile 的机器驱动单例。
+pub struct Machine;
+
+static MACHINE: Machine = Machine;
+
+/// 返回当前机器的 [`MachineDriver`] 契约实现。
+pub fn machine() -> &'static dyn MachineDriver {
+    &MACHINE
+}
+
+impl MachineDriver for Machine {
+    fn init_when_boot(&self, dtb_pa: usize) {
+        init_when_boot(dtb_pa)
+    }
+
+    fn init_after_boot(&self) -> DriverResult<()> {
+        init_after_boot()
+    }
+
+    fn realtime_ns(&self) -> DriverResult<Option<u64>> {
+        goldfish_rtc_realtime_ns().map(Some)
+    }
+
+    fn test(&self) {
+        test()
+    }
 }
 
 /// 物理 RAM 上界（不包含）：优先解析 DTB `memory@*` 的 `reg`；失败时用 `wateros-base-config` 回退值。

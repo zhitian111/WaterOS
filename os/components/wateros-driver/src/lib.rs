@@ -29,21 +29,37 @@ pub mod network {
     pub use ::network::*;
 }
 
-// 三选一：QEMU/OpenSBI RISC-V, QEMU/LoongArch64 virt, 或 dummy
-// 占位（可同时不选，则无 `active_impl` 符号）。
-#[cfg(feature = "impl-dummy")]
-pub use impl_dummy as active_impl;
-#[cfg(feature = "impl-qemu-loongarch64-virt")]
-pub use impl_qemu_loongarch64_virt as active_impl;
+// 三选一：QEMU/OpenSBI RISC-V, QEMU/LoongArch64 virt, 或 dummy 占位；
+// 行为契约统一由 [`MachineDriver`] 表达，经 [`machine`] 选择当前 profile。
 #[cfg(feature = "impl-qemu-loongarch64-virt")]
 pub use impl_qemu_loongarch64_virt::uart;
-#[cfg(feature = "impl-qemu-riscv64-opensbi")]
-pub use impl_qemu_riscv64_opensbi as active_impl;
 #[cfg(feature = "impl-qemu-riscv64-opensbi")]
 pub use impl_qemu_riscv64_opensbi::uart;
 
 use alloc::vec::Vec;
-use api_v0::SupportedDeviceEntry;
+use api_v0::{MachineDriver, SupportedDeviceEntry};
+
+/// 当前 feature 选中的机器驱动契约实现（QEMU RV/LA 或 dummy）。
+pub fn machine() -> &'static dyn MachineDriver {
+    #[cfg(feature = "impl-dummy")]
+    {
+        impl_dummy::machine()
+    }
+    #[cfg(feature = "impl-qemu-loongarch64-virt")]
+    {
+        impl_qemu_loongarch64_virt::machine()
+    }
+    #[cfg(feature = "impl-qemu-riscv64-opensbi")]
+    {
+        impl_qemu_riscv64_opensbi::machine()
+    }
+    #[cfg(not(any(feature = "impl-dummy",
+                  feature = "impl-qemu-loongarch64-virt",
+                  feature = "impl-qemu-riscv64-opensbi")))]
+    {
+        core::unreachable!("no machine driver feature selected")
+    }
+}
 
 /// 合并各子系统 [`supported_devices()`]
 /// 的静态条目，便于诊断「内核声明了哪些可绑定设备」。
@@ -59,14 +75,7 @@ pub fn supported_device_entries() -> Vec<&'static SupportedDeviceEntry> {
 /// 引导早期调用：保存 DTB 物理地址等平台状态；具体解析在 [`init_after_boot`]
 /// 或各实现内完成。
 pub fn init_when_boot(dtb_pa : usize) {
-    #[cfg(feature = "impl-qemu-riscv64-opensbi")]
-    impl_qemu_riscv64_opensbi::init_when_boot(dtb_pa);
-    #[cfg(feature = "impl-qemu-loongarch64-virt")]
-    impl_qemu_loongarch64_virt::init_when_boot(dtb_pa);
-    #[cfg(feature = "impl-dummy")]
-    {
-        let _ = dtb_pa;
-    }
+    machine().init_when_boot(dtb_pa);
 }
 
 /// 物理 RAM 上界（不包含），用于恒等映射与帧分配器；QEMU 实现从 DTB
@@ -91,19 +100,9 @@ pub fn physical_ram_end_exclusive() -> usize {
 /// 内核完成必要子系统初始化后调用：扫描/注册设备等；失败时记录日志，
 /// 不向上返回错误（当前契约）。
 pub fn init_after_boot() {
-    #[cfg(feature = "impl-qemu-riscv64-opensbi")]
-    {
-        if let Err(e) = impl_qemu_riscv64_opensbi::init_after_boot() {
-            log::warn!("[driver] init_after_boot failed: {:?}",
-                       e);
-        }
-    }
-    #[cfg(feature = "impl-qemu-loongarch64-virt")]
-    {
-        if let Err(e) = impl_qemu_loongarch64_virt::init_after_boot() {
-            log::warn!("[driver] init_after_boot failed: {:?}",
-                       e);
-        }
+    if let Err(e) = machine().init_after_boot() {
+        log::warn!("[driver] init_after_boot failed: {:?}",
+                   e);
     }
 }
 
@@ -116,11 +115,6 @@ pub fn test() {
     character::api_v0::test();
     assert_eq!(display::supported_devices().len(), 3);
     network::test();
-    #[cfg(feature = "impl-qemu-riscv64-opensbi")]
-    impl_qemu_riscv64_opensbi::test();
-    #[cfg(feature = "impl-qemu-loongarch64-virt")]
-    impl_qemu_loongarch64_virt::test();
-    #[cfg(feature = "impl-dummy")]
-    log::info!("[driver] dummy impl: skip qemu probe test");
+    machine().test();
     log::trace!("[driver] test end");
 }

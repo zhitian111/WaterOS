@@ -8,7 +8,7 @@ extern crate alloc;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use api_v0::{DriverError, DriverResult};
+use api_v0::{DriverError, DriverResult, MachineDriver};
 use block::{
     block_device_count, first_block_device, register_block_device, Lba,
     VirtioPciProbeInfo, BLOCK_SIZE,
@@ -49,6 +49,30 @@ static INIT_AFTER_BOOT_DONE: AtomicBool = AtomicBool::new(false);
 pub fn init_when_boot(dtb_pa: usize) {
     DTB_BASE_ADDR.store(dtb_pa, Ordering::Release);
     uart::init_early_default_uart();
+}
+
+/// 当前 QEMU LoongArch64 profile 的机器驱动单例。
+pub struct Machine;
+
+static MACHINE: Machine = Machine;
+
+/// 返回当前机器的 [`MachineDriver`] 契约实现。
+pub fn machine() -> &'static dyn MachineDriver {
+    &MACHINE
+}
+
+impl MachineDriver for Machine {
+    fn init_when_boot(&self, dtb_pa: usize) {
+        init_when_boot(dtb_pa)
+    }
+
+    fn init_after_boot(&self) -> DriverResult<()> {
+        init_after_boot()
+    }
+
+    fn test(&self) {
+        test()
+    }
 }
 
 /// 物理 RAM 上界（不包含）：QEMU LoongArch64 `virt -m 1G` 的可用 RAM

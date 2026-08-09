@@ -10,7 +10,7 @@ use runtime::logging::*;
 
 /// 运行已登记的 bring-up 阶段（按编号递增顺序）。
 ///
-/// 仅在 `driver::active_impl::init_after_boot` 成功且已执行 `fs::init`
+/// 仅在 `driver::machine().init_after_boot` 成功且已执行 `fs::init`
 /// 之后调用。
 pub fn run() {
     info!("[bringup][stage-00-bus] BEGIN");

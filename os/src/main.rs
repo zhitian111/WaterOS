@@ -110,7 +110,7 @@ extern "C" fn gui_refresh_task(_arg : usize) -> ! {
 
 /// 驱动 → 网络 → FS → 用户态 bring-up。两 board 模块共用。
 fn bringup_driver_and_user() {
-    match driver::active_impl::init_after_boot() {
+    match driver::machine().init_after_boot() {
         Err(ref err) => warn!("driver init failed: {:?}", err),
         Ok(()) => {
             #[cfg(feature = "gui")]
@@ -126,14 +126,14 @@ fn bringup_driver_and_user() {
                 }
                 Err(error) => warn!("[gui] initialization skipped: {:?}", error),
             }
-            #[cfg(feature = "qemu-riscv64-opensbi")]
-            match driver::active_impl::goldfish_rtc_realtime_ns() {
-                Ok(ns) => {
+            match driver::machine().realtime_ns() {
+                Ok(Some(ns)) => {
                     if platform::wall_clock::set_realtime_ns(u128::from(ns)).is_err() {
-                        warn!("[boot] failed to initialize CLOCK_REALTIME from Goldfish RTC");
+                        warn!("[boot] failed to initialize CLOCK_REALTIME from machine RTC");
                     }
                 }
-                Err(err) => warn!("[boot] Goldfish RTC unavailable: {:?}",
+                Ok(None) => {}
+                Err(err) => warn!("[boot] machine RTC unavailable: {:?}",
                                   err),
             }
             match network::stack::init(network::NetworkConfig { address : [10, 0, 2, 15],

@@ -89,6 +89,26 @@ pub enum DriverError {
 /// [`DriverError`] 上的 [`Result`] 别名，便于块/字符等 API 统一签名。
 pub type DriverResult<T> = core::result::Result<T, DriverError>;
 
+/// 机器级驱动契约：引导接入、设备注册与可选平台能力。
+///
+/// 每个 `driver-impl` profile（QEMU RV/LA、dummy）实现本 trait，并通过
+/// `machine()` 提供单例；上层只依赖该契约，不再直接引用具体 impl crate。
+pub trait MachineDriver {
+    /// 引导早期调用：保存 DTB 等平台状态；实现可忽略参数。
+    fn init_when_boot(&self, dtb_pa: usize);
+
+    /// 内核完成必要子系统初始化后调用：枚举并注册设备。
+    fn init_after_boot(&self) -> DriverResult<()>;
+
+    /// 平台可选能力（如实时钟）；不支持时默认返回 `Ok(None)`。
+    fn realtime_ns(&self) -> DriverResult<Option<u64>> {
+        Ok(None)
+    }
+
+    /// 驱动自检。
+    fn test(&self);
+}
+
 /// 轻量自检：构造样例 [`DeviceInfo`] 并断言字段一致性；不访问 DTB 或硬件。
 pub fn test() {
     log::trace!("[driver-api] test begin");
