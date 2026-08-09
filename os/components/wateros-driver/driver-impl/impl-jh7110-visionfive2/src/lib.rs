@@ -3,6 +3,7 @@
 extern crate alloc;
 
 pub mod plic;
+pub mod irq;
 pub mod topology;
 pub mod uart;
 
@@ -25,8 +26,15 @@ impl MachineDriver for Machine {
         if INITIALIZED.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
-        let result = topology::discover(platform_dtb_pa()).map(|board| {
+        let result = topology::discover(platform_dtb_pa()).and_then(|board| {
+                         let prepared_irq = irq::prepare_current_hart(&board)?;
                          topology::store(board.clone());
+                         #[cfg(target_arch = "riscv64")]
+                         if let Some((hart, context)) = prepared_irq {
+                             irq::enable_current_hart(hart, context);
+                         }
+                         #[cfg(not(target_arch = "riscv64"))]
+                         let _ = prepared_irq;
                          character::register_builtin_character_devices();
                          if let Some(console) = board.console_uart {
                              let index = uart::register(console);
@@ -41,18 +49,23 @@ impl MachineDriver for Machine {
                          }
                          if let Some(plic) = board.plic {
                              log::info!("[driver][visionfive2] PLIC discovered base={:#x} \
-                                         size={:#x} sources={} contexts={}; activation deferred \
-                                         until supervisor context is confirmed",
+                                         size={:#x} sources={} contexts={}; source activation \
+                                         requires an explicit IRQ handler",
                                         plic.mmio.base,
                                         plic.mmio.size,
                                         plic.sources,
                                         plic.contexts.len());
                          }
+                         Ok(())
                      });
         if result.is_err() {
             INITIALIZED.store(false, Ordering::Release);
         }
         result
+    }
+
+    fn handle_external_interrupt(&self, cpu_raw : usize) -> DriverResult<bool> {
+        irq::handle_external_interrupt(cpu_raw)
     }
 
     fn test(&self) {

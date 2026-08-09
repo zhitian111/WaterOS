@@ -457,3 +457,45 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] add VisionFive 2 DTB machine profile`
+
+## 2026-08-10：批次 10——VisionFive 2 PLIC 上下文与外部中断分发
+
+### 任务与设计
+
+1. 审计 RISC-V `scause=9` 路径、machine driver 契约、CPU/hart 编号和第 9 批 PLIC 描述。
+2. 通过 CPU 子节点的 interrupt-controller phandle 反查 hart ID，不假设 context 下标等于 hart ID。
+3. 补齐 PLIC priority、enable/disable、threshold、claim/complete 的范围和溢出校验。
+4. 在 machine driver 契约增加平台中立的 external-interrupt 入口，由内核 trap 组合层调用。
+5. 设备源只有显式注册 handler 后才启用；未知源先屏蔽再 complete，避免中断风暴。
+
+### 完成内容
+
+- [x] DTB 扫描 `/cpus/cpu@N/interrupt-controller` 的 `phandle`/`linux,phandle`，把 PLIC context 映射到明确 hart ID。
+- [x] 只把 RISC-V 中断号 9 认作 supervisor external context；缺失映射的 context 保持未解析状态。
+- [x] PLIC MMIO 构造验证 context、source、窗口大小与地址算术。
+- [x] 新增 source priority、按 context enable/disable、threshold、claim 和受检 complete 操作。
+- [x] 新增 IRQ handler 注册表；重复 source 和越界 source 会被拒绝。
+- [x] 新增 `MachineDriver::handle_external_interrupt` 默认契约，QEMU/dummy profile 无需伪造 PLIC。
+- [x] RISC-V `SupervisorExternal` trap 接入当前 machine driver；控制器不可用时按启动契约错误处理。
+- [x] JH7110 仅在 boot hart 找到有效 S-mode context 且 claim/complete 路径就绪后打开 `sie.SEIE`。
+- [x] 未注册但由固件遗留为 enabled 的 source 会先在当前 context 屏蔽，再 complete。
+
+### 验证证据
+
+- JH7110 profile host 单测 5 项通过，包括 PLIC context 解析、寄存器偏移、纯内存 volatile MMIO、hart 分发、handler 调用和 complete。
+- 最小 DTS fixture 端到端解析通过：M/S context 交错时得到 `phandle 1 → hart 0 → S context 1`、`phandle 2 → hart 1 → S context 3`，并继续验证 chosen DW APB UART。
+- VisionFive 2 完整交叉检查通过：`cargo check --no-default-features --features visionfive2,heap-tlsf,pre --target riscv64gc-unknown-none-elf`。
+- 公共 QEMU RISC-V `make check` 通过，证明 machine trait 和 trap 改动未破坏既有 profile 编译。
+- 平台 memory profile 的恒等 MMIO 窗口覆盖 DTB fixture 的 PLIC 地址；未创建任何磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] PLIC 寄存器布局遵循标准 RISC-V PLIC；JH7110 实际 claim/complete、priority 位宽及固件初始状态仍待真机测试。
+- [ ] 当前只在执行 machine driver 初始化的 boot hart 打开 SEIE；AP per-hart 初始化钩子尚未接入，因此多核外部 IRQ 亲和性未完成。
+- [ ] IRQ handler 是同步函数指针，尚无共享 IRQ、threaded IRQ、注销/quiesce 和设备生命周期屏障。
+- [ ] 尚无真实设备 source 注册；MMC/DWMAC/USB 驱动接入时必须由其 DTB IRQ 属性注册，不能写死 source 编号。
+- [ ] 合成内存可证明寄存器地址和软件分发次序，不能证明 PLIC 的硬件 claim 副作用、电气路由或中断丢失行为。
+
+### 提交
+
+- `[feat] add VisionFive 2 external interrupt routing`

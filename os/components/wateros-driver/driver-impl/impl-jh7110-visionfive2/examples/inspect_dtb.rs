@@ -15,6 +15,12 @@ fn main() {
     assert_eq!(uart.mmio.base, 0x1000_0000);
     assert_eq!(plic.mmio.base, 0x0C00_0000);
     assert_eq!(plic.sources, 136);
-    assert_eq!(plic.contexts.len(), 2);
+    assert_eq!(plic.contexts.len(), 4);
+    assert_eq!(plic.contexts[0].hart_id, Some(0));
+    assert_eq!(plic.contexts[1].hart_id, Some(0));
+    assert_eq!(plic.contexts[2].hart_id, Some(1));
+    assert_eq!(plic.contexts[3].hart_id, Some(1));
+    assert_eq!(plic.context_for_hart(0), Some(1));
+    assert_eq!(plic.context_for_hart(1), Some(3));
     println!("fixture topology: {topology:?}");
 }

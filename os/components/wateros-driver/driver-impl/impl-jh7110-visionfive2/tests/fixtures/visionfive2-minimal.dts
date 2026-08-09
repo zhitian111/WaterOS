@@ -7,17 +7,31 @@
     aliases { serial0 = &uart0; };
     chosen { stdout-path = "serial0:115200n8"; };
 
-    cpu_intc0: interrupt-controller-0 {
-        compatible = "riscv,cpu-intc";
-        interrupt-controller;
-        #interrupt-cells = <1>;
-        phandle = <1>;
-    };
-    cpu_intc1: interrupt-controller-1 {
-        compatible = "riscv,cpu-intc";
-        interrupt-controller;
-        #interrupt-cells = <1>;
-        phandle = <2>;
+    cpus {
+        #address-cells = <1>;
+        #size-cells = <0>;
+        cpu@0 {
+            device_type = "cpu";
+            compatible = "riscv";
+            reg = <0>;
+            cpu_intc0: interrupt-controller {
+                compatible = "riscv,cpu-intc";
+                interrupt-controller;
+                #interrupt-cells = <1>;
+                phandle = <1>;
+            };
+        };
+        cpu@1 {
+            device_type = "cpu";
+            compatible = "riscv";
+            reg = <1>;
+            cpu_intc1: interrupt-controller {
+                compatible = "riscv,cpu-intc";
+                interrupt-controller;
+                #interrupt-cells = <1>;
+                phandle = <2>;
+            };
+        };
     };
     uart0: serial@10000000 {
         compatible = "starfive,jh7110-uart", "snps,dw-apb-uart";
@@ -31,6 +45,7 @@
         interrupt-controller;
         #interrupt-cells = <1>;
         riscv,ndev = <136>;
-        interrupts-extended = <&cpu_intc0 9 &cpu_intc1 9>;
+        interrupts-extended = <&cpu_intc0 11 &cpu_intc0 9
+                               &cpu_intc1 11 &cpu_intc1 9>;
     };
 };

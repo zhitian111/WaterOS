@@ -383,6 +383,21 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 task::schedule_tick();
             }
         }
+        TrapCause::Interrupt(Interrupt::SupervisiorExternel) => {
+            let cpu_raw = platform::arch::cpu::current_cpu_id().raw();
+            match driver::machine().handle_external_interrupt(cpu_raw) {
+                Ok(true) => trace!("[trap] external interrupt handled cpu={}", cpu_raw),
+                Ok(false) => trace!("[trap] external interrupt had no pending source cpu={}",
+                                    cpu_raw),
+                Err(err) => {
+                    // A profile must not enable SEIE until it can claim and complete
+                    // its controller. Reaching this path is a boot-contract defect.
+                    panic!("external interrupt controller unavailable on cpu {}: {:?}",
+                           cpu_raw,
+                           err);
+                }
+            }
+        }
         _ => {
             if cx.returns_to_user() {
                 let signal = match trap_cause {

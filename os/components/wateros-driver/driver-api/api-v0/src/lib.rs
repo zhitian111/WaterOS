@@ -125,6 +125,14 @@ pub trait MachineDriver {
         Ok(None)
     }
 
+    /// Handle one machine external interrupt for the hardware CPU identifier.
+    ///
+    /// Returns `true` when a non-zero source was claimed and completed. Profiles
+    /// without an interrupt controller keep the default `Unsupported` result.
+    fn handle_external_interrupt(&self, _cpu_raw : usize) -> DriverResult<bool> {
+        Err(DriverError::Unsupported)
+    }
+
     /// 驱动自检。
     fn test(&self);
 }

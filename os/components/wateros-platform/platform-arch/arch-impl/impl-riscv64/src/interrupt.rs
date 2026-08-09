@@ -97,3 +97,17 @@ pub fn disable_soft_interrupt() {
         sie::clear_ssoft();
     }
 }
+
+/// Enable supervisor external interrupts on the current hart.
+///
+/// The board driver must install a claim/complete path before calling this.
+#[inline]
+pub fn enable_external_interrupt() {
+    unsafe { sie::set_sext(); }
+}
+
+/// Disable supervisor external interrupts on the current hart.
+#[inline]
+pub fn disable_external_interrupt() {
+    unsafe { sie::clear_sext(); }
+}
