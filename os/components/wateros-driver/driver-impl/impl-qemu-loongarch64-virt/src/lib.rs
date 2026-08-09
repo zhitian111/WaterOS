@@ -1,81 +1,37 @@
-//! QEMU LoongArch64 `virt` 平台驱动：PCIe ECAM 枚举 virtio-blk/net、UART 与 devfs 同步。
+//! QEMU LoongArch64 `virt` 平台驱动：PCIe ECAM 枚举、virtio 注册与 devfs 同步。
 //!
-//! 与 RISC-V OpenSBI 路径不同，块/网卡走 **VirtIO PCI** 而非 virtio-mmio DTB 扫描。
+//! 职责划分：`boot` 保存引导 DTB 并初始化早期 UART；`enumerate` 做 PCIe ECAM
+//! 扫描；`register` 实例化并注册各子系统设备；`devfs` 同步设备视图；`test`
+//! 提供只读自检；`machine` 以 [`MachineDriver`] 契约对外暴露本 profile。
 
 #![no_std]
 extern crate alloc;
 
-use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-
-use api_v0::{DriverError, DriverResult, MachineDriver};
-use block::{
-    block_device_count, first_block_device, register_block_device, Lba,
-    VirtioPciProbeInfo, BLOCK_SIZE,
-};
-#[cfg(feature = "block-cache")]
-use block::BlockCacheManager;
-use character::{
-    character_device_count, register_builtin_character_devices,
-};
-use fs::devfs::active_impl as devfs_impl;
-use network::{network_device_count, register_network_device, NetworkDevice, VirtioNetPciProbeInfo};
-#[cfg(feature = "display")]
-use display::{
-    display_device_count, register_display_device, DisplayDevice, VirtioGpuPciProbeInfo,
-};
-#[cfg(feature = "input")]
-use input::{
-    input_device_count, register_input_device, InputDevice, VirtioInputPciProbeInfo,
-};
-use spin::Mutex;
-
-mod pci;
+mod boot;
+mod devfs;
+mod enumerate;
+mod machine;
+mod register;
+mod test;
 pub mod uart;
 
-/// DTB 物理基址；为 0 时退化至硬编码 PCI 配置空间基址。
-static DTB_BASE_ADDR: AtomicUsize = AtomicUsize::new(0);
-/// 成功注册为 virtio-blk 的 PCI 设备列表。
-static VIRTIO_BLK_PCI: Mutex<Vec<VirtioPciProbeInfo>> = Mutex::new(Vec::new());
-/// 成功注册为 virtio-net 的 PCI 设备列表。
-static VIRTIO_NET_PCI: Mutex<Vec<VirtioNetPciProbeInfo>> = Mutex::new(Vec::new());
+use core::sync::atomic::{AtomicBool, Ordering};
+
+use api_v0::DriverResult;
+use block::block_device_count;
+use character::character_device_count;
+use network::network_device_count;
 #[cfg(feature = "display")]
-static VIRTIO_GPU_PCI: Mutex<Vec<VirtioGpuPciProbeInfo>> = Mutex::new(Vec::new());
+use display::display_device_count;
 #[cfg(feature = "input")]
-static VIRTIO_INPUT_PCI: Mutex<Vec<VirtioInputPciProbeInfo>> = Mutex::new(Vec::new());
-static INIT_AFTER_BOOT_DONE: AtomicBool = AtomicBool::new(false);
+use input::input_device_count;
 
-/// 与上层 `wateros-driver` 聚合入口的引导约定一致：保存 DTB 并初始化早期 UART。
-pub fn init_when_boot(dtb_pa: usize) {
-    DTB_BASE_ADDR.store(dtb_pa, Ordering::Release);
-    uart::init_early_default_uart();
-}
+/// 防止重复 bring-up；成功后供 `test` 等路径读取。
+pub(crate) static INIT_AFTER_BOOT_DONE: AtomicBool = AtomicBool::new(false);
 
-/// 当前 QEMU LoongArch64 profile 的机器驱动单例。
-pub struct Machine;
+pub use machine::machine;
 
-static MACHINE: Machine = Machine;
-
-/// 返回当前机器的 [`MachineDriver`] 契约实现。
-pub fn machine() -> &'static dyn MachineDriver {
-    &MACHINE
-}
-
-impl MachineDriver for Machine {
-    fn init_when_boot(&self, dtb_pa: usize) {
-        init_when_boot(dtb_pa)
-    }
-
-    fn init_after_boot(&self) -> DriverResult<()> {
-        init_after_boot()
-    }
-
-    fn test(&self) {
-        test()
-    }
-}
-
-/// 扫描 PCIe ECAM 总线寻找 virtio-blk 设备并注册。
+/// 扫描 PCIe ECAM 总线、注册 virtio 设备并同步 devfs。
 pub fn init_after_boot() -> DriverResult<()> {
     if INIT_AFTER_BOOT_DONE.swap(true, Ordering::AcqRel) {
         log::warn!(
@@ -124,140 +80,7 @@ fn init_after_boot_inner() -> DriverResult<()> {
         );
     }
 
-    let mut blk = VIRTIO_BLK_PCI.lock();
-    blk.clear();
-    drop(blk);
-    VIRTIO_NET_PCI.lock().clear();
-    #[cfg(feature = "display")]
-    VIRTIO_GPU_PCI.lock().clear();
-    #[cfg(feature = "input")]
-    VIRTIO_INPUT_PCI.lock().clear();
-
-    // 尝试 PCIe ECAM 枚举 virtio-blk 设备。
-    let config_base = pci::find_config_base(DTB_BASE_ADDR.load(Ordering::Acquire));
-    log::info!(
-        "[driver-la] PCI config base = {:#x}",
-        config_base
-    );
-    match pci::probe_virtio_blk_pci(config_base) {
-        Ok(Some((dev, info))) => {
-            let shared = {
-                #[cfg(feature = "block-cache")]
-                {
-                    BlockCacheManager::wrap(
-                        Box::new(dev),
-                        BlockCacheManager::default_config(),
-                    )
-                }
-                #[cfg(not(feature = "block-cache"))]
-                {
-                    let dev: Box<dyn BlockDevice> = Box::new(dev);
-                    Arc::new(Mutex::new(dev))
-                }
-            };
-            let idx = register_block_device(shared);
-            VIRTIO_BLK_PCI.lock().push(info);
-            log::info!(
-                "[driver-la] registered virtio-blk #{} via PCI {}:{}.{} vendor={:#06x} \
-                            device={:#06x}",
-                idx,
-                info.bus,
-                info.device,
-                info.function,
-                info.vendor_id,
-                info.device_id
-            );
-        }
-        Ok(None) => {
-            log::warn!("[driver-la][pci] no virtio-blk device found on PCI bus 0");
-        }
-        Err(err) => {
-            log::warn!(
-                "[driver-la] failed to init virtio-blk via PCI: {:?}",
-                err
-            );
-        }
-    }
-
-    match pci::probe_virtio_net_pci(config_base) {
-        Ok(Some((dev, info))) => {
-            let mac = dev.mac_address();
-            let shared = {
-                let dev: Box<dyn NetworkDevice> = Box::new(dev);
-                Arc::new(Mutex::new(dev))
-            };
-            let idx = register_network_device(shared);
-            VIRTIO_NET_PCI.lock().push(info);
-            log::info!(
-                "[driver-la] registered virtio-net #{} via PCI {}:{}.{} vendor={:#06x} \
-                            device={:#06x}",
-                idx,
-                info.bus,
-                info.device,
-                info.function,
-                info.vendor_id,
-                info.device_id
-            );
-            log::info!("[driver-la] found virtio-net-pci mac={:02x?}", mac);
-        }
-        Ok(None) => {
-            log::warn!("[driver-la][pci] no virtio-net device found on PCI bus 0");
-        }
-        Err(err) => {
-            log::warn!(
-                "[driver-la] failed to init virtio-net via PCI: {:?}",
-                err
-            );
-        }
-    }
-
-    #[cfg(feature = "display")]
-    match pci::probe_virtio_gpu_pci(config_base) {
-        Ok(Some((device, info))) => {
-            let framebuffer = device.info();
-            let device: Box<dyn DisplayDevice> = Box::new(device);
-            let idx = register_display_device(Arc::new(Mutex::new(device)));
-            VIRTIO_GPU_PCI.lock().push(info);
-            log::info!(
-                "[driver-la] registered virtio-gpu #{} via PCI {}:{}.{} resolution={}x{} stride={}",
-                idx,
-                info.bus,
-                info.device,
-                info.function,
-                framebuffer.width,
-                framebuffer.height,
-                framebuffer.stride
-            );
-        }
-        Ok(None) => {
-            log::warn!("[driver-la][pci] no virtio-gpu device found on PCI bus 0");
-        }
-        Err(err) => {
-            log::warn!("[driver-la] failed to init virtio-gpu via PCI: {:?}", err);
-        }
-    }
-
-    #[cfg(feature = "input")]
-    match pci::probe_virtio_input_pci(config_base) {
-        Ok(devices) => {
-            for (device, info) in devices {
-                let device_info = device.info().clone();
-                let device: Box<dyn InputDevice> = Box::new(device);
-                let idx = register_input_device(Arc::new(Mutex::new(device)));
-                VIRTIO_INPUT_PCI.lock().push(info);
-                log::info!(
-                    "[driver-la] registered virtio-input #{} via PCI {}:{}.{} name={} kind={:?}",
-                    idx, info.bus, info.device, info.function, device_info.name, device_info.kind
-                );
-            }
-        }
-        Err(err) => {
-            log::warn!("[driver-la] failed to init virtio-input via PCI: {:?}", err);
-        }
-    }
-
-    register_builtin_character_devices();
-    uart::register_uart_character_device();
+    register::register_devices()?;
 
     let registered = block_device_count();
     let registered_net = network_device_count();
@@ -282,7 +105,7 @@ fn init_after_boot_inner() -> DriverResult<()> {
                         unless a virtio-blk is present. QEMU example: `-device \
                         virtio-blk-pci,drive=x0 -drive file=...,if=none,format=raw,id=x0`."
         );
-    } else if let Err(err) = virtio_blk_probe_test() {
+    } else if let Err(err) = test::virtio_blk_probe_test() {
         log::warn!(
             "[driver-la] virtio-blk block0 read self-test failed: {:?}",
             err
@@ -295,40 +118,9 @@ fn init_after_boot_inner() -> DriverResult<()> {
         );
     }
 
-    // devfs 同步：填充 /dev/sys/* 视图
-    let node_count = devfs_impl::refresh();
-    log::info!(
-        "[driver-la] devfs refreshed, nodes={}",
-        node_count
-    );
+    devfs::sync();
     uart::init_default_virt_uart();
     log::info!("[driver-la] QEMU LoongArch64 UART16550 ready (serial I/O)");
 
     Ok(())
-}
-
-/// 对已注册的首个 virtio-blk 执行块 0 读取自检。
-pub fn virtio_blk_probe_test() -> DriverResult<()> {
-    let Some(dev) = first_block_device() else {
-        return Err(DriverError::NotFound);
-    };
-    let mut dev = dev.lock();
-    let mut buf = [0u8; BLOCK_SIZE];
-    dev.read_blocks(Lba(0), &mut buf)?;
-    log::info!(
-        "[driver-la] virtio-blk read block0 ok, first16={:02x?}",
-        &buf[..16]
-    );
-    Ok(())
-}
-
-/// 驱动自检：只读块 0 自检；不重复 probe / 注册。
-pub fn test() {
-    log::trace!("[driver-la] test begin");
-    if !INIT_AFTER_BOOT_DONE.load(Ordering::Acquire) {
-        log::warn!("[driver-la] test skipped: init_after_boot not completed");
-        return;
-    }
-    let _ = virtio_blk_probe_test();
-    log::trace!("[driver-la] test end");
 }

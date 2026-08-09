@@ -825,6 +825,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wateros-driver-impl-common"
+version = "0.1.0"
+dependencies = [
+ "fdt",
+ "log",
+ "spin",
+ "wateros-driver-api-v0",
+]
+
+[[package]]
 name = "wateros-driver-impl-dummy"
 version = "0.1.0"
 dependencies = [
@@ -836,7 +846,6 @@ dependencies = [
 name = "wateros-driver-impl-qemu-loongarch64-virt"
 version = "0.1.0"
 dependencies = [
- "fdt",
  "log",
  "spin",
  "wateros-base-config",
@@ -845,6 +854,7 @@ dependencies = [
  "wateros-driver-character",
  "wateros-driver-character-api-v0",
  "wateros-driver-display",
+ "wateros-driver-impl-common",
  "wateros-driver-input",
  "wateros-driver-network",
  "wateros-fs",
@@ -854,7 +864,6 @@ dependencies = [
 name = "wateros-driver-impl-qemu-riscv64-opensbi"
 version = "0.1.0"
 dependencies = [
- "fdt",
  "log",
  "spin",
  "wateros-base-config",
@@ -863,6 +872,7 @@ dependencies = [
  "wateros-driver-character",
  "wateros-driver-character-api-v0",
  "wateros-driver-display",
+ "wateros-driver-impl-common",
  "wateros-driver-input",
  "wateros-driver-network",
  "wateros-fs",

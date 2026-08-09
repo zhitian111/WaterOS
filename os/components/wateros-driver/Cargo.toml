@@ -22,6 +22,7 @@
         "./driver-input/input-impl/impl-virtio-mmio/",
         "./driver-input/input-impl/impl-virtio-pci/",
         "./driver-impl/impl-dummy/",
+        "./driver-impl/impl-common/",
         "./driver-impl/impl-qemu-loongarch64-virt/",
         "./driver-impl/impl-qemu-riscv64-opensbi/",
         "./driver-network/",

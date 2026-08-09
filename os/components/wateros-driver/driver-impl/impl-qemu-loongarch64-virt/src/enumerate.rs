@@ -31,24 +31,22 @@ const PCI_MMIO_END: u64 = 0x8000_0000;
 
 /// 从 DTB 中解析 `pci@*` 节点的 `reg` 段，优先寻找 QEMU LoongArch 的配置窗口；
 /// 失败则回退到硬编码默认值。
-pub fn find_config_base(dtb_pa: usize) -> usize {
-    if dtb_pa != 0 {
-        if let Ok(fdt) = unsafe { fdt::Fdt::from_ptr(dtb_pa as *const u8) } {
-            for node in fdt.all_nodes() {
-                if !node
-                    .name
-                    .starts_with("pci")
-                {
-                    continue;
-                }
-                let Some(mut regions) = node.reg() else {
-                    continue;
-                };
-                while let Some(region) = regions.next() {
-                    let base = region.starting_address as usize;
-                    if base == PCI_CONFIG_DEFAULT_BASE {
-                        return base;
-                    }
+pub fn find_config_base() -> usize {
+    if let Ok(fdt) = common::dtb::read_fdt() {
+        for node in fdt.all_nodes() {
+            if !node
+                .name
+                .starts_with("pci")
+            {
+                continue;
+            }
+            let Some(mut regions) = node.reg() else {
+                continue;
+            };
+            while let Some(region) = regions.next() {
+                let base = region.starting_address as usize;
+                if base == PCI_CONFIG_DEFAULT_BASE {
+                    return base;
                 }
             }
         }
