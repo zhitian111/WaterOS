@@ -7374,6 +7374,26 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 - Loongson 平台 crate 完整 lib 单测：206 项通过。
 - `UNVERIFIED_ON_HARDWARE`：真实 GMAC PCI/ECAM、MAC/PHY 寄存器、DMA/cache、IRQ route、PHY link 和网络收发仍需实体板验证。
 
+## 2026-08-10：批次 75——Loongson DMA wrapper 契约审计
+
+### 任务与设计
+
+1. 审计 `OwnedDmaBuffer` 与 APB-DMA/read coordinator 的映射创建路径，确认平台代码没有绕过共有 `DmaRegion`。
+2. 复核零长度、非对齐、页尾取整、设备地址位宽和 ownership 转移边界。
+3. 现有实现已统一经由 `DmaRegion::new` 和 `DmaMapping`，本批不添加猜测性硬件代码，仅做完整回归。
+
+### 审计结论
+
+- [x] `OwnedDmaBuffer::allocate_zeroed` 先通过页布局校验，再以真实物理地址构造共有 `DmaRegion`。
+- [x] APB-DMA descriptor/payload、MMC read coordinator 均持有 `DmaMapping`，未发现裸地址旁路。
+- [x] device-owned buffer 在未确认硬件停止时不释放，保留并输出 `UNVERIFIED_ON_HARDWARE` 诊断。
+
+### 验证证据与限制
+
+- Loongson 平台 crate 完整 lib 单测：207 项通过。
+- 共有 DMA API 的地址溢出/对齐测试已在批次 71 通过。
+- `UNVERIFIED_ON_HARDWARE`：2K1000LA 实际物理地址窗口、cache 维护、DMA 停止确认和掉电行为仍需实机。
+
 ### 提交
 
 - `[ref] tighten gmac evidence contract`
