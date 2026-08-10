@@ -1389,3 +1389,30 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[fix] fail closed dma coherency default`
+
+## 2026-08-10：批次 34——公共块设备 GPT 只读分区解析
+
+### 任务与设计
+
+1. 审计确认物理根镜像和 MBR 分区注册已经可用，但 protective MBR 会直接拒绝 GPT，真实 SD 卡上的 GPT 布局无法被检查。
+2. 新增独立 `scan_gpt` 只读解析器，验证 GPT header、header CRC、entry array CRC、可用 LBA 范围、空 entry 和分区重叠。
+3. 先返回结构化 `GptPartition`，不改变现有 MBR 分区设备编号和自动注册行为，避免把新的格式误接入旧 ABI。
+
+### 完成内容
+
+- [x] 支持标准 512-byte GPT header 和 128-byte 至 1024-byte、8-byte 对齐的 entry size。
+- [x] 限制 entry 数量为 4096，所有 entry array 读取都有字节数和磁盘范围上界。
+- [x] 导出 `GptPartition` 与 `scan_gpt`；损坏 header、header/entry CRC、越界和重叠均 fail-closed。
+- [x] 新增内存小镜像测试，覆盖合法 GPT、损坏 header、重叠和越界分区。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path os/components/wateros-driver/driver-block/block-api/api-v0/Cargo.toml --lib`：5 项通过。
+- RISC-V64 目标检查：通过。
+- LoongArch64 目标检查：通过。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：尚未用真实 SD 卡/固件 GPT 对照；GPT 分区尚未接入全局 block registry 和 devfs 命名，当前仍保持 MBR 自动注册兼容。
+
+### 提交
+
+- `[feat] add gpt partition scanner`

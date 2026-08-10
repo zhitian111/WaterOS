@@ -1,6 +1,6 @@
 //! MBR partition discovery and bounded partition block devices.
 
-use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 use spin::Mutex;
 
 use crate::{BlockDevice, DriverError, DriverResult, Lba, SharedBlockDevice, BLOCK_SIZE};
@@ -9,6 +9,11 @@ const MBR_SIGNATURE_OFFSET : usize = 510;
 const MBR_PARTITION_TABLE_OFFSET : usize = 446;
 const MBR_ENTRY_SIZE : usize = 16;
 const MBR_ENTRY_COUNT : usize = 4;
+const GPT_SIGNATURE : &[u8; 8] = b"EFI PART";
+const GPT_MIN_HEADER_SIZE : usize = 92;
+const GPT_MAX_ENTRY_COUNT : u32 = 4096;
+const GPT_MIN_ENTRY_SIZE : u32 = 128;
+const GPT_MAX_ENTRY_SIZE : u32 = 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MbrPartition {
@@ -16,6 +21,13 @@ pub struct MbrPartition {
     pub partition_type : u8,
     pub start_lba : u64,
     pub sectors : u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GptPartition {
+    pub number : u32,
+    pub start_lba : u64,
+    pub end_lba : u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,10 +39,30 @@ pub enum PartitionScanError {
     UnsupportedExtended,
     InvalidEntry,
     OverlappingEntries,
+    InvalidGptHeader,
+    GptHeaderCrc,
+    GptEntryCrc,
+    UnsupportedGptLayout,
+    GptEntryOutOfRange,
 }
 
 fn read_u32_le(bytes : &[u8]) -> u32 {
     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
+fn read_u64_le(bytes : &[u8]) -> u64 {
+    u64::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]])
+}
+
+fn crc32(bytes : &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for byte in bytes {
+        crc ^= *byte as u32;
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+        }
+    }
+    !crc
 }
 
 /// Read the legacy MBR primary partition table.
@@ -90,6 +122,92 @@ pub fn scan_mbr(device : &SharedBlockDevice) -> Result<Vec<MbrPartition>, Partit
                                        partition_type,
                                        start_lba,
                                        sectors });
+    }
+    Ok(partitions)
+}
+
+/// Read a GPT header and its partition-entry array without modifying the disk.
+/// Empty entries are skipped; populated entries are range-checked and rejected
+/// if they overlap. The result is intentionally separate from MBR registration
+/// until the public device-number contract grows a GPT-specific role.
+pub fn scan_gpt(device : &SharedBlockDevice) -> Result<Vec<GptPartition>, PartitionScanError> {
+    let mut header = [0u8; BLOCK_SIZE];
+    let total_blocks = {
+        let mut device = device.lock();
+        if device.block_size() != BLOCK_SIZE {
+            return Err(PartitionScanError::InvalidBlockSize);
+        }
+        device.read_blocks(Lba(1), &mut header).map_err(PartitionScanError::Io)?;
+        device.total_blocks().ok_or(PartitionScanError::InvalidGptHeader)?
+    };
+    if &header[..8] != GPT_SIGNATURE {
+        return Err(PartitionScanError::InvalidGptHeader);
+    }
+    let header_size = read_u32_le(&header[12..16]) as usize;
+    if !(GPT_MIN_HEADER_SIZE..=BLOCK_SIZE).contains(&header_size) ||
+       read_u64_le(&header[24..32]) != 1 ||
+       read_u64_le(&header[72..80]) == 0 ||
+       read_u32_le(&header[80..84]) == 0
+    {
+        return Err(PartitionScanError::InvalidGptHeader);
+    }
+    let backup_lba = read_u64_le(&header[32..40]);
+    let first_usable = read_u64_le(&header[40..48]);
+    let last_usable = read_u64_le(&header[48..56]);
+    if backup_lba >= total_blocks || first_usable > last_usable || last_usable >= total_blocks {
+        return Err(PartitionScanError::InvalidGptHeader);
+    }
+    let expected_header_crc = read_u32_le(&header[16..20]);
+    let mut crc_header = header[..header_size].to_vec();
+    crc_header[16..20].fill(0);
+    if crc32(&crc_header) != expected_header_crc {
+        return Err(PartitionScanError::GptHeaderCrc);
+    }
+
+    let entry_lba = read_u64_le(&header[72..80]);
+    let entry_count = read_u32_le(&header[80..84]);
+    let entry_size = read_u32_le(&header[84..88]);
+    if !(GPT_MIN_ENTRY_SIZE..=GPT_MAX_ENTRY_SIZE).contains(&entry_size) ||
+       !entry_size.is_multiple_of(8) || entry_count > GPT_MAX_ENTRY_COUNT
+    {
+        return Err(PartitionScanError::UnsupportedGptLayout);
+    }
+    let entry_bytes = usize::try_from(entry_count)
+        .ok().and_then(|count| usize::try_from(entry_size).ok().and_then(|size| count.checked_mul(size)))
+        .ok_or(PartitionScanError::UnsupportedGptLayout)?;
+    let entry_sectors = entry_bytes.div_ceil(BLOCK_SIZE) as u64;
+    if entry_lba == 0 || entry_lba.checked_add(entry_sectors).is_none_or(|end| end > total_blocks) {
+        return Err(PartitionScanError::GptEntryOutOfRange);
+    }
+    let mut entries = vec![0u8; entry_bytes];
+    {
+        let mut device = device.lock();
+        let entry_offset = entry_lba.checked_mul(BLOCK_SIZE as u64)
+                                      .ok_or(PartitionScanError::GptEntryOutOfRange)?;
+        device.read_bytes(entry_offset, &mut entries)
+              .map_err(PartitionScanError::Io)?;
+    }
+    if crc32(&entries) != read_u32_le(&header[88..92]) {
+        return Err(PartitionScanError::GptEntryCrc);
+    }
+    let mut partitions = Vec::new();
+    for index in 0..entry_count as usize {
+        let offset = index * entry_size as usize;
+        let entry = &entries[offset..offset + entry_size as usize];
+        if entry[..16].iter().all(|byte| *byte == 0) {
+            continue;
+        }
+        let start_lba = read_u64_le(&entry[32..40]);
+        let end_lba = read_u64_le(&entry[40..48]);
+        if start_lba < first_usable || start_lba > end_lba || end_lba > last_usable {
+            return Err(PartitionScanError::GptEntryOutOfRange);
+        }
+        if partitions.iter().any(|prior : &GptPartition| {
+            start_lba <= prior.end_lba && prior.start_lba <= end_lba
+        }) {
+            return Err(PartitionScanError::OverlappingEntries);
+        }
+        partitions.push(GptPartition { number : index as u32 + 1, start_lba, end_lba });
     }
     Ok(partitions)
 }
@@ -215,6 +333,33 @@ mod tests {
         Arc::new(Mutex::new(Box::new(MemoryDisk { bytes })))
     }
 
+    fn gpt_disk(ranges : &[(u64, u64)]) -> SharedBlockDevice {
+        let mut bytes = vec![0u8; BLOCK_SIZE * 32];
+        let entries = &mut bytes[BLOCK_SIZE * 2..BLOCK_SIZE * 3];
+        for (index, (start, end)) in ranges.iter().enumerate() {
+            let entry = &mut entries[index * 128..(index + 1) * 128];
+            entry[0] = 1;
+            entry[32..40].copy_from_slice(&start.to_le_bytes());
+            entry[40..48].copy_from_slice(&end.to_le_bytes());
+        }
+        let entries_crc = crc32(entries);
+        let header = &mut bytes[BLOCK_SIZE..BLOCK_SIZE * 2];
+        header[..8].copy_from_slice(GPT_SIGNATURE);
+        header[8..12].copy_from_slice(&0x0001_0000u32.to_le_bytes());
+        header[12..16].copy_from_slice(&(GPT_MIN_HEADER_SIZE as u32).to_le_bytes());
+        header[24..32].copy_from_slice(&1u64.to_le_bytes());
+        header[32..40].copy_from_slice(&31u64.to_le_bytes());
+        header[40..48].copy_from_slice(&4u64.to_le_bytes());
+        header[48..56].copy_from_slice(&28u64.to_le_bytes());
+        header[72..80].copy_from_slice(&2u64.to_le_bytes());
+        header[80..84].copy_from_slice(&4u32.to_le_bytes());
+        header[84..88].copy_from_slice(&128u32.to_le_bytes());
+        header[88..92].copy_from_slice(&entries_crc.to_le_bytes());
+        let header_crc = crc32(&header[..GPT_MIN_HEADER_SIZE]);
+        header[16..20].copy_from_slice(&header_crc.to_le_bytes());
+        Arc::new(Mutex::new(Box::new(MemoryDisk { bytes })))
+    }
+
     #[test]
     fn scans_primary_partitions() {
         let disk = disk_with_entries(&[(0x83, 1, 4),
@@ -262,5 +407,23 @@ mod tests {
                                           (0x83, 4, 8)]);
         assert_eq!(scan_mbr(&overlap),
                    Err(PartitionScanError::OverlappingEntries));
+    }
+
+    #[test]
+    fn scans_gpt_entries_and_rejects_corruption() {
+        let disk = gpt_disk(&[(4, 7), (12, 20)]);
+        let partitions = scan_gpt(&disk).unwrap();
+        assert_eq!(partitions,
+                   vec![GptPartition { number : 1, start_lba : 4, end_lba : 7 },
+                        GptPartition { number : 2, start_lba : 12, end_lba : 20 }]);
+
+        let crc_bad = gpt_disk(&[(4, 7)]);
+        crc_bad.lock().write_blocks(Lba(1), &[0; BLOCK_SIZE]).unwrap();
+        assert_eq!(scan_gpt(&crc_bad), Err(PartitionScanError::InvalidGptHeader));
+
+        let overlap = gpt_disk(&[(4, 10), (8, 12)]);
+        assert_eq!(scan_gpt(&overlap), Err(PartitionScanError::OverlappingEntries));
+        let out_of_range = gpt_disk(&[(3, 5)]);
+        assert_eq!(scan_gpt(&out_of_range), Err(PartitionScanError::GptEntryOutOfRange));
     }
 }

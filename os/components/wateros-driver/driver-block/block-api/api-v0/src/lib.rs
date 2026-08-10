@@ -9,7 +9,8 @@ use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 use spin::Mutex;
 
 pub mod partition;
-pub use partition::{MbrPartition, PartitionBlockDevice, PartitionScanError, scan_mbr};
+pub use partition::{GptPartition, MbrPartition, PartitionBlockDevice, PartitionScanError, scan_gpt,
+                    scan_mbr};
 
 pub use driver_api::{DriverError, DriverResult, device_topology_generation};
 
