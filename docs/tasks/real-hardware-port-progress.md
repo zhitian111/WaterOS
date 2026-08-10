@@ -5935,3 +5935,34 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] add root image QEMU snapshot smoke`
+
+## 2026-08-10：批次 129——向 VFS 设备目录暴露 devfs generation
+
+### 本批任务与设计
+
+1. 审计 input/character registry、kernel devfs 和 VFS `VfsDevInventory`，确认 `/dev/input/eventN` 已能随注册表更新，但 VFS 目录消费者没有 generation 查询。
+2. 在稳定 VFS trait 上增加默认 `devfs_generation()`，避免破坏 dummy/外部后端；FsBridge 转发 active devfs 的软件视图代际。
+3. 明确 generation 只用于缓存失效，不代表物理热插拔、IRQ、DMA 或设备权限已经验证。
+4. 使用现有 devfs/input/character host 测试和双架构编译门禁确认 API 兼容。
+
+### 已完成
+
+- [x] `VfsDevInventory` 增加兼容性默认的 `devfs_generation()`。
+- [x] FsBridge 返回 kernel/active devfs generation，dummy 后端固定返回 0。
+- [x] 保持 input/character 注销后的路径查找 `NotFound` 与稳定 slot 语义不变。
+
+### 验证证据
+
+- devfs kernel、简化 devfs 和 input/character registry 的既有 host 测试通过。
+- `make check EXTRA_FEATURES=remote-debug-monitor` 与 `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 通过。
+- `UNVERIFIED_ON_HARDWARE`：USB/PS2/virtio-input 控制器、IRQ、事件时间戳、权限和真实热插拔仍待目标板/QEMU guest 运行验证。
+
+### 已知限制、未验证与后续测试
+
+- [ ] VFS trait 目前只返回 generation 和粗节点类型，尚未提供 Linux major/minor、权限、uevent 或设备能力位图。
+- [ ] 输入事件时间戳仍由 input API 置零；需要接入平台单调时钟后再验证 evdev 兼容性。
+- [ ] 尚未执行真实 guest 键盘/鼠标事件注入到 `/dev/input/eventN` 的端到端测试。
+
+### 提交
+
+- 本批计划提交：`[feat] expose devfs generation through VFS inventory`

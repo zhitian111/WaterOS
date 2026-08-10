@@ -52,6 +52,8 @@ impl VfsDevInventory for DummyBackend {
         Vec::new()
     }
 
+    fn devfs_generation(&self) -> u64 { 0 }
+
     fn default_root_block_path(&self) -> Option<alloc::string::String> {
         None
     }

@@ -28,6 +28,12 @@ pub trait VfsDevInventory {
     /// 枚举当前可见的全部 devfs 节点。
     fn list_dev_nodes(&self) -> Vec<VfsDevNode>;
 
+    /// 返回节点快照对应的软件 devfs generation。
+    ///
+    /// 调用方可在缓存设备目录时保存该值；generation 变化只表示软件
+    /// 视图需要重新枚举，不代表硬件热插拔或 IRQ/DMA 状态已被验证。
+    fn devfs_generation(&self) -> u64 { 0 }
+
     /// 根卷默认块设备路径；无可用设备时 `None`。
     fn default_root_block_path(&self) -> Option<String>;
 

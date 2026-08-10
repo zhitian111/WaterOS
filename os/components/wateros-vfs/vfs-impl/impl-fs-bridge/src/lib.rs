@@ -1188,6 +1188,10 @@ impl VfsDevInventory for FsBridge {
         nodes
     }
 
+    fn devfs_generation(&self) -> u64 {
+        fs::devfs::active_impl::generation()
+    }
+
     // 本方法代码由AI完成
     fn default_root_block_path(&self) -> Option<String> {
         fs::devfs::active_impl::default_root_block_path()
