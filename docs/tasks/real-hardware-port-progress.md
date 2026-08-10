@@ -4081,3 +4081,64 @@ DMA ownership transfer 或 command。
 ### 提交
 
 - `[feat] plan LS2K1000 MMC read transfers`
+
+## 2026-08-10：批次 84——LS2K1000 MMC command/data/DMA 三重完成 typestate
+
+### 任务与设计
+
+1. 为未来只读传输建立 command response、controller DFIN、DMA completion 三份独立证据的汇合状态机。
+2. 三份成功证据允许任意顺序到达，但只有全部具备后才能归还 owned buffer。
+3. data/command/DMA failure、未知中断与重复 completion 必须进入资源隔离态。
+4. 恢复态不得默认 drop 或公开 buffer，因为 DMA 是否停止在失败时可能未知。
+5. 当前没有 executor，生产构建不得存在 tracker 构造入口，也不接 MMIO/IRQ runtime。
+
+completion tracker 按值拥有泛型资源 `B`，成功时由 `ReadCompleted::into_buffer()` 归还；失败时将
+资源放入 `ManuallyDrop<B>`。生产 API 没有 recovery buffer extractor，避免未来把 device-owned
+mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tracker 和回收纯内存资源。
+
+### 完成内容
+
+- [x] 新增 `ReadCompletionEvidence`，分别记录 command response validated、DFIN、DMA finished。
+- [x] 新增 `ReadCompletionTracker<B>`、`ReadCompletionProgress`、`ReadCompleted<B>` 和 `ReadCompletionRecovery<B>`。
+- [x] success facts 以 consuming transition 更新；第三份独立 evidence 到达前始终返回 Pending。
+- [x] completed 类型保存 plan/evidence，只有该类型公开 `into_buffer()`。
+- [x] recovery 使用私有 `_buffer: ManuallyDrop<B>`，生产构建没有取回或自动 drop 路径。
+- [x] tracker 构造器限定 `#[cfg(test)]`；生产代码无法从 deferred plan 启动 completion 状态机。
+- [x] command failure 分类 Timeout/ResponseCrc/Io；DMA failure 分类 Start/Completion/Stop。
+- [x] data failure 分类 DTimeout/RxCrc/TxCrc/ProgramError/unknown interrupt。
+- [x] controller error priority 固定为 DTimeout→RxCrc→TxCrc→ProgramError→unknown→DFIN；成功位不覆盖错误。
+- [x] command、DFIN 或 DMA completion 重复到达分别进入 DuplicateCommand/Data/Dma recovery。
+- [x] controller snapshot 可包含其它已知 INT bits；没有 DFIN 时不会错误形成 data completion。
+- [x] 没有修改 Host、IRQ owner、APBDMA executor、machine init、remote monitor 或 activation gate。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 125 项全部通过；新增 3 项 completion typestate 聚合测试。
+- 6 种 command/data/DMA 成功排列全部验证：前两步 Pending，第三步 Completed，原 owned value 完整归还。
+- data error matrix 将 DFIN、一个已知错误和未知 bit 同时注入，稳定保留已知错误优先级且不设置 data_finished。
+- unknown-only snapshot 进入 `UnknownInterrupt` recovery；资源只能经 test-only fixture 回收。
+- duplicate matrix 覆盖 command/DFIN/DMA 三类重复 evidence。
+- explicit failure matrix 覆盖 3 类 command failure 与 3 类 DMA failure，全部保留资源进入 recovery。
+- 组件 production `cargo check` 零新增 warning；tracker 构造器和 recovery extractor 均未编译进生产路径。
+- LoongArch64 精确 target check 通过；仅有仓库既有 warning。
+- 新状态机不接收 RegisterIo、IRQ runtime 或 APBDMA session，测试没有物理 MMIO/DMA。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：DFIN 与外部 DMA completion 的真实先后、并发和中断合并行为未知。
+- [ ] command validated 当前是抽象 evidence；CRC policy 仍无实现，生产构建也没有 tracker 构造入口。
+- [ ] recovery 目前只能永久隔离资源；尚无“MMC idle + APBDMA stop + cache sync”组合恢复 token。
+- [ ] `ManuallyDrop` 是 fail-closed 所有权策略，未来 executor 必须明确记录泄漏/隔离资源并提供受证明的恢复路径。
+- [ ] controller interrupt tracker 不负责 W1C；实际 executor 必须在 IRQ owner 下保存 snapshot、ack 并防止重复 delivery。
+- [ ] CMD18 仍缺 CMD12 stop/auto-stop contract，不能用于多块真实读取。
+- [ ] 状态机尚未绑定 `OwnedDmaBuffer<FromDevice>` 与 `PreparedSession`，泛型 fixture 不证明 cache coherency。
+- [ ] 下一批应定义组合 recovery typestate：同时持有 MMC post-state 和 APBDMA recovery session，只有两侧 quiesce、INT clear/readback 与 sync_for_cpu 都成功后才能取回 buffer。
+
+### 参考与许可证
+
+- `docs/references/loongson2-mmc-upstream.md`
+- 本批为 WaterOS 自有 typestate/测试实现，未复制第三方代码。
+
+### 提交
+
+- `[feat] model LS2K1000 MMC read completion`

@@ -14,7 +14,7 @@ use crate::{
     },
 };
 use api_v0::MmioRegion;
-use core::marker::PhantomData;
+use core::{marker::PhantomData, mem::ManuallyDrop};
 use core::sync::atomic::{AtomicBool, Ordering};
 use dw_mmc::mmc::MmcError;
 
@@ -170,6 +170,11 @@ const CCTL_START : u32 = 1 << 8;
 const CCTL_WAIT_RESPONSE : u32 = 1 << 9;
 const CCTL_LONG_RESPONSE : u32 = 1 << 10;
 const INT_COMMAND_SENT : u32 = 1 << 6;
+const INT_DATA_FINISHED : u32 = 1 << 0;
+const INT_DATA_TIMEOUT : u32 = 1 << 1;
+const INT_RECEIVE_CRC : u32 = 1 << 2;
+const INT_TRANSMIT_CRC : u32 = 1 << 3;
+const INT_PROGRAM_ERROR : u32 = 1 << 4;
 const INT_COMMAND_TIMEOUT : u32 = 1 << 7;
 const INT_RESPONSE_CRC : u32 = 1 << 8;
 const INT_CLEAR : u32 = 0x3FF;
@@ -1064,6 +1069,167 @@ impl<'a> DeferredRead<'a> {
     pub fn cancel(self) -> &'a mut [u8] { self.buffer }
 }
 
+/// Three independent completion facts required before a read buffer may be
+/// returned to CPU ownership.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReadCompletionEvidence {
+    pub command_response_validated : bool,
+    pub data_finished : bool,
+    pub dma_finished : bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadCommandFailure {
+    Timeout,
+    ResponseCrc,
+    Io,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadDmaFailure {
+    Start,
+    Completion,
+    Stop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadCompletionFailure {
+    Command(ReadCommandFailure),
+    DataTimeout,
+    ReceiveCrc,
+    TransmitCrc,
+    ProgramError,
+    UnknownInterrupt(u32),
+    Dma(ReadDmaFailure),
+    DuplicateCommand,
+    DuplicateData,
+    DuplicateDma,
+}
+
+/// Pure software tracker for future MMC/data/DMA completion orchestration.
+///
+/// There is no public constructor. The future executor must first remove the
+/// unconditional deferred-plan blocker and transfer an owned DMA resource.
+pub struct ReadCompletionTracker<B> {
+    plan : DeferredReadPlan,
+    buffer : B,
+    evidence : ReadCompletionEvidence,
+}
+
+pub struct ReadCompleted<B> {
+    pub plan : DeferredReadPlan,
+    pub evidence : ReadCompletionEvidence,
+    buffer : B,
+}
+
+impl<B> ReadCompleted<B> {
+    pub fn into_buffer(self) -> B { self.buffer }
+}
+
+/// Failed transfer isolation. `buffer` is deliberately never dropped or
+/// exposed by production methods because device ownership may be uncertain.
+pub struct ReadCompletionRecovery<B> {
+    pub plan : DeferredReadPlan,
+    pub evidence : ReadCompletionEvidence,
+    pub failure : ReadCompletionFailure,
+    _buffer : ManuallyDrop<B>,
+}
+
+#[cfg(test)]
+impl<B> ReadCompletionRecovery<B> {
+    fn reclaim_fixture(self) -> B { ManuallyDrop::into_inner(self._buffer) }
+}
+
+pub enum ReadCompletionProgress<B> {
+    Pending(ReadCompletionTracker<B>),
+    Completed(ReadCompleted<B>),
+    RecoveryRequired(ReadCompletionRecovery<B>),
+}
+
+impl<B> ReadCompletionTracker<B> {
+    #[cfg(test)]
+    fn new(plan : DeferredReadPlan, buffer : B) -> Self {
+        Self { plan,
+               buffer,
+               evidence : ReadCompletionEvidence::default() }
+    }
+
+    pub fn evidence(&self) -> ReadCompletionEvidence { self.evidence }
+
+    fn finish(self) -> ReadCompletionProgress<B> {
+        if self.evidence.command_response_validated && self.evidence.data_finished &&
+           self.evidence.dma_finished
+        {
+            ReadCompletionProgress::Completed(ReadCompleted { plan : self.plan,
+                                                               evidence : self.evidence,
+                                                               buffer : self.buffer })
+        } else {
+            ReadCompletionProgress::Pending(self)
+        }
+    }
+
+    fn fail(self, failure : ReadCompletionFailure) -> ReadCompletionProgress<B> {
+        ReadCompletionProgress::RecoveryRequired(ReadCompletionRecovery {
+            plan : self.plan,
+            evidence : self.evidence,
+            failure,
+            _buffer : ManuallyDrop::new(self.buffer),
+        })
+    }
+
+    /// Record a command response that has already passed its required policy.
+    /// This method performs no command MMIO and cannot validate CRC itself.
+    pub fn command_validated(mut self) -> ReadCompletionProgress<B> {
+        if self.evidence.command_response_validated {
+            return self.fail(ReadCompletionFailure::DuplicateCommand);
+        }
+        self.evidence.command_response_validated = true;
+        self.finish()
+    }
+
+    pub fn command_failed(self, failure : ReadCommandFailure) -> ReadCompletionProgress<B> {
+        self.fail(ReadCompletionFailure::Command(failure))
+    }
+
+    /// Record one already-observed controller interrupt snapshot. Error bits
+    /// take priority over DFIN when they appear together.
+    pub fn controller_interrupt(mut self, interrupts : u32) -> ReadCompletionProgress<B> {
+        let unknown = interrupts & !INT_CLEAR;
+        for (bit, failure) in
+            [(INT_DATA_TIMEOUT, ReadCompletionFailure::DataTimeout),
+             (INT_RECEIVE_CRC, ReadCompletionFailure::ReceiveCrc),
+             (INT_TRANSMIT_CRC, ReadCompletionFailure::TransmitCrc),
+             (INT_PROGRAM_ERROR, ReadCompletionFailure::ProgramError)]
+        {
+            if interrupts & bit != 0 {
+                return self.fail(failure);
+            }
+        }
+        if unknown != 0 {
+            return self.fail(ReadCompletionFailure::UnknownInterrupt(unknown));
+        }
+        if interrupts & INT_DATA_FINISHED != 0 {
+            if self.evidence.data_finished {
+                return self.fail(ReadCompletionFailure::DuplicateData);
+            }
+            self.evidence.data_finished = true;
+        }
+        self.finish()
+    }
+
+    pub fn dma_completed(mut self) -> ReadCompletionProgress<B> {
+        if self.evidence.dma_finished {
+            return self.fail(ReadCompletionFailure::DuplicateDma);
+        }
+        self.evidence.dma_finished = true;
+        self.finish()
+    }
+
+    pub fn dma_failed(self, failure : ReadDmaFailure) -> ReadCompletionProgress<B> {
+        self.fail(ReadCompletionFailure::Dma(failure))
+    }
+}
+
 pub fn prepare_deferred_read<'a>(bring_up : BringUpPlan,
                                  request : ReadBlockRequest,
                                  transport : ReadTransport,
@@ -1876,6 +2042,143 @@ mod tests {
                                                ReadPathEvidence::default(),
                                                &mut buffer),
                          Err(ReadRequestError::AddressOverflow)));
+    }
+
+    fn completion_tracker<B>(buffer : B) -> ReadCompletionTracker<B> {
+        let request = ReadBlockRequest::new(0, 1, 512, ReadAddressing::Block).unwrap();
+        let mut scratch = [0; 512];
+        let deferred = prepare_deferred_read(plan(&description()).unwrap(),
+                                             request,
+                                             ReadTransport::ExternalDma,
+                                             ReadPathEvidence::default(),
+                                             &mut scratch).unwrap();
+        let read_plan = *deferred.plan();
+        let _ = deferred.cancel();
+        ReadCompletionTracker::new(read_plan, buffer)
+    }
+
+    fn pending<B>(progress : ReadCompletionProgress<B>) -> ReadCompletionTracker<B> {
+        match progress {
+            ReadCompletionProgress::Pending(tracker) => tracker,
+            ReadCompletionProgress::Completed(_) => panic!("completion arrived early"),
+            ReadCompletionProgress::RecoveryRequired(_) => panic!("unexpected recovery"),
+        }
+    }
+
+    #[test]
+    fn read_completion_requires_all_three_facts_in_any_order() {
+        #[derive(Clone, Copy)]
+        enum Step { Command, Data, Dma }
+
+        for order in [[Step::Command, Step::Data, Step::Dma],
+                      [Step::Command, Step::Dma, Step::Data],
+                      [Step::Data, Step::Command, Step::Dma],
+                      [Step::Data, Step::Dma, Step::Command],
+                      [Step::Dma, Step::Command, Step::Data],
+                      [Step::Dma, Step::Data, Step::Command]]
+        {
+            let mut tracker = Some(completion_tracker(0xA5A5_5A5Au32));
+            for (index, step) in order.into_iter().enumerate() {
+                let current = tracker.take().unwrap();
+                let progress = match step {
+                    Step::Command => current.command_validated(),
+                    Step::Data => current.controller_interrupt(INT_DATA_FINISHED),
+                    Step::Dma => current.dma_completed(),
+                };
+                if index != 2 {
+                    tracker = Some(pending(progress));
+                } else {
+                    match progress {
+                        ReadCompletionProgress::Completed(completed) => {
+                            assert_eq!(completed.evidence,
+                                       ReadCompletionEvidence {
+                                           command_response_validated : true,
+                                           data_finished : true,
+                                           dma_finished : true,
+                                       });
+                            assert_eq!(completed.into_buffer(), 0xA5A5_5A5A);
+                        }
+                        _ => panic!("third independent fact did not complete"),
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn read_completion_prioritizes_data_errors_and_isolates_resource() {
+        for (bit, expected) in
+            [(INT_DATA_TIMEOUT, ReadCompletionFailure::DataTimeout),
+             (INT_RECEIVE_CRC, ReadCompletionFailure::ReceiveCrc),
+             (INT_TRANSMIT_CRC, ReadCompletionFailure::TransmitCrc),
+             (INT_PROGRAM_ERROR, ReadCompletionFailure::ProgramError)]
+        {
+            let tracker = pending(completion_tracker(7u32).command_validated());
+            let recovery = match tracker.controller_interrupt(INT_DATA_FINISHED | bit | (1 << 31)) {
+                ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+                _ => panic!("data error did not isolate resource"),
+            };
+            assert_eq!(recovery.failure, expected);
+            assert!(recovery.evidence.command_response_validated);
+            assert!(!recovery.evidence.data_finished);
+            assert_eq!(recovery.reclaim_fixture(), 7);
+        }
+        let recovery = match completion_tracker(8u32).controller_interrupt(1 << 31) {
+            ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+            _ => panic!("unknown interrupt did not isolate resource"),
+        };
+        assert_eq!(recovery.failure, ReadCompletionFailure::UnknownInterrupt(1 << 31));
+        assert_eq!(recovery.reclaim_fixture(), 8);
+    }
+
+    #[test]
+    fn read_completion_rejects_duplicates_and_explicit_failures() {
+        let tracker = pending(completion_tracker(1u8).command_validated());
+        let command_duplicate = match tracker.command_validated() {
+            ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+            _ => panic!("duplicate command completion accepted"),
+        };
+        assert_eq!(command_duplicate.failure, ReadCompletionFailure::DuplicateCommand);
+        assert_eq!(command_duplicate.reclaim_fixture(), 1);
+
+        let tracker = pending(completion_tracker(2u8).controller_interrupt(INT_DATA_FINISHED));
+        let data_duplicate = match tracker.controller_interrupt(INT_DATA_FINISHED) {
+            ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+            _ => panic!("duplicate data completion accepted"),
+        };
+        assert_eq!(data_duplicate.failure, ReadCompletionFailure::DuplicateData);
+        assert_eq!(data_duplicate.reclaim_fixture(), 2);
+
+        let tracker = pending(completion_tracker(3u8).dma_completed());
+        let dma_duplicate = match tracker.dma_completed() {
+            ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+            _ => panic!("duplicate DMA completion accepted"),
+        };
+        assert_eq!(dma_duplicate.failure, ReadCompletionFailure::DuplicateDma);
+        assert_eq!(dma_duplicate.reclaim_fixture(), 3);
+
+        for failure in [ReadCommandFailure::Timeout,
+                        ReadCommandFailure::ResponseCrc,
+                        ReadCommandFailure::Io]
+        {
+            let recovery = match completion_tracker(4u8).command_failed(failure) {
+                ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+                _ => panic!("command failure did not isolate"),
+            };
+            assert_eq!(recovery.failure, ReadCompletionFailure::Command(failure));
+            assert_eq!(recovery.reclaim_fixture(), 4);
+        }
+        for failure in [ReadDmaFailure::Start,
+                        ReadDmaFailure::Completion,
+                        ReadDmaFailure::Stop]
+        {
+            let recovery = match completion_tracker(5u8).dma_failed(failure) {
+                ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+                _ => panic!("DMA failure did not isolate"),
+            };
+            assert_eq!(recovery.failure, ReadCompletionFailure::Dma(failure));
+            assert_eq!(recovery.reclaim_fixture(), 5);
+        }
     }
 
     #[test]
