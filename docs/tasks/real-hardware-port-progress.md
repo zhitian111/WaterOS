@@ -6816,3 +6816,29 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[feat] add safe evdev query ioctls`
+
+## 2026-08-10：批次 163——RISC-V/LoongArch QEMU TCP remote-debug 端到端验收
+
+### 本批任务与设计
+
+1. 复用已有 `remote_debug_qemu_smoke.py`、QEMU hostfwd 和 16 MiB 物理根盘，不新增 SSH 或任意远程 shell 权限。
+2. 分别构建带 `remote-debug-monitor,operator-shell` 的 RISC-V/LoongArch 内核，强制 `WOS_QEMU_SNAPSHOT=1`，由 Python 客户端等待 TCP readiness 后执行只读诊断命令。
+3. 验证 monitor 返回的块设备分区拓扑、devfs generation/节点快照、版本和状态；架构不匹配的 LS2K 专用命令必须明确返回 `unsupported`，不能被当作通过。
+
+### 已完成
+
+- [x] RISC-V QEMU 实际 TCP 会话通过：`ping`、`status`、`version`、`blocks`、`devfs`、`capabilities`/`ls2k-mmc` unsupported 分支、退出协议均响应正确。
+- [x] LoongArch QEMU 实际 TCP 会话通过：同一组通用命令、分区拓扑和 devfs 快照响应正确；LS2K 专用命令在通用 QEMU profile 下明确拒绝。
+- [x] 两次 QEMU 均使用 16 MiB MBR 根镜像和 snapshot，镜像及内核临时产物已清理，基准文件未被写回。
+
+### 验证证据与限制
+
+- `root_image.py build/verify --size-mib 16 --partition-table mbr`：通过，分区从 LBA 2048 开始。
+- `make kernel-rv EXTRA_FEATURES='remote-debug-monitor,operator-shell'`：通过。
+- `make kernel-la EXTRA_FEATURES='remote-debug-monitor,operator-shell'`：通过。
+- `remote_debug_qemu_smoke.py`：RISC-V 和 LoongArch 各一轮实际 hostfwd TCP smoke 通过。
+- `UNVERIFIED_ON_HARDWARE`：QEMU TCP 会话不证明目标板 NIC/PHY、IRQ/DMA、UART 网络路径或可靠性；monitor 仍无认证、无加密、无 PTY/登录 shell，只能用于隔离开发网络的诊断。
+
+### 提交
+
+- 待提交：`[test] verify remote debug QEMU sessions`
