@@ -121,6 +121,7 @@ def run_smoke(client: MonitorClient) -> list[CommandResult]:
         client.command("status"),
         client.command("version"),
         client.command("devfs"),
+        client.command("capabilities"),
         client.command("ls2k-mmc"),
         client.command("reboot"),
     ]
@@ -133,16 +134,25 @@ def run_smoke(client: MonitorClient) -> list[CommandResult]:
         raise MonitorProtocolError(f"version failed: {results[2].response!r}")
     if not results[3].response.startswith("devfs generation="):
         raise MonitorProtocolError(f"invalid devfs response: {results[3].response!r}")
+    capabilities_prefixes = (
+        "capabilities ",
+        "ERR capabilities ",
+        "ERR unsupported: capabilities ",
+    )
+    if not results[4].response.startswith(capabilities_prefixes):
+        raise MonitorProtocolError(
+            f"invalid capabilities response: {results[4].response!r}"
+        )
     mmc_prefixes = (
         "ls2k-mmc ",
         "ERR ls2k-mmc ",
         "ERR unavailable: ls2k-mmc ",
         "ERR unsupported: ls2k-mmc ",
     )
-    if not results[4].response.startswith(mmc_prefixes):
-        raise MonitorProtocolError(f"invalid ls2k-mmc response: {results[4].response!r}")
-    if results[5].response != "unknown command; type 'help'\r\n":
-        raise MonitorProtocolError(f"unknown-command guard failed: {results[5].response!r}")
+    if not results[5].response.startswith(mmc_prefixes):
+        raise MonitorProtocolError(f"invalid ls2k-mmc response: {results[5].response!r}")
+    if results[6].response != "unknown command; type 'help'\r\n":
+        raise MonitorProtocolError(f"unknown-command guard failed: {results[6].response!r}")
     results.append(client.quit())
     return results
 

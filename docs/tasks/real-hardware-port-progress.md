@@ -6242,3 +6242,30 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[test] harden remote debug smoke`
+
+## 2026-08-10：批次 140——完成 LoongArch QEMU 远程监控 smoke
+
+### 本批任务与设计
+
+1. 审计上一批证据，确认远程监控只有 RISC-V QEMU 端到端记录，LoongArch 虽有网络初始化和 QEMU virtio-net 路径但缺少运行时证明。
+2. 使用 `remote-debug-monitor,operator-shell` 构建 LoongArch 内核和 16 MiB 临时 GPT 根镜像，避免 Auto operator 在空 workload 镜像上立即关机。
+3. 将 `capabilities` 纳入公共 host smoke 契约：已激活平台返回结构化能力快照，未激活平台必须返回明确 `ERR unsupported`，不允许静默成功或伪造硬件能力。
+4. 在 LoongArch 和 RISC-V QEMU 上分别跑同一套命令序列，结束后删除内核和镜像产物。
+
+### 已完成
+
+- [x] `MonitorClient.run_smoke()` 增加 `capabilities` 命令及响应前缀校验。
+- [x] fake-server 单测覆盖未激活 LoongArch 能力响应、命令顺序和后续未知命令拒绝。
+- [x] LoongArch QEMU smoke 通过：`ping`、`status`、`version`、`devfs`、`capabilities` unsupported、`ls2k-mmc` unsupported、`reboot` 拒绝、`quit`。
+- [x] RISC-V QEMU smoke 使用同一新契约再次通过。
+- [x] LoongArch/RISC-V `operator-shell` 内核构建成功；临时 16 MiB GPT 镜像实际挂载并在 smoke 后清理。
+
+### 验证证据与限制
+
+- LoongArch 串行启动日志确认 virtio-net、静态 `10.0.2.15/24`、根卷挂载和远程监控监听；host 端口转发后端到端可读。
+- `capabilities` 与 `ls2k-mmc` 在 QEMU virt 配置返回 unsupported 是预期结果；它证明拒绝契约，不证明 2K1000LA 能力快照或 MMC 硬件。
+- `UNVERIFIED_ON_HARDWARE`：LoongArch 真实板 GMAC/PHY、LIOINTC、UART、MMC、APBDMA 和板级供电仍需实机；当前远程监控仍只允许开发环境 loopback 转发。
+
+### 提交
+
+- 本批计划提交：`[test] cover loongarch remote debug smoke`
