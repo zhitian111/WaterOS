@@ -6516,3 +6516,26 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[fix] bound loongson ecam addresses`
+
+## 2026-08-10：批次 151——明确 aux 分区的显式挂载路径
+
+### 本批任务与设计
+
+1. 审计 VFS bridge 后确认 `vfs::mount_ext4_block_at(mount_point, block_dev, readonly)` 已经是公共入口，并通过现有 mount namespace/代际/cache 生命周期；无需另造绕过层。
+2. 保持 aux 不自动挂载，避免单分区镜像和启动顺序发生隐式变化；由用户空间 `mount` 或平台策略显式调用 `/dev/vda2`。
+3. 将镜像 README 与 VFS 行为对齐，记录 root/aux 分离、空目录要求、RO/RW 和失败非致命语义。
+
+### 已完成
+
+- [x] root-image README 增加 `/dev/vda2` 显式 ext4 mount 示例及 API 语义说明。
+- [x] root-image host + QEMU smoke 参数测试 12 项通过。
+- [x] 额外尝试直接 cargo 检查整个 VFS LoongArch crate；因未选择完整平台 feature，工作区既有 `Arch*Impl` 配置错误阻断，非本次文档变更引入。
+
+### 验证证据与限制
+
+- 当前 QEMU smoke 仍只自动挂载 `/dev/vda1`；aux 的实际 guest `mount /dev/vda2 /data` 端到端执行仍待增加。
+- `UNVERIFIED_ON_HARDWARE`：真实 SD/eMMC 分区发现、启动时序、写屏障和自动挂载策略仍需目标板验证。
+
+### 提交
+
+- 本批计划提交：`[docs] document explicit aux mount path`

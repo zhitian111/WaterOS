@@ -53,6 +53,19 @@ protective MBR, primary/backup GPT metadata and a CRC-checked Linux root
 partition. Verification also checks that the backup header and entry array
 match the primary metadata.
 
+The data partition is deliberately not auto-mounted by the kernel. After the
+root volume is available, userspace may mount it explicitly, for example:
+
+```sh
+mkdir -p /data
+mount -t ext4 /dev/vda2 /data
+```
+
+The VFS bridge routes this through `mount_ext4_block_at`, validates that the
+target is an empty directory, keeps the root handle separate, and supports
+`MS_RDONLY`. A platform-specific auto-mount policy can call the same API later;
+absence or mount failure must remain non-fatal for single-partition images.
+
 Each manifest file entry must contain an absolute guest `path`, an octal
 `mode`, and exactly one of `content` or `source`. Relative sources are resolved
 against the manifest directory. Add architecture-specific binaries through a
