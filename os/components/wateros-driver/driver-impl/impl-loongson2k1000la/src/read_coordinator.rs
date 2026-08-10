@@ -21,6 +21,7 @@ use crate::{board_irq_owner::{BoardIrqOwner, BoundedMmcReadRecheck,
                               DrainError, RuntimeReservation, RuntimeService, SlotError},
             irq_domain::GlobalIrq,
             mmc::{ReadBlockRequest, RegisterIo}};
+use api_v0::{dma::{DmaCoherency, DmaDirection, DmaMapping, DmaRegion}, DriverError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadCoordinatorPhase {
@@ -68,6 +69,17 @@ pub enum ReadCoordinatorError {
     CompletionMustBeFinalized,
     RecoveryMustBeRecorded,
     RecoveryMustBeTaken,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadRequestBufferError {
+    WrongLength { expected : usize, actual : usize },
+    WrongDirection(DmaDirection),
+    Dma(DriverError),
+}
+
+impl From<DriverError> for ReadRequestBufferError {
+    fn from(error : DriverError) -> Self { Self::Dma(error) }
 }
 
 #[must_use = "retry recording or retain the linear recovery report"]
@@ -275,6 +287,23 @@ impl ReadRequest {
 
     pub const fn block(&self) -> ReadBlockRequest { self.block }
 
+    pub fn bind_dma_buffer<C : DmaCoherency>(
+        &self,
+        mapping : DmaMapping<C>)
+        -> Result<ReadRequestBuffer<C>, ReadRequestBufferError> {
+        let region = mapping.identity_region();
+        if region.length() != self.block.byte_length {
+            return Err(ReadRequestBufferError::WrongLength {
+                expected : self.block.byte_length,
+                actual : region.length(),
+            });
+        }
+        if mapping.identity_direction() != DmaDirection::FromDevice {
+            return Err(ReadRequestBufferError::WrongDirection(mapping.identity_direction()));
+        }
+        Ok(ReadRequestBuffer { request : *self, mapping })
+    }
+
     pub fn reserve<'a>(&self,
                        slot : &'a ReadCoordinatorSlot)
                        -> Result<ReadRequestReservation<'a>, ReadCoordinatorError> {
@@ -284,6 +313,34 @@ impl ReadRequest {
             request : *self,
         })
     }
+}
+
+/// A production-owned read payload mapping. The mapping remains CPU-owned
+/// until the caller explicitly prepares it, and cannot be released while the
+/// device owns it. The actual cache/barrier behavior remains
+/// `UNVERIFIED_ON_HARDWARE` for LS2K1000LA.
+pub struct ReadRequestBuffer<C> {
+    request : ReadRequest,
+    mapping : DmaMapping<C>,
+}
+
+impl<C : DmaCoherency> ReadRequestBuffer<C> {
+    pub const fn request(&self) -> ReadRequest { self.request }
+
+    pub fn region(&self) -> Result<DmaRegion, ReadRequestBufferError> {
+        self.mapping.cpu_region().map_err(Into::into)
+    }
+
+    pub fn prepare_for_device(&mut self) -> Result<DmaRegion, ReadRequestBufferError> {
+        self.mapping.prepare_for_device().map_err(Into::into)
+    }
+
+    pub fn complete_from_device(&mut self) -> Result<DmaRegion, ReadRequestBufferError> {
+        self.mapping.complete_from_device().map_err(Into::into)
+    }
+
+    pub const fn is_cpu_owned(&self) -> bool { self.mapping.is_cpu_owned() }
+
 }
 
 impl ReadCoordinatorSlot {
@@ -879,6 +936,7 @@ mod tests {
     extern crate std;
 
     use super::*;
+    use api_v0::DriverResult;
     use crate::board_irq_owner::{DeferredApbDmaOwner, DrainedReadIrqs,
                                  MmcCommandOwner, MmcReadRecheckError,
                                  ReadIrqOwnerBinding};
@@ -899,6 +957,25 @@ mod tests {
         status : u32,
         fail_read : bool,
         panic_read : bool,
+    }
+
+    #[derive(Default)]
+    struct MockCoherency {
+        fail_device : bool,
+    }
+
+    impl DmaCoherency for MockCoherency {
+        fn sync_for_device(&mut self,
+                           _region : DmaRegion,
+                           _direction : DmaDirection)
+                           -> DriverResult<()> {
+            if self.fail_device { Err(DriverError::IoError) } else { Ok(()) }
+        }
+
+        fn sync_for_cpu(&mut self,
+                        _region : DmaRegion,
+                        _direction : DmaDirection)
+                        -> DriverResult<()> { Ok(()) }
     }
 
     impl RegisterIo for MockRegisters {
@@ -974,6 +1051,29 @@ mod tests {
         assert_eq!(slot.snapshot().unwrap().phase, ReadCoordinatorPhase::Published);
         handle.release().unwrap();
         assert_eq!(slot.state(), DiagnosticSlotState::Empty);
+    }
+
+    #[test]
+    fn production_request_buffer_enforces_geometry_and_linear_dma_ownership() {
+        let request = ReadRequest::new(
+            transaction(4),
+            ReadBlockRequest::new(0, 2, 512, crate::mmc::ReadAddressing::Block).unwrap());
+        let region = DmaRegion::new(0x4000, 0x8000, 1024, 32, 32).unwrap();
+        let mapping = DmaMapping::new(region, DmaDirection::FromDevice, MockCoherency::default());
+        let mut buffer = request.bind_dma_buffer(mapping).unwrap();
+        assert_eq!(buffer.request(), request);
+        assert_eq!(buffer.region(), Ok(region));
+        assert_eq!(buffer.prepare_for_device(), Ok(region));
+        assert!(!buffer.is_cpu_owned());
+        assert_eq!(buffer.region(), Err(ReadRequestBufferError::Dma(DriverError::InvalidParam)));
+        assert_eq!(buffer.complete_from_device(), Ok(region));
+        assert!(buffer.is_cpu_owned());
+
+        let wrong_length = DmaRegion::new(0x4000, 0x8000, 512, 32, 32).unwrap();
+        let wrong_mapping = DmaMapping::new(wrong_length, DmaDirection::FromDevice,
+                                            MockCoherency::default());
+        assert_eq!(request.bind_dma_buffer(wrong_mapping).err(),
+                   Some(ReadRequestBufferError::WrongLength { expected : 1024, actual : 512 }));
     }
 
     #[test]

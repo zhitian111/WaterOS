@@ -5331,3 +5331,35 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] add LS2K1000 owned read request lifecycle`
+
+## 2026-08-10：批次 110——为 ReadRequest 接入生产态 DMA buffer lease
+
+### 本批任务与设计
+
+1. 审计 `ReadRequest` 与现有 `DmaMapping`/coherency typestate 的连接点。
+2. 新增绑定请求几何的生产态 `ReadRequestBuffer<C>`，拒绝长度或方向不匹配的 mapping。
+3. 只允许通过显式 `prepare_for_device`/`complete_from_device` 转移 CPU/device 所有权；同步失败必须保留 buffer 以便重试。
+4. 用 host mock 验证线性所有权与错配路径，不宣称真实 cache/barrier 已验证。
+
+### 已完成
+
+- [x] `ReadRequest::bind_dma_buffer` 校验 DMA mapping 长度等于请求 byte length，且方向必须为 `FromDevice`。
+- [x] `ReadRequestBuffer` 持有 mapping 与 request identity，公开 CPU region、prepare、complete 和 ownership 查询。
+- [x] DMA mapping 的现有 typestate 没有被复制；所有 sync 仍由调用方提供的 `DmaCoherency` backend 执行。
+- [x] 新增 host 测试覆盖成功 prepare/complete、CPU region 拒绝 device-owned mapping 和错误长度拒绝。
+
+### 验证证据
+
+- 本批 focused coordinator tests 11 项通过；新增 buffer 测试验证 1024-byte 双块请求与 mapping identity 一致。
+- `DmaDirection::FromDevice`、长度校验和 ownership transition 均由 API 层实际返回值断言。
+- `UNVERIFIED_ON_HARDWARE`：2K1000LA 的实际 cache flush/invalidate、DMA 地址可达性和屏障时序仍没有物理机证据。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 当前 lease 尚未由真实 APBDMA executor 持有 descriptor/channel；下一步需要把 descriptor lease 与 payload lease 合并到同一 production request。
+- [ ] 真实硬件上发生 partial start、stop timeout 或迟到 IRQ 时的 buffer 回收仍待 QEMU 模型扩展和实机验证。
+- [ ] rootfs 镜像、分区 block device、动态 `/dev` 与 remote-debug monitor 仍按此前批次状态维护，不能将 QEMU/host 结果当作物理板验证。
+
+### 提交
+
+- 本批计划提交：`[feat] bind LS2K1000 read buffer lease`
