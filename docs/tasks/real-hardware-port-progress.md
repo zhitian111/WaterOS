@@ -1132,3 +1132,27 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] add visionfive2 mmc bringup plan`
+
+## 2026-08-10：批次 26——VisionFive 2 输出共享 MMC 控制器参数候选
+
+### 任务与设计
+
+1. 审计确认 bring-up plan 已结构化资源 blocker，但仍没有向共享 `DwMmc` 核心输出纯协议参数。
+2. 从 host 描述生成目标卡频率、FIFO 深度和 bus width 配置候选；不读取/写入 JH7110 clock/reset/syscon。
+3. 静态资源无效时拒绝生成候选；即使候选有效，`can_activate()` 仍为 false，硬件证据 blocker 不被移除。
+
+### 完成内容
+
+- [x] 新增 `MmcControllerConfig` 与 `MmcConfigError`。
+- [x] 新增 `MmcBringUpPlan::controller_config`，为共享 `DwMmc::initialize_polling` 提供纯数据边界。
+- [x] 测试覆盖合法候选和 malformed 资源拒绝，未触碰真实 MMIO。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path components/wateros-driver/driver-impl/impl-jh7110-visionfive2/Cargo.toml --lib mmc::tests`：2 项通过。
+- `cargo check --manifest-path components/wateros-driver/driver-impl/impl-jh7110-visionfive2/Cargo.toml --target riscv64gc-unknown-none-elf`：通过。
+- `UNVERIFIED_ON_HARDWARE`：输入时钟实际频率、CIU 分频、reset/pinmux/供电顺序、FIFO 行为和卡响应仍需实机；本批不注册块设备。
+
+### 提交
+
+- `[feat] expose visionfive2 mmc controller config`

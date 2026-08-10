@@ -20,6 +20,20 @@ pub enum MmcActivationBlocker {
     HardwareEvidence,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MmcControllerConfig {
+    pub target_frequency_hz : u32,
+    pub fifo_depth : u32,
+    pub bus_width : u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MmcConfigError {
+    InvalidStaticResources,
+    MissingTargetFrequency,
+    MissingFifoDepth,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcBringUpPlan {
     pub host : MmcHostDescription,
@@ -30,6 +44,22 @@ impl MmcBringUpPlan {
     /// Hardware activation remains deliberately unavailable until board
     /// clock/reset/pinmux/card and controller behavior are verified.
     pub const fn can_activate(&self) -> bool { false }
+
+    /// Produce only protocol/controller parameters; this does not touch
+    /// clocks, reset, pinmux, power or MMIO.
+    pub fn controller_config(&self) -> Result<MmcControllerConfig, MmcConfigError> {
+        if self.blockers.iter().any(|blocker| {
+            !matches!(blocker, MmcActivationBlocker::HardwareEvidence)
+        }) {
+            return Err(MmcConfigError::InvalidStaticResources);
+        }
+        let target_frequency_hz = self.host.max_frequency_hz.ok_or(
+            MmcConfigError::MissingTargetFrequency)?;
+        let fifo_depth = self.host.fifo_depth.ok_or(MmcConfigError::MissingFifoDepth)?;
+        Ok(MmcControllerConfig { target_frequency_hz,
+                                  fifo_depth,
+                                  bus_width : self.host.bus_width })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +143,10 @@ mod tests {
         let plan = bring_up_plan(&host());
         assert_eq!(plan.blockers, vec![MmcActivationBlocker::HardwareEvidence]);
         assert!(!plan.can_activate());
+        assert_eq!(plan.controller_config(),
+                   Ok(MmcControllerConfig { target_frequency_hz : 50_000_000,
+                                             fifo_depth : 32,
+                                             bus_width : 4 }));
     }
 
     #[test]
@@ -128,5 +162,6 @@ mod tests {
         assert!(plan.blockers.contains(&MmcActivationBlocker::MissingBiuClock));
         assert!(plan.blockers.contains(&MmcActivationBlocker::MissingSysreg));
         assert!(!plan.can_activate());
+        assert_eq!(plan.controller_config(), Err(MmcConfigError::InvalidStaticResources));
     }
 }
