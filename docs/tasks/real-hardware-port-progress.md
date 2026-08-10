@@ -7374,6 +7374,26 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 - Loongson 平台 crate 完整 lib 单测：206 项通过。
 - `UNVERIFIED_ON_HARDWARE`：真实 GMAC PCI/ECAM、MAC/PHY 寄存器、DMA/cache、IRQ route、PHY link 和网络收发仍需实体板验证。
 
+## 2026-08-10：批次 84——Loongson DMA buffer 显式虚拟映射入口
+
+### 任务与设计
+
+1. 审计 AHCI/GMAC/APBDMA 资源 contract，确认 AHCI/GMAC 已有严格的 PCI/PHY/IRQ/DMA evidence gate，APBDMA 已有 ownership/stop typestate。
+2. 修正 `OwnedDmaBuffer` 的资源构造接口：原入口直接把物理地址复制为虚拟地址，无法表达未来非恒等映射。
+3. 增加 `allocate_zeroed_at(..., virtual_address)` 显式入口；旧 `allocate_zeroed` 仅作为当前 identity-map bring-up wrapper，所有权和 cache 后端语义不变。
+
+### 完成内容
+
+- [x] DMA buffer 可以用调用方提供的 VA 与 owned physical span 建立 `DmaRegion`，不再要求 API 层隐式 VA=PA。
+- [x] 保留旧接口以避免现有调用方行为变化，并在注释中明确其 identity-map 限定。
+- [x] AHCI/GMAC/APBDMA 原有 fail-closed 证据和停止后回收语义未被放宽。
+
+### 验证证据与限制
+
+- Loongson driver crate host 单测：207 项通过。
+- LoongArch64 目标 `cargo check` 通过。
+- `UNVERIFIED_ON_HARDWARE`：真实高半内核/页表映射、LoongArch cache maintenance、IOMMU、AHCI command list、GMAC descriptor、APBDMA 设备可见性和 PHY 链路仍需 2K1000LA 实板验证；本批仅完善资源描述接口。
+
 ## 2026-08-10：批次 75——Loongson DMA wrapper 契约审计
 
 ### 任务与设计

@@ -80,13 +80,34 @@ impl<C : DmaCoherency> OwnedDmaBuffer<C> {
                            direction : DmaDirection,
                            coherency : C)
                            -> Result<Self, DmaAllocationError> {
+        // Current bring-up uses the kernel's identity mapping explicitly;
+        // callers that have a separate mapping must use `allocate_zeroed_at`.
+        Self::allocate_zeroed_at(byte_length,
+                                 byte_alignment,
+                                 device_address_bits,
+                                 direction,
+                                 coherency,
+                                 None)
+    }
+
+    /// Allocate a DMA buffer while explicitly supplying the virtual mapping
+    /// used by the device driver. `None` retains the current identity-map
+    /// bring-up wrapper; `Some` never changes the owned physical allocation.
+    pub fn allocate_zeroed_at(byte_length : usize,
+                              byte_alignment : usize,
+                              device_address_bits : u8,
+                              direction : DmaDirection,
+                              coherency : C,
+                              virtual_address : Option<usize>)
+                              -> Result<Self, DmaAllocationError> {
         let layout = allocation_layout(byte_length, byte_alignment)?;
         let memory = OwnedPhysFrameSpan::alloc_zeroed(layout.frame_count,
                                                       layout.alignment_frames)?;
         let physical_address = memory.physical_address()
                                      .0;
+        let virtual_address = virtual_address.unwrap_or(physical_address);
         let region =
-            DmaRegion::new(physical_address,
+            DmaRegion::new(virtual_address,
                            physical_address as u64,
                            byte_length,
                            byte_alignment,
