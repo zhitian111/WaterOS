@@ -1364,3 +1364,21 @@ python3 scripts/remote_debug_qemu_smoke.py \
 
 - VisionFive 2 driver crate：15 项测试通过。
 - `UNVERIFIED_ON_HARDWARE`：实际 PLIC context 编号、S-mode 路由、优先级/claim-complete 行为及 JH7110 外部 IRQ 仍需上板验证。
+
+## 2026-08-10：批次 77——VisionFive 2 UART 布局矩阵回归
+
+### 任务与设计
+
+1. 审计 VisionFive 2 UART DTB `reg-shift`/`reg-io-width` 到字符驱动布局的映射。
+2. 保持默认缺省值对应标准 Byte16550，同时只接受已知 Byte16550 和 DesignWare APB32 组合。
+3. 用纯布局矩阵测试覆盖错误组合，不触碰 UART MMIO 或收发时序。
+
+### 完成内容
+
+- [x] 新增 UART 布局矩阵测试，覆盖缺省、标准、DW APB32 及多个不支持组合。
+- [x] 确认 topology 仍依赖 `first_mmio_region` 拒绝零长度 MMIO。
+
+### 验证证据与限制
+
+- VisionFive 2 driver crate：16 项测试通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 UART 时钟、pinmux、MMIO 映射、IRQ 和波特率/收发时序仍需实体板验证。
