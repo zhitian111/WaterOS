@@ -34,16 +34,19 @@ pub(crate) fn with_allocator_interrupt_guard<R>(f : impl FnOnce() -> R) -> R {
     let state = arch::interrupt::read_global_interrupt_state()
                     .expect("heap guard: read interrupt state");
     let _ = arch::interrupt::disable_global_interrupt();
-    let depth = local_depth.fetch_add(1, Ordering::Acquire);
+    // Interrupts are already disabled and this slot is CPU-local, so there is
+    // exactly one writer. Atomic load/store retain race-free observability
+    // without emitting locked RMW instructions on every heap operation.
+    let depth = local_depth.load(Ordering::Relaxed);
     if depth > 0 {
-        local_depth.fetch_sub(1, Ordering::Release);
         let _ = arch::interrupt::restore_global_interrupt_state(state);
         panic!("recursive heap allocation detected (cpu={} depth={})",
                cpu.raw(),
                depth + 1);
     }
+    local_depth.store(1, Ordering::Relaxed);
     let ret = f();
-    local_depth.fetch_sub(1, Ordering::Release);
+    local_depth.store(0, Ordering::Relaxed);
     let _ = arch::interrupt::restore_global_interrupt_state(state);
     ret
 }

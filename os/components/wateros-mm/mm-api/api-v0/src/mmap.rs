@@ -43,10 +43,74 @@ pub enum PageFaultAccess {
     Execute,
 }
 
+/// Stable identity used to invalidate every resident mapping of one file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FileObjectId {
+    pub mount_id : u64,
+    pub inode_id : u64,
+}
+
+/// Page-cache pin owned by a shared-file-page lease.
+///
+/// Dropping the token cancels an uncommitted lease. `commit_mapping` converts
+/// the short pin into one long-lived mapping reference after the PTE install.
+pub trait SharedFilePagePin {
+    fn commit_mapping(self : Box<Self>) -> MmResult<Box<dyn SharedFileMappingRef>>;
+}
+
+/// Long-lived cache mapping reference retained alongside an installed PTE.
+pub trait SharedFileMappingRef: Send {
+    fn duplicate_box(&self) -> MmResult<Box<dyn SharedFileMappingRef>>;
+}
+
+/// A clean, generation-stable physical file page borrowed from the VFS cache.
+pub struct SharedFilePageLease {
+    pub ppn : PhysPageNum,
+    pub file_id : FileObjectId,
+    pub page_index : usize,
+    pub generation : u64,
+    pub valid_len : usize,
+    pin : Option<Box<dyn SharedFilePagePin>>,
+}
+
+impl SharedFilePageLease {
+    pub fn new(ppn : PhysPageNum,
+               file_id : FileObjectId,
+               page_index : usize,
+               generation : u64,
+               valid_len : usize,
+               pin : Box<dyn SharedFilePagePin>)
+               -> Self {
+        Self { ppn,
+               file_id,
+               page_index,
+               generation,
+               valid_len,
+               pin : Some(pin) }
+    }
+
+    /// Commit the cache pin after the PTE and reverse-map entry are installed.
+    pub fn commit_mapping(mut self) -> MmResult<Box<dyn SharedFileMappingRef>> {
+        self.pin.take().expect("shared file page lease without pin").commit_mapping()
+    }
+}
+
+/// Result of asking a loader for a directly mappable page.
+pub enum DemandPage {
+    SharedReadOnly(SharedFilePageLease),
+    CopyRequired,
+}
+
 /// 文件页懒加载器。实现者须自行持有 mmap 后仍可读取文件内容的状态。
 pub trait DemandPageLoader {
     /// 复制 loader；用于 fork 后父子地址空间都保留同一文件映射语义。
     fn duplicate_box(&self) -> MmResult<Box<dyn DemandPageLoader>>;
+
+    /// Acquire a directly mappable page or explicitly select the copy path.
+    fn acquire_page(&mut self,
+                    file_offset : usize,
+                    access : PageFaultAccess)
+                    -> MmResult<DemandPage>;
 
     /// 将文件偏移 `file_offset` 对应的一页加载到已清零的 `dst`。
     fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()>;

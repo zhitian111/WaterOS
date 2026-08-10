@@ -38,6 +38,7 @@
         "vfs/bridge-fs-api",
         "vfs/impl-fd-session",
     ]
+    file-page-sharing = [ "mm/file-page-sharing" ]
     impl-kernel = [
         "api-v0",
         "fd-session",

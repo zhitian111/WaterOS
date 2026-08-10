@@ -14,12 +14,13 @@
 
 extern crate alloc;
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 
 use api_v0::addr::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
-use api_v0::mmap::{DemandPageLoader, PageFaultAccess};
+use api_v0::file_mapping::{self, FileMappingRegistration, RegisteredFileMapping};
+use api_v0::mmap::{DemandPage, DemandPageLoader, PageFaultAccess, SharedFileMappingRef};
 use api_v0::perm::PagePerm;
 
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result, frame_inc_ref, frame_ref_count};
@@ -168,6 +169,50 @@ impl LoongArch64Pte {
     fn clear(&mut self) { self.0 = 0; }
 }
 
+struct LoongArch64FileMapping {
+    pte : usize,
+    aspace_handle : usize,
+    ppn : PhysPageNum,
+    page_addr : usize,
+    page_index : usize,
+    generation : u64,
+    cache_mapping : Box<dyn SharedFileMappingRef>,
+}
+
+unsafe impl Send for LoongArch64FileMapping {}
+
+impl RegisteredFileMapping for LoongArch64FileMapping {
+    fn page_index(&self) -> usize { self.page_index }
+    fn generation(&self) -> u64 { self.generation }
+
+    fn duplicate_for(&self, pte_context : usize) -> MmResult<Box<dyn RegisteredFileMapping>> {
+        Ok(Box::new(Self { pte : pte_context,
+                           aspace_handle : 0,
+                           ppn : self.ppn,
+                           page_addr : self.page_addr,
+                           page_index : self.page_index,
+                           generation : self.generation,
+                           cache_mapping : self.cache_mapping.duplicate_box()? }))
+    }
+
+    fn bind_aspace(&mut self, aspace_handle : usize) { self.aspace_handle = aspace_handle; }
+
+    fn invalidate(self : Box<Self>) {
+        if self.aspace_handle != 0 {
+            crate::user_aspace::invalidate_file_page(self.aspace_handle,
+                                                     self.page_addr,
+                                                     self.ppn);
+            return;
+        }
+        let pte = unsafe { &mut *(self.pte as *mut LoongArch64Pte) };
+        if pte.flags().is_valid() && pte.ppn() == self.ppn {
+            pte.clear();
+            let _ = frame_dealloc_result(self.ppn);
+            crate::user_aspace::shootdown_file_page(self.page_addr);
+        }
+    }
+}
+
 const LOONGARCH64_LEVELS : usize = 3;
 const LOONGARCH64_ENTRIES : usize = 512;
 const VPN_INDEX_BITS : usize = 9;
@@ -231,6 +276,9 @@ pub struct LoongArch64AddressSpace {
     pub(crate) lazy_file_vmas : Vec<LazyFileVma>,
     pub(crate) shared_anon_vmas : Vec<SharedAnonVma>,
     pub(crate) shared_file_vmas : Vec<SharedFileVma>,
+    shared_file_pages : BTreeMap<usize, FileMappingRegistration>,
+    retired_file_mappings : Vec<Box<dyn RegisteredFileMapping>>,
+    owner_handle : usize,
 }
 
 // The address space is accessed through MultiprocessorSafeCell.  The lock
@@ -329,7 +377,10 @@ impl LoongArch64AddressSpace {
                   user_stack_top : VirtAddr(0),
                   lazy_file_vmas : Vec::new(),
                   shared_anon_vmas : Vec::new(),
-                  shared_file_vmas : Vec::new() })
+                  shared_file_vmas : Vec::new(),
+                  shared_file_pages : BTreeMap::new(),
+                  retired_file_mappings : Vec::new(),
+                  owner_handle : 0 })
     }
 
     /// 创建内核地址空间；ASID 0 不参与用户 ASID 分配与复用。
@@ -347,7 +398,10 @@ impl LoongArch64AddressSpace {
                   user_stack_top : VirtAddr(0),
                   lazy_file_vmas : Vec::new(),
                   shared_anon_vmas : Vec::new(),
-                  shared_file_vmas : Vec::new() })
+                  shared_file_vmas : Vec::new(),
+                  shared_file_pages : BTreeMap::new(),
+                  retired_file_mappings : Vec::new(),
+                  owner_handle : 0 })
     }
 
     /// ELF 装载完成后初始化用户堆与匿名映射区游标（须在泄漏页表对象前调用一次）。
@@ -907,6 +961,8 @@ impl LoongArch64AddressSpace {
                 return Err(error);
             }
         };
+        #[cfg(feature = "file-page-sharing")]
+        let _file_mapping_freeze = file_mapping::freeze_invalidation();
         // SAFETY: 刚分配并清零的帧作为子地址空间根页表。
         if let Err(err) = unsafe {
             fork_table(self.root,
@@ -927,20 +983,30 @@ impl LoongArch64AddressSpace {
         platform::arch::paging::flush_address_space_translations();
         log::trace!("[mm-fork] LoongArch64AddressSpace::fork done child_root={}",
                     child_root.0);
-        Ok(LoongArch64AddressSpace { root : child_root,
-                                     asid : child_asid,
-                                     user_brk_start : self.user_brk_start,
-                                     user_brk_current_end : self.user_brk_current_end,
-                                     user_brk_max : self.user_brk_max,
-                                     mmap_anon_cursor : self.mmap_anon_cursor,
-                                     mmap_file_cursor : self.mmap_file_cursor,
-                                     mmap_base : self.mmap_base,
-                                     user_stack_bottom : self.user_stack_bottom,
-                                     user_stack_top : self.user_stack_top,
-                                     lazy_file_vmas : child_lazy_file_vmas,
-                                     shared_anon_vmas : self.shared_anon_vmas
-                                                            .clone(),
-                                     shared_file_vmas : child_shared_file_vmas })
+        let mut child = LoongArch64AddressSpace { root : child_root,
+                                                  asid : child_asid,
+                                                  user_brk_start : self.user_brk_start,
+                                                  user_brk_current_end : self.user_brk_current_end,
+                                                  user_brk_max : self.user_brk_max,
+                                                  mmap_anon_cursor : self.mmap_anon_cursor,
+                                                  mmap_file_cursor : self.mmap_file_cursor,
+                                                  mmap_base : self.mmap_base,
+                                                  user_stack_bottom : self.user_stack_bottom,
+                                                  user_stack_top : self.user_stack_top,
+                                                  lazy_file_vmas : child_lazy_file_vmas,
+                                                  shared_anon_vmas : self.shared_anon_vmas.clone(),
+                                                  shared_file_vmas : child_shared_file_vmas,
+                                                  shared_file_pages : BTreeMap::new(),
+                                                  retired_file_mappings : Vec::new(),
+                                                  owner_handle : 0 };
+        for (&vpn, &registration) in &self.shared_file_pages {
+            let child_pte = child.walk_find(VirtPageNum(vpn))?
+                                 .map(|(pte, _)| pte as *mut LoongArch64Pte as usize)
+                                 .ok_or(MmError::NotMapped)?;
+            let child_registration = file_mapping::duplicate(registration, child_pte)?;
+            child.shared_file_pages.insert(vpn, child_registration);
+        }
+        Ok(child)
     }
 
     // 本方法代码由AI完成
@@ -1012,14 +1078,71 @@ impl LoongArch64AddressSpace {
                 platform::arch::paging::TlbFlushRange::Page { addr : page.0 });
             return Ok(true);
         }
+        let file_offset = {
+            let vma = &self.lazy_file_vmas[index];
+            vma.file_offset.checked_add(page.0 - vma.start.0)
+                           .ok_or(MmError::InvalidAddress)?
+        };
+        let demand = if perm.writable() {
+            DemandPage::CopyRequired
+        } else {
+            self.lazy_file_vmas[index].loader.acquire_page(file_offset, access)?
+        };
+        if let DemandPage::SharedReadOnly(lease) = demand
+        {
+            if perm.writable() || lease.valid_len != PAGE_SIZE {
+                return Err(MmError::AccessViolation);
+            }
+            let shared_ppn = lease.ppn;
+            let file_id = lease.file_id;
+            let page_index = lease.page_index;
+            let generation = lease.generation;
+            // Keep VFS invalidation from observing the interval between the
+            // PTE install/cache commit and reverse-map registration.
+            #[cfg(feature = "file-page-sharing")]
+            let _invalidation = file_mapping::freeze_invalidation();
+            frame_inc_ref(shared_ppn).map_err(MmError::from)?;
+            if let Err(error) = self.map_page_to_ppn(page.floor_page(), shared_ppn, perm) {
+                let _ = frame_dealloc_result(shared_ppn);
+                return Err(error);
+            }
+            let mapping = match lease.commit_mapping() {
+                Ok(mapping) => mapping,
+                Err(error) => {
+                    let _ = self.unmap_page_to_ppn(page.floor_page());
+                    let _ = frame_dealloc_result(shared_ppn);
+                    return Err(error);
+                }
+            };
+            let pte_context = self.walk_find(page.floor_page())?
+                                  .map(|(pte, _)| pte as *mut LoongArch64Pte as usize)
+                                  .ok_or(MmError::NotMapped)?;
+            let registration = match file_mapping::register(
+                file_id,
+                Box::new(LoongArch64FileMapping { pte : pte_context,
+                                                  aspace_handle : self.owner_handle,
+                                                  ppn : shared_ppn,
+                                                  page_addr : page.0,
+                                                  page_index,
+                                                  generation,
+                                                  cache_mapping : mapping }))
+            {
+                Ok(registration) => registration,
+                Err(error) => {
+                    let _ = self.unmap_page_to_ppn(page.floor_page());
+                    let _ = frame_dealloc_result(shared_ppn);
+                    return Err(error);
+                }
+            };
+            self.shared_file_pages.insert(page.floor_page().0, registration);
+            platform::arch::paging::flush_tlb_local(
+                platform::arch::paging::TlbFlushRange::Page { addr : page.0 });
+            return Ok(true);
+        }
         let ppn = allocator.alloc_frame()?;
         let pa = ppn.0 * PAGE_SIZE;
         let dst = unsafe { core::slice::from_raw_parts_mut(pa as *mut u8, PAGE_SIZE) };
         dst.fill(0);
-        let file_offset = {
-            let vma = &self.lazy_file_vmas[index];
-            vma.file_offset + (page.0 - vma.start.0)
-        };
         if let Err(e) = self.lazy_file_vmas[index].loader
                                                   .load_page(file_offset, dst)
         {
@@ -1037,6 +1160,10 @@ impl LoongArch64AddressSpace {
 
     // 本方法代码由AI完成
     pub fn ensure_private_for_write(&mut self, vpn : VirtPageNum) -> MmResult<bool> {
+        if let Some(registration) = self.shared_file_pages.remove(&vpn.0) {
+            self.retired_file_mappings
+                .push(file_mapping::take(registration).ok_or(MmError::NotMapped)?);
+        }
         if self.handle_cow_page(vpn)? {
             return Ok(true);
         }
@@ -1069,6 +1196,33 @@ impl LoongArch64AddressSpace {
         Ok(true)
     }
 
+    pub(crate) fn release_retired_file_mappings(&mut self) {
+        self.retired_file_mappings.clear();
+    }
+
+    pub(crate) fn bind_owner_handle(&mut self, handle : usize) -> MmResult<()> {
+        self.owner_handle = handle;
+        for &registration in self.shared_file_pages.values() {
+            file_mapping::bind_aspace(registration, handle)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn invalidate_file_page(&mut self,
+                                       page_addr : usize,
+                                       expected_ppn : PhysPageNum)
+                                       -> bool {
+        let vpn = VirtAddr(page_addr).floor_page();
+        self.shared_file_pages.remove(&vpn.0);
+        let Ok(Some((pte, level))) = self.walk_find(vpn) else { return false };
+        if level != 0 || !pte.flags().is_leaf() || pte.ppn() != expected_ppn {
+            return false;
+        }
+        pte.clear();
+        let _ = frame_dealloc_result(expected_ppn);
+        true
+    }
+
     /// 递归释放所有用户页帧及页表帧，不触碰内核恒等映射。
     ///
     /// 调用后本地址空间不再可用。
@@ -1076,12 +1230,17 @@ impl LoongArch64AddressSpace {
         if self.root.0 == 0 {
             return;
         }
+        let cache_mappings : Vec<_> = core::mem::take(&mut self.shared_file_pages)
+            .into_values()
+            .filter_map(file_mapping::take)
+            .collect();
         unsafe {
             destroy_table(self.root,
                           LOONGARCH64_LEVELS - 1,
                           0,
                           &self.shared_anon_vmas);
         }
+        self.retired_file_mappings.extend(cache_mappings);
         self.root = PhysPageNum(0);
     }
 
@@ -1254,6 +1413,10 @@ impl AddressSpaceOps for LoongArch64AddressSpace {
     }
 
     fn unmap_page_to_ppn(&mut self, vpn : VirtPageNum) -> MmResult<Option<PhysPageNum>> {
+        if let Some(registration) = self.shared_file_pages.remove(&vpn.0) {
+            self.retired_file_mappings
+                .push(file_mapping::take(registration).ok_or(MmError::NotMapped)?);
+        }
         let Some((pte, _level)) = self.walk_find(vpn)? else {
             return Ok(None);
         };

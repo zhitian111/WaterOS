@@ -26,4 +26,5 @@
     api-v0 = [  ]
     default = [ "api-v0" ]
     elf-lazy-map = [  ]
+    file-page-sharing = [ "api-v0/file-page-sharing" ]
     vfs-root-read = [ "dep:vfs" ]

@@ -506,6 +506,8 @@ impl MmapOps for LoongArch64AddressSpace {
         if len == 0 {
             return Ok(());
         }
+        #[cfg(feature = "file-page-sharing")]
+        let _invalidation = api_v0::file_mapping::freeze_invalidation();
         if perm == PagePerm::empty() {
             return Err(MmError::InvalidAddress);
         }

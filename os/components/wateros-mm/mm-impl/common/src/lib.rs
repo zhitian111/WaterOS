@@ -30,6 +30,13 @@ pub struct ZeroAnonLoader;
 impl DemandPageLoader for ZeroAnonLoader {
     fn duplicate_box(&self) -> MmResult<Box<dyn DemandPageLoader>> { Ok(Box::new(ZeroAnonLoader)) }
 
+    fn acquire_page(&mut self,
+                    _file_offset : usize,
+                    _access : api_v0::mmap::PageFaultAccess)
+                    -> MmResult<api_v0::mmap::DemandPage> {
+        Ok(api_v0::mmap::DemandPage::CopyRequired)
+    }
+
     fn load_page(&mut self, _file_offset : usize, _dst : &mut [u8]) -> MmResult<()> { Ok(()) }
 }
 

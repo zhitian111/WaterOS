@@ -1783,6 +1783,7 @@ name = "wateros-vfs-api-v0"
 version = "0.1.0"
 dependencies = [
  "spin",
+ "wateros-mm-api-v0",
 ]
 
 [[package]]
@@ -1820,6 +1821,7 @@ dependencies = [
  "wateros-base-config",
  "wateros-driver-block-api-v0",
  "wateros-fs",
+ "wateros-mm-api-v0",
  "wateros-task",
  "wateros-vfs-api-v0",
  "wateros-vfs-impl-fd-session",
@@ -1833,6 +1835,8 @@ dependencies = [
  "log",
  "spin",
  "wateros-base-config",
+ "wateros-mm-api-v0",
+ "wateros-mm-frame-alloctor",
 ]
 
 [[package]]

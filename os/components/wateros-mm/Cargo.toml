@@ -27,6 +27,11 @@
     impl-dummy = [  ]
     impl-loongarch64 = [ "api-v0", "impl-loongarch64/api-v0" ]
     impl-sv39 = [ "api-v0", "impl-sv39/api-v0", "impl-sv39/impl-riscv64" ]
+    file-page-sharing = [
+        "api-v0/file-page-sharing",
+        "impl-sv39/file-page-sharing",
+        "impl-loongarch64/file-page-sharing",
+    ]
     qemu-riscv64-opensbi = [  ]
     vfs-root-read = [
         "impl-loongarch64/vfs-root-read",

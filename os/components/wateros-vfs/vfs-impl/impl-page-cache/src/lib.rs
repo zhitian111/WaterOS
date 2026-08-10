@@ -20,6 +20,7 @@ extern crate alloc;
 
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
+#[cfg(test)]
 use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::min;
@@ -28,12 +29,18 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use spin::{Mutex, RwLock};
 use wateros_base_config::fs::{FILE_PAGE_CACHE_CAPACITY, FILE_PAGE_SIZE, FILE_READ_AHEAD_STRIDE};
 
+#[cfg(target_os = "none")]
+use frame_allocator::OwnedPhysPage;
+
 // 本变量代码由AI完成
 const FLUSH_RUN_MAX_PAGES : usize = 64;
 
 /// 区间读写下层（通常由 `FsBridge` 委托 `ReadOnlyFs` / `ReadWriteFs`）。
 pub trait PageCacheIo {
     type Error;
+    /// Construct the backend-visible error used when every cache frame is
+    /// pinned or mapped and no slot can be reclaimed.
+    fn cache_full_error(&self) -> Self::Error;
 // 本方法代码由AI完成
     fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> Result<usize, Self::Error>;
 // 本方法代码由AI完成
@@ -118,9 +125,78 @@ impl Hash for FileCacheKey {
     }
 }
 
-// 本结构代码由AI完成
+#[cfg(not(target_os = "none"))]
+struct PagePayload([u8; FILE_PAGE_SIZE]);
+
+#[cfg(not(target_os = "none"))]
+impl PagePayload {
+    fn alloc_zeroed() -> Self { Self([0; FILE_PAGE_SIZE]) }
+    fn as_bytes(&self) -> &[u8] { &self.0 }
+    fn as_bytes_mut(&mut self) -> &mut [u8] { &mut self.0 }
+}
+
+#[cfg(target_os = "none")]
+type PagePayload = OwnedPhysPage;
+
+#[cfg(all(target_os = "none", feature = "file-page-sharing"))]
+struct CachePagePin {
+    cache : Arc<GlobalFilePageCache>,
+    key : FileCacheKey,
+    page_index : u64,
+    generation : u64,
+    mapping : bool,
+}
+
+#[cfg(all(target_os = "none", feature = "file-page-sharing"))]
+impl Drop for CachePagePin {
+    fn drop(&mut self) {
+        if self.mapping {
+            self.cache.release_mapping(&self.key, self.page_index, self.generation);
+        } else {
+            self.cache.release_pin(&self.key, self.page_index, self.generation);
+        }
+    }
+}
+
+#[cfg(all(target_os = "none", feature = "file-page-sharing"))]
+impl mm_api::mmap::SharedFilePagePin for CachePagePin {
+    fn commit_mapping(mut self : alloc::boxed::Box<Self>)
+                      -> mm_api::error::MmResult<alloc::boxed::Box<dyn mm_api::mmap::SharedFileMappingRef>> {
+        self.cache.commit_pin(&self.key, self.page_index, self.generation)?;
+        self.mapping = true;
+        Ok(self)
+    }
+}
+
+#[cfg(all(target_os = "none", feature = "file-page-sharing"))]
+impl mm_api::mmap::SharedFileMappingRef for CachePagePin {
+    fn duplicate_box(&self)
+                     -> mm_api::error::MmResult<alloc::boxed::Box<dyn mm_api::mmap::SharedFileMappingRef>> {
+        debug_assert!(self.mapping);
+        self.cache.duplicate_mapping(&self.key, self.page_index, self.generation)?;
+        Ok(alloc::boxed::Box::new(Self { cache : self.cache.clone(),
+                                        key : self.key.clone(),
+                                        page_index : self.page_index,
+                                        generation : self.generation,
+                                        mapping : true }))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FrameState {
+    Free,
+    Valid,
+    Invalidating,
+    Writeback,
+}
+
 struct PageFrame {
+    page : PagePayload,
     key : Option<(FileCacheKey, u64)>,
+    state : FrameState,
+    pin_count : usize,
+    map_count : usize,
+    generation : u64,
     dirty : bool,
     version : u64,
     lru_prev : Option<usize>,
@@ -137,8 +213,6 @@ enum LruClass {
 // 本结构代码由AI完成
 struct GlobalCacheState {
     capacity : usize,
-    /// 所有页帧 payload 共用连续池，避免每槽一次 4 KiB 堆分配放大 TLSF 锁竞争与碎片。
-    data : Vec<u8>,
     frames : Vec<PageFrame>,
     index : BTreeMap<(FileCacheKey, u64), usize>,
     clean_lru_head : Option<usize>,
@@ -156,11 +230,19 @@ impl GlobalCacheState {
     fn with_capacity(cap : usize) -> Self {
         let mut frames = Vec::new();
         let mut free = Vec::new();
-        let data = vec![0u8; cap.checked_mul(FILE_PAGE_SIZE).unwrap_or(usize::MAX)];
         if cap > 0 {
             frames.reserve_exact(cap);
             for _ in 0..cap {
-                frames.push(PageFrame { key : None,
+                #[cfg(not(target_os = "none"))]
+                let page = PagePayload::alloc_zeroed();
+                #[cfg(target_os = "none")]
+                let page = PagePayload::alloc_zeroed().expect("page-cache physical frame pool OOM");
+                frames.push(PageFrame { page,
+                                        key : None,
+                                        state : FrameState::Free,
+                                        pin_count : 0,
+                                        map_count : 0,
+                                        generation : 0,
                                         dirty : false,
                                         version : 0,
                                         lru_prev : None,
@@ -170,7 +252,6 @@ impl GlobalCacheState {
             free.extend((0..cap).rev());
         }
         Self { capacity : cap,
-               data,
                frames,
                index : BTreeMap::new(),
                clean_lru_head : None,
@@ -183,14 +264,12 @@ impl GlobalCacheState {
 
     #[inline]
     fn page_data(&self, idx : usize) -> &[u8] {
-        let start = idx * FILE_PAGE_SIZE;
-        &self.data[start..start + FILE_PAGE_SIZE]
+        self.frames[idx].page.as_bytes()
     }
 
     #[inline]
     fn page_data_mut(&mut self, idx : usize) -> &mut [u8] {
-        let start = idx * FILE_PAGE_SIZE;
-        &mut self.data[start..start + FILE_PAGE_SIZE]
+        self.frames[idx].page.as_bytes_mut()
     }
 
     fn lru_ends(&self, class : LruClass) -> (Option<usize>, Option<usize>) {
@@ -267,11 +346,17 @@ impl GlobalCacheState {
     }
 
     fn pop_lru_front(&mut self, class : LruClass) -> Option<usize> {
-        let (head, _) = self.lru_ends(class);
-        if let Some(idx) = head {
-            self.remove_from_lru(idx);
+        let (mut cursor, _) = self.lru_ends(class);
+        while let Some(idx) = cursor {
+            cursor = self.frames[idx].lru_next;
+            if self.frames[idx].pin_count == 0 && self.frames[idx].map_count == 0 &&
+               self.frames[idx].state == FrameState::Valid
+            {
+                self.remove_from_lru(idx);
+                return Some(idx);
+            }
         }
-        head
+        None
     }
 
 // 本方法代码由AI完成
@@ -309,6 +394,7 @@ impl GlobalCacheState {
             None
         };
         self.frames[idx].dirty = false;
+        self.frames[idx].state = FrameState::Free;
         dirty_data
     }
 
@@ -319,6 +405,7 @@ impl GlobalCacheState {
             self.next_version = 1;
         }
         self.frames[idx].dirty = true;
+        self.frames[idx].state = FrameState::Valid;
         self.frames[idx].version = self.next_version;
         self.push_lru_back(idx, LruClass::Dirty);
         self.next_version
@@ -330,6 +417,7 @@ impl GlobalCacheState {
         }
         self.remove_from_lru(idx);
         self.frames[idx].dirty = false;
+        self.frames[idx].state = FrameState::Valid;
         if self.frames[idx].key.is_some() {
             self.push_lru_back(idx, LruClass::Clean);
         }
@@ -350,26 +438,31 @@ impl GlobalCacheState {
     /// 供挂载代次切换时调用，避免每次 mount/umount 都重建整个缓存导致内核堆碎片化。
 // 本方法代码由AI完成
     fn clear_in_place(&mut self) {
-        for frame in self.frames
-                         .iter_mut()
-        {
-            frame.key = None;
-            frame.dirty = false;
-            frame.version = 0;
-            frame.lru_prev = None;
-            frame.lru_next = None;
-            frame.lru_class = None;
-        }
-        self.index
-            .clear();
+        self.index.clear();
         self.clean_lru_head = None;
         self.clean_lru_tail = None;
         self.dirty_lru_head = None;
         self.dirty_lru_tail = None;
-        self.free
-            .clear();
-        self.free
-            .extend((0..self.capacity).rev());
+        self.free.clear();
+        for idx in (0..self.capacity).rev() {
+            let retained = self.frames[idx].pin_count != 0 || self.frames[idx].map_count != 0;
+            self.frames[idx].lru_prev = None;
+            self.frames[idx].lru_next = None;
+            self.frames[idx].lru_class = None;
+            if retained {
+                if let Some(key) = self.frames[idx].key.clone() {
+                    self.index.insert(key, idx);
+                }
+                self.frames[idx].state = FrameState::Invalidating;
+            } else {
+                self.frames[idx].key = None;
+                self.frames[idx].state = FrameState::Free;
+                self.frames[idx].generation = 0;
+                self.frames[idx].dirty = false;
+                self.frames[idx].version = 0;
+                self.free.push(idx);
+            }
+        }
     }
 
     #[cfg(test)]
@@ -437,6 +530,9 @@ struct FileEntryInner {
 // 本结构代码由AI完成
 pub struct GlobalFilePageCache {
     mount_gen : AtomicU64,
+    /// Serializes acquisition of shared file pages with destructive VFS updates.
+    #[cfg(feature = "file-page-sharing")]
+    sharing_gate : RwLock<()>,
     state : Mutex<GlobalCacheState>,
     files : Mutex<BTreeMap<FileCacheKey, Arc<RwLock<FileEntryInner>>>>,
     /// 仍被 [`PagedFileHandle`] 持有的路径数；归零时在 `close` 后回收该路径缓存条目。
@@ -444,10 +540,68 @@ pub struct GlobalFilePageCache {
 }
 
 impl GlobalFilePageCache {
+    #[cfg(feature = "file-page-sharing")]
+    #[cfg_attr(test, allow(dead_code))]
+    fn file_object_id(key : &FileCacheKey) -> Option<mm_api::mmap::FileObjectId> {
+        key.stable.map(|(mount_id, inode_id)| mm_api::mmap::FileObjectId { mount_id, inode_id })
+    }
+
+    #[cfg(feature = "file-page-sharing")]
+    fn begin_invalidation(&self, key : &FileCacheKey, first : u64, last : u64) -> bool {
+        let mut cache = self.state.lock();
+        let slots : Vec<usize> = cache.index
+                                      .range((key.clone(), first)..=(key.clone(), last))
+                                      .map(|(_, &slot)| slot)
+                                      .collect();
+        let mut shared = false;
+        for slot in slots {
+            if cache.frames[slot].pin_count == 0 && cache.frames[slot].map_count == 0 {
+                continue;
+            }
+            shared = true;
+            cache.frames[slot].state = FrameState::Invalidating;
+            cache.remove_from_lru(slot);
+        }
+        shared
+    }
+
+    #[cfg(feature = "file-page-sharing")]
+    fn finish_invalidated_range(&self, key : &FileCacheKey, first : u64, last : u64) {
+        const INVALIDATION_SPIN_LIMIT : usize = 10_000_000;
+        for spins in 0..=INVALIDATION_SPIN_LIMIT {
+            let pending = {
+                let mut cache = self.state.lock();
+                let mut pending = false;
+                for slot in 0..cache.frames.len() {
+                    let matches = cache.frames[slot].state == FrameState::Invalidating &&
+                                  cache.frames[slot].key.as_ref().is_some_and(
+                                      |(frame_key, page)| {
+                                          frame_key == key && *page >= first && *page <= last
+                                      },
+                                  );
+                    if matches {
+                        Self::finish_invalidation(&mut cache, slot);
+                        pending |= cache.frames[slot].state == FrameState::Invalidating;
+                    }
+                }
+                pending
+            };
+            if !pending {
+                return;
+            }
+            if spins == INVALIDATION_SPIN_LIMIT {
+                panic!("page-cache invalidation pin did not quiesce");
+            }
+            core::hint::spin_loop();
+        }
+    }
+
     /// 构造与当前 `mount_gen` 绑定的缓存表。
 // 本方法代码由AI完成
     pub fn new(mount_gen : u64) -> Self {
         Self { mount_gen : AtomicU64::new(mount_gen),
+               #[cfg(feature = "file-page-sharing")]
+               sharing_gate : RwLock::new(()),
                state : Mutex::new(GlobalCacheState::new()),
                files : Mutex::new(BTreeMap::new()),
                open_refs : Mutex::new(BTreeMap::new()) }
@@ -456,11 +610,189 @@ impl GlobalFilePageCache {
     pub fn mount_gen(&self) -> u64 { self.mount_gen
                                          .load(Ordering::Acquire) }
 
+    /// Borrow one complete clean page for a read-only private mapping.
+    #[cfg(all(target_os = "none", feature = "file-page-sharing"))]
+    pub fn acquire_shared_readonly(self : &Arc<Self>,
+                                   key : &FileCacheKey,
+                                   page_index : u64,
+                                   logical_size : u64)
+                                   -> mm_api::error::MmResult<mm_api::mmap::SharedFilePageLease> {
+        let (mount_id, inode_id) = key.stable.ok_or(mm_api::error::MmError::Unsupported)?;
+        let page_index_usize = usize::try_from(page_index)
+            .map_err(|_| mm_api::error::MmError::InvalidAddress)?;
+        let _sharing = self.sharing_gate.read();
+        let page_end = page_index.checked_add(1)
+                                 .and_then(|page| page.checked_mul(FILE_PAGE_SIZE as u64))
+                                 .ok_or(mm_api::error::MmError::InvalidAddress)?;
+        if logical_size < page_end {
+            return Err(mm_api::error::MmError::AccessViolation);
+        }
+        let mut cache = self.state.lock();
+        let &slot = cache.index
+                         .get(&(key.clone(), page_index))
+                         .ok_or(mm_api::error::MmError::NotMapped)?;
+        let frame = &mut cache.frames[slot];
+        if frame.state != FrameState::Valid || frame.dirty || frame.generation != key.mount_gen {
+            return Err(mm_api::error::MmError::AccessViolation);
+        }
+        frame.pin_count = frame.pin_count
+                               .checked_add(1)
+                               .ok_or(mm_api::error::MmError::OutOfMemory)?;
+        let ppn = frame.page.frame_id();
+        let generation = frame.generation;
+        cache.remove_from_lru(slot);
+        drop(cache);
+        let pin = alloc::boxed::Box::new(CachePagePin { cache : self.clone(),
+                                                        key : key.clone(),
+                                                        page_index,
+                                                        generation,
+                                                        mapping : false });
+        Ok(mm_api::mmap::SharedFilePageLease::new(
+            ppn,
+            mm_api::mmap::FileObjectId { mount_id, inode_id },
+            page_index_usize,
+            generation,
+            FILE_PAGE_SIZE,
+            pin))
+    }
+
+    #[cfg(not(all(target_os = "none", feature = "file-page-sharing")))]
+    pub fn acquire_shared_readonly(self : &Arc<Self>,
+                                   _key : &FileCacheKey,
+                                   _page_index : u64,
+                                   _logical_size : u64)
+                                   -> mm_api::error::MmResult<mm_api::mmap::SharedFilePageLease> {
+        Err(mm_api::error::MmError::Unsupported)
+    }
+
+    #[cfg(all(target_os = "none", feature = "file-page-sharing"))]
+    fn matching_slot(cache : &GlobalCacheState,
+                     key : &FileCacheKey,
+                     page_index : u64,
+                     generation : u64)
+                     -> mm_api::error::MmResult<usize> {
+        let &slot = cache.index
+                         .get(&(key.clone(), page_index))
+                         .ok_or(mm_api::error::MmError::NotMapped)?;
+        let frame = &cache.frames[slot];
+        if frame.generation != generation {
+            return Err(mm_api::error::MmError::NotMapped);
+        }
+        Ok(slot)
+    }
+
+    #[cfg(all(target_os = "none", feature = "file-page-sharing"))]
+    fn release_pin(&self, key : &FileCacheKey, page_index : u64, generation : u64) {
+        let mut cache = self.state.lock();
+        if let Ok(slot) = Self::matching_slot(&cache, key, page_index, generation) {
+            if cache.frames[slot].pin_count == 0 {
+                return;
+            }
+            cache.frames[slot].pin_count -= 1;
+            if cache.frames[slot].state == FrameState::Invalidating {
+                Self::finish_invalidation(&mut cache, slot);
+            } else if cache.frames[slot].pin_count == 0 && cache.frames[slot].map_count == 0 {
+                cache.touch_lru(slot);
+            }
+        }
+    }
+
+    #[cfg(all(target_os = "none", feature = "file-page-sharing"))]
+    fn commit_pin(&self,
+                  key : &FileCacheKey,
+                  page_index : u64,
+                  generation : u64)
+                  -> mm_api::error::MmResult<()> {
+        let mut cache = self.state.lock();
+        let slot = Self::matching_slot(&cache, key, page_index, generation)?;
+        let frame = &mut cache.frames[slot];
+        if frame.pin_count == 0 || frame.state != FrameState::Valid {
+            return Err(mm_api::error::MmError::NotMapped);
+        }
+        let map_count = frame.map_count
+                             .checked_add(1)
+                             .ok_or(mm_api::error::MmError::OutOfMemory)?;
+        frame.pin_count -= 1;
+        frame.map_count = map_count;
+        Ok(())
+    }
+
+    #[cfg(all(target_os = "none", feature = "file-page-sharing"))]
+    fn duplicate_mapping(&self,
+                         key : &FileCacheKey,
+                         page_index : u64,
+                         generation : u64)
+                         -> mm_api::error::MmResult<()> {
+        let mut cache = self.state.lock();
+        let slot = Self::matching_slot(&cache, key, page_index, generation)?;
+        cache.frames[slot].map_count = cache.frames[slot].map_count
+                                                   .checked_add(1)
+                                                   .ok_or(mm_api::error::MmError::OutOfMemory)?;
+        Ok(())
+    }
+
+    #[cfg(all(target_os = "none", feature = "file-page-sharing"))]
+    fn release_mapping(&self, key : &FileCacheKey, page_index : u64, generation : u64) {
+        let mut cache = self.state.lock();
+        if let Ok(slot) = Self::matching_slot(&cache, key, page_index, generation) {
+            if cache.frames[slot].map_count == 0 {
+                return;
+            }
+            cache.frames[slot].map_count -= 1;
+            if cache.frames[slot].state == FrameState::Invalidating {
+                Self::finish_invalidation(&mut cache, slot);
+            } else if cache.frames[slot].map_count == 0 && cache.frames[slot].pin_count == 0 {
+                cache.touch_lru(slot);
+            }
+        }
+    }
+
+    #[cfg(feature = "file-page-sharing")]
+    fn finish_invalidation(cache : &mut GlobalCacheState, slot : usize) {
+        let frame = &cache.frames[slot];
+        if frame.state != FrameState::Invalidating || frame.pin_count != 0 || frame.map_count != 0 {
+            return;
+        }
+        if let Some(key) = cache.frames[slot].key.take() {
+            cache.index.remove(&key);
+        }
+        cache.remove_from_lru(slot);
+        cache.frames[slot].dirty = false;
+        cache.frames[slot].version = 0;
+        cache.frames[slot].generation = 0;
+        cache.frames[slot].state = FrameState::Free;
+        if !cache.free.iter().any(|&free_slot| free_slot == slot) {
+            cache.free.push(slot);
+        }
+    }
+
     /// 切换到新挂载代次：原地清空缓存元数据并复用已分配的帧池，
     /// 避免每次 mount/umount 重建 16MiB 缓存造成内核堆碎片化与长跑卡死。
     /// 仅应在已无活跃用户 fd 持有脏页的安全点调用（脏页须由 `flush_all` 先写回）。
 // 本方法代码由AI完成
     pub fn reset_to_gen(&self, new_gen : u64) {
+        #[cfg(feature = "file-page-sharing")]
+        let _sharing = self.sharing_gate.write();
+        #[cfg(all(not(test), feature = "file-page-sharing"))]
+        {
+            let mut objects : Vec<(mm_api::mmap::FileObjectId, u64)> = {
+                let mut cache = self.state.lock();
+                for frame in &mut cache.frames {
+                    if frame.key.is_some() {
+                        frame.state = FrameState::Invalidating;
+                    }
+                }
+                cache.index.keys()
+                           .filter_map(|(key, _)| Self::file_object_id(key)
+                                                       .map(|id| (id, key.mount_gen)))
+                           .collect()
+            };
+            objects.sort_unstable();
+            objects.dedup();
+            for (file_id, generation) in objects {
+                mm_api::file_mapping::invalidate_all(file_id, generation);
+            }
+        }
         self.state
             .lock()
             .clear_in_place();
@@ -646,7 +978,7 @@ impl GlobalFilePageCache {
                                  .copied();
             }
 
-            let cache = self.state.lock();
+            let mut cache = self.state.lock();
             let Some(slot) = slot else {
                 if off >= logical_size {
                     flushed_pages.push((page_idx, expected_version));
@@ -683,6 +1015,8 @@ impl GlobalFilePageCache {
 
             let len = FILE_PAGE_SIZE.min(usize::try_from(logical_size - off).unwrap_or(0));
             batch_data.extend_from_slice(&cache.page_data(slot)[..len]);
+            cache.frames[slot].state = FrameState::Writeback;
+            cache.remove_from_lru(slot);
             batch_last = Some(page_idx);
             flushed_pages.push((page_idx, expected_version));
         }
@@ -692,8 +1026,20 @@ impl GlobalFilePageCache {
 
         for (start_page, data) in batches {
             let off = start_page * FILE_PAGE_SIZE as u64;
-            io.write_range(key.path.as_ref(), off, &data)
-              .map_err(map_err)?;
+            if let Err(error) = io.write_range(key.path.as_ref(), off, &data) {
+                let mut cache = self.state.lock();
+                for &(page_idx, version) in &flushed_pages {
+                    if let Some(&slot) = cache.index.get(&(key.clone(), page_idx)) {
+                        if cache.frames[slot].dirty && cache.frames[slot].version == version &&
+                           cache.frames[slot].state == FrameState::Writeback
+                        {
+                            cache.frames[slot].state = FrameState::Valid;
+                            cache.touch_lru(slot);
+                        }
+                    }
+                }
+                return Err(map_err(error));
+            }
         }
 
         let mut cache = self.state.lock();
@@ -760,14 +1106,7 @@ impl GlobalFilePageCache {
 
         loop {
             let Some(idx) = cache.pop_free_or_lru_index() else {
-                drop(cache);
-                core::hint::spin_loop();
-                cache = self.state.lock();
-                if let Some(&existing) = cache.index.get(&(key.clone(), page_idx)) {
-                    cache.touch_lru(existing);
-                    return Ok(());
-                }
-                continue;
+                return Err(map_err(io.cache_full_error()));
             };
             let dirty_victim = if cache.frames[idx].dirty {
                 cache.frames[idx].key.clone().map(|(victim_key, victim_page)| {
@@ -780,6 +1119,7 @@ impl GlobalFilePageCache {
                 None
             };
             if let Some((victim_key, victim_page, saved_data, version)) = dirty_victim {
+                cache.frames[idx].state = FrameState::Writeback;
                 drop(cache);
                 let victim_logical = self.logical_size_for_key(
                     &victim_key,
@@ -799,6 +1139,7 @@ impl GlobalFilePageCache {
                                  Some(&(victim_key.clone(), victim_page));
                 if let Err(err) = writeback {
                     if still_same {
+                        cache.frames[idx].state = FrameState::Valid;
                         cache.touch_lru(idx);
                     }
                     return Err(err);
@@ -823,6 +1164,8 @@ impl GlobalFilePageCache {
             cache.frames[idx].dirty = false;
             cache.frames[idx].version = 0;
             cache.frames[idx].key = Some((key.clone(), page_idx));
+            cache.frames[idx].state = FrameState::Valid;
+            cache.frames[idx].generation = key.mount_gen;
             cache.index
                  .insert((key.clone(), page_idx), idx);
             cache.touch_lru(idx);
@@ -865,14 +1208,7 @@ impl GlobalFilePageCache {
 
         loop {
             let Some(idx) = cache.pop_free_or_lru_index() else {
-                drop(cache);
-                core::hint::spin_loop();
-                cache = self.state.lock();
-                if let Some(&existing) = cache.index.get(&(key.clone(), page_idx)) {
-                    cache.touch_lru(existing);
-                    return Ok(());
-                }
-                continue;
+                return Err(map_err(io.cache_full_error()));
             };
             let dirty_victim = if cache.frames[idx].dirty {
                 cache.frames[idx].key.clone().map(|(victim_key, victim_page)| {
@@ -885,6 +1221,7 @@ impl GlobalFilePageCache {
                 None
             };
             if let Some((victim_key, victim_page, saved_data, version)) = dirty_victim {
+                cache.frames[idx].state = FrameState::Writeback;
                 drop(cache);
                 let victim_logical = self.logical_size_for_key(
                     &victim_key,
@@ -904,6 +1241,7 @@ impl GlobalFilePageCache {
                                  Some(&(victim_key.clone(), victim_page));
                 if let Err(err) = writeback {
                     if still_same {
+                        cache.frames[idx].state = FrameState::Valid;
                         cache.touch_lru(idx);
                     }
                     return Err(err);
@@ -928,6 +1266,8 @@ impl GlobalFilePageCache {
             cache.frames[idx].dirty = false;
             cache.frames[idx].version = 0;
             cache.frames[idx].key = Some((key.clone(), page_idx));
+            cache.frames[idx].state = FrameState::Valid;
+            cache.frames[idx].generation = key.mount_gen;
             cache.index
                  .insert((key.clone(), page_idx), idx);
             cache.touch_lru(idx);
@@ -1038,6 +1378,24 @@ impl GlobalFilePageCache {
     {
         if buf.is_empty() {
             return Ok(0);
+        }
+        #[cfg(feature = "file-page-sharing")]
+        let _sharing = self.sharing_gate.write();
+        #[cfg(feature = "file-page-sharing")]
+        {
+            let first_page = offset / FILE_PAGE_SIZE as u64;
+            let last_page = offset.saturating_add(buf.len().saturating_sub(1) as u64) /
+                            FILE_PAGE_SIZE as u64;
+            let invalidate_shared = self.begin_invalidation(key, first_page, last_page);
+            #[cfg(not(test))]
+            if invalidate_shared {
+                if let Some(file_id) = Self::file_object_id(key) {
+                    mm_api::file_mapping::prepare_write(file_id, offset, buf.len());
+                }
+            }
+            if invalidate_shared {
+                self.finish_invalidated_range(key, first_page, last_page);
+            }
         }
 
         let entry = self.get_file_entry_for_key(key, file_size);
@@ -1232,9 +1590,12 @@ impl GlobalFilePageCache {
                  .map(|(k, _)| k.clone())
                  .collect();
         for old in keys_to_remove {
-            if let Some(slot) = cache.index
-                                     .remove(&old)
-            {
+            if let Some(&slot) = cache.index.get(&old) {
+                if cache.frames[slot].pin_count != 0 || cache.frames[slot].map_count != 0 {
+                    cache.frames[slot].state = FrameState::Invalidating;
+                    continue;
+                }
+                cache.index.remove(&old);
                 cache.frames[slot].key = None;
                 cache.frames[slot].dirty = false;
                 cache.frames[slot].version = 0;
@@ -1278,7 +1639,11 @@ impl GlobalFilePageCache {
                  .map(|(k, _)| k.clone()),
         );
         for key in keys_to_remove {
-            if let Some(slot) = cache.index.remove(&key) {
+            if let Some(&slot) = cache.index.get(&key) {
+                if cache.frames[slot].pin_count != 0 || cache.frames[slot].map_count != 0 {
+                    continue;
+                }
+                cache.index.remove(&key);
                 cache.frames[slot].key = None;
                 cache.frames[slot].dirty = false;
                 cache.frames[slot].version = 0;
@@ -1301,6 +1666,22 @@ impl GlobalFilePageCache {
     }
 
     pub fn truncate_key(&self, key : &FileCacheKey, len : u64) {
+        #[cfg(feature = "file-page-sharing")]
+        let _sharing = self.sharing_gate.write();
+        #[cfg(feature = "file-page-sharing")]
+        {
+            let first_invalid = len / FILE_PAGE_SIZE as u64;
+            let invalidate_shared = self.begin_invalidation(key, first_invalid, u64::MAX);
+            #[cfg(not(test))]
+            if invalidate_shared {
+                if let Some(file_id) = Self::file_object_id(key) {
+                    mm_api::file_mapping::truncate(file_id, len);
+                }
+            }
+            if invalidate_shared {
+                self.finish_invalidated_range(key, first_invalid, u64::MAX);
+            }
+        }
         let entry = self.get_file_entry_for_key(key, len);
         {
             let mut guard = entry.write();
@@ -1333,9 +1714,12 @@ impl GlobalFilePageCache {
                  .map(|(k, _)| k.clone())
                  .collect();
         for old in keys_to_remove {
-            if let Some(slot) = cache.index
-                                     .remove(&old)
-            {
+            if let Some(&slot) = cache.index.get(&old) {
+                if cache.frames[slot].pin_count != 0 || cache.frames[slot].map_count != 0 {
+                    cache.frames[slot].state = FrameState::Invalidating;
+                    continue;
+                }
+                cache.index.remove(&old);
                 cache.frames[slot].key = None;
                 cache.frames[slot].dirty = false;
                 cache.frames[slot].version = 0;
@@ -1424,6 +1808,8 @@ mod tests {
     impl PageCacheIo for RacingIo {
         type Error = ();
 
+        fn cache_full_error(&self) -> Self::Error {}
+
         fn read_range(&self, _path : &str, _offset : u64, _buf : &mut [u8]) -> Result<usize, ()> {
             Ok(0)
         }
@@ -1468,6 +1854,8 @@ mod tests {
     impl PageCacheIo for FailOnceIo {
         type Error = ();
 
+        fn cache_full_error(&self) -> Self::Error {}
+
         fn read_range(&self, _path : &str, offset : u64, buf : &mut [u8]) -> Result<usize, ()> {
             let start = usize::try_from(offset).map_err(|_| ())?;
             if start >= self.data.len() {
@@ -1495,6 +1883,8 @@ mod tests {
 
     impl PageCacheIo for CountingIo {
         type Error = ();
+
+        fn cache_full_error(&self) -> Self::Error {}
 
         fn read_range(&self, _path : &str, offset : u64, buf : &mut [u8]) -> Result<usize, ()> {
             self.reads
@@ -1825,6 +2215,7 @@ mod tests {
         }
         let key = (FileCacheKey::path(7, Arc::from("/tmp/lru")), page_idx);
         state.frames[idx].key = Some(key.clone());
+        state.frames[idx].state = FrameState::Valid;
         state.frames[idx].dirty = false;
         state.frames[idx].version = 0;
         state.index.insert(key, idx);
@@ -1874,5 +2265,29 @@ mod tests {
         state.assert_lru_invariants();
         assert_eq!(state.dirty_lru_head, Some(0));
         assert_eq!(state.clean_lru_head, None);
+    }
+
+    #[test]
+    fn all_mapped_frames_return_observable_cache_full_error() {
+        let cache = GlobalFilePageCache { mount_gen : AtomicU64::new(7),
+                                          #[cfg(feature = "file-page-sharing")]
+                                          sharing_gate : RwLock::new(()),
+                                          state : Mutex::new(GlobalCacheState::with_capacity(1)),
+                                          files : Mutex::new(BTreeMap::new()),
+                                          open_refs : Mutex::new(BTreeMap::new()) };
+        {
+            let mut state = cache.state.lock();
+            activate_test_frame(&mut state, 0, 0, false);
+            state.frames[0].map_count = 1;
+        }
+        let mut io = CountingIo::new();
+        let mut out = [0u8; 1];
+        assert_eq!(cache.read(&mut io,
+                              "/tmp/cache-full",
+                              (FILE_PAGE_SIZE * 2) as u64,
+                              FILE_PAGE_SIZE as u64,
+                              &mut out,
+                              |e| e),
+                   Err(()));
     }
 }

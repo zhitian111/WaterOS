@@ -49,6 +49,8 @@ pub enum IpiKind {
     TlbShootdown = 1 << 1,
     /// 目标任务有必须在其 trap-return 安全点处理的状态变化（如 signal）。
     TaskNotify = 1 << 2,
+    /// 目标 CPU 应把 slab magazine 归还中央表并确认内存压力回收。
+    AllocatorDrain = 1 << 3,
 }
 
 impl IpiKind {

@@ -32,6 +32,7 @@
     ]
     default = [ "api-v0", "bridge-fs-api", "impl-fd-session" ]
     impl-dummy = [  ]
+    file-page-sharing = [ "impl_fs_bridge?/file-page-sharing" ]
     impl-fd-session = [
         "dep:base",
         "dep:impl_fd_session",

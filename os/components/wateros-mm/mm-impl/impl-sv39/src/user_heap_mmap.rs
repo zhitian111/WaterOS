@@ -473,6 +473,8 @@ impl MmapOps for Sv39AddressSpace {
         if len == 0 {
             return Ok(());
         }
+        #[cfg(feature = "file-page-sharing")]
+        let _invalidation = api_v0::file_mapping::freeze_invalidation();
         let end = VirtAddr(addr.0
                                .checked_add(len)
                                .ok_or(MmError::InvalidAddress)?);

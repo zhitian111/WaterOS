@@ -16,6 +16,8 @@ use wateros_base_config::task::MAX_CPUS;
 static TLB_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 static TLB_PENDING: [AtomicUsize; MAX_CPUS] = [const { AtomicUsize::new(0) }; MAX_CPUS];
 static TLB_COMPLETED: [AtomicUsize; MAX_CPUS] = [const { AtomicUsize::new(0) }; MAX_CPUS];
+static TLB_PAGE_ADDR: [AtomicUsize; MAX_CPUS] =
+    [const { AtomicUsize::new(usize::MAX) }; MAX_CPUS];
 fn debug_cpu_id() -> usize { platform::arch::cpu::current_cpu_id().raw() }
 
 static TLB_SHOOTDOWN_LOCK: debug::TrackedMutex<()> =
@@ -45,7 +47,13 @@ impl UserAddressSpaceCell {
 }
 
 pub(crate) fn into_handle(aspace: LoongArch64AddressSpace) -> usize {
-    alloc::boxed::Box::into_raw(alloc::boxed::Box::new(UserAddressSpaceCell::new(aspace))) as usize
+    let boxed = alloc::boxed::Box::new(UserAddressSpaceCell::new(aspace));
+    let handle = boxed.as_ref() as *const UserAddressSpaceCell as usize;
+    boxed.inner
+         .exclusive_access()
+         .bind_owner_handle(handle)
+         .expect("bind LoongArch64 shared-file mappings to address space");
+    alloc::boxed::Box::into_raw(boxed) as usize
 }
 
 unsafe fn cell(handle: usize) -> Option<&'static UserAddressSpaceCell> {
@@ -54,6 +62,7 @@ unsafe fn cell(handle: usize) -> Option<&'static UserAddressSpaceCell> {
 
 pub(crate) fn destroy(handle: usize) {
     let Some(cell) = (unsafe { cell(handle) }) else { return };
+    let _file_mapping_freeze = api_v0::file_mapping::freeze_invalidation();
     if !cell.mark_dropped() {
         return;
     }
@@ -65,6 +74,7 @@ pub(crate) fn destroy(handle: usize) {
         // ASID 只有在所有可能缓存它的 CPU 完成失效后才允许复用。
         platform::arch::paging::flush_tlb_local(platform::arch::paging::TlbFlushRange::All);
         if request_tlb_shootdown_targets(wateros_base::cpu::CpuMask::from_bits(cached)) {
+            cell.inner.exclusive_access().release_retired_file_mappings();
             crate::asid::release_user(asid);
         } else {
             // 不能证明旧 TLB 项已经失效时，宁可永久退休这枚 ASID，也不能让
@@ -105,7 +115,13 @@ fn lock_tlb_shootdown() -> debug::TrackedMutexGuard<'static, ()> {
     }
 }
 
-fn request_tlb_shootdown_targets(mut targets : wateros_base::cpu::CpuMask) -> bool {
+fn request_tlb_shootdown_targets(targets : wateros_base::cpu::CpuMask) -> bool {
+    request_tlb_shootdown_targets_for(targets, None)
+}
+
+fn request_tlb_shootdown_targets_for(mut targets : wateros_base::cpu::CpuMask,
+                                     page_addr : Option<usize>)
+                                     -> bool {
     // Serialize sequence allocation, pending publication, IPI delivery and
     // acknowledgements.  A per-CPU pending slot cannot represent two
     // concurrent transactions safely without this critical section.
@@ -115,14 +131,16 @@ fn request_tlb_shootdown_targets(mut targets : wateros_base::cpu::CpuMask) -> bo
                                                      task::online_cpu_mask().bits());
     targets.remove(current);
     if targets.is_empty() { return true; }
-    match platform::smp::flush_tlb_remote(targets) {
-        Ok(()) => return true,
-        Err(platform::smp::PlatformSmpError::Unsupported) => {}
-        Err(error) => {
-            log::warn!("[tlb] platform remote flush failed targets={:#x} error={:?}; \
-                        falling back to software IPI",
-                       targets.bits(),
-                       error);
+    if page_addr.is_none() {
+        match platform::smp::flush_tlb_remote(targets) {
+            Ok(()) => return true,
+            Err(platform::smp::PlatformSmpError::Unsupported) => {}
+            Err(error) => {
+                log::warn!("[tlb] platform remote flush failed targets={:#x} error={:?}; \
+                            falling back to software IPI",
+                           targets.bits(),
+                           error);
+            }
         }
     }
     let sequence = TLB_SEQUENCE.fetch_add(1, Ordering::AcqRel) + 1;
@@ -130,7 +148,10 @@ fn request_tlb_shootdown_targets(mut targets : wateros_base::cpu::CpuMask) -> bo
     while raw != 0 {
         let cpu = raw.trailing_zeros() as usize;
         raw &= raw - 1;
-        if cpu < MAX_CPUS { TLB_PENDING[cpu].store(sequence, Ordering::Release); }
+        if cpu < MAX_CPUS {
+            TLB_PAGE_ADDR[cpu].store(page_addr.unwrap_or(usize::MAX), Ordering::Relaxed);
+            TLB_PENDING[cpu].store(sequence, Ordering::Release);
+        }
     }
     if let Err(error) = platform::smp::send_ipi(targets, platform::smp::IpiKind::TlbShootdown) {
         log::warn!("[tlb] shootdown IPI failed sequence={} targets={:#x} error={:?}",
@@ -158,11 +179,26 @@ fn request_tlb_shootdown_targets(mut targets : wateros_base::cpu::CpuMask) -> bo
     completed
 }
 
-fn request_tlb_shootdown(handle: usize) {
+fn request_tlb_shootdown(handle: usize) -> bool {
     let cached = unsafe { cell(handle) }
                     .map(|cell| cell.tlb_cpus.load(Ordering::Acquire))
                     .unwrap_or(0);
-    let _ = request_tlb_shootdown_targets(wateros_base::cpu::CpuMask::from_bits(cached));
+    request_tlb_shootdown_targets(wateros_base::cpu::CpuMask::from_bits(cached))
+}
+
+pub(crate) fn shootdown_file_page(addr : usize) {
+    platform::arch::paging::flush_tlb_local(
+        platform::arch::paging::TlbFlushRange::Page { addr });
+    let _ = request_tlb_shootdown_targets_for(wateros_base::cpu::CpuMask::ALL, Some(addr));
+}
+
+pub(crate) fn invalidate_file_page(handle : usize, addr : usize, ppn : api_v0::addr::PhysPageNum) {
+    let revoked = with_user_aspace_mut(handle, |aspace| {
+        Ok(aspace.invalidate_file_page(addr, ppn))
+    }).unwrap_or(false);
+    if revoked {
+        shootdown_file_page(addr);
+    }
 }
 
 pub fn handle_tlb_shootdown_ipi() -> bool {
@@ -170,7 +206,11 @@ pub fn handle_tlb_shootdown_ipi() -> bool {
     if cpu >= MAX_CPUS { return false; }
     let pending = TLB_PENDING[cpu].load(Ordering::Acquire);
     if pending <= TLB_COMPLETED[cpu].load(Ordering::Relaxed) { return false; }
-    platform::arch::paging::flush_tlb_local(platform::arch::paging::TlbFlushRange::All);
+    let range = match TLB_PAGE_ADDR[cpu].load(Ordering::Relaxed) {
+        usize::MAX => platform::arch::paging::TlbFlushRange::All,
+        addr => platform::arch::paging::TlbFlushRange::Page { addr },
+    };
+    platform::arch::paging::flush_tlb_local(range);
     TLB_COMPLETED[cpu].store(pending, Ordering::Release);
     true
 }
@@ -197,6 +237,11 @@ pub fn with_user_aspace_mut_and_flush<R>(handle : usize,
                                          -> MmResult<R> {
     let result = with_user_aspace_mut(handle, f);
     platform::arch::paging::flush_tlb_local(platform::arch::paging::TlbFlushRange::All);
-    request_tlb_shootdown(handle);
+    if request_tlb_shootdown(handle) {
+        let _ = with_user_aspace_mut(handle, |aspace| {
+            aspace.release_retired_file_mappings();
+            Ok(())
+        });
+    }
     result
 }

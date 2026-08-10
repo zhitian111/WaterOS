@@ -61,8 +61,16 @@
     stall-debug = [
         "dep:ipc",
         "ipc/futex",
-        "runtime/tlsf-diagnostics",
+        "tlsf-diagnostics",
         "syscall/user-copy-diagnostics",
+    ]
+    # Per-CPU allocator profiling. Ordinary final builds compile this out.
+    tlsf-diagnostics = [ "runtime/tlsf-diagnostics" ]
+    slab-allocator = [ "runtime/slab-allocator" ]
+    file-page-sharing = [
+        "mm/file-page-sharing",
+        "syscall/file-page-sharing",
+        "vfs/file-page-sharing",
     ]
     # 整个顶部 dashboard（CPU、内存、文件描述符与 syscall 摘要）；默认关闭。
     dashboard-debug = [ "dep:vfs", "stall-debug" ]

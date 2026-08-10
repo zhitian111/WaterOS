@@ -22,6 +22,7 @@ pub mod user_access;
 pub mod brk;
 pub mod elf_user_stack;
 pub mod executable;
+pub mod file_mapping;
 pub mod kernel_bringup;
 pub mod kernel_satp;
 pub mod mempolicy;

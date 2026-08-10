@@ -23,6 +23,7 @@ use vfs::api::{VfsError, VfsIoHandle, VfsNodeType};
 struct VfsMmapPageLoader {
     handle : Box<dyn VfsIoHandle>,
     file_size : usize,
+    allow_readonly_sharing : bool,
 }
 
 impl DemandPageLoader for VfsMmapPageLoader {
@@ -31,7 +32,25 @@ impl DemandPageLoader for VfsMmapPageLoader {
                          .duplicate()
                          .map_err(|_| MmError::AccessViolation)?;
         Ok(Box::new(Self { handle,
-                           file_size : self.file_size }))
+                           file_size : self.file_size,
+                           allow_readonly_sharing : self.allow_readonly_sharing }))
+    }
+
+    fn acquire_page(&mut self,
+                    file_offset : usize,
+                    access : mm::api::mmap::PageFaultAccess)
+                    -> MmResult<mm::api::mmap::DemandPage> {
+        if !cfg!(feature = "file-page-sharing") || !self.allow_readonly_sharing ||
+           access == mm::api::mmap::PageFaultAccess::Write
+        {
+            return Ok(mm::api::mmap::DemandPage::CopyRequired);
+        }
+        let offset = u64::try_from(file_offset).map_err(|_| MmError::InvalidAddress)?;
+        match self.handle.acquire_readonly_page(offset) {
+            Ok(Some(lease)) => Ok(mm::api::mmap::DemandPage::SharedReadOnly(lease)),
+            Ok(None) => Ok(mm::api::mmap::DemandPage::CopyRequired),
+            Err(_) => Err(MmError::AccessViolation),
+        }
     }
 
     fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()> {
@@ -179,7 +198,8 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
             }
         },
         Some(fd) => {
-            let loader = match mmap_page_loader(fd, file_size) {
+            let allow_readonly_sharing = mf.contains(MapFlags::PRIVATE) && !perm.writable();
+            let loader = match mmap_page_loader(fd, file_size, allow_readonly_sharing) {
                 Ok(loader) => loader,
                 Err(e) => return UserRet::from_error(e),
             };
@@ -205,11 +225,15 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
     }
 }
 
-fn mmap_page_loader(fd : usize, file_size : usize) -> Result<Box<dyn DemandPageLoader>, ErrNo> {
+fn mmap_page_loader(fd : usize,
+                    file_size : usize,
+                    allow_readonly_sharing : bool)
+                    -> Result<Box<dyn DemandPageLoader>, ErrNo> {
     let handle = vfs::fd::with_current_io(fd, |handle| handle.duplicate())
         .map_err(vfs_error_to_errno)?;
     Ok(Box::new(VfsMmapPageLoader { handle,
-                                     file_size }))
+                                     file_size,
+                                     allow_readonly_sharing }))
 }
 
 fn file_size_for_mmap(fd : usize) -> Result<usize, ErrNo> {
