@@ -4671,3 +4671,47 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] rollback LS2K1000 read IRQ arms`
+
+## 2026-08-10：批次 96——以 owning guard 预约双 IRQ owner slot
+
+### 本批任务与设计
+
+1. 为 runtime owner table 增加两个不同 IRQ slot 的原子可变借用，消除板级协调器逐个取 owner 的中间窗口。
+2. 双 slot 借用使用 `split_at_mut`，既证明引用不别名，也保持调用者请求的返回顺序。
+3. `ReadIrqArmGuard` 独占 MMC/APBDMA 两个 owner 并事务化 arm；guard 存活期间 runtime 无法再次服务或改动这两个 slot。
+4. 未提交 guard 的 `Drop` 只回滚仍精确处于本 generation 的软件 Armed 状态；显式 `commit` 后才返回已预约 token。
+5. 保持硬件 activation、IRQ rearm 与 descriptor success decoding 关闭，并覆盖 slot/variant/状态错误。
+
+### 已完成
+
+- [x] `IrqOwnerTable::get_pair_mut` 拒绝相同 slot，并用 `split_at_mut` 同时借用两个 Ready owner；反向请求仍按请求顺序返回。
+- [x] pair borrow 对 missing、InHandler 和 same-slot 均在交出引用前 fail-closed。
+- [x] `BoardIrqRuntime::owners_mut` 将双 slot 借用提供给板级事务协调层。
+- [x] 新增 `ReadIrqArmGuard`，内部隐藏两个 owner 引用，构造时通过既有 `arm_read_owners` 原子绑定同一 transaction generation。
+- [x] 未 commit 的 guard 在析构时仅当两侧仍为同代 Armed 才同时清除；不会触发 rearm、硬件寄存器写或伪造 completion evidence。
+- [x] `commit` 消费 guard 并返回不可复制的 `ArmedReadIrqs`，token 可读取 transaction identity，但不声称 DMA 已启动。
+- [x] `reserve_read_irq_owners` 先取得两个 runtime slot，再验证 MMC/APBDMA owner variant；slot 与 variant 错误均不改变 owner 状态。
+- [x] production data path、APBDMA hardware start、status success decoder 与 IRQ rearm coordinator 仍保持关闭。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 160 项全部通过；本批新增双 slot borrow、guard drop/commit 和错误 variant 共 3 项测试。
+- 反向 slot 顺序可正确取得并修改对应 owner；same slot、missing slot 与 InHandler slot 均返回精确错误。
+- 未 commit guard 离开作用域后两侧 binding 均为 None；commit 后两侧保持同代 Armed，并可由既有 drain 协议完整退役。
+- swapped owner variants 被拒绝且无 mutation；guard 独占借用从类型层阻止存活期间 runtime 再借这两个 owner。
+- production 组件 check、RISC-V `make check` 与 LoongArch64 `make kernel-la` 全部通过；仅有仓库既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过；dtc warning 来自预期畸形输入。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：双 slot 借用与 guard 只证明软件 owner 状态一致，不证明控制器已 idle，也不能排除物理迟到 IRQ。
+- [ ] guard 目前只覆盖 arm preparation；production 尚未把它与 DMA start、MMC command publish 串成不可跳步的 typestate。
+- [ ] `ArmedReadIrqs` token 还没有绑定真实 `RunningReadDmaSession`，commit 只表示两个 owner 已 armed，不表示硬件已启动。
+- [ ] production diagnostic runtime 仍拒绝构造 APBDMA owner，因此真实 runtime 尚未执行本预约入口。
+- [ ] 本批仍不提供任何 IRQ source rearm；软件 rollback 不会清除设备侧潜在 pending condition。
+- [ ] 若 guard 内部状态因未来代码改动意外不再是同代双 Armed，`Drop` 会保持 fail-closed 而不强行做部分清理；显式恢复仍需 coordinator。
+- [ ] 下一批应把 `ArmedReadIrqs` 消费进 DMA start/publish typestate，并确保 start/publish 任一步失败都经 runtime coordinator drain/rollback；在 production permit 开放前继续以 model fixture 验证。
+
+### 提交
+
+- 本批计划提交：`[feat] guard LS2K1000 read IRQ arms`

@@ -114,6 +114,83 @@ pub struct DrainedReadIrqs {
     pub dma : Option<ApbDmaReadIrqReceipt>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct ArmedReadIrqs {
+    transaction : ReadTransactionId,
+}
+
+impl ArmedReadIrqs {
+    pub const fn transaction(&self) -> ReadTransactionId { self.transaction }
+}
+
+/// Exclusive pre-start reservation for both read interrupt owners.
+/// Dropping without commit rolls the software arms back.
+#[must_use = "commit the read IRQ arms or let the guard roll them back"]
+pub struct ReadIrqArmGuard<'a, R> {
+    mmc : &'a mut MmcCommandOwner<R>,
+    dma : &'a mut DeferredApbDmaOwner,
+    transaction : ReadTransactionId,
+    committed : bool,
+}
+
+impl<'a, R> ReadIrqArmGuard<'a, R> {
+    pub fn arm(mmc : &'a mut MmcCommandOwner<R>,
+               dma : &'a mut DeferredApbDmaOwner,
+               transaction : ReadTransactionId)
+               -> Result<Self, ReadPairOwnerFailure> {
+        arm_read_owners(mmc, dma, transaction)?;
+        Ok(Self { mmc, dma, transaction, committed : false })
+    }
+
+    pub fn commit(mut self) -> ArmedReadIrqs {
+        self.committed = true;
+        ArmedReadIrqs { transaction : self.transaction }
+    }
+}
+
+impl<R> Drop for ReadIrqArmGuard<'_, R> {
+    fn drop(&mut self) {
+        if self.committed { return; }
+        // The guard holds both exclusive owner borrows, so neither runtime IRQ
+        // service nor receipt production can occur between arm and this drop.
+        if self.mmc.read_binding() == Some(ReadIrqOwnerBinding::Armed(self.transaction)) &&
+           self.dma.read_binding() == Some(ReadIrqOwnerBinding::Armed(self.transaction))
+        {
+            self.mmc.read_armed = None;
+            self.dma.armed = None;
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadIrqReservationError {
+    Runtime(crate::irq_runtime::RuntimeError),
+    MmcOwnerVariant,
+    DmaOwnerVariant,
+    Arm(ReadPairOwnerFailure),
+}
+
+/// Reserve two runtime owner slots and arm the expected MMC/APBDMA variants.
+pub fn reserve_read_irq_owners<'a, I, R>(
+    runtime : &'a mut crate::irq_runtime::BoardIrqRuntime<I, BoardIrqOwner<R>>,
+    mmc_irq : GlobalIrq,
+    dma_irq : GlobalIrq,
+    transaction : ReadTransactionId)
+    -> Result<ReadIrqArmGuard<'a, R>, ReadIrqReservationError>
+where I : crate::liointc::RegisterIo
+{
+    let (mmc, dma) = runtime.owners_mut(mmc_irq, dma_irq)
+                             .map_err(ReadIrqReservationError::Runtime)?;
+    let BoardIrqOwner::MmcCommand(mmc) = mmc else {
+        return Err(ReadIrqReservationError::MmcOwnerVariant);
+    };
+    let BoardIrqOwner::ApbDmaDeferred(dma) = dma else {
+        return Err(ReadIrqReservationError::DmaOwnerVariant);
+    };
+    ReadIrqArmGuard::arm(mmc, dma, transaction)
+        .map_err(ReadIrqReservationError::Arm)
+}
+
 /// Arm both read IRQ owners as one software transaction. A DMA-side failure
 /// rolls the newly armed MMC owner back before returning.
 pub fn arm_read_owners<R>(mmc : &mut MmcCommandOwner<R>,
@@ -401,6 +478,15 @@ mod tests {
     use super::*;
     use crate::{irq_domain::DeviceAckedIrq, irq_owner::IrqOwnerTable};
 
+    #[derive(Default)]
+    struct ModelLioIo;
+
+    impl crate::liointc::RegisterIo for ModelLioIo {
+        fn read32(&self, _address : usize) -> u32 { 0 }
+        fn write32(&mut self, _address : usize, _value : u32) {}
+        fn write8(&mut self, _address : usize, _value : u8) {}
+    }
+
     const REG_INT : usize = 0x3c;
     const COMMAND_SENT : u32 = 1 << 6;
 
@@ -425,6 +511,26 @@ mod tests {
     }
 
     fn transaction(raw : u64) -> ReadTransactionId { ReadTransactionId::new(raw).unwrap() }
+
+    fn owner_runtime(mmc_irq : GlobalIrq, dma_irq : GlobalIrq, swapped : bool)
+        -> crate::irq_runtime::BoardIrqRuntime<ModelLioIo, BoardIrqOwner<MockRegisters>> {
+        let bank0 = crate::liointc::LioIntc::new(ModelLioIo, 0, 0x1000, &[0x2000]).unwrap();
+        let bank1 = crate::liointc::LioIntc::new(ModelLioIo, 1, 0x1040, &[0x2040]).unwrap();
+        let mut runtime = crate::irq_runtime::BoardIrqRuntime::new(
+            [Some(bank0), Some(bank1)], [None; 8]).unwrap();
+        let mmc = BoardIrqOwner::MmcCommand(
+            MmcCommandOwner::new(mmc_irq, MockRegisters::default()));
+        let dma : BoardIrqOwner<MockRegisters> = BoardIrqOwner::ApbDmaDeferred(
+            DeferredApbDmaOwner::new(dma_irq));
+        if swapped {
+            runtime.register(mmc_irq, dma).unwrap_or_else(|_| panic!("register failed"));
+            runtime.register(dma_irq, mmc).unwrap_or_else(|_| panic!("register failed"));
+        } else {
+            runtime.register(mmc_irq, mmc).unwrap_or_else(|_| panic!("register failed"));
+            runtime.register(dma_irq, dma).unwrap_or_else(|_| panic!("register failed"));
+        }
+        runtime
+    }
 
     #[test]
     fn mmc_owner_persists_state_through_owner_table() {
@@ -659,5 +765,64 @@ mod tests {
             .unwrap_or_else(|_| panic!("dual pending generation did not drain"));
         assert_eq!(drained.mmc.unwrap().transaction, wrong);
         assert_eq!(drained.dma.unwrap().transaction, wrong);
+    }
+
+    #[test]
+    fn runtime_arm_guard_rolls_back_on_drop_and_commit_retains_both_slots() {
+        let mmc_irq = GlobalIrq::from_bank_local(0, 31).unwrap();
+        let dma_irq = GlobalIrq::from_bank_local(1, 13).unwrap();
+        let first = transaction(81);
+        let second = transaction(82);
+        let mut runtime = owner_runtime(mmc_irq, dma_irq, false);
+        {
+            let _guard = reserve_read_irq_owners(&mut runtime, mmc_irq, dma_irq, first)
+                .unwrap_or_else(|_| panic!("guard reservation failed"));
+        }
+        let BoardIrqOwner::MmcCommand(mmc) = runtime.owner(mmc_irq).unwrap() else {
+            panic!("wrong MMC variant")
+        };
+        assert_eq!(mmc.read_binding(), None);
+        let BoardIrqOwner::ApbDmaDeferred(dma) = runtime.owner(dma_irq).unwrap() else {
+            panic!("wrong DMA variant")
+        };
+        assert_eq!(dma.read_binding(), None);
+
+        let armed = reserve_read_irq_owners(&mut runtime, mmc_irq, dma_irq, second)
+            .unwrap_or_else(|_| panic!("guard reservation failed"))
+            .commit();
+        assert_eq!(armed.transaction(), second);
+        let (mmc, dma) = runtime.owners_mut(mmc_irq, dma_irq).unwrap();
+        let BoardIrqOwner::MmcCommand(mmc) = mmc else { panic!("wrong MMC variant") };
+        let BoardIrqOwner::ApbDmaDeferred(dma) = dma else { panic!("wrong DMA variant") };
+        let drained = drain_read_owners(mmc, dma, second)
+            .unwrap_or_else(|_| panic!("committed generation did not drain"));
+        assert!(drained.mmc.is_none());
+        assert!(drained.dma.is_none());
+    }
+
+    #[test]
+    fn runtime_guard_rejects_same_slot_and_swapped_owner_variants() {
+        let mmc_irq = GlobalIrq::from_bank_local(0, 31).unwrap();
+        let dma_irq = GlobalIrq::from_bank_local(1, 13).unwrap();
+        let current = transaction(91);
+        let mut runtime = owner_runtime(mmc_irq, dma_irq, false);
+        assert!(matches!(reserve_read_irq_owners(&mut runtime,
+                                                 mmc_irq,
+                                                 mmc_irq,
+                                                 current),
+                         Err(ReadIrqReservationError::Runtime(
+                             crate::irq_runtime::RuntimeError::Owner(
+                                 crate::irq_owner::OwnerError::SameSlot)))));
+
+        let mut runtime = owner_runtime(mmc_irq, dma_irq, true);
+        assert!(matches!(reserve_read_irq_owners(&mut runtime,
+                                                 mmc_irq,
+                                                 dma_irq,
+                                                 current),
+                         Err(ReadIrqReservationError::MmcOwnerVariant)));
+        let BoardIrqOwner::ApbDmaDeferred(owner) = runtime.owner(mmc_irq).unwrap() else {
+            panic!("swapped owner changed")
+        };
+        assert_eq!(owner.read_binding(), None);
     }
 }

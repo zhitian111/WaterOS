@@ -21,6 +21,7 @@ pub enum OwnerError {
     AlreadyRegistered,
     NotRegistered,
     InHandler,
+    SameSlot,
     InvalidCompletion,
 }
 
@@ -117,6 +118,24 @@ impl<O> IrqOwnerTable<O> {
         }
     }
 
+    /// Borrow two distinct ready owners in caller-requested order.
+    pub fn get_pair_mut(&mut self, first : GlobalIrq, second : GlobalIrq)
+                        -> Result<(&mut O, &mut O), OwnerError> {
+        let first_index = first.raw() as usize;
+        let second_index = second.raw() as usize;
+        if first_index == second_index { return Err(OwnerError::SameSlot); }
+        let (first_slot, second_slot) = if first_index < second_index {
+            let (lower, upper) = self.slots.split_at_mut(second_index);
+            (&mut lower[first_index], &mut upper[0])
+        } else {
+            let (lower, upper) = self.slots.split_at_mut(first_index);
+            (&mut upper[0], &mut lower[second_index])
+        };
+        let first_owner = ready_owner_mut(first_slot)?;
+        let second_owner = ready_owner_mut(second_slot)?;
+        Ok((first_owner, second_owner))
+    }
+
     pub fn begin(&mut self, acknowledged : AcknowledgedIrq)
                  -> Result<ActiveOwner<O>, BeginFailure> {
         let irq = acknowledged.irq();
@@ -154,6 +173,14 @@ impl<O> IrqOwnerTable<O> {
 
     pub fn is_busy(&self, irq : GlobalIrq) -> bool {
         matches!(self.slots[irq.raw() as usize], OwnerSlot::InHandler { .. })
+    }
+}
+
+fn ready_owner_mut<O>(slot : &mut OwnerSlot<O>) -> Result<&mut O, OwnerError> {
+    match slot {
+        OwnerSlot::Ready { owner, .. } => Ok(owner),
+        OwnerSlot::Empty => Err(OwnerError::NotRegistered),
+        OwnerSlot::InHandler { .. } => Err(OwnerError::InHandler),
     }
 }
 
@@ -227,5 +254,28 @@ mod tests {
         second.finish(second_active).unwrap_or_else(|_| panic!("second finish failed"));
         assert_eq!(first.unregister(source), Ok(1));
         assert_eq!(second.unregister(source), Ok(2));
+    }
+
+    #[test]
+    fn pair_borrow_preserves_requested_order_and_rejects_unavailable_slots() {
+        let low = irq(3);
+        let high = irq(19);
+        let missing = irq(20);
+        let mut table = IrqOwnerTable::new();
+        table.register(low, 3u32).unwrap();
+        table.register(high, 19u32).unwrap();
+        {
+            let (first, second) = table.get_pair_mut(high, low).unwrap();
+            *first += 100;
+            *second += 200;
+        }
+        assert_eq!(*table.get(low).unwrap(), 203);
+        assert_eq!(*table.get(high).unwrap(), 119);
+        assert_eq!(table.get_pair_mut(low, low).unwrap_err(), OwnerError::SameSlot);
+        assert_eq!(table.get_pair_mut(low, missing).unwrap_err(), OwnerError::NotRegistered);
+
+        let active = table.begin(acknowledged(high)).unwrap();
+        assert_eq!(table.get_pair_mut(low, high).unwrap_err(), OwnerError::InHandler);
+        table.finish(active).unwrap_or_else(|_| panic!("finish failed"));
     }
 }

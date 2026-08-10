@@ -292,6 +292,12 @@ impl<I : RegisterIo, O> BoardIrqRuntime<I, O> {
         self.owners.get_mut(irq).map_err(RuntimeError::Owner)
     }
 
+    /// Exclusively reserve two different ready owner slots in requested order.
+    pub fn owners_mut(&mut self, first : GlobalIrq, second : GlobalIrq)
+                      -> Result<(&mut O, &mut O), RuntimeError> {
+        self.owners.get_pair_mut(first, second).map_err(RuntimeError::Owner)
+    }
+
     pub fn into_dormant(self) -> DormantRuntime<I, O> { DormantRuntime { runtime : self } }
 
     pub fn into_controllers(self) -> [Option<LioIntc<I>>; MAX_BANKS] {
