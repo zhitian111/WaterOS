@@ -1189,6 +1189,35 @@ pub struct ReadRequestExecutor<'a, D, P> {
     lease : ReadRequestDmaLease<D, P>,
 }
 
+/// Published DMA ownership explicitly bound to the request generation that
+/// created it. The binding does not copy the underlying session or receipt.
+#[must_use = "finish completion or stop the generation-bound DMA session"]
+pub struct ReadRequestPublishedDmaSession<'a, 'e, R, D, P> {
+    transaction : ReadTransactionId,
+    session : crate::mmc::PublishedReadDmaReceiptSession<'a, 'e, R, D, P>,
+}
+
+impl<'a, 'e, R, D, P> ReadRequestPublishedDmaSession<'a, 'e, R, D, P> {
+    /// Bind a session only after the caller has established that its plan
+    /// belongs to `transaction`; the type then preserves that generation.
+    pub fn bind(
+        transaction : ReadTransactionId,
+        session : crate::mmc::PublishedReadDmaReceiptSession<'a, 'e, R, D, P>) -> Self {
+        Self { transaction, session }
+    }
+
+    pub const fn transaction(&self) -> ReadTransactionId { self.transaction }
+
+    pub const fn receipt(&self) -> crate::mmc::ReadDataPublishReceipt {
+        self.session.receipt()
+    }
+
+    pub fn into_session(self)
+                     -> crate::mmc::PublishedReadDmaReceiptSession<'a, 'e, R, D, P> {
+        self.session
+    }
+}
+
 impl<'a, D : DmaCoherency, P : DmaCoherency> ReadRequestExecutor<'a, D, P> {
     pub fn bind(handle : ReadRequestHandle<'a>,
                lease : ReadRequestDmaLease<D, P>)

@@ -1357,6 +1357,12 @@ mod tests {
             MockMmcRegisters::default(),
             crate::mmc::ReadDataPublishPermit::fixture());
         let published = prepared.start_and_publish(&mut executor, &mut publisher).unwrap();
+        let generation = crate::board_irq_owner::ReadTransactionId::new(101).unwrap();
+        let published = crate::read_coordinator::ReadRequestPublishedDmaSession::bind(
+            generation, published);
+        assert_eq!(published.transaction(), generation);
+        assert_eq!(published.receipt().command_index, read.request.command_index);
+        let published = published.into_session();
         assert_eq!(published.plan(), &read);
         assert_eq!(published.receipt().writes_completed, 6);
         assert_eq!(publisher.into_inner().writes.iter()

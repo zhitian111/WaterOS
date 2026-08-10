@@ -5649,3 +5649,33 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] carry dma start publish failures`
+
+## 2026-08-10：批次 120——为 published DMA ownership 绑定 request generation
+
+### 本批任务与设计
+
+1. 审计 production `PublishedReadDmaReceiptSession`：它保留 MMC receipt 和 DMA mapping，但此前没有 request transaction/generation。
+2. 增加 `ReadRequestPublishedDmaSession` wrapper，由 caller 显式提供已验证的 `ReadTransactionId` 后绑定底层 session。
+3. wrapper 只复制 generation 标量，不复制或拆分 receipt/mapping；`into_session` 仍保持底层线性 ownership。
+4. 在现有 start→publish→completion→stop host model 测试中加入 generation 和 receipt 断言。
+
+### 已完成
+
+- [x] 新增 generation-bound published session wrapper、`transaction`/`receipt`/`into_session` API。
+- [x] 既有 APBDMA/MMC 顺序测试验证 generation 绑定后 receipt 不变，最终仍能 stop/finish 并恢复 CPU ownership。
+- [x] 保持底层 MMC session API 向后兼容，避免在硬件 activation 未验证前扩大默认路径。
+
+### 验证证据
+
+- 定向测试 `mmc_read_start_typestate_orders_dma_before_command_publish` 通过。
+- `UNVERIFIED_ON_HARDWARE`：generation 与软件 request 关联尚未由真实 IRQ owner/调度 worker 证明；DMA、MMC、cache、IRQ 和 SD/eMMC 电气行为仍待实机。
+
+### 已知限制、未验证与后续测试
+
+- [ ] wrapper 的 `bind` 依赖 caller 先完成 request/session 归属校验；下一步应将它直接接到 `ReadRequestExecutor` 的 worker transition，减少手工绑定面。
+- [ ] coordinator 尚未消费该 wrapper 的 generation 来驱动 `RecoveryPending`/`RecoveryRecorded`，目前仍需显式 service 调用。
+- [ ] 真实板上仍需验证 transaction cookie 与迟到 IRQ、DMA status 的代次过滤。
+
+### 提交
+
+- 本批计划提交：`[feat] bind published dma generation`
