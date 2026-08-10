@@ -6686,3 +6686,29 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - `[fix] validate gpt backup metadata`
+
+## 2026-08-10：批次 158——补齐 USB HID boot report 公共解码层
+
+### 本批任务与设计
+
+1. 审计输入 API、evdev 字节流、订阅队列和 devfs 动态节点，确认队列和 `/dev/input/eventN` 已有实现，不重复建设。
+2. 增加无硬件依赖的 USB HID boot keyboard/mouse report 到 `RawInputEvent` 的转换入口。
+3. 键盘维护 modifier/6-key 状态，只输出状态变化；遇到 rollover 或短报告 fail-closed。
+4. 鼠标输出按钮、相对 X/Y、可选滚轮和 `SYN_REPORT`；短报告和输出缓冲不足返回参数错误。
+
+### 已完成
+
+- [x] 新增 `input-api::hid` 模块及键盘/鼠标状态类型、evdev 常量和常用 HID usage 映射。
+- [x] HID 解码器不分配堆内存，调用方提供有界输出缓冲，适合中断后处理或轮询任务。
+- [x] 补充 rollover、短报告、按钮/轴/滚轮、输出缓冲不足等 host 单元测试。
+- [x] 更新 driver-input README，明确该层不包含 USB host 控制器和物理传输实现。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path os/components/wateros-driver/driver-input/input-api/api-v0/Cargo.toml`：6 项通过。
+- `cargo test --manifest-path os/components/wateros-gui/gui-impl/impl-software/Cargo.toml`：9 项通过，确认现有 GUI bridge 仍兼容新增 API。
+- `UNVERIFIED_ON_HARDWARE`：VisionFive 2/2K1000LA USB host、HID descriptor 非 boot protocol 设备、IRQ/DMA/cache 一致性、热插拔和真实事件注入仍待目标板；本批没有伪造硬件驱动已完成。
+
+### 提交
+
+- `[feat] add hid boot report decoder`

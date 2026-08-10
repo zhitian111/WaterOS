@@ -3,6 +3,10 @@
 #![no_std]
 extern crate alloc;
 
+pub mod hid;
+pub use hid::{BootKeyboardState, BootMouseState, decode_boot_keyboard_report,
+              decode_boot_mouse_report, hid_usage_to_evdev};
+
 use alloc::{boxed::Box, collections::VecDeque, string::String, sync::Arc, vec::Vec};
 use character_api::{CharacterDevice, CharacterDeviceKind, CharacterReadFinish,
                     CharacterReadReservation, SharedCharacterDevice};
@@ -35,7 +39,7 @@ pub struct InputDeviceInfo {
 }
 
 /// 与 Linux evdev/virtio-input 兼容的三元组。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 /// Linux evdev/virtio-input 兼容事件三元组。
 pub struct RawInputEvent {
     pub event_type : u16,
