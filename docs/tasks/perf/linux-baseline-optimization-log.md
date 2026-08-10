@@ -958,3 +958,52 @@ codegraph explore "InterruptSafeTlsfHeap GlobalAlloc alloc dealloc realloc estim
 - 结论：普通分配前的两个统计 load 不是可独立兑现的主要成本。下一步 allocator 工作应先
   获取真实尺寸分布/锁等待数据，再决定是否值得建设带旁路元数据的 per-CPU 小对象 cache；
   不应继续做原子指令级微调。
+
+## MM-03A：页表层级跳过 mmap 候选空洞
+
+状态：完整测试退化并回退（2026-08-10）
+
+### 模块与热链
+
+```text
+sys_mmap / mremap
+  -> find_free_mmap_base_considering_vmas
+     -> 排除 stack/kernel-reserved/lazy/shared VMA
+     -> for every candidate page
+        -> translate_addr
+           -> walk_find: root -> middle -> leaf
+```
+
+pc-hot 中 `find_free_mmap` 约 3.85 亿条指令。候选区间在排除有序 VMA 后，当前仍对每页从
+根页表重走三级；上级目录项为空时，本可一次证明其覆盖的整段地址均未映射。
+
+### 设计与保留门槛
+
+1. 在 Sv39 与 LoongArch 页表实现中分别增加范围内首个已映射 VPN 的层级查询。
+2. 无效中间 PTE 一次跳过该目录项覆盖范围；有效子表只扫描与查询相交的索引；叶 PTE
+   返回范围内首个映射页。支持现有大页判断，即使用户映射目前只允许 4 KiB 叶。
+3. `find_free_mmap` 保留 VMA/栈/保留区检查、冲突后跳一页、搜索上限和错误语义，只替换
+   最后的逐页 `translate_addr` 循环；不增加需要在 munmap/fork/exec 同步的第二真相源。
+4. 添加层级空洞/叶冲突定向测试，双架构 Final check/build 后以线上 RISC-V 配置和
+   `-snapshot` 跑完整 BuildStorm；以 900.64 s 为保留基线。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "find_free_mmap_base_considering_vmas first_mapped_vpn_in_range walk_find vpn_indexes table_mut Sv39Pte LoongArch64Pte mmap_anonymous mmap_file_lazy mremap exact source and tests"
+```
+
+### 验证结果与结论
+
+- 双架构地址空间自检增加了范围内叶映射定位、排除和 unmap 后为空的断言；双架构 Final
+  check/build 均通过。
+- RISC-V 完整 BuildStorm 生成了
+  `BUILDSTORM_COMPILE mode=multi ok=true elapsed_s=905.58`，较 900.64 s 慢 4.94 s
+  （+0.55%），无 panic/SIGSEGV。
+- 测试组已打印 END，但父 bringup 数分钟未打印 command-succeeded/退出，出现异常尾部停滞；
+  取得结果字段后手动终止 QEMU。代码全部回退并恢复双架构 Final。
+- 结论：递归层级扫描虽然能跳过大空洞，但常见候选范围很可能较小，递归边界计算和函数调用
+  抵消了省下的上级 walk；旧 pc-hot 的 3.85 亿指令不能直接等同于可兑现的墙钟收益。
+  若再处理此链，应先取得 mmap 长度/页数分布，并考虑为 `walk_find` 返回缺失层级后在原循环
+  原地跳跃，避免通用递归扫描器。
+- 日志：`/tmp/wateros-mm03a-after-rv.log`（本机临时文件，不提交）。
