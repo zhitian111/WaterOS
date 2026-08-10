@@ -1382,3 +1382,23 @@ python3 scripts/remote_debug_qemu_smoke.py \
 
 - VisionFive 2 driver crate：16 项测试通过。
 - `UNVERIFIED_ON_HARDWARE`：真实 UART 时钟、pinmux、MMIO 映射、IRQ 和波特率/收发时序仍需实体板验证。
+
+## 2026-08-10：批次 83——VisionFive 2 MMC FIFO 前置边界
+
+### 任务与设计
+
+1. 复查 VisionFive 2 的 MMC、PLIC 和 UART bring-up contract，避免在没有实体板时凭空添加时钟或波特率寄存器假设。
+2. 发现 `MmcActivationBlocker` 仅拒绝零 FIFO 深度，而共享 DesignWare MMC controller 已明确要求 `2..=4096`。
+3. 将该范围校验前移到 `bring_up_plan`，确保任何 MMIO 访问前都报告静态 blocker；UART layout 和 PLIC 唯一 context 语义保持不变。
+
+### 完成内容
+
+- [x] `fifo_depth` 现在拒绝 1 和大于 4096 的值，并继续拒绝缺失/零值。
+- [x] 新增回归测试覆盖两个边界方向；不触碰 controller registers。
+- [x] 保持 `HardwareEvidence` blocker、PLIC ambiguous context 拒绝和 UART layout 白名单策略。
+
+### 验证证据与限制
+
+- VisionFive 2 crate host 单测：17 项通过。
+- RISC-V64 目标 `cargo check` 通过。
+- `UNVERIFIED_ON_HARDWARE`：JH7110 clock/reset/syscon、pinmux、供电、card-detect、PLIC 路由、UART 实际 clock/divisor、MMC IRQ 和 SD 卡读写仍需 VisionFive 2 实板验证；本批没有解除 hardware evidence blocker。

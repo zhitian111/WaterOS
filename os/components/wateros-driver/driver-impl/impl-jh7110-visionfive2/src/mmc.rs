@@ -180,7 +180,7 @@ pub fn bring_up_plan(host : &MmcHostDescription) -> MmcBringUpPlan {
     }
     if host.fifo_depth.is_none() {
         blockers.push(MmcActivationBlocker::MissingFifoDepth);
-    } else if host.fifo_depth == Some(0) {
+    } else if !host.fifo_depth.is_some_and(|depth| (2..=4096).contains(&depth)) {
         blockers.push(MmcActivationBlocker::InvalidFifoDepth);
     }
     blockers.push(MmcActivationBlocker::HardwareEvidence);
@@ -398,6 +398,17 @@ mod tests {
         assert!(plan.blockers.contains(&MmcActivationBlocker::InvalidTargetFrequency));
         assert!(plan.blockers.contains(&MmcActivationBlocker::InvalidFifoDepth));
         assert_eq!(plan.controller_config(), Err(MmcConfigError::InvalidStaticResources));
+    }
+
+    #[test]
+    fn fifo_depth_outside_controller_range_is_rejected_before_mmio() {
+        for depth in [1, 4097] {
+            let mut value = host();
+            value.fifo_depth = Some(depth);
+            let plan = bring_up_plan(&value);
+            assert!(plan.blockers.contains(&MmcActivationBlocker::InvalidFifoDepth));
+            assert_eq!(plan.controller_config(), Err(MmcConfigError::InvalidStaticResources));
+        }
     }
 
     struct Registers { values : [u32; 32] }
