@@ -48,6 +48,16 @@ def missing_markers(serial: str) -> list[str]:
     return [marker for marker in REQUIRED_MARKERS if marker not in serial]
 
 
+def qmp_input_events() -> list[dict]:
+    """Return a deterministic key/tablet batch for QMP injection."""
+    return [
+        {"type": "key", "data": {"down": True, "key": {"type": "qcode", "data": "a"}}},
+        {"type": "key", "data": {"down": False, "key": {"type": "qcode", "data": "a"}}},
+        {"type": "abs", "data": {"axis": "x", "value": 100}},
+        {"type": "abs", "data": {"axis": "y", "value": 100}},
+    ]
+
+
 def inject_qmp_events(socket_path: Path, timeout: float = 2.0) -> tuple[bool, str]:
     """Inject one key press/release and one tablet motion through QMP."""
     deadline = time.monotonic() + timeout
@@ -56,23 +66,19 @@ def inject_qmp_events(socket_path: Path, timeout: float = 2.0) -> tuple[bool, st
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
                 conn.settimeout(max(0.1, deadline - time.monotonic()))
                 conn.connect(str(socket_path))
-                greeting = conn.makefile("rb").readline()
+                reader = conn.makefile("rb")
+                greeting = reader.readline()
                 if b"QMP" not in greeting:
                     return False, f"invalid QMP greeting: {greeting!r}"
                 def request(payload: dict) -> dict:
                     conn.sendall((json.dumps(payload) + "\n").encode())
-                    line = conn.makefile("rb").readline()
+                    line = reader.readline()
                     return json.loads(line)
                 reply = request({"execute": "qmp_capabilities"})
                 if "error" in reply:
                     return False, f"qmp_capabilities failed: {reply['error']}"
-                events = [
-                    {"type": "key", "data": {"down": True, "key": {"type": "qcode", "data": "a"}}},
-                    {"type": "key", "data": {"down": False, "key": {"type": "qcode", "data": "a"}}},
-                    {"type": "abs", "data": {"axis": "x", "value": 100}},
-                    {"type": "abs", "data": {"axis": "y", "value": 100}},
-                ]
-                reply = request({"execute": "input-send-event", "arguments": {"events": events}})
+                reply = request({"execute": "input-send-event",
+                                 "arguments": {"events": qmp_input_events()}})
                 if "error" in reply:
                     return False, f"input-send-event failed: {reply['error']}"
                 return True, "QMP input events injected"

@@ -1951,6 +1951,28 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - QEMU guest 事件注入尚需在带 GUI kernel/root image 上实际运行脚本确认；本批代码保留失败时 QMP/串口诊断。
 - `UNVERIFIED_ON_HARDWARE`：真实 USB/HID 控制器、IRQ/DMA/cache、热插拔及 VisionFive 2/Loongson 2K1000 实板输入仍未验证。
 
+## 2026-08-10：批次 65——稳定 QMP 输入注入诊断
+
+### 任务与设计
+
+1. 复核批次 64 的 QMP guest smoke，重点检查 Unix socket 响应读取是否会因重复创建缓冲 reader 而丢失响应。
+2. 抽出确定性的键盘按键/释放和 tablet X/Y 事件构造函数，并为其增加单元测试。
+3. 在本机 QEMU 上运行独立 monitor/QMP virtio-input smoke，并重新构建 GUI RISC-V kernel；生成的大内核产物不留在工作树。
+
+### 完成内容
+
+- [x] QMP 客户端改为单一持久 reader，避免 JSON 行响应被临时缓冲区吞掉。
+- [x] 新增 `qmp_input_events()` 及键盘/绝对坐标事件形状测试。
+- [x] QEMU x86_64 HMP 与 QMP virtio-input smoke 均通过。
+- [x] `make kernel-rv-final EXTRA_FEATURES=gui` 通过；临时 kernel 产物已移出工作树。
+
+### 验证证据与限制
+
+- Python guest smoke 单测：3 项通过。
+- 独立 QMP 实测：`QEMU QMP virtio input smoke passed`。
+- 带 WaterOS guest 的完整注入仍需小型 GPT/rootfs 镜像；当前工作树没有该镜像，因此尚未宣称 guest 事件端到端通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 USB/HID 控制器、IRQ/DMA/cache、热插拔及 VisionFive 2/Loongson 2K1000 实板输入仍未验证。
+
 ### 提交
 
 - `[fix] expose virtio block capacity`
