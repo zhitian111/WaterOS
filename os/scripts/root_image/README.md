@@ -26,6 +26,13 @@ make verify-physical-root-image ROOT_IMAGE=./wateros-rv64.img \
 make physical-root-image ROOT_IMAGE=./wateros-gpt.img \
   ROOT_IMAGE_SIZE_MIB=16 ROOT_IMAGE_PARTITION_TABLE=gpt
 make verify-physical-root-image ROOT_IMAGE=./wateros-gpt.img
+
+# 可选第二个 ext4 数据分区（root manifest 写入 /dev/vda1，data manifest 写入 /dev/vda2）
+make physical-root-image ROOT_IMAGE=./wateros-with-data.img \
+  ROOT_IMAGE_SIZE_MIB=16 ROOT_IMAGE_DATA_SIZE_MIB=4 \
+  ROOT_IMAGE_DATA_MANIFEST=./data-manifest.json
+make verify-physical-root-image ROOT_IMAGE=./wateros-with-data.img \
+  ROOT_IMAGE_DATA_MANIFEST=./data-manifest.json
 ```
 
 The build requires `sfdisk`, `mkfs.ext4`, `e2fsck`, `dumpe2fs`, and `debugfs`.
@@ -35,7 +42,10 @@ image. Use `--force` (the Make target does this) only when replacing the named
 output is intended.
 
 `ROOT_IMAGE_MANIFEST` is passed to both build and verify, so the same
-architecture-specific manifest is checked after construction. `ROOT_IMAGE_SIZE_MIB`
+architecture-specific manifest is checked after construction. Set
+`ROOT_IMAGE_DATA_MANIFEST` together with `ROOT_IMAGE_DATA_SIZE_MIB` to create and
+verify a second Linux/ext4 data partition; leaving it unset preserves the
+single-root-partition layout. `ROOT_IMAGE_SIZE_MIB`
 defaults to 32 and may be reduced to 16 for small host/QEMU tests (the tool
 still enforces a 1 MiB-aligned partition and ext4 metadata minimum). The
 `ROOT_IMAGE_PARTITION_TABLE` Make variable defaults to `mbr`; `gpt` emits a

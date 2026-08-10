@@ -122,6 +122,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--profile", choices=("pre", "final"), default="pre")
     result.add_argument("--image", type=Path, required=True)
     result.add_argument("--manifest", type=Path, required=True)
+    result.add_argument("--data-manifest", type=Path)
     result.add_argument("--kernel", type=Path, required=True)
     result.add_argument("--execute", action="store_true")
     result.add_argument(
@@ -140,7 +141,14 @@ def main(argv: list[str] | None = None) -> int:
     manifest = args.manifest.resolve()
     kernel = args.kernel.resolve()
     try:
-        verify_image(image, manifest_paths(manifest), manifest_file_contents(manifest))
+        data_manifest = args.data_manifest.resolve() if args.data_manifest else None
+        verify_image(
+            image,
+            manifest_paths(manifest),
+            manifest_file_contents(manifest),
+            manifest_paths(data_manifest) if data_manifest else None,
+            manifest_file_contents(data_manifest) if data_manifest else None,
+        )
         command = build_smoke_command(args.arch, args.profile, image, kernel, root=root)
         print("root-image-qemu-smoke:", shlex.join(command))
         if args.require_root_mount and not args.execute:

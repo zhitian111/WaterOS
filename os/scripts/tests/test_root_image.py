@@ -19,6 +19,10 @@ from root_image import (
     parse_gpt_sectors,
     populate_staging,
     parse_mbr_sector,
+    read_partitions,
+    verify_image,
+    manifest_file_contents,
+    manifest_paths,
     verify_gpt_backup,
 )
 
@@ -82,6 +86,52 @@ class RootImageTests(unittest.TestCase):
                 target.write(b"x")
             with self.assertRaisesRegex(ImageError, "backup header CRC"):
                 verify_gpt_backup(image)
+
+    def test_builds_two_ext4_partitions_for_mbr_and_gpt(self) -> None:
+        for table in ("mbr", "gpt"):
+            with self.subTest(table=table), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                root_manifest = root / "root.json"
+                data_manifest = root / "data.json"
+                root_manifest.write_text(
+                    json.dumps({"directories": [], "files": [
+                        {"path": "/etc/root", "mode": "0644", "content": "root\n"},
+                    ]}),
+                    encoding="utf-8",
+                )
+                data_manifest.write_text(
+                    json.dumps({"directories": [], "files": [
+                        {"path": "/state/marker", "mode": "0644", "content": "data\n"},
+                    ]}),
+                    encoding="utf-8",
+                )
+                image = root / f"{table}.img"
+                args = argparse.Namespace(
+                    output=image,
+                    manifest=root_manifest,
+                    data_manifest=data_manifest,
+                    data_size_mib=4,
+                    data_uuid="574f5300-0000-4000-8000-000000000002",
+                    data_label="WATEROS_DATA",
+                    size_mib=16,
+                    start_sector=2048,
+                    partition_table=table,
+                    uuid="574f5300-0000-4000-8000-000000000001",
+                    label="WATEROS_ROOT",
+                    force=False,
+                )
+                build_image(args)
+                partitions = read_partitions(image)
+                self.assertEqual([part.number for part in partitions], [1, 2])
+                self.assertLess(partitions[0].start_sector + partitions[0].sectors,
+                                partitions[1].start_sector + 1)
+                verify_image(
+                    image,
+                    manifest_paths(root_manifest),
+                    manifest_file_contents(root_manifest),
+                    manifest_paths(data_manifest),
+                    manifest_file_contents(data_manifest),
+                )
 
     def test_manifest_populates_modes_and_rejects_escape(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

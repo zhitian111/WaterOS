@@ -290,28 +290,47 @@ def verify_gpt_backup(image: Path) -> None:
 
 
 def make_partition_table(
-    image: Path, image_bytes: int, start_sector: int, table_type: str = "mbr"
+    image: Path,
+    image_bytes: int,
+    start_sector: int,
+    table_type: str = "mbr",
+    data_size_mib: int = 0,
 ) -> Partition:
     total_sectors = image_bytes // SECTOR_SIZE
-    sectors = total_sectors - start_sector
-    if sectors <= 0:
+    data_sectors = _data_partition_sectors(data_size_mib)
+    root_sectors = total_sectors - start_sector - data_sectors
+    if root_sectors <= 0 or root_sectors % 8:
         raise ImageError("image is too small for requested partition start")
+    data_start = start_sector + root_sectors
     if table_type == "mbr":
         specification = (
             "label: dos\n"
             f"label-id: {DEFAULT_DISK_ID}\n"
             "unit: sectors\n\n"
-            f"{start_sector},{sectors},83\n"
+            f"{start_sector},{root_sectors},83\n"
         )
+        if data_sectors:
+            specification += f"{data_start},{data_sectors},83\n"
         run(["sfdisk", "--quiet", str(image)], input_text=specification)
     elif table_type == "gpt":
-        return make_gpt_partition_table(image, image_bytes, start_sector)
+        return make_gpt_partition_table(image, image_bytes, start_sector, data_size_mib)
     else:
         raise ImageError(f"unsupported partition table: {table_type}")
     partition = read_partitions(image)
-    if len(partition) != 1:
-        raise ImageError("partitioning tool did not create exactly one partition")
+    if len(partition) != (2 if data_sectors else 1):
+        raise ImageError("partitioning tool created an unexpected partition count")
     return partition[0]
+
+
+def _data_partition_sectors(data_size_mib: int) -> int:
+    if data_size_mib < 0:
+        raise ImageError("data partition size must not be negative")
+    if data_size_mib == 0:
+        return 0
+    sectors = data_size_mib * 1024 * 1024 // SECTOR_SIZE
+    if sectors < 8 or sectors % 8:
+        raise ImageError("data partition size must be at least 4 KiB and 8-sector aligned")
+    return sectors
 
 
 def build_image(args: argparse.Namespace) -> list[str]:
@@ -327,6 +346,18 @@ def build_image(args: argparse.Namespace) -> list[str]:
         with tempfile.TemporaryDirectory(prefix="wateros-root-staging-") as temporary:
             staging = Path(temporary)
             required_paths = populate_staging(args.manifest.resolve(), staging)
+            data_manifest_value = getattr(args, "data_manifest", None)
+            data_size_mib = getattr(args, "data_size_mib", 0)
+            if data_manifest_value is None and data_size_mib:
+                raise ImageError("data partition requires --data-manifest")
+            data_required_paths: list[str] = []
+            data_staging = staging / "__wateros_data__"
+            if data_manifest_value is not None:
+                if not data_size_mib:
+                    raise ImageError("--data-manifest requires --data-size-mib")
+                data_required_paths = populate_staging(
+                    Path(data_manifest_value).resolve(), data_staging
+                )
             descriptor, raw_path = tempfile.mkstemp(
                 prefix=f".{image.name}.", suffix=".tmp", dir=image.parent
             )
@@ -339,7 +370,12 @@ def build_image(args: argparse.Namespace) -> list[str]:
                 image_bytes,
                 args.start_sector,
                 getattr(args, "partition_table", "mbr"),
+                data_size_mib,
             )
+            partitions = read_partitions(temporary_image)
+            if not partitions or partitions[0] != partition:
+                raise ImageError("root partition table result is inconsistent")
+            data_partition = partitions[1] if data_size_mib else None
             if partition.partition_type != LINUX_PARTITION_TYPE:
                 raise ImageError("root partition has unexpected MBR type")
             if partition.byte_length % DEFAULT_BLOCK_SIZE != 0:
@@ -347,28 +383,33 @@ def build_image(args: argparse.Namespace) -> list[str]:
             blocks = partition.byte_length // DEFAULT_BLOCK_SIZE
             environment = os.environ.copy()
             environment.setdefault("E2FSPROGS_FAKE_TIME", "1704067200")
-            command = [
-                "mkfs.ext4", "-q", "-F", "-b", str(DEFAULT_BLOCK_SIZE),
-                "-L", args.label, "-U", args.uuid,
-                # another_ext4 currently requires the 64-bit group descriptor
-                # layout even for this small volume. This is QEMU-tested but
-                # still needs validation with each board's storage controller.
-                "-O", "^has_journal",
-                "-E", f"offset={partition.byte_offset},lazy_itable_init=0,lazy_journal_init=0",
-                "-d", str(staging), str(temporary_image), str(blocks),
-            ]
-            try:
-                subprocess.run(command, env=environment, check=True)
-            except FileNotFoundError as error:
-                raise ImageError("required host tool not found: mkfs.ext4") from error
-            except subprocess.CalledProcessError as error:
-                raise ImageError(f"mkfs.ext4 failed with status {error.returncode}") from error
+            _make_ext4(
+                temporary_image,
+                partition,
+                staging,
+                args.label,
+                args.uuid,
+                environment,
+            )
+            if data_partition is not None:
+                _make_ext4(
+                    temporary_image,
+                    data_partition,
+                    data_staging,
+                    getattr(args, "data_label", "WATEROS_DATA"),
+                    getattr(args, "data_uuid", "574f5300-0000-4000-8000-000000000002"),
+                    environment,
+                )
             # Do not replace a known-good image before the replacement passes
             # both filesystem and manifest validation.
             verify_image(
                 temporary_image,
                 required_paths,
                 manifest_file_contents(args.manifest.resolve()),
+                data_required_paths,
+                manifest_file_contents(Path(data_manifest_value).resolve())
+                if data_manifest_value is not None
+                else None,
             )
             os.replace(temporary_image, image)
             temporary_image = None
@@ -376,6 +417,33 @@ def build_image(args: argparse.Namespace) -> list[str]:
     finally:
         if temporary_image is not None:
             temporary_image.unlink(missing_ok=True)
+
+
+def _make_ext4(
+    image: Path,
+    partition: Partition,
+    staging: Path,
+    label: str,
+    uuid: str,
+    environment: dict[str, str],
+) -> None:
+    if partition.byte_length % DEFAULT_BLOCK_SIZE:
+        raise ImageError("partition size is not aligned to ext4 block size")
+    blocks = partition.byte_length // DEFAULT_BLOCK_SIZE
+    command = [
+        "mkfs.ext4", "-q", "-F", "-b", str(DEFAULT_BLOCK_SIZE),
+        "-L", label, "-U", uuid,
+        # another_ext4 currently requires the 64-bit group descriptor layout.
+        "-O", "^has_journal",
+        "-E", f"offset={partition.byte_offset},lazy_itable_init=0,lazy_journal_init=0",
+        "-d", str(staging), str(image), str(blocks),
+    ]
+    try:
+        subprocess.run(command, env=environment, check=True)
+    except FileNotFoundError as error:
+        raise ImageError("required host tool not found: mkfs.ext4") from error
+    except subprocess.CalledProcessError as error:
+        raise ImageError(f"mkfs.ext4 failed with status {error.returncode}") from error
 
 
 def copy_partition(image: Path, partition: Partition, destination: Path) -> None:
@@ -395,53 +463,82 @@ def debugfs_command(partition_image: Path, command: str) -> str:
 
 
 def verify_image(
-    image: Path, required_paths: Iterable[str], expected_files: dict[str, bytes] | None = None
+    image: Path,
+    required_paths: Iterable[str],
+    expected_files: dict[str, bytes] | None = None,
+    data_required_paths: Iterable[str] | None = None,
+    data_expected_files: dict[str, bytes] | None = None,
 ) -> Partition:
     partitions = read_partitions(image)
     with image.open("rb") as source:
         protective_type = source.read(SECTOR_SIZE)[446 + 4]
     if protective_type == 0xEE:
         verify_gpt_backup(image)
-    if len(partitions) != 1:
-        raise ImageError(f"expected one root partition, found {len(partitions)}")
+    wants_data = data_required_paths is not None or data_expected_files is not None
+    expected_count = 2 if wants_data else 1
+    if len(partitions) != expected_count:
+        raise ImageError(f"expected {expected_count} partition(s), found {len(partitions)}")
     partition = partitions[0]
     if partition.partition_type != LINUX_PARTITION_TYPE:
         raise ImageError(f"root partition type is 0x{partition.partition_type:02x}, expected 0x83")
     if partition.start_sector % DEFAULT_START_SECTOR != 0:
         raise ImageError("root partition is not 1 MiB aligned")
     with tempfile.TemporaryDirectory(prefix="wateros-root-verify-") as temporary:
-        extracted = Path(temporary) / "root.ext4"
-        copy_partition(image, partition, extracted)
-        run(["e2fsck", "-fn", str(extracted)])
-        superblock = run(["dumpe2fs", "-h", str(extracted)]).stdout
-        if f"Block size:               {DEFAULT_BLOCK_SIZE}" not in superblock:
-            raise ImageError("root ext4 block size is not 4096")
-        feature_line = next(
-            (line for line in superblock.splitlines() if line.startswith("Filesystem features:")),
-            "",
+        _verify_ext4_partition(
+            image, partition, Path(temporary) / "root.ext4", required_paths,
+            expected_files, "root",
         )
-        features = set(feature_line.partition(":")[2].split())
-        if "64bit" not in features:
-            raise ImageError("root ext4 must retain the 64bit descriptor layout")
-        if "has_journal" in features:
-            raise ImageError("root ext4 unexpectedly contains a journal")
-        for raw_path in required_paths:
-            guest = checked_guest_path(raw_path)
-            output = debugfs_command(extracted, f"stat {guest}")
-            if "File not found" in output:
-                raise ImageError(f"required root path is missing: {guest}")
-        for index, (raw_path, expected) in enumerate((expected_files or {}).items()):
-            guest = checked_guest_path(raw_path)
-            dumped = Path(temporary) / f"manifest-file-{index}"
-            output = debugfs_command(extracted, f"dump {guest} {dumped}")
-            if "File not found" in output or not dumped.is_file():
-                raise ImageError(f"cannot extract required root file: {guest}")
-            if dumped.read_bytes() != expected:
-                raise ImageError(f"root file content differs from manifest: {guest}")
+        if wants_data:
+            data_partition = partitions[1]
+            if data_partition.partition_type != LINUX_PARTITION_TYPE:
+                raise ImageError("data partition is not Linux type 0x83")
+            _verify_ext4_partition(
+                image, data_partition, Path(temporary) / "data.ext4",
+                data_required_paths or (), data_expected_files, "data",
+            )
     return partition
 
 
-def make_gpt_partition_table(image: Path, image_bytes: int, start_sector: int) -> Partition:
+def _verify_ext4_partition(
+    image: Path,
+    partition: Partition,
+    extracted: Path,
+    required_paths: Iterable[str],
+    expected_files: dict[str, bytes] | None,
+    name: str,
+) -> None:
+    copy_partition(image, partition, extracted)
+    run(["e2fsck", "-fn", str(extracted)])
+    superblock = run(["dumpe2fs", "-h", str(extracted)]).stdout
+    if f"Block size:               {DEFAULT_BLOCK_SIZE}" not in superblock:
+        raise ImageError(f"{name} ext4 block size is not 4096")
+    feature_line = next(
+        (line for line in superblock.splitlines() if line.startswith("Filesystem features:")),
+        "",
+    )
+    features = set(feature_line.partition(":")[2].split())
+    if "64bit" not in features:
+        raise ImageError(f"{name} ext4 must retain the 64bit descriptor layout")
+    if "has_journal" in features:
+        raise ImageError(f"{name} ext4 unexpectedly contains a journal")
+    for raw_path in required_paths:
+        guest = checked_guest_path(raw_path)
+        output = debugfs_command(extracted, f"stat {guest}")
+        if "File not found" in output:
+            raise ImageError(f"required {name} path is missing: {guest}")
+    for index, (raw_path, expected) in enumerate((expected_files or {}).items()):
+        guest = checked_guest_path(raw_path)
+        dumped = extracted.parent / f"{name}-manifest-file-{index}"
+        output = debugfs_command(extracted, f"dump {guest} {dumped}")
+        if "File not found" in output or not dumped.is_file():
+            raise ImageError(f"cannot extract required {name} file: {guest}")
+        if dumped.read_bytes() != expected:
+            raise ImageError(f"{name} file content differs from manifest: {guest}")
+
+
+def make_gpt_partition_table(
+    image: Path, image_bytes: int, start_sector: int, data_size_mib: int = 0
+) -> Partition:
     total_sectors = image_bytes // SECTOR_SIZE
     entry_count, entry_size = 128, 128
     entry_sectors = entry_count * entry_size // SECTOR_SIZE
@@ -449,16 +546,31 @@ def make_gpt_partition_table(image: Path, image_bytes: int, start_sector: int) -
     last_usable = total_sectors - entry_sectors - 2
     if start_sector < first_usable or last_usable <= start_sector:
         raise ImageError("image is too small for GPT metadata and root partition")
-    partition_sectors = ((last_usable - start_sector + 1) // 8) * 8
+    data_sectors = _data_partition_sectors(data_size_mib)
+    partition_sectors = ((last_usable - start_sector + 1 - data_sectors) // 8) * 8
     if partition_sectors <= 0:
         raise ImageError("GPT root partition is too small")
     partition_end = start_sector + partition_sectors - 1
+    data_start = partition_end + 1
+    data_end = data_start + data_sectors - 1
+    if data_sectors and data_end > last_usable:
+        raise ImageError("GPT data partition is outside usable range")
     entries = bytearray(entry_count * entry_size)
+    unique_root = bytes.fromhex("01000000000040008000000000000001")
     entries[:16] = GPT_LINUX_TYPE_GUID
-    entries[16:32] = bytes.fromhex("01000000000040008000000000000001")
+    entries[16:32] = unique_root
     struct.pack_into("<QQ", entries, 32, start_sector, partition_end)
     name = "WaterOS root".encode("utf-16le")
     entries[56 : 56 + len(name)] = name
+    if data_sectors:
+        offset = entry_size
+        entries[offset : offset + 16] = GPT_LINUX_TYPE_GUID
+        entries[offset + 16 : offset + 32] = bytes.fromhex(
+            "02000000000040008000000000000001"
+        )
+        struct.pack_into("<QQ", entries, offset + 32, data_start, data_end)
+        data_name = "WaterOS data".encode("utf-16le")
+        entries[offset + 56 : offset + 56 + len(data_name)] = data_name
     entries_crc = _crc32(entries)
     header = bytearray(SECTOR_SIZE)
     header[:8] = GPT_SIGNATURE
@@ -542,12 +654,17 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--size-mib", type=int, default=DEFAULT_IMAGE_MIB)
     build.add_argument("--start-sector", type=int, default=DEFAULT_START_SECTOR)
     build.add_argument("--partition-table", choices=("mbr", "gpt"), default="mbr")
+    build.add_argument("--data-manifest", type=Path)
+    build.add_argument("--data-size-mib", type=int, default=0)
+    build.add_argument("--data-uuid", default="574f5300-0000-4000-8000-000000000002")
+    build.add_argument("--data-label", default="WATEROS_DATA")
     build.add_argument("--uuid", default=DEFAULT_UUID)
     build.add_argument("--label", default=DEFAULT_LABEL)
     build.add_argument("--force", action="store_true")
     verify = subcommands.add_parser("verify", help="verify partition, ext4 and manifest paths")
     verify.add_argument("--image", type=Path, required=True)
     verify.add_argument("--manifest", type=Path, default=default_manifest)
+    verify.add_argument("--data-manifest", type=Path)
     return result
 
 
@@ -558,7 +675,11 @@ def main(argv: list[str] | None = None) -> int:
             required = build_image(args)
             manifest = args.manifest.resolve()
             partition = verify_image(
-                args.output.resolve(), required, manifest_file_contents(manifest)
+                args.output.resolve(),
+                required,
+                manifest_file_contents(manifest),
+                manifest_paths(args.data_manifest.resolve()) if args.data_manifest else None,
+                manifest_file_contents(args.data_manifest.resolve()) if args.data_manifest else None,
             )
             print(
                 f"built {args.output}: start={partition.start_sector} "
@@ -567,7 +688,11 @@ def main(argv: list[str] | None = None) -> int:
         else:
             manifest = args.manifest.resolve()
             partition = verify_image(
-                args.image.resolve(), manifest_paths(manifest), manifest_file_contents(manifest)
+                args.image.resolve(),
+                manifest_paths(manifest),
+                manifest_file_contents(manifest),
+                manifest_paths(args.data_manifest.resolve()) if args.data_manifest else None,
+                manifest_file_contents(args.data_manifest.resolve()) if args.data_manifest else None,
             )
             print(
                 f"verified {args.image}: start={partition.start_sector} "

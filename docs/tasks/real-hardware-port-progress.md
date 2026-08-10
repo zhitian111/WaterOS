@@ -6324,3 +6324,29 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] expose block partition diagnostics`
+
+## 2026-08-10：批次 143——为物理镜像增加可选 aux 数据分区
+
+### 本批任务与设计
+
+1. 审计根盘工具，确认它能生成并验证单个 MBR/GPT root 分区，但已有 `mount_aux_ro/rw_from_block_path` API 没有对应的镜像构建入口。
+2. 增加可选 `ROOT_IMAGE_DATA_MANIFEST` + `ROOT_IMAGE_DATA_SIZE_MIB`；未设置时保持原有单 root 分区兼容行为。
+3. MBR/GPT 均生成两个 Linux 分区：root manifest 写入分区 1，data manifest 写入分区 2；两个分区分别格式化、校验 ext4 64-bit/no-journal、校验路径和文件内容。
+4. QEMU 只读 smoke 仍选择 `/dev/vda1` 作为 root，同时由 `blocks` 诊断证明 `/dev/vda2` 存在，避免误把整盘或 aux 卷当 root。
+
+### 已完成
+
+- [x] root image CLI、Makefile 和 README 支持可选第二 ext4 分区及独立 UUID/label。
+- [x] MBR/GPT 双布局 host 测试验证分区不重叠、metadata、两个 manifest 内容和失败边界。
+- [x] RISC-V 16 MiB 双分区 QEMU smoke：`disks=1 partitions=2`，发现 `/dev/vda1`、`/dev/vda2`，root RW 挂载成功。
+- [x] LoongArch 16 MiB 双分区 QEMU smoke 同样通过。
+- [x] 保留单分区默认路径；root image/QEMU 12 项 Python 测试、远程监控测试和双架构内核构建通过。
+
+### 验证证据与限制
+
+- aux 分区目前只提供镜像构建和块设备/devfs 暴露；实际调用 `mount_aux_*`、VFS mount namespace、开机自动挂载策略仍需后续接入。
+- `UNVERIFIED_ON_HARDWARE`：真实 SD/eMMC 写屏障、掉电恢复、cache coherency、aux 分区热插拔和控制器错误注入仍未验证；镜像 journal 继续关闭以控制体积。
+
+### 提交
+
+- 本批计划提交：`[feat] add optional aux data partition`
