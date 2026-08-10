@@ -3,14 +3,13 @@
 #![no_std]
 extern crate alloc;
 
-use alloc::{string::String, vec::Vec};
-use core::{ptr, ptr::NonNull};
+use alloc::string::String;
+use core::ptr::NonNull;
 use api_v0::{
     AbsoluteAxis, DriverError, DriverResult, InputDevice, InputDeviceInfo, InputDeviceKind,
     RawInputEvent,
 };
-use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
-use mm_api::addr::PhysPageNum;
+use driver_common::virtio_dma;
 use virtio_drivers::device::input::VirtIOInput;
 use virtio_drivers::transport::DeviceType as VirtioDeviceType;
 use virtio_drivers::transport::pci::{self, PciTransport};
@@ -51,30 +50,13 @@ struct VirtioInputPciHal;
 
 unsafe impl Hal for VirtioInputPciHal {
     fn dma_alloc(pages : usize, _direction : BufferDirection) -> (PhysAddr, NonNull<u8>) {
-        if pages == 0 { return (0, NonNull::dangling()) }
-        let mut ppns = Vec::new();
-        for _ in 0..pages {
-            match frame_alloc_result() {
-                Ok(ppn) => ppns.push(ppn),
-                Err(_) => {
-                    for ppn in ppns { let _ = frame_dealloc_result(ppn); }
-                    return (0, NonNull::dangling());
-                }
-            }
-        }
-        if (1..pages).any(|index| ppns[index - 1].0 != ppns[index].0 + 1) {
-            for ppn in ppns { let _ = frame_dealloc_result(ppn); }
-            return (0, NonNull::dangling());
-        }
-        let address = ppns[pages - 1].0 * PAGE_SIZE;
-        unsafe { ptr::write_bytes(address as *mut u8, 0, pages * PAGE_SIZE) };
-        (address as PhysAddr, NonNull::new(address as *mut u8).unwrap_or(NonNull::dangling()))
+        virtio_dma::alloc(pages)
+            .map(|(address, pointer)| (address as PhysAddr, pointer))
+            .unwrap_or((0, NonNull::dangling()))
     }
 
-    unsafe fn dma_dealloc(paddr : PhysAddr, _vaddr : NonNull<u8>, pages : usize) -> i32 {
-        let base = paddr as usize / PAGE_SIZE;
-        for offset in 0..pages { let _ = frame_dealloc_result(PhysPageNum(base + offset)); }
-        0
+    unsafe fn dma_dealloc(paddr : PhysAddr, vaddr : NonNull<u8>, pages : usize) -> i32 {
+        unsafe { virtio_dma::dealloc(paddr as u64, vaddr, pages) }
     }
 
     unsafe fn mmio_phys_to_virt(paddr : PhysAddr, _size : usize) -> NonNull<u8> {
@@ -82,7 +64,7 @@ unsafe impl Hal for VirtioInputPciHal {
     }
 
     unsafe fn share(buffer : NonNull<[u8]>, _direction : BufferDirection) -> PhysAddr {
-        buffer.as_ptr() as *mut u8 as usize as PhysAddr
+        unsafe { virtio_dma::share_identity(buffer) as PhysAddr }
     }
 
     unsafe fn unshare(_paddr : PhysAddr, _buffer : NonNull<[u8]>, _direction : BufferDirection) {}

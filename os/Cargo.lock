@@ -809,6 +809,7 @@ dependencies = [
  "virtio-drivers",
  "wateros-driver-api-v0",
  "wateros-driver-display-api-v0",
+ "wateros-driver-impl-common",
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor",
  "wateros-runtime-logging",
@@ -821,6 +822,7 @@ dependencies = [
  "virtio-drivers",
  "wateros-driver-api-v0",
  "wateros-driver-display-api-v0",
+ "wateros-driver-impl-common",
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor",
  "wateros-runtime-logging",
@@ -909,6 +911,7 @@ version = "0.1.0"
 dependencies = [
  "virtio-drivers",
  "wateros-driver-api-v0",
+ "wateros-driver-impl-common",
  "wateros-driver-input-api-v0",
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor",
@@ -921,6 +924,7 @@ version = "0.1.0"
 dependencies = [
  "virtio-drivers",
  "wateros-driver-api-v0",
+ "wateros-driver-impl-common",
  "wateros-driver-input-api-v0",
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor",
@@ -962,6 +966,7 @@ dependencies = [
  "spin",
  "virtio-drivers",
  "wateros-driver-api-v0",
+ "wateros-driver-impl-common",
  "wateros-driver-network-api-v0",
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor",
@@ -974,6 +979,7 @@ version = "0.1.0"
 dependencies = [
  "virtio-drivers",
  "wateros-driver-api-v0",
+ "wateros-driver-impl-common",
  "wateros-driver-network-api-v0",
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor",

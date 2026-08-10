@@ -5,14 +5,11 @@
 #![no_std]
 extern crate alloc;
 
-use alloc::vec::Vec;
-use core::ptr;
 use core::ptr::NonNull;
 
 use api_v0::{DriverError, DriverResult, NetworkDevice, DEFAULT_MTU};
 use driver_api::MmioRegion;
-use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
-use mm_api::addr::PhysPageNum;
+use driver_common::virtio_dma;
 use virtio_drivers::device::net::VirtIONet;
 use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
 use virtio_drivers::{BufferDirection, Hal, PhysAddr, PAGE_SIZE};
@@ -27,68 +24,13 @@ struct VirtioMmioHal;
 
 unsafe impl Hal for VirtioMmioHal {
     fn dma_alloc(pages: usize, _direction: BufferDirection) -> (PhysAddr, NonNull<u8>) {
-        if pages == 0 {
-            return (0, NonNull::dangling());
-        }
-        let mut ppns: Vec<PhysPageNum> = Vec::new();
-        for _ in 0..pages {
-            match frame_alloc_result() {
-                Ok(p) => ppns.push(p),
-                Err(_) => {
-                    for q in ppns {
-                        let _ = frame_dealloc_result(q);
-                    }
-                    logging::error!("[virtio-net-hal] dma_alloc: frame pool OOM (pages={})", pages);
-                    return (0, NonNull::dangling());
-                }
-            }
-        }
-        for i in 1..pages {
-            if ppns[i - 1].0 != ppns[i].0 + 1 {
-                for q in ppns {
-                    let _ = frame_dealloc_result(q);
-                }
-                logging::error!(
-                    "[virtio-net-hal] dma_alloc: non-contiguous frames (expect stack PPNs)"
-                );
-                return (0, NonNull::dangling());
-            }
-        }
-        let base_ppn = ppns[pages - 1].0;
-        let Some(paddr_us) = base_ppn.checked_mul(PAGE_SIZE) else {
-            for q in ppns {
-                let _ = frame_dealloc_result(q);
-            }
-            return (0, NonNull::dangling());
-        };
-        let paddr = paddr_us as PhysAddr;
-        let vptr = paddr_us as *mut u8;
-        unsafe {
-            ptr::write_bytes(vptr, 0, pages * PAGE_SIZE);
-        }
-        let Some(nn) = NonNull::new(vptr) else {
-            for q in ppns {
-                let _ = frame_dealloc_result(q);
-            }
-            return (0, NonNull::dangling());
-        };
-        (paddr, nn)
+        virtio_dma::alloc(pages)
+            .map(|(address, pointer)| (address as PhysAddr, pointer))
+            .unwrap_or((0, NonNull::dangling()))
     }
 
     unsafe fn dma_dealloc(paddr: PhysAddr, vaddr: NonNull<u8>, pages: usize) -> i32 {
-        if pages == 0 || paddr == 0 {
-            return 0;
-        }
-        debug_assert_eq!(
-            vaddr.as_ptr() as usize,
-            paddr as usize,
-            "identity DMA: vaddr must match paddr"
-        );
-        let base_ppn = (paddr as usize) / PAGE_SIZE;
-        for i in 0..pages {
-            let _ = frame_dealloc_result(PhysPageNum(base_ppn + i));
-        }
-        0
+        unsafe { virtio_dma::dealloc(paddr as u64, vaddr, pages) }
     }
 
     unsafe fn mmio_phys_to_virt(paddr: PhysAddr, _size: usize) -> NonNull<u8> {
@@ -96,8 +38,7 @@ unsafe impl Hal for VirtioMmioHal {
     }
 
     unsafe fn share(buffer: NonNull<[u8]>, _direction: BufferDirection) -> PhysAddr {
-        let ptr = buffer.as_ptr() as *mut u8 as usize;
-        ptr as PhysAddr
+        unsafe { virtio_dma::share_identity(buffer) as PhysAddr }
     }
 
     unsafe fn unshare(_paddr: PhysAddr, _buffer: NonNull<[u8]>, _direction: BufferDirection) {}

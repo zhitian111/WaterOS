@@ -3,12 +3,10 @@
 #![no_std]
 extern crate alloc;
 
-use alloc::vec::Vec;
-use core::{ptr, ptr::NonNull, slice};
+use core::{ptr::NonNull, slice};
 
 use api_v0::{DisplayDevice, DriverError, DriverResult, FramebufferInfo, PixelFormat};
-use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
-use mm_api::addr::PhysPageNum;
+use driver_common::virtio_dma;
 use virtio_drivers::device::gpu::VirtIOGpu;
 use virtio_drivers::transport::pci::bus::{
     BarInfo, Cam, Command, ConfigurationAccess, DeviceFunction, MemoryBarType, MmioCam, PciRoot,
@@ -70,54 +68,13 @@ struct VirtioGpuPciHal;
 
 unsafe impl Hal for VirtioGpuPciHal {
     fn dma_alloc(pages : usize, _direction : BufferDirection) -> (PhysAddr, NonNull<u8>) {
-        if pages == 0 {
-            return (0, NonNull::dangling());
-        }
-        let mut ppns = Vec::new();
-        for _ in 0..pages {
-            match frame_alloc_result() {
-                Ok(ppn) => ppns.push(ppn),
-                Err(_) => {
-                    for ppn in ppns {
-                        let _ = frame_dealloc_result(ppn);
-                    }
-                    logging::error!("[virtio-gpu-pci] DMA allocation failed pages={}",
-                                    pages);
-                    return (0, NonNull::dangling());
-                }
-            }
-        }
-        for index in 1..pages {
-            if ppns[index - 1].0 != ppns[index].0 + 1 {
-                for ppn in ppns {
-                    let _ = frame_dealloc_result(ppn);
-                }
-                logging::error!("[virtio-gpu-pci] DMA frames are not contiguous");
-                return (0, NonNull::dangling());
-            }
-        }
-        let address = ppns[pages - 1].0
-                                     .saturating_mul(PAGE_SIZE);
-        if address == 0 {
-            return (0, NonNull::dangling());
-        }
-        unsafe { ptr::write_bytes(address as *mut u8, 0, pages * PAGE_SIZE) };
-        let Some(pointer) = NonNull::new(address as *mut u8) else {
-            return (0, NonNull::dangling());
-        };
-        (address as PhysAddr, pointer)
+        virtio_dma::alloc(pages)
+            .map(|(address, pointer)| (address as PhysAddr, pointer))
+            .unwrap_or((0, NonNull::dangling()))
     }
 
     unsafe fn dma_dealloc(paddr : PhysAddr, vaddr : NonNull<u8>, pages : usize) -> i32 {
-        if pages == 0 || paddr == 0 {
-            return 0;
-        }
-        debug_assert_eq!(paddr as usize, vaddr.as_ptr() as usize);
-        let base = paddr as usize / PAGE_SIZE;
-        for offset in 0..pages {
-            let _ = frame_dealloc_result(PhysPageNum(base + offset));
-        }
-        0
+        unsafe { virtio_dma::dealloc(paddr as u64, vaddr, pages) }
     }
 
     unsafe fn mmio_phys_to_virt(paddr : PhysAddr, _size : usize) -> NonNull<u8> {
@@ -125,7 +82,7 @@ unsafe impl Hal for VirtioGpuPciHal {
     }
 
     unsafe fn share(buffer : NonNull<[u8]>, _direction : BufferDirection) -> PhysAddr {
-        buffer.as_ptr() as *mut u8 as usize as PhysAddr
+        unsafe { virtio_dma::share_identity(buffer) as PhysAddr }
     }
 
     unsafe fn unshare(_paddr : PhysAddr, _buffer : NonNull<[u8]>, _direction : BufferDirection) {}

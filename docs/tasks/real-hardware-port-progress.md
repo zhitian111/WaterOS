@@ -2211,3 +2211,28 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - `git diff --check` 通过；未生成大磁盘镜像。
 - helper 的纯边界测试已写入模块，但该共用 crate 的独立 host 测试受其生产版 frame allocator/platform feature 组合限制；双架构编译路径已实际覆盖 helper 和两个 HAL。
 - `UNVERIFIED_ON_HARDWARE`：identity mapping、设备可见性、cache flush/invalidate、VirtIO `share/unshare` 的方向语义、IOMMU 和真实设备停止后释放仍需两平台实机验证；当前 helper 不声称已完成 coherency。
+
+## 2026-08-10：批次 82——VirtIO network/input/display HAL 统一 DMA
+
+### 任务与设计
+
+1. 复查剩余 VirtIO-MMIO/PCI network、input、display HAL，确认它们仍各自逐页分配、假设 PPN 连续并忽略释放错误。
+2. 将六个 HAL（network/input/display 的 MMIO 与 PCI）全部切换到批次 81 的 `driver-impl-common::virtio_dma`。
+3. 不修改 VirtIO vendor 或上层网络包、输入事件、framebuffer 逻辑；`share/unshare` 继续是显式 identity bring-up 适配。
+
+### 完成内容
+
+- [x] VirtIO network MMIO/PCI 使用统一连续 DMA allocator。
+- [x] VirtIO input MMIO/PCI 使用统一连续 DMA allocator。
+- [x] VirtIO display MMIO/PCI 使用统一连续 DMA allocator。
+- [x] 六个 HAL 的释放路径均校验 VA/PA/pages，并传播连续区间释放失败。
+- [x] 删除各 HAL 内重复的逐页回滚、递减 PPN 假设和静默释放代码。
+
+### 验证证据与限制
+
+- `make check`（RISC-V64/pre）通过。
+- `make check ARCH=la PROFILE=pre`（LoongArch64/pre）通过，覆盖 VirtIO PCI network/input/display。
+- Driver DMA API 单元测试：6 项通过。
+- root image 既有测试：6 项通过，未生成大镜像。
+- `git diff --check` 通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 GPU/input/NIC 控制器、cache flush/invalidate、VirtIO `share/unshare` 方向语义、IOMMU、设备停止后释放和实体板热插拔仍需两平台实测；本批只完成 DMA glue 统一，不宣称真实设备可用。
