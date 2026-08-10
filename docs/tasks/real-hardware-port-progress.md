@@ -6866,3 +6866,27 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[test] audit loongson2k1000 bringup gates`
+
+## 2026-08-10：批次 165——收紧 2K1000LA reset/time 平台契约测试
+
+### 本批任务与设计
+
+1. 复查发现 2K1000LA 的 PM/reset-controller 地址和时钟校准仍没有目标板证据；不猜测寄存器序列，也不把 BSP 默认频率当作校准结果。
+2. 为当前安全默认后端增加契约测试：所有 reset 类型/原因必须显式返回 `Unsupported`，时间频率 placeholder 必须稳定可见，便于未来替换真实后端时发现语义回归。
+3. 保持上层 API 的 `Unsupported`/`Failed` 区分，不新增任何未经验证的 MMIO 写操作。
+
+### 已完成
+
+- [x] 2K1000LA reset backend 增加 shutdown/cold/warm 与两种 reason 的 fail-closed 回归测试。
+- [x] 2K1000LA time backend 增加 100 MHz placeholder 契约测试，并在测试中明确其不是硬件校准证据。
+- [x] 保留源代码中的 `TODO(real-hardware)` 和 `UNVERIFIED_ON_HARDWARE` 边界标记。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path os/components/wateros-platform/platform-impl/impl-loongson2k1000la/Cargo.toml --lib`：8 项通过。
+- LoongArch64 target `cargo check`（`api-v0`）：通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 reset-controller/PMU 序列、CPUCFG/boot-parameter 时钟频率、复位后固件行为仍需目标板验证；本批没有宣称 reset 或时间校准已完成。
+
+### 提交
+
+- 待提交：`[test] lock loongson platform reset contracts`

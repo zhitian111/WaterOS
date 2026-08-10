@@ -7,3 +7,14 @@ impl PlatformTime for Loongson2K1000LATime {
     }
 }
 pub use Loongson2K1000LATime as PlatformTimeImpl;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placeholder_frequency_is_stable_and_documented() {
+        // This is the current BSP placeholder, not hardware calibration evidence.
+        assert_eq!(Loongson2K1000LATime::get_time_frequency_hz(), Ok(100_000_000));
+    }
+}
