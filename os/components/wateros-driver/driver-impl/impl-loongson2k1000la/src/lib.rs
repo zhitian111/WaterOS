@@ -29,6 +29,7 @@ pub mod apbdma;
 pub mod apbdma_mmio;
 pub mod dma_memory;
 pub mod gpio;
+pub mod gmac;
 mod machine;
 pub mod topology;
 #[cfg(feature = "uart-16550")]
@@ -83,6 +84,19 @@ pub fn init_after_boot() -> DriverResult<()> {
                        .len(),
                topology.mmc_hosts
                        .len());
+    for network in &topology.networks {
+        match gmac::evaluate(network, gmac::GmacActivationEvidence::default()) {
+            gmac::GmacActivation::Deferred(blockers) => {
+                log::warn!("[driver-ls2k][gmac] deferred pci={}:{}/{} blockers={:?}; \
+                            BAR/DMA/IRQ/PHY activation=UNVERIFIED_ON_HARDWARE",
+                           network.bus, network.device, network.function, blockers);
+            }
+            gmac::GmacActivation::Ready(plan) => {
+                log::info!("[driver-ls2k][gmac] activation plan pci={}:{}/{} irq_count={}",
+                           plan.bus, plan.device, plan.function, plan.interrupt_count);
+            }
+        }
+    }
     for host in &topology.mmc_hosts {
         let plan = mmc::plan(host).map_err(|error| {
                                       log::error!("[driver-ls2k][mmc] invalid deferred plan: {:?}",

@@ -6373,3 +6373,27 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] add loongson gmac discovery contract`
+
+## 2026-08-10：批次 145——补齐 GMAC 激活前置条件与诊断
+
+### 本批任务与设计
+
+1. 复核上一批 DTB 网络发现结果，确认其已经进入 2K1000LA 启动路径。
+2. 新增纯状态机，将 PCI function、interrupt、PHY 描述与 BAR/DMA/IRQ/链路证据分开校验。
+3. 默认所有真实硬件证据为未验证，返回 deferred blockers；只有证据全部齐全才产生可复制的 activation plan。
+
+### 已完成
+
+- [x] 新增 `gmac::evaluate`、`GmacBlocker`、`GmacActivationEvidence` 和 `GmacActivationPlan`。
+- [x] 启动日志按每个 GMAC 输出 PCI 位置和阻塞原因，明确不会执行未经验证的 MMIO。
+- [x] 增加默认 deferred、完整证据 ready、坏 function/中断命名三组 host 测试。
+- [x] 相关 crate host 测试 189 项通过；LoongArch64 `cargo check` 通过。
+
+### 验证证据与限制
+
+- 当前 `Ready` 仅代表前置条件状态机通过，不等于真实 GMAC 已初始化；尚无 PCI config、BAR、DMA、MDIO 或 PHY link 的物理证据。
+- `UNVERIFIED_ON_HARDWARE`：真实板必须补做 PCIe ECAM 读写保护、BAR 分配、descriptor ownership、IRQ 路由和收发回环测试。
+
+### 提交
+
+- 本批计划提交：`[feat] add gmac activation prerequisites`
