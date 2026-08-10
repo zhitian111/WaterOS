@@ -34,6 +34,53 @@ pub enum PciProbeResult {
     Present(PciIdentity),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PciBar {
+    Io { index : u8, base : u32 },
+    Memory32 { index : u8, base : u32, prefetchable : bool },
+    Memory64 { index : u8, base : u64, prefetchable : bool },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PciBarError {
+    InvalidIndex,
+    MissingUpperHalf,
+    UnsupportedMemoryType,
+    Unassigned,
+}
+
+/// Decode one already-read PCI BAR without probing or writing configuration.
+pub fn parse_bar(index : u8, low : u32, high : Option<u32>) -> Result<PciBar, PciBarError> {
+    if index >= 6 {
+        return Err(PciBarError::InvalidIndex);
+    }
+    if low == 0 {
+        return Err(PciBarError::Unassigned);
+    }
+    if low & 1 != 0 {
+        return Ok(PciBar::Io { index,
+                               base : low & !3 });
+    }
+    let memory_type = (low >> 1) & 3;
+    let prefetchable = low & 8 != 0;
+    match memory_type {
+        0 => Ok(PciBar::Memory32 { index,
+                                   base : low & !0xf,
+                                   prefetchable }),
+        2 => Ok(PciBar::Memory64 { index,
+                                   base : (u64::from(high.ok_or(PciBarError::MissingUpperHalf)? ) << 32) |
+                                          u64::from(low & !0xf),
+                                   prefetchable }),
+        _ => Err(PciBarError::UnsupportedMemoryType),
+    }
+}
+
+pub const fn bar_is_assigned(bar : Result<PciBar, PciBarError>) -> bool {
+    matches!(bar, Ok(PciBar::Io { base, .. }) if base != 0) ||
+    matches!(bar, Ok(PciBar::Memory32 { base, .. }) if base != 0) ||
+    matches!(bar, Ok(PciBar::Memory64 { base, .. }) if base != 0)
+}
+
 /// Return the ECAM byte offset for one aligned config-space register.
 pub fn ecam_offset(location : PciLocation, register : u16) -> Result<u64, PciProbeError> {
     if register >= 0x1000 || register % 4 != 0 {
@@ -185,5 +232,29 @@ mod tests {
                                                                                     size : 3 })
                         },
                         Err(PciProbeError::InvalidWindow)));
+    }
+
+    #[test]
+    fn bar_decoder_handles_io_32_and_64_bit_memory_bars() {
+        assert_eq!(parse_bar(0, 0x0000_1001, None),
+                   Ok(PciBar::Io { index : 0, base : 0x1000 }));
+        assert_eq!(parse_bar(1, 0x8000_0008, None),
+                   Ok(PciBar::Memory32 { index : 1,
+                                         base : 0x8000_0000,
+                                         prefetchable : true }));
+        assert_eq!(parse_bar(2, 0x0000_0004, Some(0x0000_0001)),
+                   Ok(PciBar::Memory64 { index : 2,
+                                         base : 0x1_0000_0000,
+                                         prefetchable : false }));
+        assert!(bar_is_assigned(parse_bar(0, 0x1001, None)));
+    }
+
+    #[test]
+    fn bar_decoder_rejects_unassigned_and_malformed_bars() {
+        assert_eq!(parse_bar(0, 0, None), Err(PciBarError::Unassigned));
+        assert_eq!(parse_bar(6, 0x1000, None), Err(PciBarError::InvalidIndex));
+        assert_eq!(parse_bar(0, 0x0000_0004, None), Err(PciBarError::MissingUpperHalf));
+        assert_eq!(parse_bar(0, 0x0000_0006, None), Err(PciBarError::UnsupportedMemoryType));
+        assert!(!bar_is_assigned(parse_bar(0, 0, None)));
     }
 }

@@ -7166,3 +7166,27 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[feat] add loongson pci ecam reader`
+
+## 2026-08-10：批次 177——补齐 PCI BAR 只读解析契约
+
+### 本批任务与设计
+
+1. 在 ECAM identity reader 之上解析 BAR 原始值，为 GMAC 的 `bar_assigned` 证据提供可复用基础。
+2. 只做纯解码，不执行 BAR size probing、写配置空间或资源分配。
+3. 对 I/O、32 位 MMIO、64 位 MMIO、未分配和非法 memory type 分别建模；缺少 64 位高半部直接拒绝。
+
+### 已完成
+
+- [x] 新增 `PciBar`/`PciBarError` 和 `parse_bar`。
+- [x] 新增 `bar_is_assigned`，只有非零、成功解码的 BAR 才能形成“已分配”证据。
+- [x] 增加 7 项 PCI 单测，覆盖地址掩码、64 位组合、未分配和 malformed BAR。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path components/wateros-driver/driver-impl/impl-loongson2k1000la/Cargo.toml --lib pci::tests`：7 项通过。
+- `cargo check --manifest-path components/wateros-driver/driver-impl/impl-loongson2k1000la/Cargo.toml --target loongarch64-unknown-none`：通过。
+- `UNVERIFIED_ON_HARDWARE`：BAR 原始值尚未从真实 ECAM 读取，仍未执行 BAR 分配/size probing；GMAC DMA、PHY、IRQ 和链路收发继续阻断激活。
+
+### 提交
+
+- 待提交：`[feat] decode loongson pci bars`
