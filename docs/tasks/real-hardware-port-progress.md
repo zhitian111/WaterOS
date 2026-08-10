@@ -4142,3 +4142,65 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - `[feat] model LS2K1000 MMC read completion`
+
+## 2026-08-10：批次 85——LS2K1000 MMC/APBDMA 组合恢复 typestate
+
+### 任务与设计
+
+1. 审计 APBDMA `RecoverySession→QuiescedSession→finish()` 与 DmaMapping ownership/sync 契约。
+2. MMC 恢复要求 cleanup 前后 snapshot：post 必须 command/data idle、CARG/CCTL=0、INT readback=0。
+3. DMA 恢复要求独立的 quiesced evidence；token 在生产构建中没有构造器。
+4. MMC 与 DMA 两侧均 quiesced 后才允许执行 `sync_for_cpu`。
+5. sync 失败必须返回完整 recovery 以便重试，不能 drop 或取回 owned resource。
+
+组合 recovery 按值继承批次 84 的失败资源和原始 completion evidence。资源持续保存在
+`ManuallyDrop<B>`；只有 MMC gate、DMA gate 和 synchronizer 三步全部成功，才转换为
+`ReadRecovered<B>` 并开放 `into_buffer()`。当前组合 recovery 仅能由 test fixture 构造。
+
+### 完成内容
+
+- [x] 新增无生产构造器的 `ReadDmaQuiescedEvidence`，作为未来 APBDMA QuiescedSession adapter 输出。
+- [x] 新增 `ReadCombinedRecovery<B>`、`ReadCombinedRecoveryFailure<B>` 与 `ReadRecovered<B>`。
+- [x] 组合 recovery 保留原始 `DeferredReadPlan`、completion failure 和 partial completion evidence。
+- [x] `record_mmc_quiesced(before,after)` 验证 after CSTS/DSTS idle。
+- [x] before/after 任一含 INT[31:10] 未知位均拒绝，保留具体 unknown mask。
+- [x] after INT 非零返回 `MmcInterruptStillPending`，要求 W1C 后 readback 为零。
+- [x] after CARG/CCTL 非零返回 `MmcCommandRegistersDirty`。
+- [x] `record_dma_quiesced()` 消费独立 token；MMC/DMA evidence 均拒绝重复提交。
+- [x] 新增 `ReadRecoverySync<B>`，只在两侧 gate 都满足后调用一次。
+- [x] 缺 MMC/DMA evidence 时 sync 调用次数保持零，资源继续隔离。
+- [x] sync failure 返回 `SyncForCpu(DriverError)` 和原 recovery；重试成功后才归还资源。
+- [x] production 仍无 completion tracker、combined recovery 或 DMA quiesced token 构造入口。
+- [x] 没有接入真实 APBDMA session、DmaMapping、RegisterIo、IRQ owner 或 machine init。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 129 项全部通过；新增 4 项组合恢复聚合测试。
+- MMC-first 与 DMA-first 两种 gate 顺序均验证：sync 仅调用一次，buffer 从 40 更新后返回 41。
+- MMC invalid matrix 覆盖 CSTS active、DSTS active、post unknown INT、pre unknown INT、pending DFIN、dirty CARG/CCTL。
+- 每个 MMC invalid fixture 均保留 recovery，可用后续 clean snapshot 重试成功。
+- missing-gate fixture 先后验证 MmcEvidenceMissing/DmaEvidenceMissing，sync call count 始终为零。
+- fault-injected sync 第一次返回 IoError，recovery 保留两侧 gate；第二次 sync 成功后返回原资源。
+- duplicate matrix 覆盖 MMC 与 DMA quiesce evidence 重复提交。
+- production 组件 `cargo check` 无新增 warning；LoongArch64 精确 target check 通过，仅有仓库既有 warning。
+- 新代码为纯内存 generic typestate，未执行物理 MMIO、APBDMA stop、cache instruction 或卡片访问。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：MMC idle/cleanup/INT readback 与 APBDMA stop confirmation 能否稳定组合，尚未逐板验证。
+- [ ] `ReadDmaQuiescedEvidence` 尚未由真实 `apbdma::QuiescedSession` 产生；生产构建没有 adapter。
+- [ ] `ReadRecoverySync` fixture 只模拟失败/重试；没有绑定真实 `DmaMapping<FromDevice>::complete_from_device()`。
+- [ ] 两份 MMC snapshot 没有 generation counter；未来 executor 必须在独占 owner 下固定顺序采集。
+- [ ] before/after 验证不执行 W1C/cleanup；真实恢复必须保留每个 write/read fault stage。
+- [ ] `ManuallyDrop` recovery 会永久隔离未恢复资源；未来需要 board-level quarantine/诊断统计，避免静默内存损失。
+- [ ] CMD18 stop/CMD12、card state 和 partial block count 仍未进入 recovery contract。
+- [ ] 下一批应在 APBDMA 模块增加一次性、不可伪造的 quiesced handoff token，并用 DmaMapping fixture 将 token、sync 和 CPU ownership真正串起来；仍保持 MMC production executor 关闭。
+
+### 参考与许可证
+
+- `docs/references/loongson2-mmc-upstream.md`
+- 本批复用仓库自有 APBDMA/DMA ownership API，未引入第三方代码。
+
+### 提交
+
+- `[feat] isolate LS2K1000 MMC read recovery`

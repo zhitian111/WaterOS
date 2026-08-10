@@ -13,7 +13,7 @@ use crate::{
         SupplyDescription, SupplyProvider,
     },
 };
-use api_v0::MmioRegion;
+use api_v0::{DriverError, MmioRegion};
 use core::{marker::PhantomData, mem::ManuallyDrop};
 use core::sync::atomic::{AtomicBool, Ordering};
 use dw_mmc::mmc::MmcError;
@@ -1146,6 +1146,144 @@ pub enum ReadCompletionProgress<B> {
     RecoveryRequired(ReadCompletionRecovery<B>),
 }
 
+/// Private proof placeholder produced only after an APBDMA session reaches its
+/// quiesced typestate. There is no production constructor yet.
+pub struct ReadDmaQuiescedEvidence {
+    _private : (),
+}
+
+#[cfg(test)]
+impl ReadDmaQuiescedEvidence {
+    fn fixture() -> Self { Self { _private : () } }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadCombinedRecoveryError {
+    MmcStillActive,
+    MmcUnknownInterrupt(u32),
+    MmcInterruptStillPending(u32),
+    MmcCommandRegistersDirty,
+    DuplicateMmcEvidence,
+    DuplicateDmaEvidence,
+    MmcEvidenceMissing,
+    DmaEvidenceMissing,
+    SyncForCpu(DriverError),
+}
+
+/// Cache/ownership operation performed only after both hardware sides are
+/// quiesced. A real implementation must delegate to the DMA mapping backend.
+pub trait ReadRecoverySync<B> {
+    fn sync_for_cpu(&mut self, buffer : &mut B) -> Result<(), DriverError>;
+}
+
+/// Combination of a failed MMC transfer resource and two independent quiesce
+/// gates. The resource remains manually isolated until cache sync succeeds.
+pub struct ReadCombinedRecovery<B> {
+    plan : DeferredReadPlan,
+    completion_failure : ReadCompletionFailure,
+    completion_evidence : ReadCompletionEvidence,
+    mmc_quiesced : bool,
+    dma_quiesced : bool,
+    _buffer : ManuallyDrop<B>,
+}
+
+pub struct ReadCombinedRecoveryFailure<B> {
+    pub error : ReadCombinedRecoveryError,
+    pub recovery : ReadCombinedRecovery<B>,
+}
+
+pub struct ReadRecovered<B> {
+    pub plan : DeferredReadPlan,
+    pub original_failure : ReadCompletionFailure,
+    pub completion_evidence : ReadCompletionEvidence,
+    buffer : B,
+}
+
+impl<B> ReadRecovered<B> {
+    pub fn into_buffer(self) -> B { self.buffer }
+}
+
+#[cfg(test)]
+impl<B> ReadCombinedRecovery<B> {
+    fn from_completion_fixture(recovery : ReadCompletionRecovery<B>) -> Self {
+        Self { plan : recovery.plan,
+               completion_failure : recovery.failure,
+               completion_evidence : recovery.evidence,
+               mmc_quiesced : false,
+               dma_quiesced : false,
+               _buffer : recovery._buffer }
+    }
+}
+
+impl<B> ReadCombinedRecovery<B> {
+    pub const fn mmc_quiesced(&self) -> bool { self.mmc_quiesced }
+
+    pub const fn dma_quiesced(&self) -> bool { self.dma_quiesced }
+
+    fn failure(self, error : ReadCombinedRecoveryError) -> ReadCombinedRecoveryFailure<B> {
+        ReadCombinedRecoveryFailure { error, recovery : self }
+    }
+
+    /// Record the snapshot before W1C/cleanup and the verified readback after
+    /// cleanup. This method does not itself perform MMIO.
+    pub fn record_mmc_quiesced(
+        mut self,
+        before : CommandPostSnapshot,
+        after : CommandPostSnapshot)
+        -> Result<Self, ReadCombinedRecoveryFailure<B>> {
+        if self.mmc_quiesced {
+            return Err(self.failure(ReadCombinedRecoveryError::DuplicateMmcEvidence));
+        }
+        if after.command_status & CSTS_ON != 0 || after.data_status & DSTS_ACTIVE != 0 {
+            return Err(self.failure(ReadCombinedRecoveryError::MmcStillActive));
+        }
+        let unknown = (before.interrupts | after.interrupts) & !INT_CLEAR;
+        if unknown != 0 {
+            return Err(self.failure(ReadCombinedRecoveryError::MmcUnknownInterrupt(unknown)));
+        }
+        if after.interrupts != 0 {
+            return Err(self.failure(ReadCombinedRecoveryError::MmcInterruptStillPending(
+                after.interrupts,
+            )));
+        }
+        if after.argument != 0 || after.control != 0 {
+            return Err(self.failure(ReadCombinedRecoveryError::MmcCommandRegistersDirty));
+        }
+        self.mmc_quiesced = true;
+        Ok(self)
+    }
+
+    pub fn record_dma_quiesced(
+        mut self,
+        _evidence : ReadDmaQuiescedEvidence)
+        -> Result<Self, ReadCombinedRecoveryFailure<B>> {
+        if self.dma_quiesced {
+            return Err(self.failure(ReadCombinedRecoveryError::DuplicateDmaEvidence));
+        }
+        self.dma_quiesced = true;
+        Ok(self)
+    }
+
+    pub fn sync_for_cpu<S : ReadRecoverySync<B>>(
+        mut self,
+        synchronizer : &mut S)
+        -> Result<ReadRecovered<B>, ReadCombinedRecoveryFailure<B>> {
+        if !self.mmc_quiesced {
+            return Err(self.failure(ReadCombinedRecoveryError::MmcEvidenceMissing));
+        }
+        if !self.dma_quiesced {
+            return Err(self.failure(ReadCombinedRecoveryError::DmaEvidenceMissing));
+        }
+        if let Err(error) = synchronizer.sync_for_cpu(&mut self._buffer) {
+            return Err(self.failure(ReadCombinedRecoveryError::SyncForCpu(error)));
+        }
+        Ok(ReadRecovered { plan : self.plan,
+                           original_failure : self.completion_failure,
+                           completion_evidence : self.completion_evidence,
+                           buffer : ManuallyDrop::into_inner(self._buffer) })
+    }
+}
+
 impl<B> ReadCompletionTracker<B> {
     #[cfg(test)]
     fn new(plan : DeferredReadPlan, buffer : B) -> Self {
@@ -2179,6 +2317,169 @@ mod tests {
             assert_eq!(recovery.failure, ReadCompletionFailure::Dma(failure));
             assert_eq!(recovery.reclaim_fixture(), 5);
         }
+    }
+
+    fn combined_recovery<B>(buffer : B) -> ReadCombinedRecovery<B> {
+        let recovery = match completion_tracker(buffer)
+            .command_failed(ReadCommandFailure::ResponseCrc)
+        {
+            ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+            _ => panic!("fixture command failure did not isolate"),
+        };
+        ReadCombinedRecovery::from_completion_fixture(recovery)
+    }
+
+    fn clean_post() -> CommandPostSnapshot {
+        CommandPostSnapshot { argument : 0,
+                              control : 0,
+                              command_status : 0,
+                              data_status : 0,
+                              interrupts : 0 }
+    }
+
+    fn accepted<B>(result : Result<ReadCombinedRecovery<B>, ReadCombinedRecoveryFailure<B>>)
+                   -> ReadCombinedRecovery<B> {
+        match result {
+            Ok(recovery) => recovery,
+            Err(_) => panic!("valid quiesce evidence rejected"),
+        }
+    }
+
+    struct RecoverySync {
+        calls : usize,
+        fail_calls : usize,
+    }
+
+    impl ReadRecoverySync<u32> for RecoverySync {
+        fn sync_for_cpu(&mut self, buffer : &mut u32) -> Result<(), DriverError> {
+            self.calls += 1;
+            if self.calls <= self.fail_calls {
+                return Err(DriverError::IoError);
+            }
+            *buffer += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn combined_recovery_requires_both_quiesce_gates_before_sync() {
+        for dma_first in [false, true] {
+            let mut recovery = combined_recovery(40u32);
+            if dma_first {
+                recovery = accepted(recovery.record_dma_quiesced(
+                    ReadDmaQuiescedEvidence::fixture(),
+                ));
+                recovery = accepted(recovery.record_mmc_quiesced(clean_post(), clean_post()));
+            } else {
+                recovery = accepted(recovery.record_mmc_quiesced(clean_post(), clean_post()));
+                recovery = accepted(recovery.record_dma_quiesced(
+                    ReadDmaQuiescedEvidence::fixture(),
+                ));
+            }
+            assert!(recovery.mmc_quiesced());
+            assert!(recovery.dma_quiesced());
+            let mut sync = RecoverySync { calls : 0, fail_calls : 0 };
+            let recovered = match recovery.sync_for_cpu(&mut sync) {
+                Ok(recovered) => recovered,
+                Err(_) => panic!("fully quiesced resource did not recover"),
+            };
+            assert_eq!(sync.calls, 1);
+            assert_eq!(recovered.original_failure,
+                       ReadCompletionFailure::Command(ReadCommandFailure::ResponseCrc));
+            assert_eq!(recovered.into_buffer(), 41);
+        }
+    }
+
+    #[test]
+    fn combined_recovery_rejects_invalid_mmc_readback_and_can_retry() {
+        let clean = clean_post();
+        let invalid = [
+            (CommandPostSnapshot { command_status : CSTS_ON, ..clean },
+             ReadCombinedRecoveryError::MmcStillActive),
+            (CommandPostSnapshot { data_status : DSTS_ACTIVE, ..clean },
+             ReadCombinedRecoveryError::MmcStillActive),
+            (CommandPostSnapshot { interrupts : 1 << 31, ..clean },
+             ReadCombinedRecoveryError::MmcUnknownInterrupt(1 << 31)),
+            (CommandPostSnapshot { interrupts : INT_DATA_FINISHED, ..clean },
+             ReadCombinedRecoveryError::MmcInterruptStillPending(INT_DATA_FINISHED)),
+            (CommandPostSnapshot { argument : 1, ..clean },
+             ReadCombinedRecoveryError::MmcCommandRegistersDirty),
+            (CommandPostSnapshot { control : CCTL_START, ..clean },
+             ReadCombinedRecoveryError::MmcCommandRegistersDirty),
+        ];
+        for (after, expected) in invalid {
+            let failure = match combined_recovery(9u8).record_mmc_quiesced(clean, after) {
+                Ok(_) => panic!("invalid MMC readback accepted"),
+                Err(failure) => failure,
+            };
+            assert_eq!(failure.error, expected);
+            assert!(!failure.recovery.mmc_quiesced());
+            let retried = accepted(failure.recovery.record_mmc_quiesced(clean, clean));
+            assert!(retried.mmc_quiesced());
+        }
+        let before_unknown = CommandPostSnapshot { interrupts : 1 << 30, ..clean };
+        let failure = match combined_recovery(10u8)
+            .record_mmc_quiesced(before_unknown, clean)
+        {
+            Ok(_) => panic!("unknown pre-clear interrupt accepted"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error,
+                   ReadCombinedRecoveryError::MmcUnknownInterrupt(1 << 30));
+    }
+
+    #[test]
+    fn combined_recovery_preserves_resource_across_missing_and_failed_sync() {
+        let mut sync = RecoverySync { calls : 0, fail_calls : 1 };
+        let failure = match combined_recovery(10u32).sync_for_cpu(&mut sync) {
+            Ok(_) => panic!("sync ran without MMC evidence"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error, ReadCombinedRecoveryError::MmcEvidenceMissing);
+        assert_eq!(sync.calls, 0);
+        let recovery = accepted(failure.recovery.record_mmc_quiesced(clean_post(), clean_post()));
+        let failure = match recovery.sync_for_cpu(&mut sync) {
+            Ok(_) => panic!("sync ran without DMA evidence"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error, ReadCombinedRecoveryError::DmaEvidenceMissing);
+        assert_eq!(sync.calls, 0);
+        let recovery = accepted(failure.recovery.record_dma_quiesced(
+            ReadDmaQuiescedEvidence::fixture(),
+        ));
+        let failure = match recovery.sync_for_cpu(&mut sync) {
+            Ok(_) => panic!("fault-injected sync succeeded"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error,
+                   ReadCombinedRecoveryError::SyncForCpu(DriverError::IoError));
+        assert!(failure.recovery.mmc_quiesced());
+        assert!(failure.recovery.dma_quiesced());
+        let recovered = match failure.recovery.sync_for_cpu(&mut sync) {
+            Ok(recovered) => recovered,
+            Err(_) => panic!("sync retry did not recover"),
+        };
+        assert_eq!(sync.calls, 2);
+        assert_eq!(recovered.into_buffer(), 11);
+    }
+
+    #[test]
+    fn combined_recovery_rejects_duplicate_quiesce_evidence() {
+        let recovery = accepted(combined_recovery(1u8)
+            .record_mmc_quiesced(clean_post(), clean_post()));
+        let failure = match recovery.record_mmc_quiesced(clean_post(), clean_post()) {
+            Ok(_) => panic!("duplicate MMC evidence accepted"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error, ReadCombinedRecoveryError::DuplicateMmcEvidence);
+        let recovery = accepted(failure.recovery.record_dma_quiesced(
+            ReadDmaQuiescedEvidence::fixture(),
+        ));
+        let failure = match recovery.record_dma_quiesced(ReadDmaQuiescedEvidence::fixture()) {
+            Ok(_) => panic!("duplicate DMA evidence accepted"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error, ReadCombinedRecoveryError::DuplicateDmaEvidence);
     }
 
     #[test]
