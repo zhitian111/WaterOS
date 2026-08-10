@@ -6539,3 +6539,27 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[docs] document explicit aux mount path`
+
+## 2026-08-10：批次 152——增加可选 aux 分区启动期挂载 hook
+
+### 本批任务与设计
+
+1. 审计 QEMU root-image smoke：默认只证明 `/dev/vda2` 被发现，未验证 mount；因此新增显式配置入口而不改变默认启动。
+2. 使用编译期 `WATEROS_AUX_BLOCK_PATH`、`WATEROS_AUX_MOUNT_POINT` 和可选 `WATEROS_AUX_READONLY=1`。
+3. root 与 `/proc` 成功后调用既有 `vfs::mount_ext4_block_at`；未配置完全跳过，配置不完整或挂载失败仅告警，不阻断 root/userspace。
+
+### 已完成
+
+- [x] `user_bringup_bus` 增加 fail-soft aux mount hook，复用 VFS mount namespace 和 cache generation 生命周期。
+- [x] 默认构建不设置变量，因此单分区镜像行为不变。
+- [x] 使用 `WATEROS_AUX_BLOCK_PATH=/dev/vda2`, `WATEROS_AUX_MOUNT_POINT=/data`, `WATEROS_AUX_READONLY=1` 成功完成 RISC-V kernel 编译门禁。
+- [x] root-image host/QEMU smoke 12 项仍通过。
+
+### 验证证据与限制
+
+- 本批验证了编译期配置和调用链，但未在 guest 中执行 `/dev/vda2` 实际 mount；需要 root manifest 预置 `/data` 空目录并运行带配置的 QEMU kernel 才能完成端到端证据。
+- `UNVERIFIED_ON_HARDWARE`：真实 SD/eMMC 分区时序、mount failure recovery、掉电一致性仍待实机。
+
+### 提交
+
+- 本批计划提交：`[feat] add optional aux boot mount`
