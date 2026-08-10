@@ -8,3 +8,8 @@ pub(crate) fn sync() {
     log::info!("[driver-ls2k][devfs] refreshed after UART registration, nodes={}",
                node_count);
 }
+
+/// 当前 LA devfs 软件视图代际；不代表硬件热插拔已验证。
+pub fn generation() -> u64 {
+    fs::devfs::active_impl::generation()
+}

@@ -58,3 +58,6 @@ pub fn set_dt_unsupported_paths(paths: Vec<String>) {
     let mut m = DummyDevFsManager;
     m.set_dt_unsupported_paths(paths);
 }
+
+/// Dummy devfs 永远没有可见节点，代际固定为零。
+pub fn generation() -> u64 { 0 }

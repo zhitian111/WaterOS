@@ -104,11 +104,12 @@ fn capabilities_response() -> alloc::string::String {
     let Some(snapshot) = driver::loongson2k1000_capability_snapshot() else {
         return alloc::string::String::from("capabilities unavailable\r\n");
     };
-    format!("capabilities uart={} irq={} mmc={} dma={} states=uart:{:?},irq:{:?},mmc:{:?},dma:{:?},network:{:?},input:{:?}\r\n",
+    format!("capabilities uart={} irq={} mmc={} dma={} devfs_generation={:?} states=uart:{:?},irq:{:?},mmc:{:?},dma:{:?},network:{:?},input:{:?}\r\n",
             snapshot.uart_count,
             snapshot.irq_controller_count,
             snapshot.mmc_count,
             snapshot.dma_controller_count,
+            driver::loongson2k1000_devfs_generation(),
             snapshot.uart,
             snapshot.irq,
             snapshot.mmc,

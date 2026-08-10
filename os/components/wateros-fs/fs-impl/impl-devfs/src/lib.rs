@@ -40,6 +40,7 @@ pub struct DevNode {
 // 本变量代码由AI完成
 static DEV_NODES: Mutex<Vec<DevNode>> = Mutex::new(Vec::new());
 static DEVFS_GENERATION : AtomicU64 = AtomicU64::new(0);
+static VIEW_GENERATION : AtomicU64 = AtomicU64::new(0);
 
 fn ensure_fresh() {
     if DEVFS_GENERATION.load(Ordering::Acquire) != device_topology_generation() {
@@ -102,7 +103,14 @@ pub fn refresh() -> usize {
     }
     logging::trace!("[fs::devfs] refresh done, block_nodes={}", nodes.len());
     DEVFS_GENERATION.store(observed_generation, Ordering::Release);
+    VIEW_GENERATION.fetch_add(1, Ordering::AcqRel);
     nodes.len()
+}
+
+/// 返回当前软件 devfs 节点视图的代际号。
+pub fn generation() -> u64 {
+    ensure_fresh();
+    VIEW_GENERATION.load(Ordering::Acquire)
 }
 
 /// 返回当前缓存的节点列表副本。
@@ -161,6 +169,7 @@ mod tests {
 
     #[test]
     fn lookup_lazily_tracks_registration_and_removal() {
+        let before = generation();
         let device : SharedBlockDevice = Arc::new(Mutex::new(Box::new(EmptyDisk)));
         let index = register_block_device(device);
         let path = list_nodes()
@@ -169,6 +178,7 @@ mod tests {
             .map(|node| node.path)
             .expect("new disk should appear without explicit refresh");
         assert!(lookup_block_device(path.as_str()).is_ok());
+        assert!(generation() > before);
         assert!(unregister_block_device(index));
         assert!(matches!(lookup_block_device(path.as_str()), Err(FsError::NotFound)));
         assert!(!list_nodes().iter().any(|node| node.index == index));

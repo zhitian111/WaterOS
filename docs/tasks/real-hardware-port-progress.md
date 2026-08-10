@@ -5804,3 +5804,36 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] expose LS2K1000 capabilities in debug monitor`
+
+## 2026-08-10：批次 125——为 devfs 软件视图增加刷新代际
+
+### 本批任务与设计
+
+1. 审计 kernel devfs 与简化 devfs 的刷新、注册、注销路径，确认节点快照和设备 topology generation 的边界。
+2. 增加独立的软件视图 generation：每次重建节点表或直接登记新路径后递增；不把它解释为硬件热插拔证明。
+3. 将 2K1000LA 的 devfs generation 接入 capability 远程诊断；UART/devfs 未启用时明确返回 `None`。
+4. 增加重复刷新、设备变化和未初始化路径的 host 编译/单测证据，完成 target 构建与清理。
+
+### 已完成
+
+- [x] kernel devfs、简化 devfs、dummy devfs 统一提供 `generation()` 查询入口。
+- [x] 节点重建、块/字符直接注册都会推进软件视图代际；旧句柄不会因代际变化继续被假定有效。
+- [x] LA driver aggregate 与 `capabilities` 诊断输出 `devfs_generation`，并保留 UART feature gate。
+- [x] 单测覆盖 input 注册/注销和 block 注册/注销后的代际变化。
+
+### 验证证据
+
+- `cargo test`：kernel devfs 1 项通过；简化 devfs 1 项通过。
+- `make check EXTRA_FEATURES=remote-debug-monitor` 通过。
+- `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 通过。
+- `UNVERIFIED_ON_HARDWARE`：generation 只描述内核软件节点快照；真实板卡热插拔、UART IRQ、MMIO 和设备断电/重连行为仍未验证。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 当前 generation 是进程/内核内软件视图代际，不提供跨重启持久性，也不替代设备注销 API。
+- [ ] LA 的 generation 只有启用 UART/devfs 集成时才接入；后续应让所有真实设备注册路径共享同一视图代际。
+- [ ] 尚未在目标板执行动态注册/注销和远程 `capabilities` 交互测试。
+
+### 提交
+
+- 本批计划提交：`[feat] track devfs software-view generations`

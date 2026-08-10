@@ -36,6 +36,9 @@ pub mod uart;
 #[cfg(feature = "uart-16550")]
 mod devfs;
 
+#[cfg(feature = "uart-16550")]
+pub fn devfs_generation() -> u64 { devfs::generation() }
+
 use api_v0::{DriverError, DriverResult};
 use spin::Mutex;
 use irq_runtime::{RuntimeLayout, RuntimeLayoutSlot};

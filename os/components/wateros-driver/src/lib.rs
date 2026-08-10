@@ -135,6 +135,15 @@ pub fn loongson2k1000_capability_snapshot()
     impl_loongson2k1000la::capability_snapshot()
 }
 
+/// Read-only LA devfs software-view generation when UART/devfs integration is enabled.
+#[cfg(feature = "impl-loongson2k1000la-uart")]
+pub fn loongson2k1000_devfs_generation() -> Option<u64> {
+    Some(impl_loongson2k1000la::devfs_generation())
+}
+
+#[cfg(all(feature = "impl-loongson2k1000la", not(feature = "impl-loongson2k1000la-uart")))]
+pub fn loongson2k1000_devfs_generation() -> Option<u64> { None }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Loongson2k1000MmcDiagnosticError {
     Busy,

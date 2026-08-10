@@ -32,6 +32,8 @@ struct DevFsImpl {
     dt_unsupported_paths: Vec<String>,
     // 驱动注册表快照对应的 topology generation；0 表示必须重建。
     synced_generation: u64,
+    // 软件节点视图代际；每次重建或直接注册都会递增。
+    view_generation: u64,
 }
 
 /// 零大小 [`DevFsManager`] 句柄；实际状态在静态 `DEVFS` 中。
@@ -45,6 +47,7 @@ static DEVFS: Mutex<DevFsImpl> = Mutex::new(DevFsImpl {
     character_bindings: Vec::new(),
     dt_unsupported_paths: Vec::new(),
     synced_generation: 0,
+    view_generation: 0,
 });
 
 fn ensure_fresh() {
@@ -176,6 +179,7 @@ impl DevFsManager for KernelDevFsManager {
             });
         }
         inner.synced_generation = observed_generation;
+        inner.view_generation = inner.view_generation.wrapping_add(1);
         logging::info!(
             "[fs::devfs] refresh done, total_nodes={}, block={}, character={}, input={}, unsupported={}",
             inner.nodes.len(),
@@ -218,6 +222,7 @@ impl DevFsManager for KernelDevFsManager {
                 path: path.to_string(),
                 node_type: api_v0::DevNodeType::Block,
             });
+            inner.view_generation = inner.view_generation.wrapping_add(1);
         }
         Ok(())
     }
@@ -253,6 +258,7 @@ impl DevFsManager for KernelDevFsManager {
                 path: path.to_string(),
                 node_type: api_v0::DevNodeType::Character,
             });
+            inner.view_generation = inner.view_generation.wrapping_add(1);
         }
         Ok(())
     }
@@ -302,6 +308,7 @@ mod tests {
     }
     #[test]
     fn input_slot_has_stable_event_node_until_unregister() {
+        let before = generation();
         let input = Arc::new(Mutex::new(Box::new(EmptyInput(InputDeviceInfo {
             name : String::from("devfs-test-input"), kind : InputDeviceKind::Keyboard,
             absolute_x : None, absolute_y : None,
@@ -310,9 +317,11 @@ mod tests {
         let manager = KernelDevFsManager;
         let path = format!("/dev/input/event{index}");
         assert!(manager.list_nodes().iter().any(|node| node.path == path));
+        assert!(generation() > before);
         assert!(manager.lookup_character_device(&path).is_ok());
         assert!(unregister_input_device(index));
         assert!(!manager.list_nodes().iter().any(|node| node.path == path));
+        assert!(generation() > before);
         assert!(manager.lookup_character_device(&path).is_err());
     }
 }
@@ -323,6 +332,12 @@ pub fn refresh() -> usize {
     let mut m = KernelDevFsManager;
     m.refresh();
     m.list_nodes().len()
+}
+
+/// 返回当前软件 devfs 节点视图的代际号。
+pub fn generation() -> u64 {
+    ensure_fresh();
+    DEVFS.lock().view_generation
 }
 
 /// 登记 DTB 占位路径（下次 [`refresh`] 时合并进节点表）。
