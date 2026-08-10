@@ -343,15 +343,16 @@ def build_image(args: argparse.Namespace) -> list[str]:
     image.parent.mkdir(parents=True, exist_ok=True)
     temporary_image: Path | None = None
     try:
-        with tempfile.TemporaryDirectory(prefix="wateros-root-staging-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="wateros-root-staging-") as temporary, \
+             tempfile.TemporaryDirectory(prefix="wateros-data-staging-") as data_temporary:
             staging = Path(temporary)
+            data_staging = Path(data_temporary)
             required_paths = populate_staging(args.manifest.resolve(), staging)
             data_manifest_value = getattr(args, "data_manifest", None)
             data_size_mib = getattr(args, "data_size_mib", 0)
             if data_manifest_value is None and data_size_mib:
                 raise ImageError("data partition requires --data-manifest")
             data_required_paths: list[str] = []
-            data_staging = staging / "__wateros_data__"
             if data_manifest_value is not None:
                 if not data_size_mib:
                     raise ImageError("--data-manifest requires --data-size-mib")

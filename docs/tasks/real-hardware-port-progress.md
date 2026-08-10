@@ -6397,3 +6397,27 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] add gmac activation prerequisites`
+
+## 2026-08-10：批次 146——隔离双分区镜像 staging
+
+### 本批任务与设计
+
+1. 审计可选 aux 分区实现，发现 data staging 原先位于 root staging 子目录，可能将 aux 内容带入 root ext4。
+2. 将 root/data 使用两个独立的临时目录，保持单分区默认行为和现有分区布局不变。
+3. 增加 MBR/GPT 回归检查，验证 root 不含 aux 文件、aux 不含 root 文件。
+
+### 已完成
+
+- [x] `build_image` 使用独立 root/data staging 生命周期，异常时由 `TemporaryDirectory` 自动清理。
+- [x] 双分区 root-image host 测试增加 debugfs 互斥内容检查。
+- [x] root-image host 测试 8 项通过。
+- [x] root-image QEMU smoke 参数/解析测试 4 项通过。
+
+### 验证证据与限制
+
+- 测试使用 16 MiB 小镜像和 4 MiB aux 分区，验证 MBR/GPT 两种布局及 ext4 内容隔离。
+- `UNVERIFIED_ON_HARDWARE`：真实 SD/eMMC 的写屏障、掉电撕裂和控制器 cache 一致性仍需实机验证。
+
+### 提交
+
+- 本批计划提交：`[fix] isolate root image staging`

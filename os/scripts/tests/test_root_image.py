@@ -24,6 +24,8 @@ from root_image import (
     manifest_file_contents,
     manifest_paths,
     verify_gpt_backup,
+    copy_partition,
+    debugfs_command,
 )
 
 
@@ -132,6 +134,15 @@ class RootImageTests(unittest.TestCase):
                     manifest_paths(data_manifest),
                     manifest_file_contents(data_manifest),
                 )
+                with tempfile.TemporaryDirectory() as extracted:
+                    root_partition, data_partition = read_partitions(image)
+                    root_fs = Path(extracted) / "root.ext4"
+                    data_fs = Path(extracted) / "data.ext4"
+                    copy_partition(image, root_partition, root_fs)
+                    copy_partition(image, data_partition, data_fs)
+                    self.assertIn("File not found", debugfs_command(root_fs,
+                                                                    "stat /__wateros_data__/state/marker"))
+                    self.assertIn("File not found", debugfs_command(data_fs, "stat /etc/root"))
 
     def test_manifest_populates_modes_and_rejects_escape(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
