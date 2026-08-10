@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "root_image"))
-from flash_image import FlashError, flash
+from flash_image import FlashError, flash, target_capacity_bytes
 
 
 class FlashImageTests(unittest.TestCase):
@@ -52,6 +52,12 @@ class FlashImageTests(unittest.TestCase):
             source.write_bytes(b"x" * 16)
             target.write_bytes(b"\0" * 16)
             self.assertEqual(flash(source, target, allow_regular_file=True, dry_run=True), 16)
+
+    def test_regular_file_capacity_uses_stat_without_device_io(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "target.img"
+            target.write_bytes(b"\0" * 32)
+            self.assertEqual(target_capacity_bytes(target, target.stat()), 32)
 
 
 if __name__ == "__main__":

@@ -7015,3 +7015,28 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[fix] allow physical image dry runs`
+
+## 2026-08-10：批次 171——写盘前读取真实 block device 容量
+
+### 本批任务与设计
+
+1. 审计 flasher：regular file 有容量检查，但真实 `/dev/sdX` 不能通过 `st_size` 判断介质大小。
+2. 增加 Linux `BLKGETSIZE64` 只读查询；dry-run 和实际写入均先确认目标容量不小于镜像。
+3. 保持 block-device 显式确认、regular-file opt-in 和 source verification 不变。
+
+### 已完成
+
+- [x] `flash_image.py` 对 block device 使用只读 `BLKGETSIZE64`，查询失败即停止，不猜测容量。
+- [x] regular file 继续走 stat 分支，新增无设备 I/O 的容量单测。
+- [x] 小镜像 flash/root-image 回归保持通过。
+
+### 验证证据与限制
+
+- `python3 -m unittest discover -s os/scripts/tests -p 'test_flash_image.py'`：5 项通过。
+- `python3 -m unittest discover -s os/scripts/tests -p 'test_root_image*.py'`：18 项通过。
+- `py_compile`、`git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：未对真实 SD/eMMC 执行 BLKGETSIZE64 或写入；设备驱动容量报告、flush、掉电恢复仍待实机。
+
+### 提交
+
+- 待提交：`[fix] validate block device capacity before flashing`

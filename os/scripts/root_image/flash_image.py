@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import array
+import fcntl
 import os
 import shutil
 import stat
@@ -14,6 +16,23 @@ from root_image import ImageError, verify_image
 
 class FlashError(RuntimeError):
     """The source or explicit target safety contract failed."""
+
+
+BLKGETSIZE64 = 0x80081272
+
+
+def target_capacity_bytes(target: Path, target_stat: os.stat_result) -> int:
+    if stat.S_ISREG(target_stat.st_mode):
+        return target_stat.st_size
+    if not stat.S_ISBLK(target_stat.st_mode):
+        raise FlashError("cannot determine target capacity")
+    capacity = array.array("Q", [0])
+    try:
+        with target.open("rb", buffering=0) as handle:
+            fcntl.ioctl(handle.fileno(), BLKGETSIZE64, capacity, True)
+    except OSError as error:
+        raise FlashError(f"cannot query block-device capacity for {target}: {error}") from error
+    return capacity[0]
 
 
 def validate_target(source: Path, target: Path, *, allow_regular_file: bool,
@@ -34,8 +53,9 @@ def validate_target(source: Path, target: Path, *, allow_regular_file: bool,
     source_size = source.stat().st_size
     if source_size == 0:
         raise FlashError("source image is empty")
-    if stat.S_ISREG(target_stat.st_mode) and target_stat.st_size < source_size:
-        raise FlashError(f"target is smaller than source ({target_stat.st_size} < {source_size})")
+    target_size = target_capacity_bytes(target, target_stat)
+    if target_size < source_size:
+        raise FlashError(f"target is smaller than source ({target_size} < {source_size})")
     return source_size
 
 
