@@ -127,6 +127,13 @@ pub fn with_topology<R>(f : impl FnOnce(Option<&BoardTopology>) -> R) -> R {
     f(topology.as_ref())
 }
 
+/// Return a copyable, read-only capability summary for bring-up diagnostics.
+/// `None` means DTB discovery has not completed; discovered resources are not
+/// implied to be hardware-activated.
+pub fn capability_snapshot() -> Option<topology::BoardCapabilitySnapshot> {
+    with_topology(|topology| topology.map(BoardTopology::capability_snapshot))
+}
+
 /// Perform one explicitly requested read-only MMC prerequisite diagnosis.
 ///
 /// # Safety

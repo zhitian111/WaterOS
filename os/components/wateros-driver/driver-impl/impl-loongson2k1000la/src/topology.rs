@@ -144,6 +144,58 @@ pub struct BoardTopology {
     pub dma_controllers : Vec<DmaControllerDescription>,
 }
 
+/// Coarse capability state exposed to bring-up diagnostics. Discovery is not
+/// activation: MMC/DMA remain deferred until their hardware contracts are
+/// verified on the target board.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapabilityState {
+    Discovered,
+    DeferredActivation,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoardCapabilitySnapshot {
+    pub uart_count : usize,
+    pub irq_controller_count : usize,
+    pub mmc_count : usize,
+    pub dma_controller_count : usize,
+    pub uart : CapabilityState,
+    pub irq : CapabilityState,
+    pub mmc : CapabilityState,
+    pub dma : CapabilityState,
+    pub network : CapabilityState,
+    pub input : CapabilityState,
+}
+
+impl BoardTopology {
+    pub fn capability_snapshot(&self) -> BoardCapabilitySnapshot {
+        let state = |count : usize, deferred : bool| {
+            if count == 0 {
+                CapabilityState::Unsupported
+            } else if deferred {
+                CapabilityState::DeferredActivation
+            } else {
+                CapabilityState::Discovered
+            }
+        };
+        BoardCapabilitySnapshot {
+            uart_count : self.uarts.len(),
+            irq_controller_count : self.interrupt_controllers.len(),
+            mmc_count : self.mmc_hosts.len(),
+            dma_controller_count : self.dma_controllers.len(),
+            uart : state(self.uarts.len(), true),
+            irq : state(self.interrupt_controllers.len(), true),
+            mmc : state(self.mmc_hosts.len(), true),
+            dma : state(self.dma_controllers.len(), true),
+            // No LA DTB network/input parser or target-board implementation is
+            // registered yet; do not infer support from unrelated QEMU drivers.
+            network : CapabilityState::Unsupported,
+            input : CapabilityState::Unsupported,
+        }
+    }
+}
+
 fn property_u32(node : fdt::node::FdtNode<'_, '_>, name : &str) -> Option<u32> {
     let value = node.property(name)?
                     .value;
@@ -735,4 +787,33 @@ pub fn discover(fdt : &fdt::Fdt<'_>) -> DriverResult<BoardTopology> {
         return Err(DriverError::NotFound);
     }
     Ok(topology)
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+    use super::*;
+
+    #[test]
+    fn capability_snapshot_separates_discovery_from_activation() {
+        let topology = BoardTopology { uarts : vec![UartDescription {
+                                                  mmio : MmioRegion { base : 0x1000, size : 0x100 },
+                                                  interrupt : InterruptSpec {
+                                                      parent_phandle : 1,
+                                                      cells : [0; 4],
+                                                      cell_count : 2,
+                                                  },
+                                                  clock_hz : 125_000_000,
+                                                  register_shift : 0,
+                                              }],
+                                  interrupt_controllers : Vec::new(),
+                                  mmc_hosts : Vec::new(),
+                                  dma_controllers : Vec::new() };
+        let snapshot = topology.capability_snapshot();
+        assert_eq!(snapshot.uart_count, 1);
+        assert_eq!(snapshot.uart, CapabilityState::DeferredActivation);
+        assert_eq!(snapshot.irq, CapabilityState::Unsupported);
+        assert_eq!(snapshot.network, CapabilityState::Unsupported);
+        assert_eq!(snapshot.input, CapabilityState::Unsupported);
+    }
 }

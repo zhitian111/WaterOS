@@ -5742,3 +5742,34 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] refresh LS2K1000 devfs after UART registration`
+
+## 2026-08-10：批次 123——增加 2K1000LA 设备能力状态快照
+
+### 本批任务与设计
+
+1. 审计现有 LA 驱动目录：仓库已有 QEMU virtio input/network 实现，但没有可直接套用的 2K1000LA GMAC/USB-HID 绑定；不能把 QEMU 驱动状态冒充目标板能力。
+2. 在 DTB topology 上增加只读 `BoardCapabilitySnapshot`，分别记录 UART、IRQ、MMC、DMA 的发现数量与 activation 状态。
+3. 明确 network/input 为 `Unsupported`，MMC/DMA/IRQ/UART 为 `DeferredActivation`，避免“DTB 发现 = 驱动可用”的误判。
+4. 对外提供 `capability_snapshot()`，供远程诊断和后续设备注册流程复用。
+
+### 已完成
+
+- [x] 新增 `CapabilityState` 与 `BoardCapabilitySnapshot`。
+- [x] 新增 `BoardTopology::capability_snapshot`，并提供 LA crate 只读查询入口。
+- [x] 增加 host 单测，验证发现数量、延迟激活和未支持接口状态彼此区分。
+- [x] 记录 QEMU virtio input/network 只能复用在 QEMU profile，目标板 GMAC/USB-HID 仍需独立驱动/许可证审计。
+
+### 验证证据
+
+- `capability_snapshot_separates_discovery_from_activation` 通过。
+- `UNVERIFIED_ON_HARDWARE`：快照是软件/DTB 观察，不证明时钟、IRQ、MMIO、DMA、网络 PHY 或 USB 电气状态。
+
+### 已知限制、未验证与后续测试
+
+- [ ] network/input 尚无 2K1000LA 设备解析和硬件实现；下一步应先研究上游 GMAC/USB 控制器驱动及许可证。
+- [ ] 快照尚未接入 TCP debug monitor 的 `status` 输出。
+- [ ] capability 状态没有热插拔代次；后续动态 `/dev` 需要增加 generation 与注销语义。
+
+### 提交
+
+- 本批计划提交：`[feat] add LS2K1000 capability snapshot`
