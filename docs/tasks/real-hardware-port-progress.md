@@ -5966,3 +5966,35 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] expose devfs generation through VFS inventory`
+
+## 2026-08-10：批次 130——建立驱动复用与许可证清单
+
+### 本批任务与设计
+
+1. 审计 `virtio-drivers`、`smoltcp`、WaterOS NS16550/DW-MMC 和 2K1000LA 自有适配层的来源、锁定版本与许可证证据。
+2. 将“通用软件组件可复用”和“目标板硬件已适配”拆成不同字段，避免把 QEMU virtio 误认为 GMAC/USB/SD 真机驱动。
+3. 对每条记录写明上游/仓库证据、适用范围、`UNVERIFIED_ON_HARDWARE` 限制和下一步测试。
+4. 增加文档结构测试，防止后续新增驱动遗漏许可证或硬件验证状态。
+
+### 已完成
+
+- [x] 新增 `docs/drivers/driver-reuse-and-license-matrix.md`。
+- [x] 记录 virtio-drivers MIT、smoltcp 0BSD、ext4plus MIT OR Apache-2.0，以及 WaterOS 自有适配层边界。
+- [x] 明确 QEMU virtio 不能代替 2K1000LA GMAC/USB/SD 控制器适配。
+- [x] 新增清单结构/状态词 host 测试。
+
+### 验证证据
+
+- `test_driver_inventory.py` 通过；依赖许可证字段来自锁定 crate manifest/仓库 README。
+- `make check EXTRA_FEATURES=remote-debug-monitor` 与 `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 通过。
+- `UNVERIFIED_ON_HARDWARE`：清单本身是合规和范围记录，不证明任何目标板控制器、电气时序或 DMA 行为已经成功。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 尚未引入 2K1000LA GMAC、USB-HID 或专用 UART 的第三方代码；需要先取得芯片手册和兼容许可证。
+- [ ] 许可证测试检查文档结构，不替代法律审查、NOTICE 汇总或发布包扫描。
+- [ ] 目标板需要分别验证复用层的 DMA/cache、IRQ、PHY、时钟和电源依赖。
+
+### 提交
+
+- 本批计划提交：`[docs] record driver reuse and licenses`
