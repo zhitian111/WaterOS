@@ -5619,3 +5619,33 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] bind read request to dma typestate`
+
+## 2026-08-10：批次 119——封装 prepared 到 publish receipt 的 carrying transition
+
+### 本批任务与设计
+
+1. 审计上一批生成的 `PreparedReadDmaSession` 与现有 APBDMA `start`、MMC `publish_with_receipt` 两段接口。
+2. 增加单一 `start_and_publish` transition，顺序固定为先启动 DMA、再写 MMC command；不复制 descriptor/payload mapping。
+3. 启动失败返回 `ReadDmaStartFailure`，publisher 失败返回仍持有 running session 的 `ReadDataPublishReceiptFailure`，统一由 carrying enum 传回。
+4. 将既有 host model 顺序测试迁移到该 facade；不把 model 写入或 stop confirmation 当作真机证据。
+
+### 已完成
+
+- [x] 新增 `ReadDmaStartPublishFailure`，线性区分 DMA start 与 MMC publish 两阶段失败。
+- [x] 新增 `PreparedReadDmaSession::start_and_publish`，成功返回带 receipt 的 running session。
+- [x] 既有 MMC/DMA 顺序测试改用新 facade，继续覆盖 command/data/DMA completion、stop 和 cache ownership 回收。
+
+### 验证证据
+
+- 定向测试 `mmc_read_start_typestate_orders_dma_before_command_publish` 通过。
+- `UNVERIFIED_ON_HARDWARE`：DMA descriptor fetch、APB route、MMC volatile writes、IRQ completion、cache/barrier 和 stop idle confirmation 仍只经过 host model/文档约束。
+
+### 已知限制、未验证与后续测试
+
+- [ ] facade 尚未接入真实 IRQ owner/coordinator slot；下一步需让 carrying published session 与 request transaction/generation 同时存活。
+- [ ] 当前 publisher 仍需 caller 提供 capability permit，默认生产路径保持关闭。
+- [ ] 目标板 MMC/SD 电气、时钟、DMA channel 和中断行为仍待实机 bring-up。
+
+### 提交
+
+- 本批计划提交：`[feat] carry dma start publish failures`

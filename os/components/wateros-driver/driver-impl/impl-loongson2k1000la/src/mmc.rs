@@ -1308,6 +1308,23 @@ pub struct ReadDmaStartFailure<'a, 'e, R, D, P> {
     pub failure : apbdma::StartSessionFailure<'a, 'e, R, D, P>,
 }
 
+#[must_use = "retain the start/publish failure token and recover the DMA session"]
+pub enum ReadDmaStartPublishFailure<'a, 'e, R, D, P, E> {
+    Start(ReadDmaStartFailure<'a, 'e, R, D, P>),
+    Publish(ReadDataPublishReceiptFailure<E, RunningReadDmaSession<'a, 'e, R, D, P>>),
+}
+
+impl<E : core::fmt::Debug, R, D, P> core::fmt::Debug
+    for ReadDmaStartPublishFailure<'_, '_, R, D, P, E>
+{
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Start(failure) => formatter.debug_tuple("Start").field(failure).finish(),
+            Self::Publish(failure) => formatter.debug_tuple("Publish").field(failure).finish(),
+        }
+    }
+}
+
 impl<R, D, P> core::fmt::Debug for ReadDmaStartFailure<'_, '_, R, D, P> {
     fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.debug_struct("ReadDmaStartFailure")
@@ -1349,6 +1366,23 @@ impl<'a, D : DmaCoherency, P : DmaCoherency> PreparedReadDmaSession<'a, D, P> {
             Ok(dma) => Ok(RunningReadDmaSession { read : self.read, dma }),
             Err(failure) => Err(ReadDmaStartFailure { read : self.read, failure }),
         }
+    }
+
+    /// Start APBDMA and immediately publish the deferred MMC command through
+    /// the caller-owned publisher. Either stage returns a token carrying the
+    /// exact remaining ownership; no partial success is discarded.
+    pub fn start_and_publish<'e, R, C>(
+        self,
+        executor : &'e mut apbdma::Executor<R>,
+        publisher : &mut C)
+        -> Result<PublishedReadDmaReceiptSession<'a, 'e, R, D, P>,
+                  ReadDmaStartPublishFailure<'a, 'e, R, D, P, C::Error>>
+    where R : apbdma::OrderIo, C : ReadDataPublisher
+    {
+        let running = self.start(executor)
+                         .map_err(ReadDmaStartPublishFailure::Start)?;
+        running.publish_with_receipt(publisher)
+               .map_err(ReadDmaStartPublishFailure::Publish)
     }
 }
 

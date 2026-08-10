@@ -1353,21 +1353,17 @@ mod tests {
         assert!(payload.is_cpu_owned());
         let prepared = binding.prepare(&mut descriptor, &mut payload).unwrap();
         let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
-        let running = armed_read_irqs(101).bind_prepared_dma(prepared)
-                                             .start(&mut executor).unwrap();
-        assert_eq!(running.transaction().raw(), 101);
-        assert_eq!(running.plan(), &read);
         let mut publisher = crate::mmc::ReadDataCommandPublisher::new(
             MockMmcRegisters::default(),
             crate::mmc::ReadDataPublishPermit::fixture());
-        let published = running.publish_with_receipt(&mut publisher).unwrap();
+        let published = prepared.start_and_publish(&mut executor, &mut publisher).unwrap();
         assert_eq!(published.plan(), &read);
         assert_eq!(published.receipt().writes_completed, 6);
         assert_eq!(publisher.into_inner().writes.iter()
                                            .map(|(offset, _)| *offset)
                                            .collect::<Vec<_>>(),
                    [0x2C, 0x28, 0x24, 0x3C, 0x08, 0x0C]);
-        let (armed, tracker) = published.into_completion_tracker();
+        let tracker = published.into_completion_tracker();
         let tracker = match tracker.command_validated().unwrap() {
             crate::mmc::PublishedReadCompletionProgress::Pending(tracker) => tracker,
             _ => panic!("command fact completed read too early"),
@@ -1388,7 +1384,6 @@ mod tests {
         let (receipt, quiesced) = completed.into_session().stop().unwrap();
         assert_eq!(receipt.command_index, read.request.command_index);
         quiesced.finish().unwrap();
-        assert_eq!(armed.transaction().raw(), 101);
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
         assert_eq!(executor.into_inner().writes,
