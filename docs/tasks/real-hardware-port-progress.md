@@ -2236,3 +2236,26 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - root image 既有测试：6 项通过，未生成大镜像。
 - `git diff --check` 通过。
 - `UNVERIFIED_ON_HARDWARE`：真实 GPU/input/NIC 控制器、cache flush/invalidate、VirtIO `share/unshare` 方向语义、IOMMU、设备停止后释放和实体板热插拔仍需两平台实测；本批只完成 DMA glue 统一，不宣称真实设备可用。
+
+## 2026-08-10：批次 85——小型 rootfs QEMU guest 启动回归
+
+### 任务与设计
+
+1. 审计 root image builder、QEMU 启动脚本、remote monitor 和 devfs 初始化，补齐一个不依赖实体板的最小 guest 启动检查。
+2. 使用临时小型 GPT 镜像和 RISC-V final kernel，验证块设备注册、devfs 刷新、`/dev/vda1` 根文件系统挂载以及 runner 进入；临时大产物放在 `/tmp`，不进入仓库。
+3. 远程 monitor 继续用已有大镜像做端到端协议回归，避免把“guest 已监听”与“宿主 TCP 转发可达”混为一谈。
+
+### 完成内容
+
+- [x] 新增 `os/scripts/qemu_rootfs_guest_smoke.py`，提供架构/文件预检、QEMU 生命周期管理、关键串口 marker 检查和清晰失败诊断。
+- [x] 新增 3 项脚本单元测试，覆盖 marker 缺失、输入文件缺失和不支持架构。
+- [x] 构建并验证 16 MiB GPT 临时 root image；实际 QEMU 启动观察到 `virtio-blk`、`devices registered`、devfs 刷新、`/dev/vda1` 只读/读写挂载和 runner 进入。
+- [x] 使用现有大镜像完成 remote-debug monitor `hello/capabilities/ping/status/version/quit` 协议回归。
+
+### 验证证据与限制
+
+- `python3 -m unittest discover -s os/scripts/tests -p 'test_qemu_rootfs_guest_smoke.py'`：3 项通过。
+- `python3 os/scripts/qemu_rootfs_guest_smoke.py --arch rv --profile final --kernel /tmp/wateros-b85-kernel-rv --sdcard /tmp/wateros-b85-root.img --timeout 12`：通过（4 个 guest marker）。
+- `root_image_qemu_smoke.py --partition-table gpt --size-mib 16`：通过。
+- 小镜像的串口已显示 monitor listening，但 remote-debug smoke 的宿主 TCP 转发仍连接拒绝；同时小镜像不含 `/glibc/cagent_testcode.sh`，其 NotFound 属于镜像内容限制，不是启动链路失败。网络转发和完整用户工作负载保持 `UNVERIFIED_ON_HARDWARE`。
+- `UNVERIFIED_ON_HARDWARE`：实体板上的 SD/eMMC 时序、真实 DMA/cache coherency、网络 PHY 和设备热插拔仍未验证。
