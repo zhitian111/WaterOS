@@ -274,6 +274,7 @@ pub enum ReadRecoveryCause {
         polls_completed : u16,
         remaining : u16,
     },
+    CompletionFailure(crate::mmc::ReadCompletionFailure),
 }
 
 #[derive(Debug)]

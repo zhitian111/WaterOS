@@ -5159,3 +5159,51 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] claim LS2K1000 read completion exclusively`
+
+## 2026-08-10：批次 106——固化 claimed read completion failure
+
+### 本批任务与设计
+
+1. 扩展 recovery cause，使 coordinator 能区分 masked recheck 失败与 receipt pair 已认领后的完成失败。
+2. CompletionClaimed 增加独占 failure service；错误 generation、错误 phase 和重复归档均不得改变状态。
+3. paired DMA descriptor hardware error 与 MMC terminal snapshot error 都必须进入同一精确状态转换。
+4. coordinator 只复制 `ReadCompletionFailure` 摘要，不能消费或伪造 quiesced recovery session。
+5. RecoveryPending 后普通 release 必须被拒绝，等待后续完整 evidence archive。
+
+### 已完成
+
+- [x] `ReadRecoveryCause` 新增 `CompletionFailure(ReadCompletionFailure)`，保留 DMA hardware status、MMC command/data error 与 duplicate 分类。
+- [x] 新增 `ReadCoordinatorSlot::service_claimed_completion`，只允许同 generation 的 CompletionClaimed 状态进入 SERVICING。
+- [x] 新增 must-use `ReadClaimedCompletionService`；`record_failure` 在独占 guard 内原子转换为 RecoveryPending。
+- [x] paired acknowledged fixture 改为走真实 coordinator 模型链：Published→Rechecking→Terminal→claim→CompletionClaimed，不再绕过 slot 直接 take pair。
+- [x] DMA descriptor hardware error `0x8000_0042` 被记录为 `CompletionFailure(Dma(Hardware(...)))`。
+- [x] MMC command timeout snapshot 被记录为 `CompletionFailure(Command(Timeout))`。
+- [x] wrong-generation service 在变更前返回 expected/actual，snapshot 仍 CompletionClaimed；正确 generation 可随后重试。
+- [x] 第二次 failure service 返回 WrongPhase(RecoveryPending)，RecoveryPending 不能通过 release 丢弃。
+- [x] 两条错误链的 `ReadCompletionRecovery<QuiescedReadDmaSession>` 均保留到状态提交之后，并完成 cache ownership recovery。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 176 项全部通过；既有 paired error 测试升级为 coordinator claim 后 failure 分类测试。
+- DMA error 链从同代 pair claim、DMA ack、descriptor CPU sync/status 进入 RecoveryPending，snapshot 精确保留 hardware status。
+- MMC error 链先确认 DMA success 仍 Pending，再应用 terminal MMC receipt 进入 RecoveryPending，证明不会把单侧成功误判为整笔成功。
+- wrong generation 不改变 CompletionClaimed；正确记录后重复 service 被拒绝，证明失败摘要只有一个 coordinator owner。
+- 两条链均在 coordinator 状态固化后继续 `finish()`，descriptor/payload 最终为 CPU-owned；状态转换没有消费 recovery session。
+- production 组件 test/check、RISC-V `make check` 与 LoongArch64 `make kernel-la` 全部通过；完整构建仅有仓库既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过；dtc warning 来自预期畸形输入。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：真实 descriptor error status、MMC terminal error priority、cache barrier 和 DMA idle 时序仍待 2K1000LA 实测。
+- [ ] claim 前 timeout/recheck recovery 从 runtime owner table drain receipts；claim 后 receipts 已被 pair 取走，现有 `retire_and_record` 不能复用于 CompletionFailure。
+- [ ] 当前 CompletionFailure 会稳定停在 RecoveryPending，普通 release 被拒绝；尚缺 paired recovery 专用的 report archive API，不能宣称错误闭环已完成。
+- [ ] DMA acknowledged receipt 当前进入 paired tracker 后没有作为可归档字段公开；后续需要由 production-owned request 持有 generation、MMC/DMA receipts 与 quiesced session。
+- [ ] `record_failure` 接受 Copy 摘要，状态机保证唯一 phase，但类型系统尚不能证明摘要一定来自同一个 paired recovery；生产 wrapper 接线时必须用私有构造的证据 token 收紧。
+- [ ] success release 仍由调用顺序保证，slot 本身不能证明 cache finish；后续 owned request 应同时解决 success/failure finalize proof。
+- [ ] source 继续保持 masked，RecoveryPending 不是 rearm 许可；真实 condition clear、DMA idle 与下一 generation arm 均未验证。
+- [ ] production runtime、publish permit、status decoder、block completion callback 与 scheduler worker 仍未接通。
+- [ ] 下一批应设计 `ClaimedReadRecoveryEvidence` 线性 token，保留 transaction、两路 receipts、completion failure 和 quiesced session；cache finish 后由专用 coordinator service 原子归档 report。
+
+### 提交
+
+- 本批计划提交：`[feat] classify LS2K1000 claimed read failures`

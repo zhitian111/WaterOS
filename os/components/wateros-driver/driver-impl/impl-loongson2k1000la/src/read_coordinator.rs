@@ -350,6 +350,25 @@ impl ReadCoordinatorSlot {
         Ok(ReadTerminalService { service, transaction })
     }
 
+    pub fn service_claimed_completion(
+        &self,
+        transaction : ReadTransactionId)
+        -> Result<ReadClaimedCompletionService<'_>, ReadCoordinatorError> {
+        let service = self.inner.service().map_err(ReadCoordinatorError::Slot)?;
+        if service.transaction() != transaction {
+            return Err(ReadCoordinatorError::WrongTransaction {
+                expected : service.transaction(), actual : transaction,
+            });
+        }
+        if service.phase() != ReadCoordinatorPhase::CompletionClaimed {
+            return Err(ReadCoordinatorError::WrongPhase {
+                expected : ReadCoordinatorPhase::CompletionClaimed,
+                actual : service.phase(),
+            });
+        }
+        Ok(ReadClaimedCompletionService { service, transaction })
+    }
+
     pub fn record_recovery(&self,
                            report : ReadRecoveryReport)
                            -> Result<(), RecordRecoveryFailure> {
@@ -580,6 +599,28 @@ impl ReadTerminalService<'_> {
                 })
             },
         }
+    }
+}
+
+#[must_use = "record a completion failure or drop the service to retry later"]
+pub struct ReadClaimedCompletionService<'a> {
+    service : RuntimeService<'a, ReadCoordinatorState>,
+    transaction : ReadTransactionId,
+}
+
+impl ReadClaimedCompletionService<'_> {
+    pub const fn transaction(&self) -> ReadTransactionId { self.transaction }
+
+    pub fn record_failure(
+        mut self,
+        failure : crate::mmc::ReadCompletionFailure)
+        -> ReadRecoveryCause {
+        let cause = ReadRecoveryCause::CompletionFailure(failure);
+        *self.service = ReadCoordinatorState::RecoveryPending {
+            transaction : self.transaction,
+            cause,
+        };
+        cause
     }
 }
 

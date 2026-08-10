@@ -1534,8 +1534,9 @@ mod tests {
         executor : &'e mut Executor<MockOrderIo>,
         transaction_raw : u64,
         mmc_interrupts : u32)
-        -> crate::board_irq_owner::PairedAcknowledgedReadDmaSession<
-            'a, MockCache, MockCache> {
+        -> (crate::board_irq_owner::PairedAcknowledgedReadDmaSession<
+                'a, MockCache, MockCache>,
+            crate::read_coordinator::ReadCoordinatorSlot) {
         let recovery = crate::mmc::combined_recovery_fixture(0u8);
         let read = *recovery.plan();
         let prepared = crate::mmc::ReadDmaBinding::bind(&read,
@@ -1556,16 +1557,27 @@ mod tests {
             MockMmcRegisters::default(),
             crate::mmc::ReadDataPublishPermit::fixture());
         let published = running.publish(&mut publisher).unwrap();
+        let coordinator = crate::read_coordinator::ReadCoordinatorSlot::new();
+        coordinator.reserve(transaction).unwrap().commit();
+        coordinator.mark_published(transaction, 1).unwrap();
+        coordinator.record_recheck(
+            crate::board_irq_owner::BoundedMmcReadRecheck::new(transaction, 1).unwrap())
+            .unwrap_or_else(|_| panic!("bounded recheck token rejected"));
         assert_eq!(runtime.owner_mut(dma_irq()).unwrap()
                           .handle(acknowledged_dma_irq()),
                    crate::irq_domain::IrqDisposition::KeepMasked);
-        assert_eq!(runtime.owner_mut(mmc_irq).unwrap()
-                          .handle(AcknowledgedIrq::after_mask_ack(mmc_irq)),
-                   crate::irq_domain::IrqDisposition::KeepMasked);
-        published.take_pending_pair(&mut runtime, mmc_irq, dma_irq())
-                 .unwrap_or_else(|_| panic!("matching pair rejected"))
-                 .acknowledge_dma_irq()
-                 .unwrap_or_else(|_| panic!("paired DMA IRQ rejected"))
+        assert_eq!(coordinator.service_recheck(transaction).unwrap()
+                              .step(&mut runtime, mmc_irq),
+                   Ok(crate::read_coordinator::ReadCoordinatorStepProgress::Terminal {
+                       transaction, polls_completed : 1,
+                   }));
+        let paired = published.claim_pending_pair(
+            coordinator.service_terminal(transaction).unwrap(),
+            &mut runtime, mmc_irq, dma_irq())
+            .unwrap_or_else(|_| panic!("matching pair rejected"))
+            .acknowledge_dma_irq()
+            .unwrap_or_else(|_| panic!("paired DMA IRQ rejected"));
+        (paired, coordinator)
     }
 
     #[test]
@@ -1901,12 +1913,12 @@ mod tests {
                                       Direction::DeviceToMemory).unwrap();
         let (mut descriptor, mut payload) = mappings(transfer);
         let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
-        let paired = paired_acknowledged_session(transfer,
-                                                  &mut descriptor,
-                                                  &mut payload,
-                                                  &mut executor,
-                                                  25,
-                                                  (1 << 6) | 1);
+        let (paired, coordinator) = paired_acknowledged_session(transfer,
+                                                                &mut descriptor,
+                                                                &mut payload,
+                                                                &mut executor,
+                                                                25,
+                                                                (1 << 6) | 1);
         let mut reader = MockStatusReader { status : 0x8000_0042,
                                             ..MockStatusReader::default() };
         let (mmc, recovery) = match paired.inspect_dma_status(&mut reader,
@@ -1921,18 +1933,36 @@ mod tests {
         assert_eq!(recovery.failure,
                    crate::mmc::ReadCompletionFailure::Dma(
                        crate::mmc::ReadDmaFailure::Hardware(0x8000_0042)));
+        let wrong = crate::board_irq_owner::ReadTransactionId::new(125).unwrap();
+        match coordinator.service_claimed_completion(wrong) {
+            Err(error) => assert_eq!(error,
+                crate::read_coordinator::ReadCoordinatorError::WrongTransaction {
+                    expected : mmc.transaction, actual : wrong,
+                }),
+            Ok(_) => panic!("wrong generation serviced claimed completion"),
+        }
+        assert_eq!(coordinator.snapshot().unwrap().phase,
+                   crate::read_coordinator::ReadCoordinatorPhase::CompletionClaimed);
+        let cause = coordinator.service_claimed_completion(mmc.transaction).unwrap()
+                               .record_failure(recovery.failure);
+        assert_eq!(cause,
+                   crate::board_irq_owner::ReadRecoveryCause::CompletionFailure(
+                       recovery.failure));
+        assert_eq!(coordinator.snapshot().unwrap().recovery_cause, Some(cause));
+        assert_eq!(coordinator.release(mmc.transaction),
+                   Err(crate::read_coordinator::ReadCoordinatorError::RecoveryMustBeRecorded));
         recovery.into_quiesced_session().finish().unwrap();
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
 
         let (mut descriptor, mut payload) = mappings(transfer);
         let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
-        let paired = paired_acknowledged_session(transfer,
-                                                  &mut descriptor,
-                                                  &mut payload,
-                                                  &mut executor,
-                                                  26,
-                                                  1 << 7);
+        let (paired, coordinator) = paired_acknowledged_session(transfer,
+                                                                &mut descriptor,
+                                                                &mut payload,
+                                                                &mut executor,
+                                                                26,
+                                                                1 << 7);
         let mut reader = MockStatusReader { status : 0x100,
                                             ..MockStatusReader::default() };
         let paired = match paired.inspect_dma_status(&mut reader, &FixtureStatusDecoder)
@@ -1947,6 +1977,20 @@ mod tests {
         assert_eq!(recovery.failure,
                    crate::mmc::ReadCompletionFailure::Command(
                        crate::mmc::ReadCommandFailure::Timeout));
+        let transaction = crate::board_irq_owner::ReadTransactionId::new(26).unwrap();
+        let cause = coordinator.service_claimed_completion(transaction).unwrap()
+                               .record_failure(recovery.failure);
+        assert_eq!(cause,
+                   crate::board_irq_owner::ReadRecoveryCause::CompletionFailure(
+                       recovery.failure));
+        match coordinator.service_claimed_completion(transaction) {
+            Err(error) => assert_eq!(error,
+                crate::read_coordinator::ReadCoordinatorError::WrongPhase {
+                    expected : crate::read_coordinator::ReadCoordinatorPhase::CompletionClaimed,
+                    actual : crate::read_coordinator::ReadCoordinatorPhase::RecoveryPending,
+                }),
+            Ok(_) => panic!("completion failure was recorded twice"),
+        }
         recovery.into_quiesced_session().finish().unwrap();
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
