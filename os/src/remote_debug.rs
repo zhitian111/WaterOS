@@ -182,6 +182,12 @@ extern "C" fn monitor_task(_arg : usize) -> ! {
     info!("[remote-debug] unauthenticated development monitor listening on tcp/{}",
           MONITOR_PORT);
     loop {
+        // Keep the development monitor usable even when the platform's
+        // background network-poller task is delayed or unavailable during
+        // early bring-up. The stack lock serializes this with the normal
+        // poller; this is a QEMU/bring-up fallback, not a hardware IRQ claim.
+        network::stack::poll();
+        network::stack::poll_socket_events();
         match listener.accept(0) {
             Ok((client, peer)) => {
                 info!("[remote-debug] client connected from {:?}:{}",

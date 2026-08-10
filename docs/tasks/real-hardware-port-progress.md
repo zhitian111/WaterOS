@@ -1860,6 +1860,30 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 
 - `[test] diagnose qemu monitor forwarding`
 
+## 2026-08-10：批次 61——remote monitor 早期网络轮询兜底
+
+### 任务与设计
+
+1. 根据上一批 QEMU 证据，monitor task 已监听但 host-forward TCP 仍拒绝；检查背景 network-poller 是否可能在早期 bring-up 被调度延迟。
+2. 在 monitor accept 循环中增加一次串行化的 `network::stack::poll()` / `poll_socket_events()` 兜底；它与后台 poller 共用 stack lock，不假设实体板 IRQ 可用。
+3. 用 monitor-enabled RISC-V kernel 和 16MiB GPT 镜像重新验证；若仍失败，保留 guest listen/host forward 的精确诊断。
+
+### 完成内容
+
+- [x] remote monitor accept 循环增加早期网络轮询兜底，并注明这是 QEMU/bring-up fallback。
+- [x] `make kernel-rv-final EXTRA_FEATURES=remote-debug-monitor`：通过。
+- [x] 重跑 QEMU 后仍观察到 guest listen marker，但 host TCP forward 被拒绝；问题不是 monitor feature 或后台 poller 未调用。
+
+### 验证证据与限制
+
+- remote-debug smoke：仍未端到端通过，当前需继续定位 virtio-net RX、smoltcp interface 或 QEMU user networking。
+- smoltcp crate 的无 feature host test 不能直接运行，因平台 arch implementation 未选择；kernel RISC-V 交叉构建通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 NIC 收包、IRQ/DMA/cache、LoongArch 网络路径和实体板网络均未验证。
+
+### 提交
+
+- `[fix] poll network from remote monitor`
+
 ## 2026-08-10：批次 56——QEMU guest GPT 根盘接通与 virtio 容量修复
 
 ### 任务与设计
