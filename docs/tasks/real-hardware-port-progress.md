@@ -1422,3 +1422,9 @@ python3 scripts/remote_debug_qemu_smoke.py \
 - `cargo test --manifest-path components/wateros-driver/driver-impl/impl-jh7110-visionfive2/Cargo.toml --lib`：18 项通过。
 - RISC-V64 `cargo check`：通过（仅已有 mmc unused import 警告）。
 - `UNVERIFIED_ON_HARDWARE`：真实 PLIC 地址译码、context/hart 映射、JH7110 external IRQ 线路和中断 claim/complete 时序仍需实体板；本批只保证 DTB 描述不会以明显非法状态进入后续初始化。
+
+## 2026-08-10：批次 89——VisionFive 2 最终报告与暂停
+
+- [x] 已写入 `docs/tasks/real-hardware-port-final-status.md`，汇总 UART、PLIC、MMC、SD 分区和硬件证据闸门。
+- [x] 已记录板子到位后的 DTB/UART→PLIC→MMC→SD→网络/输入验证顺序。
+- [x] 本工作树暂停；所有真实 clock/reset/pinmux/IRQ/MMC/SD 行为继续标记 `UNVERIFIED_ON_HARDWARE`。
