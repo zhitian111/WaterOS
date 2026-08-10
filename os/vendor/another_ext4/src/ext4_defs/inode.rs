@@ -423,14 +423,48 @@ impl Inode {
 
 /// A combination of an `Inode` and its id
 #[derive(Clone, Debug)]
+pub struct CowInode(Arc<Inode>);
+
+impl CowInode {
+    pub(crate) fn from_box(inode: Box<Inode>) -> Self {
+        Self(Arc::from(inode))
+    }
+}
+
+impl core::ops::Deref for CowInode {
+    type Target = Inode;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref()
+    }
+}
+
+impl core::ops::DerefMut for CowInode {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct InodeRef {
     pub id: InodeId,
-    pub inode: Box<Inode>,
+    pub inode: CowInode,
 }
 
 impl InodeRef {
     pub fn new(id: InodeId, inode: Box<Inode>) -> Self {
+        Self {
+            id,
+            inode: CowInode::from_box(inode),
+        }
+    }
+
+    pub(crate) fn from_snapshot(id: InodeId, inode: CowInode) -> Self {
         Self { id, inode }
+    }
+
+    pub(crate) fn snapshot(&self) -> CowInode {
+        self.inode.clone()
     }
 
     pub fn set_checksum(&mut self, uuid: &[u8]) {
@@ -444,6 +478,23 @@ impl InodeRef {
         checksum = crc32(checksum, self.inode.to_bytes());
         self.inode.osd2.l_checksum_lo = checksum as u16;
         self.inode.checksum_hi = (checksum >> 16) as u16;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inode_snapshot_clones_share_until_first_mutation() {
+        let original = InodeRef::new(7, Box::new(Inode::default()));
+        let mut writer = InodeRef::from_snapshot(7, original.snapshot());
+        assert!(Arc::ptr_eq(&original.inode.0, &writer.inode.0));
+
+        writer.inode.set_size(4096);
+        assert_eq!(original.inode.size(), 0);
+        assert_eq!(writer.inode.size(), 4096);
+        assert!(!Arc::ptr_eq(&original.inode.0, &writer.inode.0));
     }
 }
 

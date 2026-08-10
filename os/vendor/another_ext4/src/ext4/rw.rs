@@ -4,6 +4,18 @@ use crate::ext4_defs::*;
 use crate::prelude::*;
 
 impl Ext4 {
+    fn cached_inode(&self, inode_id: InodeId) -> Option<InodeRef> {
+        let cache = self.inode_cache.lock();
+        let (cached_id, inode) = cache[inode_id as usize % super::INODE_CACHE_CAPACITY].as_ref()?;
+        (*cached_id == inode_id).then(|| InodeRef::from_snapshot(inode_id, inode.clone()))
+    }
+
+    fn cache_inode(&self, inode_ref: &InodeRef) {
+        let mut cache = self.inode_cache.lock();
+        cache[inode_ref.id as usize % super::INODE_CACHE_CAPACITY] =
+            Some((inode_ref.id, inode_ref.snapshot()));
+    }
+
     /// Read a block from block device
     pub(super) fn read_block(&self, block_id: PBlockId) -> Block {
         #[cfg(feature = "block_cache")]
@@ -50,10 +62,15 @@ impl Ext4 {
     /// Read an inode from block device, return an `InodeRef` that
     /// combines the inode and its id.
     pub(super) fn read_inode(&self, inode_id: InodeId) -> InodeRef {
+        if let Some(inode) = self.cached_inode(inode_id) {
+            return inode;
+        }
         let (block_id, offset) = self.inode_disk_pos(inode_id);
         let block = self.read_block(block_id);
 
-        InodeRef::new(inode_id, Box::new(block.read_offset_as(offset)))
+        let inode_ref = InodeRef::new(inode_id, Box::new(block.read_offset_as(offset)));
+        self.cache_inode(&inode_ref);
+        inode_ref
     }
 
     /// Read the root inode from block device
@@ -74,7 +91,8 @@ impl Ext4 {
         let (block_id, offset) = self.inode_disk_pos(inode_ref.id);
         let mut block = self.read_block(block_id);
         block.write_offset_as(offset, &*inode_ref.inode);
-        self.write_block(&block)
+        self.write_block(&block);
+        self.cache_inode(inode_ref)
     }
 
     /// Read a block group descriptor from block device, return an `BlockGroupRef`

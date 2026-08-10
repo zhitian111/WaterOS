@@ -2,6 +2,7 @@ use crate::constants::*;
 use crate::ext4_defs::*;
 use crate::prelude::*;
 use crate::return_error;
+use spin::Mutex;
 
 mod alloc;
 mod dir;
@@ -12,12 +13,15 @@ mod link;
 mod low_level;
 mod rw;
 
+const INODE_CACHE_CAPACITY: usize = 4096;
+
 /// The Ext4 filesystem implementation.
 pub struct Ext4 {
     #[cfg(feature = "block_cache")]
     block_cache: BlockCache,
     #[cfg(not(feature = "block_cache"))]
     block_device: Arc<dyn BlockDevice>,
+    inode_cache: Mutex<Vec<Option<(InodeId, CowInode)>>>,
 }
 
 impl Ext4 {
@@ -50,6 +54,7 @@ impl Ext4 {
             block_cache: BlockCache::new(block_device),
             #[cfg(not(feature = "block_cache"))]
             block_device,
+            inode_cache: Mutex::new(vec![None; INODE_CACHE_CAPACITY]),
         })
     }
 

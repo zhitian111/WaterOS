@@ -1007,3 +1007,71 @@ codegraph explore "find_free_mmap_base_considering_vmas first_mapped_vpn_in_rang
   若再处理此链，应先取得 mmap 长度/页数分布，并考虑为 `walk_find` 返回缺失层级后在原循环
   原地跳跃，避免通用递归扫描器。
 - 日志：`/tmp/wateros-mm03a-after-rv.log`（本机临时文件，不提交）。
+
+## FS-04A：ext4 inode snapshot 写时复制缓存
+
+状态：已实现并保留（2026-08-10）
+
+### 证据与调用链
+
+有效基线 Final 重跑 300 s `pc-hot fast=1`，`memcpy` 本体约 70.14 亿条指令。将所有直达
+`memcpy` 的 callsite PC 与采样表、Final ELF 符号表关联后，主要调用者为：
+
+- `Ext4::dir_find_entry`：19,028,354 次（FS-02A 已证明原地解析反而退化，不重复）；
+- `copy_from_user`：4,949,253 次；
+- `Ext4::read_inode`：3,051,436 次；
+- `normalize_absolute_path`：2,167,418 次；
+- `CachingBlockDevice::read_blocks`：1,804,969 次。
+
+本项选择尚未尝试的 inode 链：
+
+```text
+lookup / getattr / open / read / write
+  -> Ext4::read_inode
+     -> inode_disk_pos
+     -> block_cache.read_block
+     -> Block::read_offset_as<Inode> memcpy
+     -> Box<Inode> allocation
+```
+
+### 设计与保留门槛
+
+1. `InodeRef` 内部改用 `Arc<Inode>` 的 COW 包装，保持现有 Deref/DerefMut 调用形式；只读
+   inode snapshot 命中只增减引用，首次修改通过 `Arc::make_mut` 获得独立副本。
+2. `Ext4` 增加固定 4096 槽的 direct-mapped inode snapshot cache；inode id 决定槽位，
+   冲突覆盖。cache miss 保持原读盘/解码路径。
+3. 所有 inode 回写最终集中到 `write_inode_without_csum`；成功写入 block cache 后同步发布
+   新 snapshot。缓存不是写回真相源，不改变 checksum、flush、unlink 或 truncate 语义。
+4. 定向测试覆盖重复读取命中、两个 reader 的 COW 隔离、写回后新 reader 可见；双架构
+   Final check/build 后以 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm 对照 900.64 s。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "another_ext4 Ext4 read_inode write_inode_with_csum write_inode_without_csum InodeRef Inode BlockCache load alloc_inode truncate generic_remove all callers exact source and tests"
+```
+
+### 验证结果
+
+- `another_ext4` 定向测试：3/3 通过；新增测试证明两个 reader 初始共享 snapshot，writer
+  首次修改后 COW 分离，原 reader 内容保持不变。
+- `make check ARCH={rv,la} PROFILE=final` 与双架构 Final build：全部通过。
+- RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm：
+  `BUILDSTORM_COMPILE mode=multi ok=true elapsed_s=880.44`；测试完整结束，无
+  panic/SIGSEGV，尾部正常退出。
+- 相对 900.64 s 有效基线减少 20.20 s（2.24%）；相对 Linux 395.90 s 为 2.22 倍，
+  距离 2 倍阶段门槛 791.80 s 尚差 88.64 s。
+- 改后相同 300 s pc-hot：
+  - `read_inode -> memcpy` callsite 从 3,051,436 降至 115,929（-96.20%）；
+  - compiler `memcpy` 从 7,014,429,050 降至 6,483,942,336（-7.56%）；
+  - TLSF allocate 从 2,034,503,114 降至 1,782,914,830（-12.37%）；
+  - TLSF deallocate 从 1,443,820,979 降至 1,263,021,142（-12.52%）；
+  - inode-cache mutex/Arc 未进入前 80 热点。
+- 完整日志：`/tmp/wateros-fs04a-after-rv.log`；改前/改后采样：
+  `/tmp/wateros-mem02-rv-pcs.txt`、`/tmp/wateros-fs04a-rv-pcs.txt`（均为本机临时文件）。
+
+### 结论
+
+固定容量 snapshot cache 同时消除了重复 inode 解码复制、Box/TLSF 分配和多数 block-cache
+查询，收益显著且与 pc-hot 变化一致，因此保留。后续文件优化应继续优先减少“读取结构体即
+分配拥有副本”的模式，而不是只改 memcpy 实现。

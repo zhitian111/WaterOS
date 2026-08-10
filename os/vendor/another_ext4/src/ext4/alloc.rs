@@ -392,7 +392,7 @@ impl Ext4 {
         self.write_super_block(&sb);
 
         // Clear inode content
-        inode_ref.inode = Box::new(Inode::default());
+        inode_ref.inode = CowInode::from_box(Box::new(Inode::default()));
         self.write_inode_with_csum(inode_ref);
 
         Ok(())

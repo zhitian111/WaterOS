@@ -108,7 +108,8 @@ impl Ext4 {
         // Append a new data block
         let (_, fblock) = self.inode_append_block(dir)?;
         // Update inode size
-        dir.inode.set_size(dir.inode.size() + BLOCK_SIZE as u64);
+        let new_size = dir.inode.size() + BLOCK_SIZE as u64;
+        dir.inode.set_size(new_size);
         // Load new block
         let mut new_dir_block = DirBlock::new(self.read_block(fblock));
         // Write the entry to block
