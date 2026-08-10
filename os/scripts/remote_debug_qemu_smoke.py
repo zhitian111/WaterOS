@@ -19,6 +19,7 @@ from remote_debug_client import connect_with_retry, run_smoke
 
 
 QEMU_BINARIES = {"rv": "qemu-system-riscv64", "la": "qemu-system-loongarch64"}
+MONITOR_LISTEN_MARKER = "[remote-debug] unauthenticated development monitor listening"
 
 
 def qemu_binary_name(arch: str) -> str:
@@ -41,6 +42,15 @@ def diagnose_inputs(arch: str, kernel: Path, sdcard: Path, port: int) -> list[st
     if not 1 <= port <= 65535:
         errors.append(f"port must be in 1..65535: {port}")
     return errors
+
+
+def monitor_listening_seen(serial_tail: str) -> bool:
+    """Whether the guest reached the monitor listen loop.
+
+    This separates a missing compile-time feature from a later guest network
+    forwarding/RX/TCP failure when a QEMU connection attempt times out.
+    """
+    return MONITOR_LISTEN_MARKER in serial_tail
 
 
 def main() -> int:
@@ -92,6 +102,19 @@ def main() -> int:
             tail = serial_log.read().decode("utf-8", errors="replace")[-8000:]
             print("--- QEMU serial tail ---", file=sys.stderr)
             print(tail, file=sys.stderr)
+            if monitor_listening_seen(tail):
+                print(
+                    "DIAGNOSIS: guest monitor reached listen state, but the host "
+                    "forwarded TCP connection failed; inspect virtio-net RX/TCP "
+                    "polling rather than the monitor feature gate.",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    "DIAGNOSIS: guest monitor listen marker was not observed; "
+                    "check the kernel remote-debug-monitor feature/profile.",
+                    file=sys.stderr,
+                )
             raise
         finally:
             process.terminate()

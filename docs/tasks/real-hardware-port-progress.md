@@ -1835,6 +1835,31 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 
 - `[test] verify dynamic input devfs refresh`
 
+## 2026-08-10：批次 60——QEMU remote monitor guest 诊断
+
+### 任务与设计
+
+1. 使用 `EXTRA_FEATURES=remote-debug-monitor` 构建最小 RISC-V final kernel，并交给已有 16MiB GPT root image 做 guest smoke。
+2. 将连接失败按串口证据分类：没有 listen marker 表示 feature/profile 缺失；有 marker 但 host forward 拒绝则表示 guest 网络 RX/TCP 或 QEMU forwarding 链路问题。
+3. 保持 monitor 只读、无认证、无加密的开发用途，不把它当作 sshd 或生产远程登录方案。
+
+### 完成内容
+
+- [x] `remote-debug-monitor` feature 构建通过。
+- [x] QEMU guest 串口确认 monitor 已启动并监听 TCP/2323。
+- [x] `remote_debug_qemu_smoke.py` 新增 listen-marker 诊断和单测，明确区分编译期 feature 缺口与 guest 网络不可达。
+
+### 验证证据与限制
+
+- remote-debug QEMU smoke：guest 已进入 listen 状态，但 host port-forward 连接被拒绝；当前 guest virtio-net/TCP 收包链路仍未打通。
+- remote-debug smoke 单测：4 项通过；client 协议单测：3 项通过。
+- `make kernel-rv-final EXTRA_FEATURES=remote-debug-monitor`：通过（仓库既有 warnings）。
+- `UNVERIFIED_ON_HARDWARE`：LoongArch 网络路径、两平台 NIC、真实网络 IRQ/DMA/cache 和认证/加密仍未验证；monitor 继续限定在隔离开发网络。
+
+### 提交
+
+- `[test] diagnose qemu monitor forwarding`
+
 ## 2026-08-10：批次 56——QEMU guest GPT 根盘接通与 virtio 容量修复
 
 ### 任务与设计

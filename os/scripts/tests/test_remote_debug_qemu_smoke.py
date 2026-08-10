@@ -8,7 +8,7 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 
-from remote_debug_qemu_smoke import diagnose_inputs, qemu_binary_name
+from remote_debug_qemu_smoke import diagnose_inputs, monitor_listening_seen, qemu_binary_name
 
 
 class RemoteDebugQemuSmokeTests(unittest.TestCase):
@@ -36,6 +36,14 @@ class RemoteDebugQemuSmokeTests(unittest.TestCase):
             kernel.write_bytes(b"K")
             sdcard.write_bytes(b"S")
             self.assertEqual(diagnose_inputs("la", kernel, sdcard, 22323), [])
+
+    def test_serial_diagnostic_distinguishes_guest_listen_from_feature_gap(self):
+        self.assertTrue(
+            monitor_listening_seen(
+                "[remote-debug] unauthenticated development monitor listening on tcp/2323"
+            )
+        )
+        self.assertFalse(monitor_listening_seen("network stack initialized"))
 
 
 if __name__ == "__main__":
