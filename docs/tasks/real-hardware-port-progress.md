@@ -6966,3 +6966,27 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[test] verify qemu input metadata evidence`
+
+## 2026-08-10：批次 169——增加安全的 SD/磁盘镜像写入工具
+
+### 本批任务与设计
+
+1. 审计用户态输入验证路径，确认仓库当前没有可直接构建的 `user/` 用户态源树，不能伪造 guest `ioctl` probe；该缺口保留到后续用户态 ABI 工作。
+2. 补齐物理部署需求：在已有 root-image build/verify 之后增加独立 flash helper。
+3. 默认 dry-run；真实 block device 必须显式 `--yes-i-really-mean-it`，源镜像先通过 verifier，目标不截断；普通文件仅允许测试时显式 `--allow-regular-file`。
+
+### 已完成
+
+- [x] 新增 `os/scripts/root_image/flash_image.py`，支持 source/target 检查、源目标相同拒绝、目标容量检查、块设备确认和 fsync 写入。
+- [x] 新增 3 项 host 测试，使用临时小文件覆盖 dry-run、实际复制、目标过小、同路径和 regular-file opt-in。
+- [x] root-image README 补充 SD/磁盘部署命令和卸载/整盘目标安全提示。
+
+### 验证证据与限制
+
+- `python3 -m unittest discover -s os/scripts/tests -p 'test_flash_image.py'`：3 项通过。
+- `py_compile` 与 `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：未对真实 `/dev/sdX` 写入；SD/eMMC 写屏障、flush、掉电恢复、烧录后固件启动仍需板上验证。仓库暂无可运行用户态 evdev probe。
+
+### 提交
+
+- 待提交：`[feat] add safe physical image flasher`

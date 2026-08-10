@@ -85,6 +85,24 @@ The image has been exercised with QEMU virtio-blk. SD/eMMC controllers, cache
 coherency, write barriers, flush semantics, and power-loss behavior still need
 validation on each physical board.
 
+To deploy a verified image, use the explicit flash helper. It defaults to a
+non-writing dry run; a real `/dev/...` block device additionally requires the
+confirmation flag. The source is verified before any write and the target is
+never truncated:
+
+```bash
+python3 ./scripts/root_image/flash_image.py --image ./wateros-root.img \
+  --manifest ./scripts/root_image/rootfs-manifest.json \
+  --target /dev/sdX --dry-run
+python3 ./scripts/root_image/flash_image.py --image ./wateros-root.img \
+  --manifest ./scripts/root_image/rootfs-manifest.json \
+  --target /dev/sdX --yes-i-really-mean-it
+```
+
+Only use an explicitly identified whole-disk target after unmounting it. Tests
+use a same-sized regular temporary file with `--allow-regular-file`; this does
+not validate SD/eMMC write barriers or power-loss behavior.
+
 After building a kernel artifact, the snapshot smoke helper validates the same
 manifest and prints the exact QEMU command without starting a guest:
 

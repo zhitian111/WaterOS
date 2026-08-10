@@ -1,0 +1,47 @@
+import tempfile
+import unittest
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "root_image"))
+from flash_image import FlashError, flash
+
+
+class FlashImageTests(unittest.TestCase):
+    def test_dry_run_and_copy_to_explicit_regular_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.img"
+            target = root / "target.img"
+            source.write_bytes(b"wateros" * 512)
+            target.write_bytes(b"\0" * source.stat().st_size)
+            self.assertEqual(flash(source, target, allow_regular_file=True, dry_run=True), source.stat().st_size)
+            self.assertEqual(target.read_bytes(), b"\0" * source.stat().st_size)
+            flash(source, target, allow_regular_file=True)
+            self.assertEqual(target.read_bytes(), source.read_bytes())
+
+    def test_rejects_small_target_and_same_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.img"
+            source.write_bytes(b"x" * 1024)
+            small = root / "small.img"
+            small.write_bytes(b"x")
+            with self.assertRaisesRegex(FlashError, "smaller"):
+                flash(source, small, allow_regular_file=True)
+            with self.assertRaisesRegex(FlashError, "different"):
+                flash(source, source, allow_regular_file=True)
+
+    def test_regular_target_requires_explicit_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.img"
+            target = root / "target.img"
+            source.write_bytes(b"x" * 16)
+            target.write_bytes(b"\0" * 16)
+            with self.assertRaisesRegex(FlashError, "block device"):
+                flash(source, target)
+
+
+if __name__ == "__main__":
+    unittest.main()
