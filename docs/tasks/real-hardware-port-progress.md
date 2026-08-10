@@ -5557,3 +5557,34 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] route LS2K1000 read failures to recovery`
+
+## 2026-08-10：批次 117——归档 published recovery summary
+
+### 本批任务与设计
+
+1. 审计 quiesced published recovery token 的最后一步，确保 DMA 停止后才恢复 CPU ownership。
+2. 新增不可变 `PublishedReadCompletionRecovered` 摘要，仅保留 completion failure 与 MMC publish receipt。
+3. 新增 `ReadRecoveryService::archive_published`，严格校验 `RecoveryPending` cause 后写入 `RecoveryRecorded`。
+4. 通过 host fixture 覆盖 failure → stop/quiesce → finish → archive → take 链路；不伪造 IRQ owner 或硬件 idle 证据。
+
+### 已完成
+
+- [x] `PublishedReadCompletionRecovery::finish` 调用 APBDMA quiesced session 的 cache/ownership finish；失败保留可重试 session。
+- [x] 新增 published recovery summary 访问器，归档失败时返回 summary，避免丢失恢复事实。
+- [x] `archive_published` 仅接受与 coordinator cause 一致的 completion failure，并记录调用方提供的 partial MMC interrupt snapshot。
+- [x] 新增 coordinator host 测试，确认归档后可线性 `take_recovery`，且不产生虚假的 claimed IRQ evidence。
+
+### 验证证据
+
+- 驱动完整 host 测试 184 项通过；published recovery summary archive 测试通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 DMA stop/idle、descriptor 与 payload cache backend、MMC interrupt clear/readback、IRQ retire 及 SD/eMMC 电气行为仍待实机验证。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 当前 summary archive 不携带 IRQ owner receipt；真实板上仍需先完成 mask/ack/retire，再把观测到的 partial snapshot 传入归档。
+- [ ] `ReadRecoveryReport` 保留 `claimed: None` 是有意的，不能把软件 quiesce 误报成硬件 interrupt 已清除。
+- [ ] 目标架构 allocator、DMA mapping/cache 实现及控制器 readback 仍需板上 bring-up 后闭环。
+
+### 提交
+
+- 本批计划提交：`[feat] archive LS2K1000 published recovery`

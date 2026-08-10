@@ -153,6 +153,13 @@ pub struct ReadClaimedRecoveryArchiveFailure {
     pub evidence : ClaimedReadRecoveryEvidence,
 }
 
+#[must_use = "recover the published summary and retry the recovery archive"]
+#[derive(Debug)]
+pub struct ReadPublishedRecoveryArchiveFailure {
+    pub error : ReadCoordinatorError,
+    pub recovery : crate::mmc::PublishedReadCompletionRecovered,
+}
+
 #[must_use = "recover the completion evidence and retry finalization"]
 pub struct ReadCompletionFinalizeFailure {
     pub error : ReadCoordinatorError,
@@ -925,6 +932,37 @@ impl ReadRecoveryService<'_> {
         Ok(())
     }
 
+    /// Archive the immutable facts left after a published completion failure
+    /// has stopped DMA and returned mappings to the CPU. Hardware interrupt
+    /// ownership is deliberately not synthesized here.
+    pub fn archive_published(
+        mut self,
+        recovery : crate::mmc::PublishedReadCompletionRecovered,
+        partial_mmc_interrupts : u32)
+        -> Result<(), ReadPublishedRecoveryArchiveFailure> {
+        let cause = match &*self.service {
+            ReadCoordinatorState::RecoveryPending { cause, .. } => *cause,
+            _ => unreachable!("recovery phase was validated before construction"),
+        };
+        let actual = ReadRecoveryCause::CompletionFailure(recovery.failure());
+        if cause != actual {
+            return Err(ReadPublishedRecoveryArchiveFailure {
+                error : ReadCoordinatorError::RecoveryCauseMismatch {
+                    expected : cause, actual,
+                },
+                recovery,
+            });
+        }
+        *self.service = ReadCoordinatorState::RecoveryRecorded(ReadRecoveryReport {
+            transaction : self.transaction,
+            cause,
+            partial_mmc_interrupts,
+            drained : DrainedReadIrqs { mmc : None, dma : None },
+            claimed : None,
+        });
+        Ok(())
+    }
+
     /// Atomically retire software IRQ owners and publish their report into the
     /// coordinator slot. Both hardware interrupt sources remain masked.
     pub fn retire_and_record<I, R>(
@@ -1516,6 +1554,31 @@ mod tests {
             crate::mmc::ReadCompletionFailure::DataTimeout));
         assert_eq!(slot.snapshot().unwrap().phase, ReadCoordinatorPhase::RecoveryPending);
         assert_eq!(slot.release(transaction), Err(ReadCoordinatorError::RecoveryMustBeRecorded));
+    }
+
+    #[test]
+    fn published_recovery_summary_archives_after_dma_quiesce() {
+        let slot = ReadCoordinatorSlot::new();
+        let current = transaction(11);
+        slot.reserve(current).unwrap().commit();
+        slot.mark_published(current, 1).unwrap();
+        slot.record_completion_failure(
+            current, crate::mmc::ReadCompletionFailure::DataTimeout).unwrap();
+        let recovered = crate::mmc::PublishedReadCompletionRecovered::fixture(
+            crate::mmc::ReadCompletionFailure::DataTimeout,
+            crate::mmc::ReadDataPublishReceipt {
+                command_index : 17,
+                command_argument : 0,
+                command_control : 0,
+                writes_completed : 6,
+            });
+        slot.service_recovery(current).unwrap()
+            .archive_published(recovered, 0).unwrap();
+        let report = slot.take_recovery(current).unwrap();
+        assert_eq!(report.cause, ReadRecoveryCause::CompletionFailure(
+            crate::mmc::ReadCompletionFailure::DataTimeout));
+        assert_eq!(report.partial_mmc_interrupts, 0);
+        assert!(report.claimed.is_none());
     }
 
     #[test]

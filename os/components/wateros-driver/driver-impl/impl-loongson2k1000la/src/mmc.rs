@@ -1441,6 +1441,24 @@ pub struct PublishedReadCompletionRecovery<'a, D, P> {
     pub session : apbdma::QuiescedSession<'a, D, P>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PublishedReadCompletionRecovered {
+    failure : ReadCompletionFailure,
+    receipt : ReadDataPublishReceipt,
+}
+
+impl PublishedReadCompletionRecovered {
+    pub const fn failure(&self) -> ReadCompletionFailure { self.failure }
+
+    pub const fn receipt(&self) -> ReadDataPublishReceipt { self.receipt }
+
+    #[cfg(test)]
+    pub(crate) const fn fixture(failure : ReadCompletionFailure,
+                                receipt : ReadDataPublishReceipt) -> Self {
+        Self { failure, receipt }
+    }
+}
+
 pub struct PublishedReadCompletionStopFailure<'a, 'e, R, D, P> {
     pub error : apbdma::ExecutorError,
     pub failure : PublishedReadCompletionFailure<'a, 'e, R, D, P>,
@@ -1490,6 +1508,23 @@ impl<'a, 'e, R : apbdma::OrderIo, D, P>
                         evidence,
                     },
                 },
+            }),
+        }
+    }
+}
+
+impl<'a, D : DmaCoherency, P : DmaCoherency>
+    PublishedReadCompletionRecovery<'a, D, P>
+{
+    pub fn finish(self)
+                -> Result<PublishedReadCompletionRecovered,
+                          apbdma::SessionFailure<DriverError, Self>> {
+        let Self { failure, receipt, session } = self;
+        match session.finish() {
+            Ok(()) => Ok(PublishedReadCompletionRecovered { failure, receipt }),
+            Err(failure_sync) => Err(apbdma::SessionFailure {
+                error : failure_sync.error,
+                session : Self { failure, receipt, session : failure_sync.session },
             }),
         }
     }
