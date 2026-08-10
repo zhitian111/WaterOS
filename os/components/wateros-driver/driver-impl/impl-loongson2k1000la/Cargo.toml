@@ -15,6 +15,7 @@ character = { path = "../../driver-character", package = "wateros-driver-charact
     "api-v0",
     "impl-uart-16550",
 ] }
+fs = { path = "../../../wateros-fs", package = "wateros-fs", default-features = true, optional = true }
 
 [target.'cfg(target_arch = "loongarch64")'.dependencies]
 platform = { path = "../../../wateros-platform", package = "wateros-platform", default-features = false, features = ["impl-loongson2k1000la"] }
@@ -23,4 +24,4 @@ frame-allocator = { path = "../../../wateros-mm/mm-frame-alloctor", package = "w
 [features]
 api-v0 = []
 default = ["api-v0"]
-uart-16550 = ["dep:character"]
+uart-16550 = ["dep:character", "dep:fs"]

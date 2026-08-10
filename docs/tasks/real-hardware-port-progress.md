@@ -5711,3 +5711,34 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] register LS2K1000 UART character devices`
+
+## 2026-08-10：批次 122——同步 2K1000LA UART 到 devfs
+
+### 本批任务与设计
+
+1. 审计 UART 注册后的设备可见性：character registry 增加设备不会自动刷新 active devfs 节点表。
+2. 复用现有 `fs::devfs::active_impl::refresh`，增加 2K1000LA 启动期同步入口。
+3. 同步只重建软件视图，不探测/写硬件；保持幂等，默认仅在 `uart-16550` opt-in feature 下启用。
+4. 继续不实现热插拔；设备注销、打开 fd 引用和物理 UART 拔插留到后续生命周期批次。
+
+### 已完成
+
+- [x] 新增 LA `devfs::sync`，在 DTB UART 注册完成后刷新 active devfs。
+- [x] `uart-16550` feature 现在同时启用 character driver 与 fs devfs 依赖。
+- [x] 同步路径只刷新节点快照，避免重复注册或硬件副作用。
+
+### 验证证据
+
+- UART feature 驱动全量 host 测试 186 项通过。
+- `make check`、`make kernel-la` 和 Python 测试通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 UART MMIO、IRQ、时钟、电气行为和目标板 `/dev` 挂载路径仍未验证；host 只验证软件构建与既有 devfs 实现。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 当前同步只在启动期追加设备后执行，尚未支持 UART 热移除或动态注销。
+- [ ] devfs 刷新不会自动创建用户权限/别名策略；需要后续与 `/dev/console`、PTY 和远程 shell 设计对齐。
+- [ ] 2K1000LA 尚未接收 UART IRQ，字符设备仍以轮询接口为主。
+
+### 提交
+
+- 本批计划提交：`[feat] refresh LS2K1000 devfs after UART registration`

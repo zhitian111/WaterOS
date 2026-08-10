@@ -33,6 +33,8 @@ mod machine;
 pub mod topology;
 #[cfg(feature = "uart-16550")]
 pub mod uart;
+#[cfg(feature = "uart-16550")]
+mod devfs;
 
 use api_v0::{DriverError, DriverResult};
 use spin::Mutex;
@@ -101,6 +103,7 @@ pub fn init_after_boot() -> DriverResult<()> {
         // register semantics remain UNVERIFIED_ON_HARDWARE.
         let count = unsafe { uart::register_from_topology(&topology.uarts) }?;
         log::info!("[driver-ls2k][uart] registered {} DTB UART(s)", count);
+        devfs::sync();
     }
     let mut stored_topology = TOPOLOGY.lock();
     let mut stored_layout = IRQ_LAYOUT.lock();
