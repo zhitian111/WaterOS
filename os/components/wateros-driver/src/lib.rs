@@ -13,6 +13,11 @@ extern crate alloc;
 pub mod api {
     pub use ::api_v0::*;
 }
+
+/// 设备中断注册与分发 facade。
+pub mod interrupt {
+    pub use ::api_v0::interrupt::*;
+}
 pub mod block {
     pub use ::block::*;
 }

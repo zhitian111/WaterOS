@@ -5,6 +5,8 @@
 #![no_std]
 extern crate alloc;
 
+pub mod interrupt;
+
 use alloc::string::String;
 use alloc::vec::Vec;
 

@@ -1325,3 +1325,51 @@ codegraph explore "VirtIOBlk new feature negotiation Transport read_device_featu
 - 临时结果：`/tmp/wateros-blk01a-after-rv.log`、
   `/tmp/wateros-blk01a-confirm-rv.log`、`/tmp/wateros-blk01a-rv-pcs.txt`、
   `/tmp/wateros-blk01a-rv-top80.txt`（不提交）。
+
+## IRQ-01A：固定容量设备 IRQ 注册表
+
+状态：完成，等待平台控制器接线（2026-08-10）
+
+### 任务与设计
+
+为 RISC-V PLIC 和 LoongArch EIOINTC/PCH-PIC 提供共同的设备中断分发目标，先不改变
+任何 block I/O 等待语义。`driver-api` 新增固定 32 项 registry、IRQ 编号、handler
+回调、共享 IRQ 分发、冻结和诊断计数；注册只允许发生在启动期，分发路径不分配、不阻塞、
+不访问文件系统。
+
+```text
+platform claim(irq)
+  -> driver_api::interrupt::dispatch(irq)
+     -> matching handlers (shared IRQ)
+  -> platform complete/eoi
+```
+
+恢复上下文命令：
+
+```bash
+codegraph explore "driver-api irq registry register_handler dispatch trap external interrupt PLIC EIOINTC PCH-PIC exact source"
+```
+
+### 验证结果
+
+- registry 单元测试通过：注册 handler、正确分发、未注册 IRQ 记为 spurious。
+- RISC-V Final `make check` 通过；当前变更尚未接入硬件 claim/complete，也未启用 block IRQ。
+- 下一步接入双架构平台控制器后再独立提交；若控制器测试失败，回退平台接线，不回退
+  已验证的 registry API。
+
+## IRQ-01：双架构设备中断基础设施
+
+状态：实施中（2026-08-10）
+
+### 任务与设计
+
+1. driver API 增加固定容量 IRQ handler registry，支持共享 IRQ、启动期冻结和无分配分发。
+2. RISC-V 按 DTB 初始化 PLIC supervisor context，并接入 SEIE 与 external trap。
+3. LoongArch 按实际 QEMU DTB 初始化 CPUIC/EIOINTC/PCH-PIC 和 PCI INTx 路由。
+4. 此阶段不改变 block I/O，双架构完整 Final 不得出现性能退化或中断风暴。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "driver IrqLine MachineDriver init_after_boot trap SupervisorExternal RISC-V sie PLIC LoongArch CPUIC EIOINTC PCH-PIC PCI interrupt-map exact source callers"
+```
