@@ -4531,3 +4531,49 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] bind LS2K1000 DMA IRQ to read completion`
+
+## 2026-08-10：批次 93——保守交接 APBDMA IRQ 且拒绝臆造状态位
+
+### 本批任务与设计
+
+1. 复核 Linux `loongson2-apb-dma` 的 descriptor、final IRQ 和 terminate 路径，寻找 `stats` 位的权威定义。
+2. 在没有位定义时固定 production fail-closed policy，不把 host fixture 数值解释带入目标代码。
+3. 将 deferred APBDMA board IRQ owner 改造成容量为 1 的 acknowledged-token handoff。
+4. runtime 只允许在 owner 不处于 handler transaction 时可变访问并取走 token。
+5. 验证 wrong/duplicate IRQ、一次性消费、keep-masked、status unverified 和 carrying resource recovery。
+
+### 已完成
+
+- [x] 上游审计确认 descriptor 有 `stats` word，但驱动没有定义其位含义，ISR 不读取该字段。
+- [x] 上游 final IRQ/terminate/pause 都写 `64BIT_EN|STOP`，没有轮询 order bit 或 descriptor status 证明 idle。
+- [x] 参考文档明确 `UnverifiedStatusDecoder` 是 production policy；测试 decoder 的 `0x100`/最高位规则仅为 fixture。
+- [x] `DeferredApbDmaOwner` 现在绑定 expected IRQ，并保留一个不可复制的 `AcknowledgedIrq` token。
+- [x] wrong source 返回 `UnexpectedIrq`；未消费 token 时的重复 IRQ 返回 `PendingNotConsumed`，且不会覆盖首个 token。
+- [x] `take_acknowledged()` 一次性移出 token，source 始终保持 masked，不产生伪造的 device-clear/rearm evidence。
+- [x] `IrqOwnerTable::get_mut` 与 `BoardIrqRuntime::owner_mut` 提供 handler transaction 之外的 coordinator handoff 点；InHandler 状态继续拒绝访问。
+- [x] board owner→published read tracker→`IrqCompletionSession` 集成 fixture 证明 production decoder 对 raw `0x100` 仍返回 `StatusUnverified` 并保留同一 session。
+- [x] 默认 diagnostic runtime 仍拒绝构造/激活 APBDMA owner，未开启生产 MMC 数据面。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 150 项全部通过；新增 owner token 与 fail-closed tracker 集成测试各 1 项。
+- wrong IRQ 不生成 pending token；正确 IRQ 生成一个；重复 IRQ 不替换；take 第一次成功、第二次为 None。
+- owner 的每种路径均返回 `KeepMasked`，没有产生 `DeviceAckedIrq` 或 rearm disposition。
+- carrying fixture 从 owner 取得 token 后释放 executor borrow；volatile-like reader 确实读取 raw `0x100`，production decoder 仍拒绝完成。
+- `StatusUnverified` 后同一 acknowledged tracker 可重试；fixture-only decoder 仅用于模型资源清理，最终显式 finish 后 mapping 才 CPU-owned。
+- production 组件 check、RISC-V `make check` 与 LoongArch64 `make kernel-la` 全部通过；仅有仓库既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过；dtc warning 来自预期畸形输入。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：APBDMA IRQ 的 device-side clear 语义、STOP 是否真正停止总线访问、何时可 rearm 均未知。
+- [ ] `UNVERIFIED_ON_HARDWARE`：descriptor `stats` 的任何完成/错误位均未知；当前 production 永远不能由该字段声明成功。
+- [ ] owner handoff 已可保存/取出 token，但 production diagnostic runtime 刻意不构造 APBDMA owner，完整板级 coordinator 尚未启用。
+- [ ] published MMC read session 和完成 tracker 的构造仍受 test-only permit 限制，因此数据面保持不可达。
+- [ ] `StatusUnverified` 后只能保留 session 或由具有平台证据的 unsafe recovery 回收；真机验证前没有自动成功路径。
+- [ ] MMC IRQ owner 与 APBDMA owner 尚未由同一 read transaction coordinator 配对，迟到/串线 IRQ 的 transaction identity 仍需加强。
+- [ ] 下一批应给 read transaction 增加 generation/cookie，把 MMC 与 APBDMA 两路 owner token 绑定到同一 carrying session；仍保持 activation 和 descriptor success decoding 关闭。
+
+### 提交
+
+- 本批计划提交：`[feat] retain LS2K1000 DMA IRQ evidence`

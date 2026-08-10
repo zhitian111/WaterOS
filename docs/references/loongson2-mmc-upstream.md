@@ -76,6 +76,13 @@ Confirmed facts used by the current WaterOS foundation:
 - The hardware descriptor contains a `stats` word, but the referenced driver
   defines no status bit meanings and does not inspect that word in its ISR.
 
+Consequently WaterOS treats the descriptor word as observable diagnostics, not
+completion evidence. `UnverifiedStatusDecoder` is the production policy and
+always returns `StatusUnverified`, regardless of the raw value. Numeric
+completion/error interpretations used by host tests are fixture-only and must
+not be promoted to a target decoder without an authoritative register manual or
+physical trace establishing both the bit meanings and DMA-quiescence semantics.
+
 Still requiring physical-board validation: MMIO accessibility/endian behavior,
 `PRE`/`CTL.ENCLK` write and readback behavior, clock/reset/power ordering,
 10 ms reset timing sufficiency, CSTS/DSTS post-reset behavior, response word

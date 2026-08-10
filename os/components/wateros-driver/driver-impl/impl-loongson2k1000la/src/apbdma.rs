@@ -792,6 +792,7 @@ mod tests {
     use super::*;
     use alloc::vec;
     use api_v0::dma::{DmaRegion, DmaCoherency};
+    use crate::irq_owner::IrqOwner;
 
     fn dma_irq() -> GlobalIrq { GlobalIrq::from_bank_local(1, 13).unwrap() }
     fn acknowledged_dma_irq() -> AcknowledgedIrq {
@@ -1617,6 +1618,48 @@ mod tests {
         assert_eq!(recovery.failure,
                    crate::mmc::ReadCompletionFailure::Dma(
                        crate::mmc::ReadDmaFailure::Hardware(0x8000_0042)));
+        recovery.into_quiesced_session().finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+    }
+
+    #[test]
+    fn board_owner_hands_one_irq_to_fail_closed_read_status_path() {
+        let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                      Direction::DeviceToMemory).unwrap();
+        let (mut descriptor, mut payload) = mappings(transfer);
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+        let tracker = published_read_tracker(transfer,
+                                             &mut descriptor,
+                                             &mut payload,
+                                             &mut executor);
+        let mut owner = crate::board_irq_owner::DeferredApbDmaOwner::new(dma_irq());
+        assert_eq!(owner.handle(acknowledged_dma_irq()),
+                   crate::irq_domain::IrqDisposition::KeepMasked);
+        let acknowledged = owner.take_acknowledged().unwrap();
+        assert_eq!(owner.take_acknowledged(), None);
+        let tracker = tracker.acknowledge_dma_irq(acknowledged).unwrap();
+        let mut reader = MockStatusReader { status : 0x100,
+                                            ..MockStatusReader::default() };
+        let failure = match tracker.inspect_dma_status(&mut reader, &UnverifiedStatusDecoder) {
+            Err(failure) => failure,
+            Ok(_) => panic!("production decoder invented APBDMA completion"),
+        };
+        assert_eq!(failure.error, DescriptorStatusError::StatusUnverified);
+        assert_eq!(reader.calls, 1);
+
+        // Fixture-only decoding releases the model resources after proving the
+        // production path retained the same acknowledged session for retry.
+        let tracker = match failure.tracker
+                                   .inspect_dma_status(&mut reader, &FixtureStatusDecoder)
+                                   .unwrap() {
+            crate::mmc::ReadCompletionProgress::Pending(tracker) => tracker,
+            _ => panic!("DMA-only evidence completed the read"),
+        };
+        let recovery = match tracker.command_failed(crate::mmc::ReadCommandFailure::Io) {
+            crate::mmc::ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+            _ => panic!("fixture cleanup did not retain quiesced DMA"),
+        };
         recovery.into_quiesced_session().finish().unwrap();
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());

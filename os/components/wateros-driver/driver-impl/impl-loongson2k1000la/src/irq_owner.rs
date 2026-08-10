@@ -107,6 +107,16 @@ impl<O> IrqOwnerTable<O> {
         }
     }
 
+    /// Mutably inspect a ready owner between interrupt service transactions.
+    /// An owner in its handler remains inaccessible.
+    pub fn get_mut(&mut self, irq : GlobalIrq) -> Result<&mut O, OwnerError> {
+        match &mut self.slots[irq.raw() as usize] {
+            OwnerSlot::Ready { owner, .. } => Ok(owner),
+            OwnerSlot::Empty => Err(OwnerError::NotRegistered),
+            OwnerSlot::InHandler { .. } => Err(OwnerError::InHandler),
+        }
+    }
+
     pub fn begin(&mut self, acknowledged : AcknowledgedIrq)
                  -> Result<ActiveOwner<O>, BeginFailure> {
         let irq = acknowledged.irq();
@@ -177,7 +187,8 @@ mod tests {
         assert_eq!(table.unregister(source), Err(OwnerError::InHandler));
         table.finish(active).unwrap_or_else(|_| panic!("finish failed"));
         assert!(!table.is_busy(source));
-        assert_eq!(table.unregister(source), Ok(15));
+        *table.get_mut(source).unwrap() += 1;
+        assert_eq!(table.unregister(source), Ok(16));
     }
 
     #[test]

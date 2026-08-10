@@ -286,6 +286,12 @@ impl<I : RegisterIo, O> BoardIrqRuntime<I, O> {
         self.owners.get(irq).map_err(RuntimeError::Owner)
     }
 
+    /// Access a ready owner after service has restored its slot. This is the
+    /// handoff point for one-shot evidence retained by keep-masked owners.
+    pub fn owner_mut(&mut self, irq : GlobalIrq) -> Result<&mut O, RuntimeError> {
+        self.owners.get_mut(irq).map_err(RuntimeError::Owner)
+    }
+
     pub fn into_dormant(self) -> DormantRuntime<I, O> { DormantRuntime { runtime : self } }
 
     pub fn into_controllers(self) -> [Option<LioIntc<I>>; MAX_BANKS] {

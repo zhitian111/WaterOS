@@ -43,21 +43,51 @@ impl<R : RegisterIo> IrqOwner for MmcCommandOwner<R> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeferredApbDmaError {
+    UnexpectedIrq,
+    PendingNotConsumed,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct DeferredApbDmaOwner {
+    expected_irq : GlobalIrq,
     handled : u64,
-    last_irq : Option<GlobalIrq>,
+    pending : Option<AcknowledgedIrq>,
+    last_error : Option<DeferredApbDmaError>,
 }
 
 impl DeferredApbDmaOwner {
+    pub const fn new(expected_irq : GlobalIrq) -> Self {
+        Self { expected_irq, handled : 0, pending : None, last_error : None }
+    }
+
     pub const fn handled(&self) -> u64 { self.handled }
-    pub const fn last_irq(&self) -> Option<GlobalIrq> { self.last_irq }
+    pub fn pending_irq(&self) -> Option<GlobalIrq> {
+        self.pending.as_ref().map(AcknowledgedIrq::irq)
+    }
+    pub const fn last_error(&self) -> Option<DeferredApbDmaError> { self.last_error }
+
+    /// Take the one acknowledged IRQ token retained for the DMA session.
+    ///
+    /// The source remains masked. Consuming this token does not prove any
+    /// descriptor status meaning or permit rearming the interrupt.
+    pub fn take_acknowledged(&mut self) -> Option<AcknowledgedIrq> {
+        self.pending.take()
+    }
 }
 
 impl IrqOwner for DeferredApbDmaOwner {
     fn handle(&mut self, acknowledged : AcknowledgedIrq) -> IrqDisposition {
         self.handled = self.handled.saturating_add(1);
-        self.last_irq = Some(acknowledged.irq());
+        if acknowledged.irq() != self.expected_irq {
+            self.last_error = Some(DeferredApbDmaError::UnexpectedIrq);
+        } else if self.pending.is_some() {
+            self.last_error = Some(DeferredApbDmaError::PendingNotConsumed);
+        } else {
+            self.pending = Some(acknowledged);
+            self.last_error = None;
+        }
         IrqDisposition::KeepMasked
     }
 }
@@ -138,10 +168,32 @@ mod tests {
 
         let dma_irq = GlobalIrq::from_bank_local(1, 13).unwrap();
         let mut dma : BoardIrqOwner<MockRegisters> =
-            BoardIrqOwner::ApbDmaDeferred(DeferredApbDmaOwner::default());
+            BoardIrqOwner::ApbDmaDeferred(DeferredApbDmaOwner::new(dma_irq));
         assert_eq!(dma.handle(acknowledged(dma_irq)), IrqDisposition::KeepMasked);
-        let BoardIrqOwner::ApbDmaDeferred(owner) = dma else { unreachable!() };
+        let BoardIrqOwner::ApbDmaDeferred(mut owner) = dma else { unreachable!() };
         assert_eq!(owner.handled(), 1);
-        assert_eq!(owner.last_irq(), Some(dma_irq));
+        assert_eq!(owner.pending_irq(), Some(dma_irq));
+        assert_eq!(owner.last_error(), None);
+        assert_eq!(owner.take_acknowledged().unwrap().irq(), dma_irq);
+        assert_eq!(owner.pending_irq(), None);
+    }
+
+    #[test]
+    fn apbdma_owner_preserves_first_token_across_wrong_and_duplicate_irqs() {
+        let dma_irq = GlobalIrq::from_bank_local(1, 13).unwrap();
+        let wrong_irq = GlobalIrq::from_bank_local(0, 13).unwrap();
+        let mut owner = DeferredApbDmaOwner::new(dma_irq);
+        assert_eq!(owner.handle(acknowledged(wrong_irq)), IrqDisposition::KeepMasked);
+        assert_eq!(owner.pending_irq(), None);
+        assert_eq!(owner.last_error(), Some(DeferredApbDmaError::UnexpectedIrq));
+
+        assert_eq!(owner.handle(acknowledged(dma_irq)), IrqDisposition::KeepMasked);
+        assert_eq!(owner.pending_irq(), Some(dma_irq));
+        assert_eq!(owner.handle(acknowledged(dma_irq)), IrqDisposition::KeepMasked);
+        assert_eq!(owner.pending_irq(), Some(dma_irq));
+        assert_eq!(owner.last_error(), Some(DeferredApbDmaError::PendingNotConsumed));
+        assert_eq!(owner.take_acknowledged().unwrap().irq(), dma_irq);
+        assert_eq!(owner.take_acknowledged(), None);
+        assert_eq!(owner.handled(), 3);
     }
 }

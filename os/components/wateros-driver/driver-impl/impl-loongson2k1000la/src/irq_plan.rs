@@ -332,7 +332,7 @@ mod tests {
             OwnerKind::MmcCommand => BoardIrqOwner::MmcCommand(
                 MmcCommandOwner::new(entry.binding.global_irq(), MockMmc)),
             OwnerKind::ApbDmaDeferred => BoardIrqOwner::ApbDmaDeferred(
-                DeferredApbDmaOwner::default()),
+                DeferredApbDmaOwner::new(entry.binding.global_irq())),
         }
     }
 
