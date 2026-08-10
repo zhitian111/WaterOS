@@ -2301,3 +2301,9 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - `remote_debug_qemu_smoke.py`（operator-shell kernel）：`hello/capabilities/ping/status/version/quit` 全部通过。
 - 为节省磁盘空间清理了本工作树 `target/` 和本轮明确生成的 `/tmp` 临时产物；未触碰仓库中的大镜像或其他工作树。
 - 普通 `final` 自动 runner + 空 rootfs 的 remote monitor 仍会在 guest 退出前无法完成协议连接；这已由脚本明确诊断，不属于网络驱动已验证通过。`UNVERIFIED_ON_HARDWARE`：实体 NIC/PHY、DMA/cache coherency 和两平台实际 operator 配置仍待上板。
+
+## 2026-08-10：批次 89——共有工作树最终报告与暂停
+
+- [x] 已写入 `docs/tasks/real-hardware-port-final-status.md`，汇总共有 rootfs、分区、devfs、VirtIO DMA 和 QEMU/remote-debug 证据。
+- [x] 记录板子到位后的 bring-up 顺序；实体存储、网络、输入、DMA/cache、IRQ 和热插拔继续标记 `UNVERIFIED_ON_HARDWARE`。
+- [x] 本工作树暂停，等待实体板和后续合并指示。
