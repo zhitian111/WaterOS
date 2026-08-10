@@ -15,6 +15,8 @@ use spin::Mutex;
 use crate::interrupt_guard::{maybe_warn_high_water, with_allocator_interrupt_guard};
 use crate::HeapMemStats;
 use crate::HEAP_SPACE;
+#[cfg(feature = "tlsf-diagnostics")]
+use crate::tlsf_diagnostics;
 
 /// TLSF 位图参数：`FLLEN=22` 使最大块 ≥ 128 MiB（64-bit GRANULARITY=32）。
 type KernelTlsf = Tlsf<'static, u32, u32, 22, 32>;
@@ -115,6 +117,12 @@ unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
     unsafe fn alloc(&self, layout : Layout) -> *mut u8 {
         let (ptr, stats) = with_allocator_interrupt_guard(|| {
             let stats = self.mem_stats();
+            #[cfg(feature = "tlsf-diagnostics")]
+            let (mut tlsf, contended) = match self.inner.try_lock() {
+                Some(lock) => (lock, false),
+                None => (self.inner.lock(), true),
+            };
+            #[cfg(not(feature = "tlsf-diagnostics"))]
             let mut tlsf = self.inner.lock();
             let ptr = match tlsf.allocate(layout) {
                 Some(ptr) => {
@@ -123,6 +131,8 @@ unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
                 }
                 None => ptr::null_mut(),
             };
+            #[cfg(feature = "tlsf-diagnostics")]
+            tlsf_diagnostics::record_alloc(layout, !ptr.is_null(), contended);
             (ptr, stats)
         });
         maybe_warn_high_water(stats.used, stats.free);
@@ -140,9 +150,16 @@ unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
         with_allocator_interrupt_guard(|| unsafe {
             self.estimate_sub(layout.size());
             let nn = NonNull::new_unchecked(ptr);
-            self.inner
-                .lock()
-                .deallocate(nn, layout.align());
+            #[cfg(feature = "tlsf-diagnostics")]
+            let (mut tlsf, contended) = match self.inner.try_lock() {
+                Some(lock) => (lock, false),
+                None => (self.inner.lock(), true),
+            };
+            #[cfg(not(feature = "tlsf-diagnostics"))]
+            let mut tlsf = self.inner.lock();
+            tlsf.deallocate(nn, layout.align());
+            #[cfg(feature = "tlsf-diagnostics")]
+            tlsf_diagnostics::record_free(layout, contended);
         })
     }
 
@@ -152,6 +169,12 @@ unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
             return ptr::null_mut();
         }
         with_allocator_interrupt_guard(|| unsafe {
+            #[cfg(feature = "tlsf-diagnostics")]
+            let (mut tlsf, contended) = match self.inner.try_lock() {
+                Some(lock) => (lock, false),
+                None => (self.inner.lock(), true),
+            };
+            #[cfg(not(feature = "tlsf-diagnostics"))]
             let mut tlsf = self.inner.lock();
             if ptr.is_null() {
                 let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
@@ -174,14 +197,17 @@ unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
             let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
                 return ptr::null_mut();
             };
-            match tlsf.reallocate(NonNull::new_unchecked(ptr), new_layout) {
+            let result = match tlsf.reallocate(NonNull::new_unchecked(ptr), new_layout) {
                 Some(p) => {
                     self.estimate_sub(layout.size());
                     self.estimate_add(new_layout.size());
                     p.as_ptr()
                 }
                 None => ptr::null_mut(),
-            }
+            };
+            #[cfg(feature = "tlsf-diagnostics")]
+            tlsf_diagnostics::record_realloc(layout, new_size, !result.is_null(), contended);
+            result
         })
     }
 }
