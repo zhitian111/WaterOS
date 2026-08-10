@@ -1951,6 +1951,28 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - QEMU guest 事件注入尚需在带 GUI kernel/root image 上实际运行脚本确认；本批代码保留失败时 QMP/串口诊断。
 - `UNVERIFIED_ON_HARDWARE`：真实 USB/HID 控制器、IRQ/DMA/cache、热插拔及 VisionFive 2/Loongson 2K1000 实板输入仍未验证。
 
+## 2026-08-10：批次 66——物理根盘构建器小镜像回归
+
+### 任务与设计
+
+1. 盘点共有分支的文件系统镜像能力，确认是否已有可复用的物理根盘入口。
+2. 使用 16 MiB 临时镜像分别验证 GPT 与 MBR 布局、ext4 内容和 QEMU image 工具识别，避免占用磁盘空间。
+3. 不重复实现已有的 `root_image.py`；继续把物理控制器写入和掉电行为单独列为待实机测试。
+
+### 完成内容
+
+- [x] 确认 `os/scripts/root_image/root_image.py` 支持 manifest、MBR/GPT、ext4 构建和 CRC/分区边界验证。
+- [x] 确认 `os/scripts/root_image_qemu_smoke.py` 提供 QEMU image 检查入口。
+- [x] 16 MiB GPT 镜像 smoke 通过：`QEMU image smoke passed table=gpt size=16777216`。
+- [x] 16 MiB MBR 镜像 smoke 通过：`QEMU image smoke passed table=mbr size=16777216`。
+- [x] root image 单元测试 5 项、QEMU wrapper 单元测试 2 项全部通过。
+
+### 验证证据与限制
+
+- 镜像均为临时文件，测试结束后自动清理，没有留下大镜像。
+- 当前 manifest 是最小根目录骨架；真实平台仍需注入对应架构的 `/sbin/init`、用户态程序和板级设备节点策略。
+- `UNVERIFIED_ON_HARDWARE`：SD/eMMC 实际写卡、分区读取、cache coherency、flush/掉电恢复仍需 VisionFive 2 和 Loongson 2K1000 实机验证。
+
 ## 2026-08-10：批次 65——稳定 QMP 输入注入诊断
 
 ### 任务与设计
