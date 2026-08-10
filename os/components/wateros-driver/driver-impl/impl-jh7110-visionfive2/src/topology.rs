@@ -33,6 +33,32 @@ fn is_plic(compatibles : &[alloc::string::String]) -> bool {
                             "riscv,plic0" | "sifive,plic-1.0.0")
                })
 }
+
+fn validate_plic_description(mmio : api_v0::MmioRegion,
+                             sources : u32,
+                             contexts : &[crate::plic::ContextInterrupt])
+                             -> DriverResult<()> {
+    if mmio.base == 0 || mmio.size == 0 || sources == 0 || contexts.is_empty() {
+        return Err(DriverError::InvalidDtb);
+    }
+    // PLIC context threshold/claim registers are spaced 0x1000 bytes apart;
+    // reject a DTB region that cannot cover the last advertised context.
+    let last_context = contexts.len()
+                              .checked_sub(1)
+                              .and_then(|index| index.checked_mul(0x1000))
+                              .ok_or(DriverError::InvalidDtb)?;
+    let required_end = 0x20_0008usize.checked_add(last_context)
+                                   .ok_or(DriverError::InvalidDtb)?;
+    if mmio.size < required_end || mmio.base.checked_add(mmio.size).is_none() {
+        return Err(DriverError::InvalidDtb);
+    }
+    if contexts.iter().any(|context| {
+        context.interrupt_controller == 0 || context.interrupt == 0
+    }) {
+        return Err(DriverError::InvalidDtb);
+    }
+    Ok(())
+}
 fn is_enabled(node : &fdt::node::FdtNode<'_, '_>) -> bool {
     node.property("status")
         .and_then(|property| core::str::from_utf8(property.value).ok())
@@ -216,7 +242,7 @@ pub fn discover(dtb_pa : usize) -> DriverResult<BoardTopology> {
                                                            .ok_or(DriverError::InvalidDtb)?,
                                              sysreg : sysreg_field(&fdt, &node)? });
         }
-        if is_plic(&compatibles) {
+        if is_plic(&compatibles) && is_enabled(&node) {
             let mmio = dtb::first_mmio_region(node).ok_or(DriverError::InvalidDtb)?;
             let sources = be32_property(&node, "riscv,ndev").ok_or(DriverError::InvalidDtb)?;
             let raw = node.property("interrupts-extended")
@@ -229,6 +255,7 @@ pub fn discover(dtb_pa : usize) -> DriverResult<BoardTopology> {
                                    .find(|(phandle, _)| *phandle == context.interrupt_controller)
                                    .map(|(_, hart)| *hart);
             }
+            validate_plic_description(mmio, sources, &contexts)?;
             result.plic = Some(PlicDescription { mmio,
                                                  sources,
                                                  contexts });
@@ -261,5 +288,29 @@ mod tests {
         assert_eq!(bus_width(None), Ok(1));
         assert_eq!(bus_width(Some(8)), Ok(8));
         assert_eq!(bus_width(Some(260)), Err(DriverError::InvalidDtb));
+    }
+
+    #[test]
+    fn rejects_unusable_plic_regions_and_contexts() {
+        let context = crate::plic::ContextInterrupt { interrupt_controller : 1,
+                                                       interrupt : 9,
+                                                       hart_id : Some(0) };
+        let valid = api_v0::MmioRegion { base : 0xC00_0000,
+                                         size : 0x20_1000 };
+        assert_eq!(validate_plic_description(valid, 64, &[context]), Ok(()));
+        assert_eq!(validate_plic_description(valid, 0, &[context]),
+                   Err(DriverError::InvalidDtb));
+        assert_eq!(validate_plic_description(valid, 64, &[]),
+                   Err(DriverError::InvalidDtb));
+        assert_eq!(validate_plic_description(api_v0::MmioRegion { base : 0,
+                                                                   size : valid.size },
+                                             64,
+                                             &[context]),
+                   Err(DriverError::InvalidDtb));
+        assert_eq!(validate_plic_description(api_v0::MmioRegion { base : valid.base,
+                                                                   size : 0x20_0008 },
+                                             64,
+                                             &[context, context]),
+                   Err(DriverError::InvalidDtb));
     }
 }

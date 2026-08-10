@@ -1402,3 +1402,23 @@ python3 scripts/remote_debug_qemu_smoke.py \
 - VisionFive 2 crate host 单测：17 项通过。
 - RISC-V64 目标 `cargo check` 通过。
 - `UNVERIFIED_ON_HARDWARE`：JH7110 clock/reset/syscon、pinmux、供电、card-detect、PLIC 路由、UART 实际 clock/divisor、MMC IRQ 和 SD 卡读写仍需 VisionFive 2 实板验证；本批没有解除 hardware evidence blocker。
+
+## 2026-08-10：批次 87——VisionFive 2 PLIC 拓扑 fail-closed 校验
+
+### 任务与设计
+
+1. 审计 JH7110 DTB topology 对 PLIC 节点的状态、MMIO 区域、source 数量和 context 列表处理。
+2. 发现 disabled PLIC、零 source、空 context 或过小 MMIO 区域可能被保存到 `BoardTopology`，将风险延迟到真实中断初始化阶段。
+3. 增加纯函数校验并在 DTB 扫描时拒绝不完整描述；只验证描述数据，不访问 PLIC 寄存器。
+
+### 完成内容
+
+- [x] disabled PLIC 节点不再参与 VisionFive 2 topology。
+- [x] 拒绝零 source、空 context、零 provider/interrupt、零基址和无法覆盖最后 context 寄存器的 MMIO 区域。
+- [x] 新增拓扑边界单测；现有 PLIC context 唯一性和 MMC/UART 校验保持不变。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path components/wateros-driver/driver-impl/impl-jh7110-visionfive2/Cargo.toml --lib`：18 项通过。
+- RISC-V64 `cargo check`：通过（仅已有 mmc unused import 警告）。
+- `UNVERIFIED_ON_HARDWARE`：真实 PLIC 地址译码、context/hart 映射、JH7110 external IRQ 线路和中断 claim/complete 时序仍需实体板；本批只保证 DTB 描述不会以明显非法状态进入后续初始化。
