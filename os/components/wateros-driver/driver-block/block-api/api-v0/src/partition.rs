@@ -38,6 +38,8 @@ pub enum PartitionScanError {
     ProtectiveGpt,
     InvalidGptHeader,
     InvalidGptEntrySize,
+    InvalidGptHeaderCrc,
+    InvalidGptEntryCrc,
     UnsupportedExtended,
     InvalidEntry,
     OverlappingEntries,
@@ -115,7 +117,7 @@ pub fn scan_mbr(device : &SharedBlockDevice) -> Result<Vec<MbrPartition>, Partit
 /// partition. CRC verification remains `UNVERIFIED_ON_HARDWARE` until the
 /// target storage path has a tested checksum implementation.
 pub fn scan_gpt(device : &SharedBlockDevice) -> Result<Vec<GptPartition>, PartitionScanError> {
-    let (total_blocks, header) = {
+    let (total_blocks, mut header) = {
         let mut device = device.lock();
         if device.block_size() != BLOCK_SIZE {
             return Err(PartitionScanError::InvalidBlockSize);
@@ -133,6 +135,11 @@ pub fn scan_gpt(device : &SharedBlockDevice) -> Result<Vec<GptPartition>, Partit
         || read_u64_le(&header[24..32]) != GPT_HEADER_LBA
     {
         return Err(PartitionScanError::InvalidGptHeader);
+    }
+    let header_crc = read_u32_le(&header[16..20]);
+    header[16..20].fill(0);
+    if crc32(&header[..header_size as usize]) != header_crc {
+        return Err(PartitionScanError::InvalidGptHeaderCrc);
     }
     let first_usable = read_u64_le(&header[40..48]);
     let last_usable = read_u64_le(&header[48..56]);
@@ -161,16 +168,26 @@ pub fn scan_gpt(device : &SharedBlockDevice) -> Result<Vec<GptPartition>, Partit
         }
     }
 
+    let entries_len = usize::try_from(entries_bytes)
+        .map_err(|_| PartitionScanError::InvalidGptEntrySize)?;
+    let entries_offset = entries_lba
+        .checked_mul(BLOCK_SIZE as u64)
+        .ok_or(PartitionScanError::InvalidGptHeader)?;
+    let mut entries = vec![0u8; entries_len];
+    device.lock()
+          .read_bytes(entries_offset, &mut entries)
+          .map_err(PartitionScanError::Io)?;
+    if crc32(&entries) != read_u32_le(&header[88..92]) {
+        return Err(PartitionScanError::InvalidGptEntryCrc);
+    }
+
     let mut partitions = Vec::new();
     for index in 0..entry_count {
-        let offset = entries_lba
-            .checked_mul(BLOCK_SIZE as u64)
-            .and_then(|base| base.checked_add(u64::from(index) * u64::from(entry_size)))
-            .ok_or(PartitionScanError::InvalidGptHeader)?;
-        let mut entry = vec![0u8; entry_size as usize];
-        device.lock()
-              .read_bytes(offset, &mut entry)
-              .map_err(PartitionScanError::Io)?;
+        let offset = usize::try_from(index)
+            .ok()
+            .and_then(|index| index.checked_mul(entry_size as usize))
+            .ok_or(PartitionScanError::InvalidGptEntrySize)?;
+        let entry = &entries[offset..offset + entry_size as usize];
         if entry[0..16].iter().all(|byte| *byte == 0) {
             continue;
         }
@@ -198,6 +215,18 @@ pub fn scan_gpt(device : &SharedBlockDevice) -> Result<Vec<GptPartition>, Partit
 fn read_u64_le(bytes : &[u8]) -> u64 {
     u64::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3],
                         bytes[4], bytes[5], bytes[6], bytes[7]])
+}
+
+pub(crate) fn crc32(bytes : &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            let mask = 0u32.wrapping_sub(crc & 1);
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
 }
 
 pub struct PartitionBlockDevice {
@@ -346,7 +375,18 @@ mod tests {
         entry[0] = 1; // non-zero type GUID
         entry[32..40].copy_from_slice(&8u64.to_le_bytes());
         entry[40..48].copy_from_slice(&15u64.to_le_bytes());
+        refresh_gpt_crcs(&mut bytes);
         Arc::new(Mutex::new(Box::new(MemoryDisk { bytes })))
+    }
+
+    fn refresh_gpt_crcs(bytes : &mut [u8]) {
+        let entry_crc = crc32(&bytes[BLOCK_SIZE * 2..BLOCK_SIZE * 2 + 4 * 128]);
+        bytes[BLOCK_SIZE + 88..BLOCK_SIZE + 92].copy_from_slice(&entry_crc.to_le_bytes());
+        let mut header = [0u8; BLOCK_SIZE];
+        header.copy_from_slice(&bytes[BLOCK_SIZE..BLOCK_SIZE * 2]);
+        header[16..20].fill(0);
+        let header_crc = crc32(&header[..92]);
+        bytes[BLOCK_SIZE + 16..BLOCK_SIZE + 20].copy_from_slice(&header_crc.to_le_bytes());
     }
 
     #[test]
@@ -380,7 +420,33 @@ mod tests {
         disk.lock()
             .write_blocks(Lba(2), &block)
             .unwrap();
+        let mut entries = [0u8; BLOCK_SIZE];
+        disk.lock().read_blocks(Lba(2), &mut entries).unwrap();
+        let mut header = [0u8; BLOCK_SIZE];
+        disk.lock().read_blocks(Lba(1), &mut header).unwrap();
+        header[88..92].copy_from_slice(&crc32(&entries).to_le_bytes());
+        header[16..20].fill(0);
+        let header_crc = crc32(&header[..92]);
+        header[16..20].copy_from_slice(&header_crc.to_le_bytes());
+        disk.lock().write_blocks(Lba(1), &header).unwrap();
         assert_eq!(scan_gpt(&disk), Err(PartitionScanError::InvalidEntry));
+    }
+
+    #[test]
+    fn rejects_bad_gpt_checksums() {
+        let header_corrupt = disk_with_gpt_partition();
+        let mut header = [0u8; BLOCK_SIZE];
+        header_corrupt.lock().read_blocks(Lba(1), &mut header).unwrap();
+        header[60] ^= 1;
+        header_corrupt.lock().write_blocks(Lba(1), &header).unwrap();
+        assert_eq!(scan_gpt(&header_corrupt), Err(PartitionScanError::InvalidGptHeaderCrc));
+
+        let entry_corrupt = disk_with_gpt_partition();
+        let mut block = [0u8; BLOCK_SIZE];
+        entry_corrupt.lock().read_blocks(Lba(2), &mut block).unwrap();
+        block[0] = 2;
+        entry_corrupt.lock().write_blocks(Lba(2), &block).unwrap();
+        assert_eq!(scan_gpt(&entry_corrupt), Err(PartitionScanError::InvalidGptEntryCrc));
     }
 
     #[test]

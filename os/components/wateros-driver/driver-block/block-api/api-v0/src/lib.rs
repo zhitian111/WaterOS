@@ -321,6 +321,13 @@ mod registry_tests {
             entry[0] = 1;
             entry[32..40].copy_from_slice(&8u64.to_le_bytes());
             entry[40..48].copy_from_slice(&15u64.to_le_bytes());
+            let entry_crc = partition::crc32(&bytes[BLOCK_SIZE * 2..BLOCK_SIZE * 2 + 2 * 128]);
+            bytes[BLOCK_SIZE + 88..BLOCK_SIZE + 92].copy_from_slice(&entry_crc.to_le_bytes());
+            let mut header_copy = [0u8; BLOCK_SIZE];
+            header_copy.copy_from_slice(&bytes[BLOCK_SIZE..BLOCK_SIZE * 2]);
+            header_copy[16..20].fill(0);
+            let header_crc = partition::crc32(&header_copy[..92]);
+            bytes[BLOCK_SIZE + 16..BLOCK_SIZE + 20].copy_from_slice(&header_crc.to_le_bytes());
             Arc::new(Mutex::new(Box::new(Self { bytes })))
         }
     }

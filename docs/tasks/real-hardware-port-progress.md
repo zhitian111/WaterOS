@@ -6084,3 +6084,28 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] support GPT block partitions`
+
+## 2026-08-10：批次 134——校验 GPT header 与分区数组 CRC
+
+### 本批任务与设计
+
+1. 补齐上一批 GPT 解析明确留下的 header/entry-array CRC 缺口。
+2. 在 `no_std` block API 中实现 GPT/IEEE CRC32，header CRC 计算前将 CRC 字段置零。
+3. 先校验完整性，再进行分区范围、重叠和子设备注册，损坏表不得进入 devfs。
+4. 更新小型内存盘夹具，覆盖正常 CRC、header 损坏和 entry-array 损坏路径。
+
+### 已完成
+
+- [x] `scan_gpt` 校验 header CRC 与 entry-array CRC，新增明确错误类型。
+- [x] CRC 校验通过后才创建 `GptPartition` 和 registry child。
+- [x] host block API 测试 8 项通过，包含 GPT 注册链路和两类 checksum failure。
+- [x] 保持无硬件依赖；CRC 实现只使用栈/`alloc`，可用于两种内核架构。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path components/wateros-driver/driver-block/block-api/api-v0/Cargo.toml --target x86_64-unknown-linux-gnu --no-default-features`：8 项通过。
+- `UNVERIFIED_ON_HARDWARE`：尚未用真实 GPT SD/eMMC 介质验证 backup header、异常掉电和控制器读错误恢复；QEMU GPT 镜像生成仍是后续任务。
+
+### 提交
+
+- 本批计划提交：`[fix] validate GPT partition checksums`
