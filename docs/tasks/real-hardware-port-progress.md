@@ -1229,3 +1229,29 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] gate dw mmc initialization`
+
+## 2026-08-10：批次 30——VisionFive 2 显式连接 SD 协议初始化
+
+### 任务与设计
+
+1. 审计发现共享 DesignWare 核心已经具备 SD 命令编排、CSD 容量解析和只读 block adapter；缺口在于 VisionFive 2 的显式平台初始化入口尚未消费这条协议路径。
+2. 在平台层增加 `initialize_sd_card`，先复用 controller 初始化和硬件证据闸门，再显式执行共享 `SdCard::initialize`。
+3. 入口只返回已初始化的协议对象，不在通用启动阶段自动调用，也不隐式注册 block device；实机卡响应仍保持 `UNVERIFIED_ON_HARDWARE`。
+
+### 完成内容
+
+- [x] 新增 `MmcInitializationError::Card`，区分控制器错误与卡协议错误。
+- [x] 新增 `initialize_sd_card`，连接 host 配置、`DwMmc` 和共享 `SdCard`。
+- [x] 缺少硬件证据时，controller 和 SD card 入口均在任何寄存器访问前返回 `NotReady`。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path os/components/wateros-driver/driver-impl/impl-jh7110-visionfive2/Cargo.toml --lib mmc::tests`：3 项通过。
+- `cargo test --manifest-path os/components/wateros-driver/driver-block/block-impl/impl-dw-mmc/Cargo.toml --lib`：12 项通过。
+- `cargo check --manifest-path os/components/wateros-driver/driver-impl/impl-jh7110-visionfive2/Cargo.toml --target riscv64gc-unknown-none-elf`：通过。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：JH7110 时钟、复位、pinmux、供电、真实 IRQ 与长响应寄存器顺序尚未上板；本入口仍是显式调用点，不会自动注册设备。
+
+### 提交
+
+- `[feat] expose visionfive2 sd initialization`

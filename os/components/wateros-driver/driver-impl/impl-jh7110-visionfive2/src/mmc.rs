@@ -7,6 +7,7 @@ use alloc::vec::Vec;
 use api_v0::MmioRegion;
 
 pub use dw_mmc::mmc::{clock_divider, DwMmc, MmcError, MmioRegisters, RegisterIo};
+use dw_mmc::sd::SdCard;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MmcActivationBlocker {
@@ -38,6 +39,7 @@ pub enum MmcConfigError {
 pub enum MmcInitializationError {
     NotReady,
     Core(MmcError),
+    Card(MmcError),
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -164,6 +166,24 @@ pub fn initialize_controller<R : RegisterIo>(plan : &MmcBringUpPlan,
     Ok(controller)
 }
 
+/// Explicitly initialize the shared SD protocol after the controller has been
+/// configured and board evidence has been supplied. This remains opt-in: the
+/// generic machine startup path does not call it or register a block device.
+pub fn initialize_sd_card<R : RegisterIo>(plan : &MmcBringUpPlan,
+                                          evidence : MmcHardwareEvidence,
+                                          registers : R,
+                                          input_frequency_hz : u32,
+                                          poll_limit : usize,
+                                          ocr_attempts : usize)
+                                          -> Result<SdCard<DwMmc<R>>, MmcInitializationError> {
+    let controller = initialize_controller(plan,
+                                            evidence,
+                                            registers,
+                                            input_frequency_hz,
+                                            poll_limit)?;
+    SdCard::initialize(controller, ocr_attempts).map_err(MmcInitializationError::Card)
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec;
@@ -251,6 +271,13 @@ mod tests {
                                                 Registers { values: [0; 32] },
                                                 50_000_000,
                                                 4),
+                         Err(MmcInitializationError::NotReady)));
+        assert!(matches!(initialize_sd_card(&plan,
+                                            MmcHardwareEvidence::default(),
+                                            Registers { values: [0; 32] },
+                                            50_000_000,
+                                            4,
+                                            1),
                          Err(MmcInitializationError::NotReady)));
     }
 }
