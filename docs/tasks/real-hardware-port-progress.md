@@ -6164,3 +6164,29 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[test] verify GPT backup metadata`
+
+## 2026-08-10：批次 137——向 VFS 暴露原子设备目录快照
+
+### 本批任务与设计
+
+1. 审计 `VfsDevInventory` 与 FsBridge，确认高层 API 只能分别读取 generation 和节点列表。
+2. 新增兼容性 `VfsDevSnapshot`，默认实现保留旧后端可编译性；FsBridge 改用 active devfs 的原子 snapshot。
+3. 保留 `/dev/zero`、`/dev/urandom`、`/dev/random` 的 VFS 兼容节点，并让它们进入同一快照结果。
+4. 增加 API host 测试，执行 RISC-V check 与 LoongArch 编译门禁。
+
+### 已完成
+
+- [x] `VfsDevInventory::snapshot()` 一次返回 generation 和节点列表。
+- [x] FsBridge 使用 kernel/simple/dummy devfs 的原子 snapshot，避免跨代设备目录视图。
+- [x] 旧 `list_dev_nodes()` 与 `devfs_generation()` 保持兼容。
+- [x] VFS API host 测试 5 项通过，包含 snapshot generation/node 一致性契约。
+- [x] `make check EXTRA_FEATURES=remote-debug-monitor` 与 `make kernel-la` 通过。
+
+### 验证证据与限制
+
+- 本批证明了软件层 snapshot API 和 FsBridge 接线；未证明真实 USB/PS2/virtio-input 热插拔期间的 IRQ、DMA 停止和电气状态。
+- `UNVERIFIED_ON_HARDWARE`：真实设备注册/注销仍需目标板或 QEMU 输入注入测试；后续应扩展 major/minor、权限和能力位图。
+
+### 提交
+
+- 本批计划提交：`[feat] add atomic VFS device snapshots`

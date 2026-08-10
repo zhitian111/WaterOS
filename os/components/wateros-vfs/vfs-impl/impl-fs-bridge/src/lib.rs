@@ -11,6 +11,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use api_v0::{
     normalize_absolute_path, validate_root_file_name, RootRwSession, SingleRootReadView,
     VfsAccessMode, VfsBackend, VfsCapability, VfsDevInventory, VfsDevNode, VfsDevNodeType,
+    VfsDevSnapshot,
     VfsDirEntry, VfsError, VfsFsKind, VfsIoHandle, VfsMetadata, VfsMountOps, VfsMountTable,
     VfsNodeType, VfsOpenFlags, VfsOpenOps, VfsResult,
 };
@@ -1152,45 +1153,35 @@ impl VfsMountOps for FsBridge {
     }
 }
 
-impl VfsDevInventory for FsBridge {
-    // 本方法代码由AI完成
-    fn list_dev_nodes(&self) -> Vec<VfsDevNode> {
-        let mut nodes = fs::devfs::active_impl::list_nodes().into_iter()
-                                                            .map(|n| {
-                                                                VfsDevNode {
-                path: n.path,
-                node_type: match n.node_type {
-                    fs::devfs::DevNodeType::Block => VfsDevNodeType::Block,
-                    fs::devfs::DevNodeType::Character => VfsDevNodeType::Character,
-                    fs::devfs::DevNodeType::Unsupported => VfsDevNodeType::Unsupported,
-                },
-            }
-                                                            })
-                                                            .collect::<Vec<VfsDevNode>>();
-        if !nodes.iter()
-                 .any(|n| n.path == "/dev/zero")
-        {
-            nodes.push(VfsDevNode { path : String::from("/dev/zero"),
+fn fs_dev_snapshot() -> VfsDevSnapshot {
+    let (generation, raw_nodes) = fs::devfs::active_impl::snapshot();
+    let mut nodes = raw_nodes.into_iter()
+                             .map(|n| VfsDevNode {
+                                 path : n.path,
+                                 node_type : match n.node_type {
+                                     fs::devfs::DevNodeType::Block => VfsDevNodeType::Block,
+                                     fs::devfs::DevNodeType::Character => VfsDevNodeType::Character,
+                                     fs::devfs::DevNodeType::Unsupported => {
+                                         VfsDevNodeType::Unsupported
+                                     },
+                                 },
+                             })
+                             .collect::<Vec<VfsDevNode>>();
+    for path in ["/dev/zero", "/dev/urandom", "/dev/random"] {
+        if !nodes.iter().any(|node| node.path == path) {
+            nodes.push(VfsDevNode { path : String::from(path),
                                     node_type : VfsDevNodeType::Character });
         }
-        if !nodes.iter()
-                 .any(|n| n.path == "/dev/urandom")
-        {
-            nodes.push(VfsDevNode { path : String::from("/dev/urandom"),
-                                    node_type : VfsDevNodeType::Character });
-        }
-        if !nodes.iter()
-                 .any(|n| n.path == "/dev/random")
-        {
-            nodes.push(VfsDevNode { path : String::from("/dev/random"),
-                                    node_type : VfsDevNodeType::Character });
-        }
-        nodes
     }
+    VfsDevSnapshot { generation, nodes }
+}
 
-    fn devfs_generation(&self) -> u64 {
-        fs::devfs::active_impl::generation()
-    }
+impl VfsDevInventory for FsBridge {
+    fn list_dev_nodes(&self) -> Vec<VfsDevNode> { fs_dev_snapshot().nodes }
+
+    fn devfs_generation(&self) -> u64 { fs::devfs::active_impl::generation() }
+
+    fn snapshot(&self) -> VfsDevSnapshot { fs_dev_snapshot() }
 
     // 本方法代码由AI完成
     fn default_root_block_path(&self) -> Option<String> {

@@ -22,7 +22,7 @@ pub mod root_read;
 pub mod rw_session;
 
 pub use backend::VfsBackend;
-pub use dev::{VfsDevInventory, VfsDevNode, VfsDevNodeType};
+pub use dev::{VfsDevInventory, VfsDevNode, VfsDevNodeType, VfsDevSnapshot};
 pub use error::{VfsError, VfsResult};
 pub use fd::{
     VfsFd, VfsFdSession, VFS_FIRST_DYNAMIC_FD, VFS_STDERR_FD, VFS_STDIN_FD, VFS_STDOUT_FD,
