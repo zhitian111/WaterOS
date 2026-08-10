@@ -234,6 +234,8 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 return;
             }
             let syscall_ret = dispatch_syscall_from_trap(syscall_nr, syscall_args);
+            #[cfg(feature = "tlsf-diagnostics")]
+            runtime::heap_allocator::maybe_emit_buildstorm_counters();
             #[cfg(feature = "stall-debug")]
             crate::stall_debug::record_syscall_exit(stall_trace);
             hot_syscall_trace!("[syscall] nr={} ret={}",

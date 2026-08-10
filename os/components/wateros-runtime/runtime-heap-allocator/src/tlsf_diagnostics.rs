@@ -2,12 +2,14 @@
 
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use base::cpu::{CpuId, CpuLocal};
 use config::task::MAX_CPUS;
 
 const CLASS_COUNT : usize = 9;
 const CLASS_LIMITS : [usize; CLASS_COUNT - 1] = [16, 32, 64, 128, 256, 512, 1024, 2048];
+const SAMPLE_INTERVAL : u64 = 1 << 18;
 
 #[repr(C, align(64))]
 #[derive(Clone, Copy)]
@@ -20,6 +22,7 @@ struct PerCpuCounters {
     lock_acquire : u64,
     lock_contended : u64,
     oom : u64,
+    sample_counter : u64,
 }
 
 impl PerCpuCounters {
@@ -31,7 +34,8 @@ impl PerCpuCounters {
                align_gt16 : 0,
                lock_acquire : 0,
                lock_contended : 0,
-               oom : 0 }
+               oom : 0,
+               sample_counter : 0 }
     }
 
     fn add_from(&mut self, other : &Self) {
@@ -58,6 +62,7 @@ impl PerCpuCounters {
 
 static COUNTERS : CpuLocal<PerCpuCounters, MAX_CPUS> =
     CpuLocal::from_cells([const { UnsafeCell::new(PerCpuCounters::new()) }; MAX_CPUS]);
+static SAMPLE_PENDING : AtomicBool = AtomicBool::new(false);
 
 #[inline]
 fn class(size : usize) -> usize {
@@ -101,6 +106,12 @@ pub(crate) fn record_alloc(layout : Layout, success : bool, contended : bool) {
                                    .saturating_add(1);
         }
         record_lock(counters, contended);
+        counters.sample_counter = counters.sample_counter
+                                          .saturating_add(1);
+        if counters.sample_counter >= SAMPLE_INTERVAL {
+            counters.sample_counter = 0;
+            SAMPLE_PENDING.store(true, Ordering::Relaxed);
+        }
     });
 }
 
@@ -137,6 +148,12 @@ fn aggregate() -> PerCpuCounters {
         }
     }
     total
+}
+
+pub fn maybe_emit_buildstorm_counters() {
+    if SAMPLE_PENDING.swap(false, Ordering::Relaxed) {
+        emit_buildstorm_counters();
+    }
 }
 
 pub fn emit_buildstorm_counters() {

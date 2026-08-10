@@ -32,7 +32,7 @@ use backend_tlsf as backend;
 
 pub use stress::heap_fragmentation_stress_report;
 #[cfg(all(feature = "impl-tlsf", feature = "tlsf-diagnostics"))]
-pub use tlsf_diagnostics::emit_buildstorm_counters;
+pub use tlsf_diagnostics::{emit_buildstorm_counters, maybe_emit_buildstorm_counters};
 
 /// 内核堆用量快照。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
