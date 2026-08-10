@@ -1653,3 +1653,10 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[test] add qemu input monitor smoke`
+
+### 批次 44 追加：QMP virtio-input 通道
+
+- [x] QEMU smoke 增加 `-nodefaults -device virtio-keyboard-pci -device virtio-tablet-pci` 的最小实例。
+- [x] 通过 QMP `query-commands` 确认 `input-send-event`，并发送按键按下/释放事件；QEMU 11.0.2 实测通过。
+- [x] 单测覆盖 QMP 命令构造；HMP 与 QMP smoke 均通过。
+- `UNVERIFIED_ON_HARDWARE`：该结果只证明 QEMU virtio-input 模型和 QMP 注入通道可用，尚未证明 WaterOS guest 驱动枚举、evdev 记录读取或真实板卡 USB/HID 中断链路。
