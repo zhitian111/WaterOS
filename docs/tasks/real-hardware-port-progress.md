@@ -1628,3 +1628,28 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[test] add input event host smoke`
+
+## 2026-08-10：批次 43——QEMU monitor 输入注入 smoke
+
+### 任务与设计
+
+1. 审计现有 QEMU 启动器：正式 WaterOS 启动默认关闭 monitor，且图形配置才挂载 virtio keyboard/tablet；本批不改启动器，单独启动无磁盘 q35 实例。
+2. 通过 HMP Unix socket 发送 `sendkey` 和 `info status`，验证 QEMU monitor 接受输入注入命令并可安全退出。
+3. 明确脚本只验证 QEMU monitor 通道，不读取 guest 文件系统，不把 host/QEMU monitor 成功写成 WaterOS `/dev/input/eventN` 或物理板成功。
+
+### 完成内容
+
+- [x] 新增 `os/scripts/qemu_input_monitor_smoke.py`，支持缺少 QEMU 时返回可识别的 skip 状态（77）。
+- [x] 使用临时 Unix socket、超时和进程清理，避免留下 QEMU 进程或监控文件。
+- [x] 新增单测覆盖命令构造和 HMP 错误响应解析。
+
+### 验证证据与限制
+
+- `python3 os/scripts/tests/test_qemu_input_monitor_smoke.py`：2 项通过。
+- `python3 os/scripts/qemu_input_monitor_smoke.py`：QEMU 11.0.2 实机执行通过。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：guest 内核是否枚举 virtio-input、事件是否到达 `/dev/input/eventN`、USB/HID IRQ/DMA/cache、LoongArch/RISC-V 两块目标板仍需各自 guest/硬件端到端验证。
+
+### 提交
+
+- `[test] add qemu input monitor smoke`
