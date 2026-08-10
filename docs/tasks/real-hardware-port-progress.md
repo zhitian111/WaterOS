@@ -1550,3 +1550,30 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[feat] describe remote monitor capabilities`
+
+## 2026-08-10：批次 40——devfs 设备元数据契约
+
+### 任务与设计
+
+1. 审计发现动态 devfs 已能按 topology generation 更新路径，但 `DevNode` 只有 path/type，缺少 major/minor、权限和能力信息。
+2. 增加稳定 `DeviceMetadata` 视图：block major 8、character major 4、input event major 13；默认 mode 为 `0600`。
+3. 元数据从稳定节点路径和类型派生，不改变现有注册表、路径别名或动态刷新流程；unsupported 节点保持零元数据。
+
+### 完成内容
+
+- [x] fs-devfs API 新增 `DeviceMetadata`、block/char/input capability bits 和 `DevNode::metadata()`。
+- [x] simple devfs 同步提供 metadata 视图，GPT 宽分区编号可稳定派生 minor。
+- [x] kernel devfs 的 block、UART/RTC、evdev 和占位节点均可通过统一 API 查询元数据。
+- [x] 默认权限保持 `0600`，没有把未验证物理设备暴露为 world-readable/writable。
+
+### 验证证据与限制
+
+- fs-devfs API 单测：1 项通过。
+- simple devfs 单测：2 项通过。
+- kernel devfs RISC-V64 检查：通过。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：major/minor 与真实 Linux 用户态兼容性、udev/权限策略、物理 USB/HID 热插拔仍需 QEMU guest 或目标板验证；metadata 不代表硬件 ready。
+
+### 提交
+
+- `[feat] expose devfs device metadata`

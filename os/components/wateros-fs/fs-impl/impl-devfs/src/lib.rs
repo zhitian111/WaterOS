@@ -24,6 +24,16 @@ pub enum DevNodeType {
     Unsupported,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeviceMetadata {
+    pub major : u32,
+    pub minor : u32,
+    pub mode : u16,
+    pub capabilities : u32,
+}
+
+const DEV_CAP_BLOCK : u32 = 1 << 0;
+
 /// 带块设备索引的节点描述，便于测试断言。
 #[derive(Debug, Clone, PartialEq, Eq)]
 // 本结构代码由AI完成
@@ -34,6 +44,27 @@ pub struct DevNode {
     pub node_type: DevNodeType,
     /// 在驱动枚举中的块设备索引。
     pub index: usize,
+}
+
+impl DevNode {
+    pub fn metadata(&self) -> DeviceMetadata {
+        let number = self.path.as_bytes()
+                         .iter()
+                         .rposition(|byte| !byte.is_ascii_digit())
+                         .and_then(|index| self.path.get(index + 1..))
+                         .and_then(|digits| digits.parse::<u32>().ok())
+                         .unwrap_or(self.index as u32);
+        match self.node_type {
+            DevNodeType::Block => DeviceMetadata { major : 8,
+                                                   minor : number,
+                                                   mode : 0o600,
+                                                   capabilities : DEV_CAP_BLOCK },
+            DevNodeType::Unsupported => DeviceMetadata { major : 0,
+                                                         minor : 0,
+                                                         mode : 0,
+                                                         capabilities : 0 },
+        }
+    }
 }
 
 // 与内核 devfs 不同：仅缓存枚举快照，无动态 register 表；单 Mutex 保护 bring-up 阶段并发。
@@ -181,5 +212,11 @@ mod tests {
     #[test]
     fn partition_alias_keeps_wide_gpt_entry_number() {
         assert_eq!(linux_vd_partition_path(0, 300), "/dev/vda300");
+        let node = DevNode { path : String::from("/dev/vda300"),
+                             node_type : DevNodeType::Block,
+                             index : 9 };
+        assert_eq!(node.metadata().major, 8);
+        assert_eq!(node.metadata().minor, 300);
+        assert_eq!(node.metadata().mode, 0o600);
     }
 }

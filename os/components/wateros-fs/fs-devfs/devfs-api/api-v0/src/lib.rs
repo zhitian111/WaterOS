@@ -23,6 +23,18 @@ pub enum DevNodeType {
     Unsupported,
 }
 
+pub const DEV_CAP_BLOCK : u32 = 1 << 0;
+pub const DEV_CAP_CHAR : u32 = 1 << 1;
+pub const DEV_CAP_INPUT : u32 = 1 << 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeviceMetadata {
+    pub major : u32,
+    pub minor : u32,
+    pub mode : u16,
+    pub capabilities : u32,
+}
+
 /// 单条设备节点：路径与类型，用于启动日志与块设备路径解析。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DevNode {
@@ -30,6 +42,37 @@ pub struct DevNode {
     pub path: String,
     /// 节点类型。
     pub node_type: DevNodeType,
+}
+
+impl DevNode {
+    /// Derive conservative metadata from the stable node path and type.
+    /// This describes the software node only; it is not hardware evidence.
+    pub fn metadata(&self) -> DeviceMetadata {
+        let number = self.path.as_bytes()
+                         .iter()
+                         .rposition(|byte| !byte.is_ascii_digit())
+                         .and_then(|index| self.path.get(index + 1..))
+                         .and_then(|digits| digits.parse::<u32>().ok())
+                         .unwrap_or(0);
+        match self.node_type {
+            DevNodeType::Block => DeviceMetadata { major : 8,
+                                                   minor : number,
+                                                   mode : 0o600,
+                                                   capabilities : DEV_CAP_BLOCK },
+            DevNodeType::Character => {
+                let input = self.path.starts_with("/dev/input/event");
+                DeviceMetadata { major : if input { 13 } else { 4 },
+                                 minor : number,
+                                 mode : 0o600,
+                                 capabilities : DEV_CAP_CHAR |
+                                               if input { DEV_CAP_INPUT } else { 0 } }
+            }
+            DevNodeType::Unsupported => DeviceMetadata { major : 0,
+                                                         minor : 0,
+                                                         mode : 0,
+                                                         capabilities : 0 },
+        }
+    }
 }
 
 /// DevFS 管理器：刷新节点表、登记 DTB 占位路径、注册/查找块设备。
@@ -54,4 +97,27 @@ pub trait DevFsManager {
     fn lookup_character_device(&self, path: &str) -> FsResult<SharedCharacterDevice>;
     /// 默认用于根卷探测的块设备路径；无可用设备时返回 `None`。
     fn default_root_block_path(&self) -> Option<String>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metadata_uses_stable_numbers_and_conservative_modes() {
+        let block = DevNode { path : String::from("/dev/vda300"),
+                              node_type : DevNodeType::Block };
+        assert_eq!(block.metadata(), DeviceMetadata { major : 8,
+                                                       minor : 300,
+                                                       mode : 0o600,
+                                                       capabilities : DEV_CAP_BLOCK });
+        let input = DevNode { path : String::from("/dev/input/event7"),
+                              node_type : DevNodeType::Character };
+        assert_eq!(input.metadata().major, 13);
+        assert_eq!(input.metadata().minor, 7);
+        assert_eq!(input.metadata().capabilities, DEV_CAP_CHAR | DEV_CAP_INPUT);
+        let unsupported = DevNode { path : String::from("/dev/unknown"),
+                                    node_type : DevNodeType::Unsupported };
+        assert_eq!(unsupported.metadata().mode, 0);
+    }
 }
