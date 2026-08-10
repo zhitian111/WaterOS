@@ -1326,3 +1326,23 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[test] verify visionfive2 partition registration`
+
+## 2026-08-10：批次 69——VisionFive 2 MMC 静态调优参数 fail-closed
+
+### 任务与设计
+
+1. 审计 JH7110 MMC bring-up plan 对 DTB `max-frequency` 与 `fifo-depth` 的验证。
+2. 将 `Some(0)` 与缺失值区分为明确的无效静态资源；在任何 MMIO/时钟/复位操作前拒绝该计划。
+3. 通过纯配置测试验证，不声称控制器真实时序或卡路径已在实体板完成。
+
+### 完成内容
+
+- [x] 新增 `InvalidTargetFrequency` 与 `InvalidFifoDepth` blockers。
+- [x] `bring_up_plan` 对零频率/零 FIFO 深度 fail-closed。
+- [x] 新增零调优参数回归测试，确认 `controller_config()` 不会产生可激活配置。
+
+### 验证证据与限制
+
+- VisionFive 2 driver crate：14 项测试通过。
+- 既有分区注册、PLIC、IRQ lease、MMC 证据门控测试仍全部通过。
+- `UNVERIFIED_ON_HARDWARE`：JH7110 实际时钟频率、FIFO 行为、pinmux、IRQ/DMA/cache 和 SD/eMMC 卡路径仍需上板验证。
