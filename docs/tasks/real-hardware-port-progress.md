@@ -5903,3 +5903,35 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] parameterize physical root image manifests`
+
+## 2026-08-10：批次 128——增加物理根盘 QEMU snapshot smoke 入口
+
+### 本批任务与设计
+
+1. 复用统一 `qemu_run.py` 的双架构参数组装，避免 root-image smoke 自己复制 virtio-blk/QEMU 参数。
+2. 新增默认只打印命令的 smoke helper：先独立验证 manifest/ext4/分区，再确认 kernel、镜像和 `-snapshot` 接线。
+3. 通过 `--execute` 显式运行 QEMU，并设置 30 秒默认超时；任何运行都强制 snapshot，禁止写回输入镜像。
+4. 没有 kernel artifact 时仍能用 host 单测验证 launch contract；真实 guest 挂载结果继续单独标注。
+
+### 已完成
+
+- [x] 新增 `os/scripts/root_image/qemu_smoke.py`，支持 rv/la、pre/final、manifest、kernel、dry-run/execute。
+- [x] 增加缺少 kernel、丢失 snapshot、镜像路径未接入等回归测试。
+- [x] README 记录 smoke 用法、超时和物理板验证边界。
+
+### 验证证据
+
+- root-image Python 单测与 QEMU smoke 单测通过。
+- 当前宿主机检测到 `qemu-system-riscv64` 和 `qemu-system-loongarch64`；本批没有 kernel artifact，因此未执行 guest。
+- 16 MiB root image 的 build/verify 已在上一批通过；smoke 会复用同一 verifier。
+- `UNVERIFIED_ON_HARDWARE`：QEMU virtio-blk snapshot 不等价于真实 SD/eMMC 控制器、cache、写屏障和掉电行为。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 需要 kernel artifact 后分别执行 rv/la `--execute`，并抓取 guest `/dev/vda1` 挂载证据。
+- [ ] smoke 当前只按 QEMU 进程退出码判定执行结果，不解析内核日志中的根卷挂载成功行。
+- [ ] 真实板仍需验证镜像烧录、分区发现、控制器 DMA 和掉电恢复。
+
+### 提交
+
+- 本批计划提交：`[feat] add root image QEMU snapshot smoke`

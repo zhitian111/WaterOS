@@ -52,3 +52,17 @@ power-loss recovery for writes to this root filesystem.
 The image has been exercised with QEMU virtio-blk. SD/eMMC controllers, cache
 coherency, write barriers, flush semantics, and power-loss behavior still need
 validation on each physical board.
+
+After building a kernel artifact, the snapshot smoke helper validates the same
+manifest and prints the exact QEMU command without starting a guest:
+
+```bash
+python3 ./scripts/root_image/qemu_smoke.py \
+  --arch rv --profile pre --image ./wateros-root.img \
+  --manifest ./scripts/root_image/rootfs-manifest.json \
+  --kernel ./kernel-rv-pre
+```
+
+Add `--execute` to run QEMU with `-snapshot`; a timeout or missing kernel/QEMU
+is reported as a smoke failure. The guest's physical SD/eMMC behavior remains
+`UNVERIFIED_ON_HARDWARE`.
