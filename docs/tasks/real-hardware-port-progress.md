@@ -5525,3 +5525,35 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] add LS2K1000 published completion tracker`
+
+## 2026-08-10：批次 116——将 completion failure 转入 coordinator recovery
+
+### 本批任务与设计
+
+1. 审计 completion failure 发生于 Published/Rechecking/Terminal 时的 coordinator 状态转移。
+2. 新增 `ReadCoordinatorSlot::record_completion_failure`，只接受代次匹配且尚未进入终态 recovery 的请求。
+3. 为 production published tracker 增加 stop/quiesce recovery token；失败时保留 tracker，成功时只交出 quiesced DMA session。
+4. 继续要求后续 IRQ retire、MMC clear 和 cache sync evidence，不能以 failure 分类代替硬件回收。
+
+### 已完成
+
+- [x] completion failure 可原子进入 `RecoveryPending`，slot 不被清空，普通 release 仍返回 `RecoveryMustBeRecorded`。
+- [x] 支持 Published、Rechecking、Terminal phase 的 failure 入口；错代和非法 phase 保持原状态。
+- [x] `PublishedReadCompletionFailure::stop` 先执行 DMA stop，生成带 failure/receipt/quiesced session 的 recovery token；stop 失败返回原 tracker。
+- [x] 新增 coordinator host 测试覆盖空 slot、成功转移、cause 和 release gate。
+
+### 验证证据
+
+- 驱动完整 host 测试 183 项通过；新增 failure 测试确认 RecoveryPending 保留请求资源。
+- 驱动 check、RISC-V `make check`、LoongArch64 `make kernel-la`、Python 53 项测试全部通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 stop confirmation、IRQ acknowledgement/clear、MMC controller readback、cache sync 和 SD/eMMC 行为仍待实机。
+
+### 已知限制、未验证与后续测试
+
+- [ ] recovery token 尚未自动构造 `ReadRecoveryReport`，调用方仍需提供 IRQ retire/partial snapshot 后进入 RecoveryRecorded。
+- [ ] coordinator failure 入口不拥有底层 DMA session；资源所有权必须由 published tracker 的 stop token 保持，禁止直接丢弃。
+- [ ] 下一步应将 quiesced recovery token 与 `ReadRecoveryService::retire_and_record`/`archive_claimed` 统一，形成完整 failure archive 链。
+
+### 提交
+
+- 本批计划提交：`[feat] route LS2K1000 read failures to recovery`

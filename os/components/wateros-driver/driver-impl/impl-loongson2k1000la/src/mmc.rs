@@ -1435,11 +1435,63 @@ pub struct PublishedReadCompletionFailure<'a, 'e, R, D, P> {
     pub tracker : PublishedReadCompletionTracker<'a, 'e, R, D, P>,
 }
 
+pub struct PublishedReadCompletionRecovery<'a, D, P> {
+    pub failure : ReadCompletionFailure,
+    pub receipt : ReadDataPublishReceipt,
+    pub session : apbdma::QuiescedSession<'a, D, P>,
+}
+
+pub struct PublishedReadCompletionStopFailure<'a, 'e, R, D, P> {
+    pub error : apbdma::ExecutorError,
+    pub failure : PublishedReadCompletionFailure<'a, 'e, R, D, P>,
+}
+
+impl<R, D, P> core::fmt::Debug for PublishedReadCompletionStopFailure<'_, '_, R, D, P> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("PublishedReadCompletionStopFailure")
+                 .field("error", &self.error)
+                 .finish_non_exhaustive()
+    }
+}
+
 impl<R, D, P> core::fmt::Debug for PublishedReadCompletionFailure<'_, '_, R, D, P> {
     fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.debug_struct("PublishedReadCompletionFailure")
                  .field("error", &self.error)
                  .finish_non_exhaustive()
+    }
+}
+
+impl<'a, 'e, R : apbdma::OrderIo, D, P>
+    PublishedReadCompletionFailure<'a, 'e, R, D, P>
+{
+    /// Stop the running DMA before handing the classified failure to the
+    /// coordinator. A stop failure returns the original tracker unchanged.
+    pub fn stop(self)
+                -> Result<PublishedReadCompletionRecovery<'a, D, P>,
+                          PublishedReadCompletionStopFailure<'a, 'e, R, D, P>> {
+        let Self { error, tracker } = self;
+        let PublishedReadCompletionTracker { session, evidence } = tracker;
+        let receipt = session.receipt;
+        match session.dma.stop() {
+            Ok(session) => Ok(PublishedReadCompletionRecovery { failure : error,
+                                                                  receipt,
+                                                                  session }),
+            Err(failure) => Err(PublishedReadCompletionStopFailure {
+                error : failure.error,
+                failure : Self {
+                    error,
+                    tracker : PublishedReadCompletionTracker {
+                        session : PublishedReadDmaReceiptSession {
+                            read : session.read,
+                            receipt,
+                            dma : failure.session,
+                        },
+                        evidence,
+                    },
+                },
+            }),
+        }
     }
 }
 

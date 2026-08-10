@@ -447,6 +447,32 @@ impl ReadCoordinatorSlot {
         })
     }
 
+    /// Move a classified completion failure into recovery without clearing the
+    /// slot. The caller must still provide quiesced IRQ/DMA evidence before a
+    /// report can be archived or the slot released.
+    pub fn record_completion_failure(
+        &self,
+        transaction : ReadTransactionId,
+        failure : crate::mmc::ReadCompletionFailure)
+        -> Result<ReadRecoveryCause, ReadCoordinatorError> {
+        let cause = ReadRecoveryCause::CompletionFailure(failure);
+        self.with_state(transaction, |state| {
+            if !matches!(state,
+                         ReadCoordinatorState::Published { .. } |
+                         ReadCoordinatorState::Rechecking { .. } |
+                         ReadCoordinatorState::Terminal { .. })
+            {
+                return Err(ReadCoordinatorError::WrongPhase {
+                    expected : ReadCoordinatorPhase::Published,
+                    actual : state.phase(),
+                });
+            }
+            *state = ReadCoordinatorState::RecoveryPending { transaction, cause };
+            Ok(())
+        })?;
+        Ok(cause)
+    }
+
     pub fn record_recheck(&self,
                           recheck : BoundedMmcReadRecheck)
                           -> Result<(), RecordRecheckFailure> {
@@ -1473,6 +1499,23 @@ mod tests {
         let executor = permit.commit(2).unwrap();
         assert_eq!(executor.snapshot().unwrap().phase, ReadCoordinatorPhase::Published);
         executor.release().unwrap();
+    }
+
+    #[test]
+    fn completion_failure_enters_recovery_without_clearing_request_slot() {
+        let slot = ReadCoordinatorSlot::new();
+        let transaction = transaction(10);
+        assert_eq!(slot.record_completion_failure(transaction,
+                                                   crate::mmc::ReadCompletionFailure::DataTimeout),
+                   Err(ReadCoordinatorError::Slot(SlotError::Empty)));
+        slot.reserve(transaction).unwrap().commit();
+        slot.mark_published(transaction, 1).unwrap();
+        let cause = slot.record_completion_failure(
+            transaction, crate::mmc::ReadCompletionFailure::DataTimeout).unwrap();
+        assert_eq!(cause, ReadRecoveryCause::CompletionFailure(
+            crate::mmc::ReadCompletionFailure::DataTimeout));
+        assert_eq!(slot.snapshot().unwrap().phase, ReadCoordinatorPhase::RecoveryPending);
+        assert_eq!(slot.release(transaction), Err(ReadCoordinatorError::RecoveryMustBeRecorded));
     }
 
     #[test]
