@@ -311,7 +311,7 @@ mod tests {
             absolute_x : None, absolute_y : None,
         })) as Box<dyn InputDevice>));
         let index = register_input_device(input);
-        let manager = KernelDevFsManager;
+        let mut manager = KernelDevFsManager;
         let path = format!("/dev/input/event{index}");
         let node = manager.list_nodes()
                            .into_iter()
@@ -323,9 +323,14 @@ mod tests {
         assert_eq!(metadata.mode, 0o600);
         assert_ne!(metadata.capabilities & api_v0::DEV_CAP_INPUT, 0);
         assert!(manager.lookup_character_device(&path).is_ok());
+        let node_count = manager.list_nodes().len();
+        manager.refresh();
+        assert_eq!(manager.list_nodes().len(), node_count,
+                   "refresh must be idempotent for a stable input topology");
         assert!(unregister_input_device(index));
         assert!(!manager.list_nodes().iter().any(|node| node.path == path));
         assert!(manager.lookup_character_device(&path).is_err());
+        assert!(!unregister_input_device(index), "duplicate removal must be harmless");
     }
 }
 

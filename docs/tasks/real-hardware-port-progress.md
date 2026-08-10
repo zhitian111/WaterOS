@@ -1810,6 +1810,31 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 
 - `[test] add operator shell preflight`
 
+## 2026-08-10：批次 59——动态 input/devfs 快照一致性
+
+### 任务与设计
+
+1. 复查输入 registry、evdev character adapter 和 devfs refresh：节点表必须是当前 registry 的快照，不能在注销后留下 stale `/dev/input/eventN`。
+2. 在已有动态注册/注销 API 上补充 refresh 幂等性和重复注销测试，不新增未经验证的 USB 控制器逻辑。
+3. 通过稳定 slot index 维持事件节点命名；注销只改变 registry 可见性，真实驱动在此之前仍需屏蔽 IRQ、停止 DMA。
+
+### 完成内容
+
+- [x] devfs fixture 验证注册输入设备后生成 `/dev/input/eventN`，节点 metadata 为 input major 13、权限 0600。
+- [x] 验证对稳定拓扑重复 `refresh()` 不重复增加节点。
+- [x] 验证注销后节点与 character lookup 消失，重复注销返回 false 且不破坏状态。
+
+### 验证证据与限制
+
+- devfs kernel crate 单测：1 项通过。
+- input API crate 单测：7 项通过。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 USB/HID descriptor、IRQ/DMA/cache、热插拔停止顺序和两平台控制器仍需 QEMU guest/实体板端到端验证。
+
+### 提交
+
+- `[test] verify dynamic input devfs refresh`
+
 ## 2026-08-10：批次 56——QEMU guest GPT 根盘接通与 virtio 容量修复
 
 ### 任务与设计
