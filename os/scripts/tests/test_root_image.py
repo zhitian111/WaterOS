@@ -12,7 +12,14 @@ from unittest.mock import patch
 ROOT_IMAGE = Path(__file__).resolve().parents[1] / "root_image"
 sys.path.insert(0, str(ROOT_IMAGE))
 
-from root_image import ImageError, build_image, populate_staging, parse_mbr_sector
+from root_image import (
+    ImageError,
+    build_image,
+    make_gpt_partition_table,
+    parse_gpt_sectors,
+    populate_staging,
+    parse_mbr_sector,
+)
 
 
 class RootImageTests(unittest.TestCase):
@@ -21,8 +28,10 @@ class RootImageTests(unittest.TestCase):
         text = makefile.read_text(encoding="utf-8")
         self.assertIn("ROOT_IMAGE_MANIFEST ?=", text)
         self.assertIn("ROOT_IMAGE_SIZE_MIB ?= 32", text)
+        self.assertIn("ROOT_IMAGE_PARTITION_TABLE ?= mbr", text)
         self.assertIn('--manifest "$(ROOT_IMAGE_MANIFEST)"', text)
         self.assertIn('--size-mib "$(ROOT_IMAGE_SIZE_MIB)"', text)
+        self.assertIn('--partition-table "$(ROOT_IMAGE_PARTITION_TABLE)"', text)
 
     def test_parse_single_linux_partition(self) -> None:
         sector = bytearray(512)
@@ -46,6 +55,19 @@ class RootImageTests(unittest.TestCase):
         struct.pack_into("<II", sector, 446 + 16 + 8, 15000, 4096)
         with self.assertRaisesRegex(ImageError, "beyond"):
             parse_mbr_sector(bytes(sector), 8 * 1024 * 1024)
+
+    def test_builds_and_parses_small_gpt_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            image = Path(temporary) / "gpt.img"
+            with image.open("wb") as output:
+                output.truncate(16 * 1024 * 1024)
+            partition = make_gpt_partition_table(image, image.stat().st_size, 2048)
+            with image.open("rb") as source:
+                metadata = source.read(34 * 512)
+            parsed = parse_gpt_sectors(metadata, image.stat().st_size)
+            self.assertEqual(parsed, [partition])
+            self.assertEqual(partition.start_sector, 2048)
+            self.assertEqual(partition.sectors % 8, 0)
 
     def test_manifest_populates_modes_and_rejects_escape(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

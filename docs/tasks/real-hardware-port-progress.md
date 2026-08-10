@@ -6109,3 +6109,32 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[fix] validate GPT partition checksums`
+
+## 2026-08-10：批次 135——构建并验证 GPT 物理根盘镜像
+
+### 本批任务与设计
+
+1. 审计 root-image builder 的 MBR 假设，确认 build、verify、ext4 offset 和 QEMU smoke 的接线点。
+2. 增加 `ROOT_IMAGE_PARTITION_TABLE=mbr|gpt`，默认保持原 MBR 行为；GPT 手工写入 protective MBR、primary/backup header 和 entry array。
+3. 使用同一布局解析器校验 GPT header/entry CRC、分区范围、ext4 内容和 manifest，避免生成后只能依赖外部工具判断。
+4. 用 16 MiB 临时镜像完成实际 build/verify 和 RISC-V QEMU 根挂载 smoke，清理所有产物。
+
+### 已完成
+
+- [x] `root_image.py` 支持 GPT 构建和解析，保留 MBR 默认兼容路径。
+- [x] GPT 镜像包含 protective MBR、primary/backup GPT metadata、CRC 和 1 MiB 对齐 Linux 根分区。
+- [x] Makefile 新增 `ROOT_IMAGE_PARTITION_TABLE`，README 补充 GPT 用法和小镜像用法。
+- [x] root-image Python 测试 10 项通过，含 GPT metadata 构建/解析测试。
+- [x] 16 MiB GPT 镜像实际 build/verify 成功；primary/backup 均观测到 `EFI PART`。
+- [x] 使用当前 RISC-V 内核执行 GPT 镜像 QEMU snapshot smoke，观测到：
+  `[fs::rootfs] mount root RW from /dev/vda1`。
+
+### 验证证据与限制
+
+- `make check EXTRA_FEATURES=remote-debug-monitor`、`make kernel-rv` 均通过；内核产物已清理。
+- GPT builder 当前生成单个 Linux root 分区；多数据分区、分区名称消费和备用 header 故障切换仍待后续测试。
+- `UNVERIFIED_ON_HARDWARE`：真实 SD/eMMC 固件、GPT backup header 在掉电后的恢复、DMA/cache 和控制器错误恢复仍需目标板验证。
+
+### 提交
+
+- 本批计划提交：`[feat] build GPT root images`

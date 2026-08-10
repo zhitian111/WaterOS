@@ -77,6 +77,7 @@ ROOT_IMAGE ?= ./wateros-root.img
 ROOT_IMAGE_TOOL := ./scripts/root_image/root_image.py
 ROOT_IMAGE_MANIFEST ?= ./scripts/root_image/rootfs-manifest.json
 ROOT_IMAGE_SIZE_MIB ?= 32
+ROOT_IMAGE_PARTITION_TABLE ?= mbr
 PORT ?= 1234
 START_PAUSED ?= 1
 FAULTS ?= 0
@@ -171,11 +172,11 @@ help:
 	@echo "  make gdb                             手动挡：终端二连接"
 	@echo "  make snapshot / make watch           附加当前活动会话"
 	@echo "  make doctor                          检查 GDB/QEMU/符号工具"
-	@echo "  make physical-root-image             构建 32 MiB MBR+ext4 真机根盘"
+	@echo "  make physical-root-image             构建 32 MiB MBR/GPT+ext4 真机根盘"
 	@echo "  make verify-physical-root-image      只读检查真机根盘布局与内容"
 	@echo "  make show-config                     显示当前最终生效配置"
 	@echo ""
-	@echo "常用变量：SMP MODE SCRIPT GUEST_SHELL SNAPSHOT WRITE_DISK SDCARD"
+	@echo "常用变量：SMP MODE SCRIPT GUEST_SHELL SNAPSHOT WRITE_DISK SDCARD ROOT_IMAGE_PARTITION_TABLE"
 	@echo "图形变量：EXTRA_FEATURES=gui GRAPHICS=1 GRAPHICS_BACKEND=auto|gtk|sdl|cocoa|none"
 	@echo "镜像默认值：RV_PRE_IMAGE RV_FINAL_IMAGE LA_PRE_IMAGE LA_FINAL_IMAGE"
 	@echo "Make 不维护测试目录；auto 模式的测试由内核 bringup 选择。"
@@ -481,7 +482,8 @@ check: validate-config $(SELECTED_CHECK_TARGET)
 physical-root-image:
 	$(call INFO, "构建物理机/QEMU 共用根盘 $(ROOT_IMAGE)...")
 	@python3 $(ROOT_IMAGE_TOOL) build --force --output "$(ROOT_IMAGE)" \
-		--manifest "$(ROOT_IMAGE_MANIFEST)" --size-mib "$(ROOT_IMAGE_SIZE_MIB)"
+		--manifest "$(ROOT_IMAGE_MANIFEST)" --size-mib "$(ROOT_IMAGE_SIZE_MIB)" \
+		--partition-table "$(ROOT_IMAGE_PARTITION_TABLE)"
 
 verify-physical-root-image:
 	$(call INFO, "只读验证根盘 $(ROOT_IMAGE)...")

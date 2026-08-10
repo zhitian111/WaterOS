@@ -1,7 +1,7 @@
 # WaterOS physical root image
 
 This directory contains the rootless image builder intended for QEMU and real
-SD-card/disk deployment. Its default layout is deliberately small:
+SD-card/disk deployment. Its default MBR layout is deliberately small:
 
 - 32 MiB sparse raw disk;
 - DOS/MBR disk id `0x574f5301`;
@@ -21,6 +21,11 @@ make physical-root-image ROOT_IMAGE=./wateros-rv64.img \
   ROOT_IMAGE_SIZE_MIB=16
 make verify-physical-root-image ROOT_IMAGE=./wateros-rv64.img \
   ROOT_IMAGE_MANIFEST=./my-rootfs-manifest-rv64.json
+
+# 如目标固件要求 GPT，也可使用小镜像先做 host/QEMU 验证
+make physical-root-image ROOT_IMAGE=./wateros-gpt.img \
+  ROOT_IMAGE_SIZE_MIB=16 ROOT_IMAGE_PARTITION_TABLE=gpt
+make verify-physical-root-image ROOT_IMAGE=./wateros-gpt.img
 ```
 
 The build requires `sfdisk`, `mkfs.ext4`, `e2fsck`, `dumpe2fs`, and `debugfs`.
@@ -32,7 +37,10 @@ output is intended.
 `ROOT_IMAGE_MANIFEST` is passed to both build and verify, so the same
 architecture-specific manifest is checked after construction. `ROOT_IMAGE_SIZE_MIB`
 defaults to 32 and may be reduced to 16 for small host/QEMU tests (the tool
-still enforces a 1 MiB-aligned partition and ext4 metadata minimum).
+still enforces a 1 MiB-aligned partition and ext4 metadata minimum). The
+`ROOT_IMAGE_PARTITION_TABLE` Make variable defaults to `mbr`; `gpt` emits a
+protective MBR, primary/backup GPT metadata and a CRC-checked Linux root
+partition.
 
 Each manifest file entry must contain an absolute guest `path`, an octal
 `mode`, and exactly one of `content` or `source`. Relative sources are resolved
