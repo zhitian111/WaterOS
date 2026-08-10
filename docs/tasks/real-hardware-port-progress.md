@@ -3820,3 +3820,68 @@ CARG/CCTL 为零且 INT 无残留，满足全部条件仍只能得到 `ObservedO
 ### 提交
 
 - `[feat] expose LS2K1000 MMC controller evidence`
+
+## 2026-08-10：批次 80——LS2K1000 MMC 主机端证据采集
+
+### 任务与设计
+
+1. 审计 `remote_debug_client.py` 对 `ls2k-mmc` 的校验范围和未来真机采集入口。
+2. 对批次 79 的稳定 controller evidence 文本增加严格、无第三方依赖的结构化解析。
+3. 增加显式、不可覆盖的小体积 JSON 归档，保存板卡身份、UTC 时间、原始响应和 SHA-256。
+4. 保留未知顶层字段以兼容后续扩展，但拒绝无法正确解释的 command trace/assessment。
+5. 不改变 monitor 认证模型、guest MMIO、默认启动或既有 smoke 命令序列。
+
+原始 CRLF 响应是证据主体，结构化字段只是检索索引。客户端校验必需字段、重复字段、二进制值、
+十六进制寄存器、prerequisite gate 和 controller success/failure schema。归档固定标记为
+`unverified-observation`，不会因 snapshot 看似干净而声称完成硬件验证。
+
+### 完成内容
+
+- [x] 新增 `MmcEvidence` 与 `parse_mmc_evidence()`，解析成功和 partial controller failure。
+- [x] 严格要求单行 CRLF、`ls2k-mmc` 前缀、唯一 `key=value` 字段和完整 prerequisite gates。
+- [x] `proof`、`can_activate`、`idle`、`clean` 只接受 0/1，controller registers 只接受 `0x...` 或 `na`。
+- [x] gate state 只接受当前稳定枚举；未知顶层字段仍保留在原始 fields map 中。
+- [x] 当前 capture schema 只接受 `trace=none assessment=unavailable`，防止未来 command evidence 被旧客户端误解析。
+- [x] 新增 `write_mmc_evidence()`，以 exclusive-create 模式写紧凑 JSON，不覆盖已有采集结果。
+- [x] JSON 保存 schema、板卡 ID、UTC 时间、原始响应、响应 SHA-256、解析索引和硬件验证状态。
+- [x] CLI 新增成对启用的 `--mmc-evidence PATH --board-id ID`；不指定时原有 smoke 行为完全不变。
+- [x] board ID 在建立网络连接前验证为 1..128 个可打印字符。
+
+### 使用方式
+
+```bash
+python3 os/scripts/remote_debug_client.py \
+  --host 192.0.2.10 --port 22323 \
+  --board-id ls2k1000-board-a \
+  --mmc-evidence ls2k1000-board-a-mmc.json
+```
+
+monitor 无认证和加密，只能在隔离开发网络使用；示例地址仅为文档保留地址。
+
+### 验证证据
+
+- 全部 47 项 Python host 测试通过；remote client/QEMU launcher 相关用例由 13 项增至 16 项。
+- 成功 fixture 验证 controller 数值、IRQ gate 和未知扩展字段保留。
+- partial failure fixture 验证 `error:read-dsts` 与 `dsts/int=na`。
+- malformed matrix 覆盖非法 proof、负 blocker、重复字段、非法 hex、缺失 gates、未知 gate state、future trace 和错误换行。
+- 归档 fixture 验证固定 UTC、schema、板卡 ID、硬件状态、SHA-256 字段、4 KiB 内文件和禁止覆盖。
+- `py_compile` 通过；topology fixture/畸形 DTB 矩阵通过，dtc warning 均来自预期畸形输入。
+- `git diff --check` 通过。本批只改主机 Python 脚本，不改变 Rust、target feature、内核或物理 MMIO，因此未重复生成大体积内核构建。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：尚未从任一目标板实际连接 monitor 或取得 controller response。
+- [ ] 板卡 ID 由操作者提供，当前没有 EEPROM/序列号等不可伪造身份来源。
+- [ ] SHA-256 用于发现响应内容变化，不是签名；无认证 monitor 上的记录不能证明远端身份。
+- [ ] 当前 schema 明确拒绝 command-bearing trace；未来开放 probe 后必须增加独立 schema 和完整 trace sample 表达。
+- [ ] 归档是单次 snapshot，不证明跨时刻稳定性；上板时每块板应在冷启动、热重启和插卡状态分别采集。
+- [ ] 成功采集仍只代表只读软件观察，不能解除 CRC/busy policy gate 或 activation blocker。
+- [ ] 下一批应增加离线 evidence verifier：重新计算 SHA-256、重解析原始响应、比较 stored parsed index，并生成逐板采集清单/通过失败摘要。
+
+### 参考与许可证
+
+- 本批仅使用 Python 标准库，未引入第三方代码或许可证。
+
+### 提交
+
+- `[feat] capture LS2K1000 MMC remote evidence`
