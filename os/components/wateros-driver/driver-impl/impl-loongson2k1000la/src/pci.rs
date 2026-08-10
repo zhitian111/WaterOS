@@ -208,6 +208,16 @@ pub fn probe_volatile(reader : &VolatileConfigReader,
     probe(reader, location)
 }
 
+/// Perform one explicit, read-only function snapshot from a mapped ECAM
+/// region. This helper is intentionally not called by `init_after_boot`:
+/// DTB ECAM ownership and mapping attributes still require board evidence.
+pub unsafe fn probe_volatile_snapshot(region : api_v0::MmioRegion,
+                                       location : PciLocation)
+                                       -> Result<PciSnapshotResult, PciProbeError> {
+    let reader = unsafe { VolatileConfigReader::from_region(region)? };
+    Ok(probe_snapshot(&reader, location))
+}
+
 /// Interpret vendor/device and class-code registers without writing config.
 pub fn probe<R : ConfigReader>(reader : &R,
                                location : PciLocation)

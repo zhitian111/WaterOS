@@ -7237,3 +7237,26 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[feat] derive gmac evidence from pci snapshot`
+
+## 2026-08-10：批次 180——提供显式 PCI snapshot 诊断入口
+
+### 本批任务与设计
+
+1. 审计启动流程确认 `init_after_boot` 当前只输出 GMAC deferred 计划，没有明确 DTB ECAM 资源，因此不能安全自动读取 PCI 配置空间。
+2. 新增一次性 `probe_volatile_snapshot` 封装：调用方必须显式提供已映射的 ECAM `MmioRegion`，函数只读并返回完整 snapshot/Absent。
+3. 不把 ethernet 节点的设备 `reg` 猜作 ECAM 窗口；未接入启动路径是刻意的 fail-closed 行为。
+
+### 已完成
+
+- [x] 新增显式 unsafe PCI snapshot 诊断入口，复用窗口校验和 identity/BAR 解码。
+- [x] 保持 `init_after_boot` 不自动探测，等待真实 DTB PCIe ranges/映射属性证据。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path components/wateros-driver/driver-impl/impl-loongson2k1000la/Cargo.toml --lib pci::tests`：8 项通过。
+- `cargo check --manifest-path components/wateros-driver/driver-impl/impl-loongson2k1000la/Cargo.toml --target loongarch64-unknown-none`：通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 DTB ECAM ranges、映射属性、PCIe link 和 config access fault 行为仍需板卡确认；本入口不会自动启用 GMAC。
+
+### 提交
+
+- 待提交：`[feat] expose explicit pci snapshot probe`
