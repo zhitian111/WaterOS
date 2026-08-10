@@ -1684,3 +1684,29 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[test] refresh remote debug protocol fixtures`
+
+## 2026-08-10：批次 46——QEMU 远程调试前置诊断
+
+### 任务与设计
+
+1. 审计发现 `remote_debug_qemu_smoke.py` 在 kernel/SD 镜像缺失时直接 parser error，且没有检查架构对应 QEMU 是否安装。
+2. 增加无副作用的 preflight 函数，检查架构、QEMU 产物路径、文件非空、端口范围；缺少构建产物或 QEMU 时返回明确 skip（77），不启动半成品 QEMU。
+3. 保留完整 guest smoke 的严格范围：通过 preflight 后才构造正式 QEMU 命令，仍不把 host 检查当作 guest/硬件结果。
+
+### 完成内容
+
+- [x] `remote_debug_qemu_smoke.py` 增加 RISC-V/LoongArch QEMU binary 映射和输入诊断。
+- [x] 正式启动前替换为 `shutil.which` 找到的 QEMU 路径，避免 PATH/脚本环境差异。
+- [x] 新增 3 项单测，覆盖架构映射、空/缺失文件和最小非空 fixture。
+
+### 验证证据与限制
+
+- QEMU preflight 单测：3 项通过。
+- remote-debug client 单测：3 项通过。
+- 缺少 kernel/SD 时实测输出明确 `SKIP` 并返回 77。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：当前环境没有可启动的 WaterOS guest 产物，完整 QEMU guest monitor 和真实板卡网络仍需后续验证。
+
+### 提交
+
+- `[test] add qemu smoke preflight`
