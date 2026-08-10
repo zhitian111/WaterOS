@@ -4015,3 +4015,69 @@ controller 可能产生相同寄存器值；独立性以不同文件路径和 UT
 ### 提交
 
 - `[feat] define LS2K1000 MMC evidence matrix`
+
+## 2026-08-10：批次 83——LS2K1000 MMC 最小只读数据 preflight
+
+### 任务与设计
+
+1. 审计 Linux 主线 Loongson2 MMC 数据寄存器、block limits、2K1000 DMA backend 和 request 顺序。
+2. 定义只能表示 CMD17/CMD18 的只读 block request，不开放写请求或通用 ADTC bypass。
+3. 对 block count/size、byte length、block/byte addressing、bus width 和 buffer length 做 checked preflight。
+4. 生成固定顺序的 DCTL/BSIZE/TIMER 软件计划，并把 DATA slave 地址绑定到 controller window。
+5. 用独占 mutable borrow 保留 CPU buffer ownership；没有 executor 时只能 cancel 归还。
+6. 即使软件 evidence 全部为 true，也保留不可移除的 ExecutorUnavailable blocker。
+
+Linux 主线为 2K1000 固定请求外部 `rx-tx` DMA，没有 PIO fallback。数据设置顺序为
+`DCTL(BNUM|START|ENDMA|bus-width) → BSIZE → TIMER=U32_MAX`；DMA slave address 是 controller
+`DATA+0x40`，读方向为 device-to-memory。WaterOS 只生成这些值的 inert plan，不执行寄存器写、
+DMA ownership transfer 或 command。
+
+### 完成内容
+
+- [x] 补充 TIMER/BSIZE/DCTL/DATA offsets 与 12-bit block count、START、ENDMA、4/8-bit bus 常量。
+- [x] 新增 `ReadAddressing::{Block,Byte}`；byte addressing 使用 checked `block * block_size`。
+- [x] 新增 `ReadBlockRequest`，单块固定 CMD17，多块固定 CMD18。
+- [x] request 显式携带 `ResponseType::Short + ResponseValidation::Crc`，不伪装成现有 Unchecked command。
+- [x] block count 限制 1..4095；block size 限制 1..4095、且必须四字节整除。
+- [x] 使用 checked arithmetic 计算 byte length、command argument 和 DATA MMIO address。
+- [x] 新增 `ReadTransport`；LS2K1000 的 PIO 请求稳定返回 `PioUnsupported`，不猜测 FIFO 行为。
+- [x] 新增 `DeferredReadPlan`，保存 DCTL→BSIZE→TIMER 固定顺序和 DATA physical address。
+- [x] 新增 `ReadPathEvidence` 和五类 blocker：mapping、coherency、data IRQ、response CRC、executor。
+- [x] `ExecutorUnavailable` 无条件存在，`DeferredReadPlan::can_execute()` 恒为 false。
+- [x] 新增 `DeferredRead<'a>` 独占 `&mut [u8]`；只公开 plan 与 cancel，没有 start/MMIO/device ownership API。
+- [x] buffer 必须与 request byte length 完全相等；失败不产生 deferred ownership。
+- [x] 默认启动、Host、CommandDescriptor、APBDMA executor、remote monitor 与 activation blockers 均未接线。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 122 项全部通过；新增 3 项数据 preflight 聚合测试。
+- request matrix 覆盖 CMD17/CMD18、block/byte address、zero/4096 blocks、0/510/4096 block size 和 argument overflow。
+- plan fixture 精确验证 DCTL→BSIZE→TIMER offsets/value、4-bit bus encoding 和 DATA=0x1fe2c040。
+- ownership fixture 验证 cancel 返回同一 buffer address，且 512 字节内容没有改变。
+- 缺全部 evidence 时有 5 个 blocker；四项 evidence 全部为 true 时仍保留且仅保留 ExecutorUnavailable。
+- 负向 fixture 覆盖 PIO、buffer length mismatch、非法 bus width 和 controller DATA address overflow。
+- 既有 command descriptor 继续拒绝 `CommandTransfer::Data`，新 plan 无转换/执行入口。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 通过；dtc warning 为预期畸形输入。
+- LoongArch64 精确 target check 与 `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 通过；仅有既有 warning。
+- `git diff --check` 通过；所有新测试为内存中的纯值/borrow 测试，没有物理 MMIO、DMA 或卡片访问。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：DCTL BNUM encoding、START/ENDMA、BSIZE/TIMER 写序和 DATA slave address 均未逐板验证。
+- [ ] 当前没有 MMC data executor，plan 不能写寄存器、发 CMD17/CMD18 或取得 device ownership。
+- [ ] `ReadPathEvidence` 是可构造的软件 observation，不能充当 capability；无条件 executor blocker 防止其被用于激活。
+- [ ] 当前 buffer 只是 CPU mutable borrow，不是 physically contiguous `DmaMapping<FromDevice>`；后续必须绑定 `OwnedDmaBuffer`。
+- [ ] CRC response policy 仍被现有 command descriptor 拒绝；标准 R1/CMD17/CMD18 不能通过 Unchecked 绕过。
+- [ ] data completion 的 DFIN/DTIMEOUT/RXCRC、DMA completion 双重汇合与错误优先级尚未建模。
+- [ ] CMD18 stop command/CMD12、partial multi-block transfer 和 recovery 尚未设计；不能声称支持多块读取。
+- [ ] cache invalidate、DMA routing、descriptor status 与真实 device-to-memory 可见性需要两板验证。
+- [ ] 下一批应建立 MMC data + APBDMA 的双 completion typestate：只在 command response、DFIN 和 DMA completion 全部满足后归还 CPU buffer；任一失败进入可恢复隔离态，仍不接生产入口。
+
+### 参考与许可证
+
+- `docs/references/loongson2-mmc-upstream.md`
+- Linux `drivers/mmc/host/loongson2-mmc.c` 为 `GPL-2.0-only`；本批仅参考公开寄存器/流程事实，未复制源码。
+
+### 提交
+
+- `[feat] plan LS2K1000 MMC read transfers`

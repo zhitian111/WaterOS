@@ -153,8 +153,12 @@ const REG_RSP0 : usize = 0x14;
 const REG_RSP1 : usize = 0x18;
 const REG_RSP2 : usize = 0x1C;
 const REG_RSP3 : usize = 0x20;
+const REG_TIMER : usize = 0x24;
+const REG_BSIZE : usize = 0x28;
+const REG_DCTL : usize = 0x2C;
 const REG_INT : usize = 0x3C;
 const REG_DSTS : usize = 0x34;
+const REG_DATA : usize = 0x40;
 const REG_IEN : usize = 0x64;
 
 const CTL_ENABLE_CLOCK : u32 = 1 << 0;
@@ -171,6 +175,11 @@ const INT_RESPONSE_CRC : u32 = 1 << 8;
 const INT_CLEAR : u32 = 0x3FF;
 const CSTS_ON : u32 = 1 << 8;
 const DSTS_ACTIVE : u32 = (1 << 0) | (1 << 1);
+const DCTL_BLOCK_COUNT_MASK : u32 = 0xFFF;
+const DCTL_START : u32 = 1 << 14;
+const DCTL_EXTERNAL_DMA : u32 = 1 << 15;
+const DCTL_WIDE_BUS : u32 = 1 << 16;
+const DCTL_8_BIT_BUS : u32 = 1 << 26;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MmcIrqAckError {
@@ -918,6 +927,195 @@ pub enum CommandDescriptorError {
     ResponsePolicyUnsupported,
 }
 
+/// Card addressing mode selected by the protocol layer after card discovery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadAddressing {
+    /// SDHC/SDXC and block-addressed MMC cards use the logical block number.
+    Block,
+    /// Legacy byte-addressed cards use `block * block_size`.
+    Byte,
+}
+
+/// Requested transport. LS2K1000 upstream evidence only supports external DMA.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadTransport {
+    Pio,
+    ExternalDma,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadRequestError {
+    ZeroBlocks,
+    TooManyBlocks,
+    InvalidBlockSize,
+    ByteLengthOverflow,
+    ArgumentOverflow,
+    AddressOverflow,
+    UnsupportedBusWidth,
+    PioUnsupported,
+    BufferLengthMismatch,
+}
+
+/// Missing evidence that prevents a deferred read plan from becoming executable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadActivationBlocker {
+    ExternalDmaMapping,
+    DmaCoherency,
+    DataCompletionIrq,
+    ResponseCrcPolicy,
+    /// No MMC↔APBDMA executor exists yet. This blocker is unconditional.
+    ExecutorUnavailable,
+}
+
+/// Software evidence inputs only. Setting these flags does not authorize MMIO.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReadPathEvidence {
+    pub external_dma_mapping : bool,
+    pub dma_coherency : bool,
+    pub data_completion_irq : bool,
+    pub response_crc_policy : bool,
+}
+
+/// Validated protocol and buffer geometry for CMD17/CMD18.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadBlockRequest {
+    pub start_block : u32,
+    pub block_count : u16,
+    pub block_size : u16,
+    pub byte_length : usize,
+    pub command_index : u8,
+    pub command_argument : u32,
+    pub response : ResponseType,
+    pub response_validation : ResponseValidation,
+}
+
+impl ReadBlockRequest {
+    pub fn new(start_block : u32,
+               block_count : u16,
+               block_size : u16,
+               addressing : ReadAddressing)
+               -> Result<Self, ReadRequestError> {
+        if block_count == 0 {
+            return Err(ReadRequestError::ZeroBlocks);
+        }
+        if u32::from(block_count) > DCTL_BLOCK_COUNT_MASK {
+            return Err(ReadRequestError::TooManyBlocks);
+        }
+        if block_size == 0 || u32::from(block_size) > 0xFFF || block_size % 4 != 0 {
+            return Err(ReadRequestError::InvalidBlockSize);
+        }
+        let byte_length = usize::from(block_count)
+                                .checked_mul(usize::from(block_size))
+                                .ok_or(ReadRequestError::ByteLengthOverflow)?;
+        let command_argument = match addressing {
+            ReadAddressing::Block => start_block,
+            ReadAddressing::Byte => start_block.checked_mul(u32::from(block_size))
+                                                       .ok_or(ReadRequestError::ArgumentOverflow)?,
+        };
+        Ok(Self { start_block,
+                  block_count,
+                  block_size,
+                  byte_length,
+                  command_index : if block_count == 1 { 17 } else { 18 },
+                  command_argument,
+                  response : ResponseType::Short,
+                  response_validation : ResponseValidation::Crc })
+    }
+}
+
+/// Register values and blockers for a future external-DMA read executor.
+///
+/// `UNVERIFIED_ON_HARDWARE`: these values mirror Linux mainline setup but are
+/// never written by this type. There is deliberately no conversion to
+/// [`CommandDescriptor`] while CRC/data completion behavior is unverified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlannedDataWrite {
+    pub offset : usize,
+    pub value : u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeferredReadPlan {
+    pub request : ReadBlockRequest,
+    /// Upstream setup order: DCTL, BSIZE, TIMER. This plan never writes them.
+    pub setup_writes : [PlannedDataWrite; 3],
+    pub data_register_address : u64,
+    pub blockers : [Option<ReadActivationBlocker>; 5],
+}
+
+impl DeferredReadPlan {
+    pub const fn can_execute(&self) -> bool { false }
+
+    pub fn blocker_count(&self) -> usize {
+        self.blockers.iter().filter(|blocker| blocker.is_some()).count()
+    }
+}
+
+/// Exclusive CPU borrow retained while a read is deferred. No method exposes
+/// device ownership or starts hardware; cancel returns the original buffer.
+pub struct DeferredRead<'a> {
+    plan : DeferredReadPlan,
+    buffer : &'a mut [u8],
+}
+
+impl<'a> DeferredRead<'a> {
+    pub const fn plan(&self) -> &DeferredReadPlan { &self.plan }
+
+    pub fn cancel(self) -> &'a mut [u8] { self.buffer }
+}
+
+pub fn prepare_deferred_read<'a>(bring_up : BringUpPlan,
+                                 request : ReadBlockRequest,
+                                 transport : ReadTransport,
+                                 evidence : ReadPathEvidence,
+                                 buffer : &'a mut [u8])
+                                 -> Result<DeferredRead<'a>, ReadRequestError> {
+    if transport == ReadTransport::Pio {
+        return Err(ReadRequestError::PioUnsupported);
+    }
+    if buffer.len() != request.byte_length {
+        return Err(ReadRequestError::BufferLengthMismatch);
+    }
+    let bus_width = match bring_up.bus_width {
+        1 => 0,
+        4 => DCTL_WIDE_BUS,
+        8 => DCTL_8_BIT_BUS,
+        _ => return Err(ReadRequestError::UnsupportedBusWidth),
+    };
+    let mut blockers = [None; 5];
+    let mut next = 0;
+    for (available, blocker) in
+        [(evidence.external_dma_mapping, ReadActivationBlocker::ExternalDmaMapping),
+         (evidence.dma_coherency, ReadActivationBlocker::DmaCoherency),
+         (evidence.data_completion_irq, ReadActivationBlocker::DataCompletionIrq),
+         (evidence.response_crc_policy, ReadActivationBlocker::ResponseCrcPolicy)]
+    {
+        if !available {
+            blockers[next] = Some(blocker);
+            next += 1;
+        }
+    }
+    blockers[next] = Some(ReadActivationBlocker::ExecutorUnavailable);
+    let data_register_address = bring_up.controller_mmio
+                                               .base
+                                               .checked_add(REG_DATA)
+                                               .ok_or(ReadRequestError::AddressOverflow)? as u64;
+    let data_control = u32::from(request.block_count) | DCTL_START |
+                       DCTL_EXTERNAL_DMA | bus_width;
+    let plan = DeferredReadPlan {
+        request,
+        setup_writes : [PlannedDataWrite { offset : REG_DCTL,
+                                           value : data_control },
+                        PlannedDataWrite { offset : REG_BSIZE,
+                                           value : u32::from(request.block_size) },
+                        PlannedDataWrite { offset : REG_TIMER,
+                                           value : u32::MAX }],
+        data_register_address,
+        blockers,
+    };
+    Ok(DeferredRead { plan, buffer })
+}
+
 /// A prevalidated command contract. Invalid and data-bearing commands cannot
 /// reach the Host MMIO method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1578,6 +1776,106 @@ mod tests {
         assert_eq!(plan.prerequisites
                        .pinctrl,
                    PrerequisiteStatus::Missing);
+    }
+
+    #[test]
+    fn read_request_validates_protocol_geometry_and_addressing() {
+        let single = ReadBlockRequest::new(7, 1, 512, ReadAddressing::Block).unwrap();
+        assert_eq!(single.command_index, 17);
+        assert_eq!(single.command_argument, 7);
+        assert_eq!(single.byte_length, 512);
+        assert_eq!(single.response, ResponseType::Short);
+        assert_eq!(single.response_validation, ResponseValidation::Crc);
+
+        let multiple = ReadBlockRequest::new(2, 2, 512, ReadAddressing::Byte).unwrap();
+        assert_eq!(multiple.command_index, 18);
+        assert_eq!(multiple.command_argument, 1024);
+        assert_eq!(multiple.byte_length, 1024);
+        assert_eq!(ReadBlockRequest::new(0, 0, 512, ReadAddressing::Block),
+                   Err(ReadRequestError::ZeroBlocks));
+        assert_eq!(ReadBlockRequest::new(0, 4096, 512, ReadAddressing::Block),
+                   Err(ReadRequestError::TooManyBlocks));
+        for block_size in [0, 510, 4096] {
+            assert_eq!(ReadBlockRequest::new(0, 1, block_size, ReadAddressing::Block),
+                       Err(ReadRequestError::InvalidBlockSize));
+        }
+        assert_eq!(ReadBlockRequest::new(u32::MAX, 1, 512, ReadAddressing::Byte),
+                   Err(ReadRequestError::ArgumentOverflow));
+    }
+
+    #[test]
+    fn deferred_read_retains_cpu_buffer_and_never_becomes_executable() {
+        let request = ReadBlockRequest::new(4, 1, 512, ReadAddressing::Block).unwrap();
+        let bring_up = plan(&description()).unwrap();
+        let mut buffer = [0xA5; 512];
+        let pointer = buffer.as_mut_ptr();
+        let deferred = prepare_deferred_read(bring_up,
+                                             request,
+                                             ReadTransport::ExternalDma,
+                                             ReadPathEvidence::default(),
+                                             &mut buffer).unwrap();
+        assert_eq!(deferred.plan().setup_writes,
+                   [PlannedDataWrite { offset : REG_DCTL,
+                                       value : 1 | DCTL_START | DCTL_EXTERNAL_DMA |
+                                               DCTL_WIDE_BUS },
+                    PlannedDataWrite { offset : REG_BSIZE, value : 512 },
+                    PlannedDataWrite { offset : REG_TIMER, value : u32::MAX }]);
+        assert_eq!(deferred.plan().data_register_address, 0x1FE2_C040);
+        assert_eq!(deferred.plan().blocker_count(), 5);
+        assert!(!deferred.plan().can_execute());
+        let returned = deferred.cancel();
+        assert_eq!(returned.as_mut_ptr(), pointer);
+        assert!(returned.iter().all(|byte| *byte == 0xA5));
+
+        let evidence = ReadPathEvidence { external_dma_mapping : true,
+                                          dma_coherency : true,
+                                          data_completion_irq : true,
+                                          response_crc_policy : true };
+        let deferred = prepare_deferred_read(bring_up,
+                                             request,
+                                             ReadTransport::ExternalDma,
+                                             evidence,
+                                             returned).unwrap();
+        assert_eq!(deferred.plan().blockers,
+                   [Some(ReadActivationBlocker::ExecutorUnavailable), None, None, None, None]);
+        assert!(!deferred.plan().can_execute());
+        let _ = deferred.cancel();
+    }
+
+    #[test]
+    fn deferred_read_rejects_pio_buffer_mismatch_and_unknown_bus_width() {
+        let request = ReadBlockRequest::new(0, 1, 512, ReadAddressing::Block).unwrap();
+        let bring_up = plan(&description()).unwrap();
+        let mut buffer = [0; 512];
+        assert!(matches!(prepare_deferred_read(bring_up,
+                                               request,
+                                               ReadTransport::Pio,
+                                               ReadPathEvidence::default(),
+                                               &mut buffer),
+                         Err(ReadRequestError::PioUnsupported)));
+        assert!(matches!(prepare_deferred_read(bring_up,
+                                               request,
+                                               ReadTransport::ExternalDma,
+                                               ReadPathEvidence::default(),
+                                               &mut buffer[..511]),
+                         Err(ReadRequestError::BufferLengthMismatch)));
+        let invalid_bus = BringUpPlan { bus_width : 2, ..bring_up };
+        assert!(matches!(prepare_deferred_read(invalid_bus,
+                                               request,
+                                               ReadTransport::ExternalDma,
+                                               ReadPathEvidence::default(),
+                                               &mut buffer),
+                         Err(ReadRequestError::UnsupportedBusWidth)));
+        let overflowing_address = BringUpPlan { controller_mmio:
+                                                   MmioRegion { base : usize::MAX - 0x20,
+                                                                size : 0x68 },
+                                                ..bring_up };
+        assert!(matches!(prepare_deferred_read(overflowing_address,
+                                               request,
+                                               ReadTransport::ExternalDma,
+                                               ReadPathEvidence::default(),
+                                               &mut buffer),
+                         Err(ReadRequestError::AddressOverflow)));
     }
 
     #[test]

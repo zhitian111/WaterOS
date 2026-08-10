@@ -58,6 +58,14 @@ Confirmed facts used by the current WaterOS foundation:
   still treated as a fail-closed anomaly.
 - The second 2K1000 DT register region is an APB DMA configuration register.
 - 2K1000 uses external APB DMA (`rx-tx`); it is not a DesignWare MMC host.
+- Linux programs data requests in `DCTL -> BSIZE -> TIMER` order. DCTL carries
+  a 12-bit block count plus START, external-DMA and bus-width bits; block size
+  is also 12-bit and Linux rejects sizes not divisible by four. Its advertised
+  maximum block count and block size are both 4095.
+- For 2K1000 the external DMA slave source/destination is the main controller's
+  `DATA` register at offset `0x40`, with 4-byte bus width. Read data uses
+  device-to-memory direction. The driver submits and issues the DMA descriptor
+  before sending CMD17/CMD18 through the normal command path.
 - The APBDMA order register is accessed as a non-atomic 64-bit little-endian
   value: Linux uses `lo_hi_readq`/`lo_hi_writeq`, which access the low 32-bit
   word before the high 32-bit word. Transfer start writes zero first, then the
