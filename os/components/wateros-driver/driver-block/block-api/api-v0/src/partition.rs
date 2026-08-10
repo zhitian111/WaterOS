@@ -1,6 +1,6 @@
-//! MBR partition discovery and bounded partition block devices.
+//! MBR/GPT partition discovery and bounded partition block devices.
 
-use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 use spin::Mutex;
 
 use crate::{BlockDevice, DriverError, DriverResult, Lba, SharedBlockDevice, BLOCK_SIZE};
@@ -9,6 +9,11 @@ const MBR_SIGNATURE_OFFSET : usize = 510;
 const MBR_PARTITION_TABLE_OFFSET : usize = 446;
 const MBR_ENTRY_SIZE : usize = 16;
 const MBR_ENTRY_COUNT : usize = 4;
+const GPT_HEADER_LBA : u64 = 1;
+const GPT_HEADER_MIN_SIZE : u32 = 92;
+const GPT_ENTRY_MIN_SIZE : u32 = 128;
+const GPT_ENTRY_MAX_SIZE : u32 = 4096;
+const GPT_ENTRY_COUNT_MAX : u32 = 255;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MbrPartition {
@@ -19,11 +24,20 @@ pub struct MbrPartition {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GptPartition {
+    pub number : u8,
+    pub start_lba : u64,
+    pub sectors : u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PartitionScanError {
     Io(DriverError),
     InvalidBlockSize,
     InvalidSignature,
     ProtectiveGpt,
+    InvalidGptHeader,
+    InvalidGptEntrySize,
     UnsupportedExtended,
     InvalidEntry,
     OverlappingEntries,
@@ -92,6 +106,98 @@ pub fn scan_mbr(device : &SharedBlockDevice) -> Result<Vec<MbrPartition>, Partit
                                        sectors });
     }
     Ok(partitions)
+}
+
+/// Read the primary GPT header and bounded partition-entry array.
+///
+/// The header and entry-array CRCs are deliberately not checked yet: the
+/// parser validates signatures, ranges, sizes, and overlap before exposing a
+/// partition. CRC verification remains `UNVERIFIED_ON_HARDWARE` until the
+/// target storage path has a tested checksum implementation.
+pub fn scan_gpt(device : &SharedBlockDevice) -> Result<Vec<GptPartition>, PartitionScanError> {
+    let (total_blocks, header) = {
+        let mut device = device.lock();
+        if device.block_size() != BLOCK_SIZE {
+            return Err(PartitionScanError::InvalidBlockSize);
+        }
+        let mut header = [0u8; BLOCK_SIZE];
+        device.read_blocks(Lba(GPT_HEADER_LBA), &mut header)
+              .map_err(PartitionScanError::Io)?;
+        (device.total_blocks(), header)
+    };
+    if &header[0..8] != b"EFI PART" {
+        return Err(PartitionScanError::InvalidGptHeader);
+    }
+    let header_size = read_u32_le(&header[12..16]);
+    if !(GPT_HEADER_MIN_SIZE..=BLOCK_SIZE as u32).contains(&header_size)
+        || read_u64_le(&header[24..32]) != GPT_HEADER_LBA
+    {
+        return Err(PartitionScanError::InvalidGptHeader);
+    }
+    let first_usable = read_u64_le(&header[40..48]);
+    let last_usable = read_u64_le(&header[48..56]);
+    let entries_lba = read_u64_le(&header[72..80]);
+    let entry_count = read_u32_le(&header[80..84]);
+    let entry_size = read_u32_le(&header[84..88]);
+    if first_usable == 0 || first_usable > last_usable || entries_lba == 0
+        || entry_count == 0 || entry_count > GPT_ENTRY_COUNT_MAX
+        || !(GPT_ENTRY_MIN_SIZE..=GPT_ENTRY_MAX_SIZE).contains(&entry_size)
+        || entry_size % 8 != 0
+    {
+        return Err(PartitionScanError::InvalidGptEntrySize);
+    }
+    let entries_bytes = u64::from(entry_count)
+        .checked_mul(u64::from(entry_size))
+        .ok_or(PartitionScanError::InvalidGptEntrySize)?;
+    let entries_blocks = entries_bytes
+        .checked_add((BLOCK_SIZE - 1) as u64)
+        .ok_or(PartitionScanError::InvalidGptEntrySize)?
+        / BLOCK_SIZE as u64;
+    if let Some(total) = total_blocks {
+        if entries_lba.checked_add(entries_blocks).filter(|end| *end <= total).is_none()
+            || last_usable >= total
+        {
+            return Err(PartitionScanError::InvalidGptHeader);
+        }
+    }
+
+    let mut partitions = Vec::new();
+    for index in 0..entry_count {
+        let offset = entries_lba
+            .checked_mul(BLOCK_SIZE as u64)
+            .and_then(|base| base.checked_add(u64::from(index) * u64::from(entry_size)))
+            .ok_or(PartitionScanError::InvalidGptHeader)?;
+        let mut entry = vec![0u8; entry_size as usize];
+        device.lock()
+              .read_bytes(offset, &mut entry)
+              .map_err(PartitionScanError::Io)?;
+        if entry[0..16].iter().all(|byte| *byte == 0) {
+            continue;
+        }
+        let start_lba = read_u64_le(&entry[32..40]);
+        let end_lba = read_u64_le(&entry[40..48]);
+        if start_lba < first_usable || end_lba < start_lba || end_lba > last_usable {
+            return Err(PartitionScanError::InvalidEntry);
+        }
+        let sectors = end_lba - start_lba + 1;
+        if partitions.iter().any(|prior : &GptPartition| {
+            let prior_end = prior.start_lba + prior.sectors;
+            start_lba < prior_end && prior.start_lba < end_lba + 1
+        }) {
+            return Err(PartitionScanError::OverlappingEntries);
+        }
+        partitions.push(GptPartition {
+            number : index as u8 + 1,
+            start_lba,
+            sectors,
+        });
+    }
+    Ok(partitions)
+}
+
+fn read_u64_le(bytes : &[u8]) -> u64 {
+    u64::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3],
+                        bytes[4], bytes[5], bytes[6], bytes[7]])
 }
 
 pub struct PartitionBlockDevice {
@@ -215,6 +321,34 @@ mod tests {
         Arc::new(Mutex::new(Box::new(MemoryDisk { bytes })))
     }
 
+    fn disk_with_gpt_partition() -> SharedBlockDevice {
+        let mut bytes = vec![0u8; BLOCK_SIZE * 64];
+        bytes[510..512].copy_from_slice(&[0x55, 0xAA]);
+        // Protective MBR entry covering the disk after LBA 0.
+        bytes[MBR_PARTITION_TABLE_OFFSET + 4] = 0xEE;
+        bytes[MBR_PARTITION_TABLE_OFFSET + 8..MBR_PARTITION_TABLE_OFFSET + 12]
+            .copy_from_slice(&1u32.to_le_bytes());
+        bytes[MBR_PARTITION_TABLE_OFFSET + 12..MBR_PARTITION_TABLE_OFFSET + 16]
+            .copy_from_slice(&63u32.to_le_bytes());
+
+        let header = &mut bytes[BLOCK_SIZE..BLOCK_SIZE * 2];
+        header[0..8].copy_from_slice(b"EFI PART");
+        header[8..12].copy_from_slice(&0x0001_0000u32.to_le_bytes());
+        header[12..16].copy_from_slice(&92u32.to_le_bytes());
+        header[24..32].copy_from_slice(&1u64.to_le_bytes());
+        header[40..48].copy_from_slice(&4u64.to_le_bytes());
+        header[48..56].copy_from_slice(&60u64.to_le_bytes());
+        header[72..80].copy_from_slice(&2u64.to_le_bytes());
+        header[80..84].copy_from_slice(&4u32.to_le_bytes());
+        header[84..88].copy_from_slice(&128u32.to_le_bytes());
+
+        let entry = &mut bytes[BLOCK_SIZE * 2..BLOCK_SIZE * 3];
+        entry[0] = 1; // non-zero type GUID
+        entry[32..40].copy_from_slice(&8u64.to_le_bytes());
+        entry[40..48].copy_from_slice(&15u64.to_le_bytes());
+        Arc::new(Mutex::new(Box::new(MemoryDisk { bytes })))
+    }
+
     #[test]
     fn scans_primary_partitions() {
         let disk = disk_with_entries(&[(0x83, 1, 4),
@@ -223,6 +357,30 @@ mod tests {
         assert_eq!(partitions.len(), 2);
         assert_eq!(partitions[1].number, 2);
         assert_eq!(partitions[1].start_lba, 8);
+    }
+
+    #[test]
+    fn scans_gpt_partition_after_protective_mbr() {
+        let disk = disk_with_gpt_partition();
+        assert_eq!(scan_mbr(&disk), Err(PartitionScanError::ProtectiveGpt));
+        let partitions = scan_gpt(&disk).unwrap();
+        assert_eq!(partitions,
+                   vec![GptPartition { number : 1,
+                                       start_lba : 8,
+                                       sectors : 8 }]);
+    }
+
+    #[test]
+    fn rejects_gpt_partition_outside_usable_range() {
+        let disk = disk_with_gpt_partition();
+        let mut block = [0u8; BLOCK_SIZE];
+        block[0] = 1;
+        block[32..40].copy_from_slice(&3u64.to_le_bytes());
+        block[40..48].copy_from_slice(&15u64.to_le_bytes());
+        disk.lock()
+            .write_blocks(Lba(2), &block)
+            .unwrap();
+        assert_eq!(scan_gpt(&disk), Err(PartitionScanError::InvalidEntry));
     }
 
     #[test]

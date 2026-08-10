@@ -6057,3 +6057,30 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] require root mount evidence in qemu smoke`
+
+## 2026-08-10：批次 133——支持 GPT protective MBR 下的分区发现
+
+### 本批任务与设计
+
+1. 审计块设备注册、devfs 命名和 rootfs 选择链路，确认当前只扫描 MBR 主分区；遇到 GPT protective MBR 会跳过子设备。
+2. 在 block API 中增加受边界约束的 GPT 主表读取：校验 `EFI PART`、header/entry size、可用 LBA 范围、设备容量和分区重叠。
+3. 复用现有 `PartitionBlockDevice`，让 MBR 与 GPT 分区都注册为稳定的 partition slot，并继续生成 `/dev/vda1` 等路径。
+4. 用内存盘 host 测试覆盖 GPT 解析、非法范围和注册链路，再执行双架构编译门禁。
+
+### 已完成
+
+- [x] 新增 `GptPartition` 与 `scan_gpt`，protective MBR 会自动转入 GPT 扫描。
+- [x] GPT 分区子设备接入全局 block registry；已有 devfs 刷新逻辑可直接暴露 `/dev/vdaN`。
+- [x] 新增 GPT 正常、越界和 registry child 测试；host 测试 7 项全部通过。
+- [x] `make check EXTRA_FEATURES=remote-debug-monitor` 与 `make kernel-la` 通过；生成的内核产物已清理。
+
+### 验证证据与限制
+
+- host 内存盘证明了 GPT entry 的 LBA 边界、重叠检测、分区有界读写和自动注册逻辑。
+- GPT header/entry-array CRC 尚未实现；代码已明确标注 `UNVERIFIED_ON_HARDWARE`，当前不应把损坏 CRC 的盘当作已验证介质。
+- 本批没有改变 root-image builder 的 MBR 输出格式；GPT 镜像仍需后续增加构建器与 QEMU 端到端样例。
+- `UNVERIFIED_ON_HARDWARE`：真实 SD/eMMC 的 GPT backup header、掉电一致性、控制器 DMA/cache 与热插拔仍待目标板验证。
+
+### 提交
+
+- 本批计划提交：`[feat] support GPT block partitions`

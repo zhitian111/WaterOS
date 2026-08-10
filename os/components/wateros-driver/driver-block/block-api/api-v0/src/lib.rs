@@ -9,7 +9,8 @@ use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 use spin::Mutex;
 
 pub mod partition;
-pub use partition::{MbrPartition, PartitionBlockDevice, PartitionScanError, scan_mbr};
+pub use partition::{GptPartition, MbrPartition, PartitionBlockDevice, PartitionScanError, scan_gpt,
+                    scan_mbr};
 
 pub use driver_api::{DriverError, DriverResult, device_topology_generation};
 
@@ -108,17 +109,31 @@ pub trait BlockDevice: Send {
 
 /// 将整盘追加到全局表末尾，返回整盘索引（从 0 起）。
 ///
-/// 若首扇区包含受支持的 MBR 主分区表，对应的有界分区设备会紧随整盘注册。
+/// 若首扇区包含受支持的 MBR 主分区表，或 protective MBR 后存在受支持的
+/// GPT 分区表，对应的有界分区设备会紧随整盘注册。
 pub fn register_block_device(device: SharedBlockDevice) -> usize {
-    let scan = scan_mbr(&device);
+    let mbr_scan = scan_mbr(&device);
+    let scan = match mbr_scan {
+        Ok(partitions) => Ok(partitions.into_iter()
+                                    .map(|partition| (partition.number,
+                                                      partition.start_lba,
+                                                      partition.sectors))
+                                    .collect::<Vec<_>>()),
+        Err(PartitionScanError::ProtectiveGpt) => scan_gpt(&device).map(|partitions| {
+            partitions.into_iter()
+                      .map(|partition| (partition.number, partition.start_lba, partition.sectors))
+                      .collect::<Vec<_>>()
+        }),
+        Err(error) => Err(error),
+    };
     let mut children = Vec::new();
     if let Ok(partitions) = &scan {
-        for partition in partitions {
+        for (partition_number, start_lba, sectors) in partitions {
             if let Ok(child) = PartitionBlockDevice::shared(device.clone(),
-                                                            partition.start_lba,
-                                                            partition.sectors)
+                                                            *start_lba,
+                                                            *sectors)
             {
-                children.push((partition.number, child));
+                children.push((*partition_number, child));
             }
         }
     }
@@ -286,6 +301,28 @@ mod registry_tests {
             bytes[446 + 12..446 + 16].copy_from_slice(&2u32.to_le_bytes());
             Arc::new(Mutex::new(Box::new(Self { bytes })))
         }
+
+        fn shared_with_gpt_partition() -> SharedBlockDevice {
+            let mut bytes = vec![0u8; BLOCK_SIZE * 32];
+            bytes[510..512].copy_from_slice(&[0x55, 0xAA]);
+            bytes[446 + 4] = 0xEE;
+            bytes[446 + 8..446 + 12].copy_from_slice(&1u32.to_le_bytes());
+            bytes[446 + 12..446 + 16].copy_from_slice(&31u32.to_le_bytes());
+            let header = &mut bytes[BLOCK_SIZE..BLOCK_SIZE * 2];
+            header[0..8].copy_from_slice(b"EFI PART");
+            header[12..16].copy_from_slice(&92u32.to_le_bytes());
+            header[24..32].copy_from_slice(&1u64.to_le_bytes());
+            header[40..48].copy_from_slice(&4u64.to_le_bytes());
+            header[48..56].copy_from_slice(&28u64.to_le_bytes());
+            header[72..80].copy_from_slice(&2u64.to_le_bytes());
+            header[80..84].copy_from_slice(&2u32.to_le_bytes());
+            header[84..88].copy_from_slice(&128u32.to_le_bytes());
+            let entry = &mut bytes[BLOCK_SIZE * 2..BLOCK_SIZE * 3];
+            entry[0] = 1;
+            entry[32..40].copy_from_slice(&8u64.to_le_bytes());
+            entry[40..48].copy_from_slice(&15u64.to_le_bytes());
+            Arc::new(Mutex::new(Box::new(Self { bytes })))
+        }
     }
 
     impl BlockDevice for RegistryDisk {
@@ -331,5 +368,26 @@ mod registry_tests {
         let next_index = register_block_device(RegistryDisk::shared_with_partition());
         assert!(next_index > partition_index, "stable slots must not be reused");
         assert!(unregister_block_device(next_index));
+    }
+
+    #[test]
+    fn register_disk_exposes_gpt_partition_child() {
+        let disk_index = register_block_device(RegistryDisk::shared_with_gpt_partition());
+        let partition = block_devices_snapshot()
+            .into_iter()
+            .find(|(_, _, role)| {
+                matches!(role,
+                         BlockDeviceRole::Partition {
+                             parent_device_index,
+                             partition_number : 1,
+                         } if *parent_device_index == disk_index)
+            })
+            .expect("GPT partition should be registered");
+        assert_eq!(partition.2,
+                   BlockDeviceRole::Partition {
+                       parent_device_index : disk_index,
+                       partition_number : 1,
+                   });
+        assert!(unregister_block_device(disk_index));
     }
 }
