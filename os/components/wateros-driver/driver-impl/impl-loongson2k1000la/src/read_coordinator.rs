@@ -21,7 +21,7 @@ use crate::{board_irq_owner::{BoardIrqOwner, BoundedMmcReadRecheck,
                               DrainError, RuntimeReservation, RuntimeService, SlotError},
             apbdma::{self, Direction as ApbDmaDirection, PreparedSession, TransferPlan},
             irq_domain::GlobalIrq,
-            mmc::{ReadBlockRequest, RegisterIo}};
+            mmc::{DeferredReadPlan, ReadBlockRequest, RegisterIo}};
 use api_v0::{dma::{DmaCoherency, DmaDirection, DmaMapping, DmaRegion}, DriverError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1012,6 +1012,59 @@ pub enum ReadRequestExecutorError {
     Coordinator(ReadCoordinatorError),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadRequestPublishPermitError {
+    WrongPhase(ReadCoordinatorPhase),
+    RequestGeometry,
+    TransferGeometry,
+    Coordinator(ReadCoordinatorError),
+}
+
+#[must_use = "recover the executor and retry publish permit validation"]
+pub struct ReadRequestPublishPermitIssueFailure<'a, D, P> {
+    pub error : ReadRequestPublishPermitError,
+    executor : ReadRequestExecutor<'a, D, P>,
+    read : DeferredReadPlan,
+}
+
+impl<D, P> core::fmt::Debug for ReadRequestPublishPermitIssueFailure<'_, D, P> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("ReadRequestPublishPermitIssueFailure")
+                 .field("error", &self.error)
+                 .finish_non_exhaustive()
+    }
+}
+
+impl<'a, D, P> ReadRequestPublishPermitIssueFailure<'a, D, P> {
+    pub fn into_parts(self) -> (ReadRequestExecutor<'a, D, P>, DeferredReadPlan) {
+        (self.executor, self.read)
+    }
+}
+
+#[must_use = "commit the publish permit or retry it"]
+pub struct ReadRequestPublishPermit<'a, D, P> {
+    executor : ReadRequestExecutor<'a, D, P>,
+    read : DeferredReadPlan,
+}
+
+#[must_use = "recover the publish permit and retry coordinator publication"]
+pub struct ReadRequestPublishFailure<'a, D, P> {
+    pub error : ReadRequestPublishPermitError,
+    permit : ReadRequestPublishPermit<'a, D, P>,
+}
+
+impl<D, P> core::fmt::Debug for ReadRequestPublishFailure<'_, D, P> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("ReadRequestPublishFailure")
+                 .field("error", &self.error)
+                 .finish_non_exhaustive()
+    }
+}
+
+impl<'a, D, P> ReadRequestPublishFailure<'a, D, P> {
+    pub fn into_permit(self) -> ReadRequestPublishPermit<'a, D, P> { self.permit }
+}
+
 #[must_use = "recover the request handle and DMA lease before retrying bind"]
 pub struct ReadRequestExecutorBindFailure<'a, D, P> {
     pub error : ReadRequestExecutorError,
@@ -1090,6 +1143,35 @@ impl<'a, D : DmaCoherency, P : DmaCoherency> ReadRequestExecutor<'a, D, P> {
         self.lease.prepare_session()
     }
 
+    /// Validate a deferred MMC plan and create a one-shot coordinator publish
+    /// permit. This does not write MMC registers; the real command publisher
+    /// remains a separate capability until hardware ordering is verified.
+    pub fn issue_publish_permit(
+        self,
+        read : DeferredReadPlan)
+        -> Result<ReadRequestPublishPermit<'a, D, P>,
+                  ReadRequestPublishPermitIssueFailure<'a, D, P>> {
+        let error = match self.snapshot() {
+            Ok(snapshot) if snapshot.phase != ReadCoordinatorPhase::Reserved =>
+                Some(ReadRequestPublishPermitError::WrongPhase(snapshot.phase)),
+            Err(error) => Some(ReadRequestPublishPermitError::Coordinator(error)),
+            Ok(_) if read.request != self.request().block() =>
+                Some(ReadRequestPublishPermitError::RequestGeometry),
+            Ok(_) if read.request.byte_length != self.lease.plan().byte_length ||
+                     u64::from(self.lease.plan().descriptor.apb_address) !=
+                         read.data_register_address ||
+                     !self.lease.plan().invalidate_buffer_after =>
+                Some(ReadRequestPublishPermitError::TransferGeometry),
+            Ok(_) => None,
+        };
+        if let Some(error) = error {
+            return Err(ReadRequestPublishPermitIssueFailure { error,
+                                                               executor : self,
+                                                               read });
+        }
+        Ok(ReadRequestPublishPermit { executor : self, read })
+    }
+
     pub fn release(self) -> Result<(), ReadRequestExecutorReleaseFailure<'a, D, P>> {
         if !self.lease.is_cpu_owned() {
             return Err(ReadRequestExecutorReleaseFailure {
@@ -1103,6 +1185,24 @@ impl<'a, D : DmaCoherency, P : DmaCoherency> ReadRequestExecutor<'a, D, P> {
             Err(error) => Err(ReadRequestExecutorReleaseFailure {
                 error : ReadRequestExecutorError::Coordinator(error),
                 executor : self,
+            }),
+        }
+    }
+}
+
+impl<'a, D : DmaCoherency, P : DmaCoherency> ReadRequestPublishPermit<'a, D, P> {
+    pub const fn plan(&self) -> &DeferredReadPlan { &self.read }
+
+    pub fn commit(self,
+                  poll_budget : u16)
+                  -> Result<ReadRequestExecutor<'a, D, P>,
+                            ReadRequestPublishFailure<'a, D, P>> {
+        let Self { executor, read } = self;
+        match executor.mark_published(poll_budget) {
+            Ok(()) => Ok(executor),
+            Err(error) => Err(ReadRequestPublishFailure {
+                error : ReadRequestPublishPermitError::Coordinator(error),
+                permit : ReadRequestPublishPermit { executor, read },
             }),
         }
     }
@@ -1288,6 +1388,21 @@ mod tests {
                          MockCoherency::default()))
     }
 
+    fn deferred_plan_fixture(request : ReadRequest, transfer : TransferPlan) -> DeferredReadPlan {
+        DeferredReadPlan {
+            request : request.block(),
+            setup_writes : [
+                crate::mmc::PlannedDataWrite { offset : 0x10,
+                                                value : u32::from(request.block().block_count) | 1 << 8 },
+                crate::mmc::PlannedDataWrite { offset : 0x1c,
+                                                value : u32::from(request.block().block_size) },
+                crate::mmc::PlannedDataWrite { offset : 0x20, value : u32::MAX },
+            ],
+            data_register_address : u64::from(transfer.descriptor.apb_address),
+            blockers : [None; 5],
+        }
+    }
+
     #[test]
     fn production_request_dma_lease_binds_pair_before_prepare() {
         let request = ReadRequest::new(
@@ -1340,6 +1455,24 @@ mod tests {
         let (handle, lease) = failure.into_parts();
         assert_eq!(handle.release(), Ok(()));
         assert!(lease.is_cpu_owned());
+    }
+
+    #[test]
+    fn production_request_publish_permit_commits_only_reserved_matching_plan() {
+        let slot = ReadCoordinatorSlot::new();
+        let request = ReadRequest::new(
+            transaction(9),
+            ReadBlockRequest::new(2, 2, 512, crate::mmc::ReadAddressing::Block).unwrap());
+        let handle = request.reserve(&slot).unwrap().commit();
+        let (transfer, descriptor, payload) = dma_plan_fixture(request);
+        let lease = ReadRequestDmaLease::bind(request, transfer, descriptor, payload).unwrap();
+        let executor = ReadRequestExecutor::bind(handle, lease).unwrap();
+        let read = deferred_plan_fixture(request, transfer);
+        let permit = executor.issue_publish_permit(read).unwrap();
+        assert_eq!(permit.plan().request, request.block());
+        let executor = permit.commit(2).unwrap();
+        assert_eq!(executor.snapshot().unwrap().phase, ReadCoordinatorPhase::Published);
+        executor.release().unwrap();
     }
 
     #[test]

@@ -5427,3 +5427,35 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] add LS2K1000 read executor facade`
+
+## 2026-08-10：批次 113——为 ReadRequest 增加 MMC publish permit
+
+### 本批任务与设计
+
+1. 审计现有 `DeferredReadPlan`、`ReadDataPublishPermit` 和 coordinator 的 publish 边界。
+2. 在 production executor 上增加一次性 `ReadRequestPublishPermit`，校验 Reserved phase、请求几何和 DMA transfer plan。
+3. permit commit 只推进 coordinator 到 Published，不直接写 MMC 寄存器；真实 `ReadDataCommandPublisher` 继续由经过硬件验证的独立 capability 控制。
+4. 所有失败路径返回可恢复的 executor/permit，避免消费 request 或 DMA lease。
+
+### 已完成
+
+- [x] `issue_publish_permit` 校验 coordinator 当前为 Reserved、MMC request geometry 与 transfer byte length 一致。
+- [x] 校验 APBDMA data register、invalidate policy 与请求 plan 匹配。
+- [x] `ReadRequestPublishPermit::commit` 一次性推进 Published；coordinator 失败时返回原 permit。
+- [x] 新增 host 测试覆盖合法 permit commit，并保持现有 executor/lease ownership。
+
+### 验证证据
+
+- focused coordinator 测试 15 项通过；新增测试实际验证 Reserved→Published 迁移与 plan identity。
+- 驱动完整测试、组件 check、RISC-V `make check`、LoongArch64 `make kernel-la` 与 Python host tests 均通过。
+- `UNVERIFIED_ON_HARDWARE`：本 permit 不代表 MMC command 已写入；真实寄存器顺序、W1C、DMA start、cache/barrier 与 IRQ 时序仍待实机。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 下一步需让真实 worker 在 permit commit 后调用 MMC publisher，并把 publisher receipt 与 APBDMA running session 绑定。
+- [ ] 当前 permit 的 transfer identity 是软件字段校验，尚未通过物理 APB route/SD card loopback 证实。
+- [ ] command publish 失败后的“可能已写入”恢复仍由现有 publisher 类型处理，facade 尚未统一收纳该 failure token。
+
+### 提交
+
+- 本批计划提交：`[feat] add LS2K1000 mmc publish permit`
