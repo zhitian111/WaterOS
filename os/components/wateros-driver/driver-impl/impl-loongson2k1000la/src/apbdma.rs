@@ -1890,7 +1890,8 @@ mod tests {
             _ => panic!("DMA receipt completed read before MMC receipt"),
         };
         let completed = match paired.apply_mmc_receipt() {
-            crate::mmc::ReadCompletionProgress::Completed(completed) => completed,
+            crate::board_irq_owner::PairedMmcCompletionProgress::Completed(completed) =>
+                completed,
             _ => panic!("paired receipts did not complete their read"),
         };
         assert_eq!(completed.evidence,
@@ -1911,7 +1912,15 @@ mod tests {
     fn paired_status_and_mmc_errors_retain_quiesced_recovery() {
         let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
                                       Direction::DeviceToMemory).unwrap();
-        let (mut descriptor, mut payload) = mappings(transfer);
+        let descriptor_region = DmaRegion::new(0x4000, 0x2000, 64, 32, 64).unwrap();
+        let payload_region = DmaRegion::new(0x8000, 0x3000, 512, 32, 64).unwrap();
+        let mut descriptor = DmaMapping::new(descriptor_region,
+                                             DmaDirection::Bidirectional,
+                                             MockCache::default());
+        let mut payload = DmaMapping::new(
+            payload_region,
+            DmaDirection::FromDevice,
+            MockCache { fail_cpu_syncs : 1, ..MockCache::default() });
         let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
         let (paired, coordinator) = paired_acknowledged_session(transfer,
                                                                 &mut descriptor,
@@ -1921,39 +1930,57 @@ mod tests {
                                                                 (1 << 6) | 1);
         let mut reader = MockStatusReader { status : 0x8000_0042,
                                             ..MockStatusReader::default() };
-        let (mmc, recovery) = match paired.inspect_dma_status(&mut reader,
-                                                              &FixtureStatusDecoder)
+        let recovery = match paired.inspect_dma_status(&mut reader,
+                                                        &FixtureStatusDecoder)
                                            .unwrap_or_else(|_| panic!("status inspect failed")) {
-            crate::board_irq_owner::PairedDmaStatusProgress::RecoveryRequired {
-                mmc, recovery
-            } => (mmc, recovery),
+            crate::board_irq_owner::PairedDmaStatusProgress::RecoveryRequired(recovery) =>
+                recovery,
             _ => panic!("hardware status did not enter paired recovery"),
         };
-        assert_eq!(mmc.transaction.raw(), 25);
-        assert_eq!(recovery.failure,
+        assert_eq!(recovery.transaction().raw(), 25);
+        assert_eq!(recovery.failure(),
                    crate::mmc::ReadCompletionFailure::Dma(
                        crate::mmc::ReadDmaFailure::Hardware(0x8000_0042)));
         let wrong = crate::board_irq_owner::ReadTransactionId::new(125).unwrap();
         match coordinator.service_claimed_completion(wrong) {
             Err(error) => assert_eq!(error,
                 crate::read_coordinator::ReadCoordinatorError::WrongTransaction {
-                    expected : mmc.transaction, actual : wrong,
+                    expected : recovery.transaction(), actual : wrong,
                 }),
             Ok(_) => panic!("wrong generation serviced claimed completion"),
         }
         assert_eq!(coordinator.snapshot().unwrap().phase,
                    crate::read_coordinator::ReadCoordinatorPhase::CompletionClaimed);
-        let cause = coordinator.service_claimed_completion(mmc.transaction).unwrap()
-                               .record_failure(recovery.failure);
+        let cause = coordinator.service_claimed_completion(recovery.transaction()).unwrap()
+                               .record_failure(recovery.failure());
         assert_eq!(cause,
                    crate::board_irq_owner::ReadRecoveryCause::CompletionFailure(
-                       recovery.failure));
+                       recovery.failure()));
         assert_eq!(coordinator.snapshot().unwrap().recovery_cause, Some(cause));
-        assert_eq!(coordinator.release(mmc.transaction),
+        assert_eq!(coordinator.release(recovery.transaction()),
                    Err(crate::read_coordinator::ReadCoordinatorError::RecoveryMustBeRecorded));
-        recovery.into_quiesced_session().finish().unwrap();
+        let failure = recovery.finish().err().expect("injected cache failure accepted");
+        assert_eq!(failure.error, DriverError::IoError);
+        assert_eq!(coordinator.snapshot().unwrap().phase,
+                   crate::read_coordinator::ReadCoordinatorPhase::RecoveryPending);
+        let evidence = failure.recovery.finish()
+                              .unwrap_or_else(|_| panic!("cache recovery retry failed"));
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
+        let invalid = evidence.with_dma_transaction_fixture(wrong);
+        let failure = coordinator.service_recovery(evidence.transaction()).unwrap()
+                                 .archive_claimed(invalid)
+                                 .err().expect("wrong DMA generation archived");
+        assert_eq!(failure.error,
+                   crate::read_coordinator::ReadCoordinatorError::WrongTransaction {
+                       expected : evidence.transaction(), actual : wrong,
+                   });
+        let evidence = failure.evidence
+                              .with_dma_transaction_fixture(evidence.dma_transaction());
+        coordinator.service_recovery(evidence.transaction()).unwrap()
+                   .archive_claimed(evidence).unwrap_or_else(|_| panic!("archive failed"));
+        let report = coordinator.take_recovery(evidence.transaction()).unwrap();
+        assert_eq!(report.claimed, Some(evidence));
 
         let (mut descriptor, mut payload) = mappings(transfer);
         let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
@@ -1971,18 +1998,19 @@ mod tests {
             _ => panic!("DMA success did not await MMC command error snapshot"),
         };
         let recovery = match paired.apply_mmc_receipt() {
-            crate::mmc::ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+            crate::board_irq_owner::PairedMmcCompletionProgress::RecoveryRequired(recovery) =>
+                recovery,
             _ => panic!("MMC timeout snapshot did not enter recovery"),
         };
-        assert_eq!(recovery.failure,
+        assert_eq!(recovery.failure(),
                    crate::mmc::ReadCompletionFailure::Command(
                        crate::mmc::ReadCommandFailure::Timeout));
         let transaction = crate::board_irq_owner::ReadTransactionId::new(26).unwrap();
         let cause = coordinator.service_claimed_completion(transaction).unwrap()
-                               .record_failure(recovery.failure);
+                               .record_failure(recovery.failure());
         assert_eq!(cause,
                    crate::board_irq_owner::ReadRecoveryCause::CompletionFailure(
-                       recovery.failure));
+                       recovery.failure()));
         match coordinator.service_claimed_completion(transaction) {
             Err(error) => assert_eq!(error,
                 crate::read_coordinator::ReadCoordinatorError::WrongPhase {
@@ -1991,9 +2019,18 @@ mod tests {
                 }),
             Ok(_) => panic!("completion failure was recorded twice"),
         }
-        recovery.into_quiesced_session().finish().unwrap();
+        let evidence = recovery.finish()
+                               .unwrap_or_else(|_| panic!("cache recovery failed"));
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
+        coordinator.service_recovery(transaction).unwrap()
+                   .archive_claimed(evidence).unwrap_or_else(|_| panic!("archive failed"));
+        assert_eq!(coordinator.snapshot().unwrap().phase,
+                   crate::read_coordinator::ReadCoordinatorPhase::RecoveryRecorded);
+        assert_eq!(coordinator.release(transaction),
+                   Err(crate::read_coordinator::ReadCoordinatorError::RecoveryMustBeTaken));
+        let report = coordinator.take_recovery(transaction).unwrap();
+        assert_eq!(report.claimed, Some(evidence));
     }
 
     #[test]

@@ -5207,3 +5207,52 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] classify LS2K1000 claimed read failures`
+
+## 2026-08-10：批次 107——归档 claimed read recovery evidence
+
+### 本批任务与设计
+
+1. 追踪 pair claim 后 MMC receipt、DMA acknowledged token、transaction 与 quiesced session 的线性所有权。
+2. 为 claim 后错误建立不可由普通调用方构造的 archive-ready evidence；只有 cache ownership 恢复成功后才能铸造。
+3. recovery report 区分 owner-drain 证据与 completion-claimed 证据，不能复制已经被 DMA completion 消费的 `AcknowledgedIrq`。
+4. RecoveryPending 独占 service 校验 slot cause、MMC transaction、DMA transaction 与 failure 后原子归档。
+5. 任一 cache/代次/cause 校验失败必须返还原线性状态或证据，slot 保持可重试。
+
+### 已完成
+
+- [x] 新增 `ClaimedReadRecoveryEvidence`，私有保存 transaction、MMC terminal interrupts、DMA transaction、completion evidence 与精确 failure。
+- [x] evidence 的普通字段不可由 crate 其他模块直接构造；只暴露只读 getter，错误代次注入仅有显式 `cfg(test)` fixture。
+- [x] paired acknowledged/quiesced wrappers 持续携带原 DMA transaction；DMA `AcknowledgedIrq` 仍只被 `complete_irq` 消费一次，没有伪造副本。
+- [x] `PairedDmaStatusProgress` 与新 `PairedMmcCompletionProgress` 在两类错误中返回 `ClaimedReadRecovery`，绑定 MMC receipt、DMA transaction 和 recovery session。
+- [x] 新增 `ClaimedReadCacheRecovery` typestate；cache finish 失败返还可重试 session，成功才返回 archive-ready evidence。
+- [x] `ReadRecoveryReport` 新增可选 claimed evidence；既有 owner-drain report 明确填写 `claimed: None`。
+- [x] `ReadRecoveryService::archive_claimed` 在 SERVICING 内校验双 transaction 和 exact CompletionFailure，成功直接发布 RecoveryRecorded。
+- [x] claimed report snapshot 将两路 receipt presence 标为 true，同时 `drained` 保持空，准确区分“已消费完成证据”和“从 owner table 排空的原 token”。
+- [x] DMA hardware error 与 MMC command timeout 都完成 RecoveryPending→cache finish→archive→take 的完整模型闭环。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 176 项全部通过；paired error 集成测试覆盖两条 claimed recovery 完整链。
+- 注入 payload 第一次 CPU sync 失败，`ClaimedReadCacheRecoveryFailure` 返回原 session；slot 保持 RecoveryPending，第二次 finish 成功后才产生 evidence。
+- 故意把 archive evidence 的 DMA generation 从 25 改为 125，返回 WrongTransaction 和原 evidence；修正后同一 evidence 成功归档。
+- DMA hardware report 保留 `Hardware(0x8000_0042)`、MMC terminal bits、两侧 transaction 与当时 completion evidence。
+- MMC timeout report 保留 `Command(Timeout)`；归档后普通 release 返回 RecoveryMustBeTaken，take 后才能清空 slot。
+- owner-drain timeout/fault 的既有 report 测试全部通过，证明新增 claimed 字段没有改变原 receipt 所有权语义。
+- production 组件 test/check、RISC-V `make check` 与 LoongArch64 `make kernel-la` 全部通过；完整构建仅有仓库既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过；dtc warning 来自预期畸形输入。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：真实 DMA acknowledged→descriptor status→cache invalidate 的可见性与屏障顺序仍待 2K1000LA 实测。
+- [ ] `UNVERIFIED_ON_HARDWARE`：MMC terminal accumulator 的 error priority、W1C 后 condition clear 以及迟到 IRQ 行为仍待实机验证。
+- [ ] claimed evidence 保存 DMA transaction 与 completion typestate 事实，而不是已经被合法消费的 `AcknowledgedIrq`；诊断工具需按 evidence source 区分语义。
+- [ ] `ClaimedReadRecovery`、paired tracker 和 DMA session 目前仍是 test-only 外壳；production 尚缺拥有 mappings/channel 的长期 read request 对象。
+- [ ] cache finish retry 已覆盖 payload failure；descriptor 在 status inspect 阶段的 CPU sync failure 由既有 inspection retry 测试覆盖，尚未组合进同一个 archive 测试。
+- [ ] report archive/take 后 sources 仍 masked；证据完整不代表 controller clear、DMA idle 或允许 rearm。
+- [ ] success path 仍缺与 claimed failure 对称的 archive-ready completion proof，slot release 依赖调用顺序。
+- [ ] production runtime、publish permit、真实 status decoder、block callback、scheduler wake/deadline 与 rearm 均未接通。
+- [ ] 下一批应设计 production-owned `ReadRequest` 状态容器，先消除 paired session 的 `cfg(test)` 边界，并用显式 success-finalized token 收紧 CompletionClaimed release。
+
+### 提交
+
+- 本批计划提交：`[feat] archive LS2K1000 claimed read recovery`

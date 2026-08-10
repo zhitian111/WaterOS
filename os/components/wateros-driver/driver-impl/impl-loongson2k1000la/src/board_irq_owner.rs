@@ -284,6 +284,35 @@ pub struct ReadRecoveryReport {
     pub cause : ReadRecoveryCause,
     pub partial_mmc_interrupts : u32,
     pub drained : DrainedReadIrqs,
+    pub claimed : Option<ClaimedReadRecoveryEvidence>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClaimedReadRecoveryEvidence {
+    transaction : ReadTransactionId,
+    mmc_interrupts : u32,
+    dma_transaction : ReadTransactionId,
+    completion_evidence : crate::mmc::ReadCompletionEvidence,
+    failure : crate::mmc::ReadCompletionFailure,
+}
+
+impl ClaimedReadRecoveryEvidence {
+    pub const fn transaction(&self) -> ReadTransactionId { self.transaction }
+    pub const fn mmc_interrupts(&self) -> u32 { self.mmc_interrupts }
+    pub const fn dma_transaction(&self) -> ReadTransactionId { self.dma_transaction }
+    pub const fn completion_evidence(&self) -> crate::mmc::ReadCompletionEvidence {
+        self.completion_evidence
+    }
+    pub const fn failure(&self) -> crate::mmc::ReadCompletionFailure { self.failure }
+
+    #[cfg(test)]
+    pub(crate) const fn with_dma_transaction_fixture(
+        mut self,
+        transaction : ReadTransactionId)
+        -> Self {
+        self.dma_transaction = transaction;
+        self
+    }
 }
 
 #[derive(Debug)]
@@ -365,6 +394,7 @@ pub(crate) struct ReadSessionTerminalClaimFailure<S> {
 #[cfg(test)]
 pub(crate) struct PairedAcknowledgedReadDmaSession<'a, D, P> {
     pub mmc : MmcReadIrqReceipt,
+    dma_transaction : ReadTransactionId,
     pub tracker : crate::mmc::ReadCompletionTracker<
         crate::mmc::AcknowledgedReadDmaSession<'a, D, P>>,
 }
@@ -372,6 +402,7 @@ pub(crate) struct PairedAcknowledgedReadDmaSession<'a, D, P> {
 #[cfg(test)]
 pub(crate) struct PairedQuiescedReadDmaSession<'a, D, P> {
     mmc : MmcReadIrqReceipt,
+    dma_transaction : ReadTransactionId,
     tracker : crate::mmc::ReadCompletionTracker<
         crate::mmc::QuiescedReadDmaSession<'a, D, P>>,
 }
@@ -385,11 +416,34 @@ pub(crate) struct PairedDmaInspectionFailure<'a, D, P> {
 #[cfg(test)]
 pub(crate) enum PairedDmaStatusProgress<'a, D, P> {
     Pending(PairedQuiescedReadDmaSession<'a, D, P>),
-    RecoveryRequired {
-        mmc : MmcReadIrqReceipt,
-        recovery : crate::mmc::ReadCompletionRecovery<
-            crate::mmc::QuiescedReadDmaSession<'a, D, P>>,
-    },
+    RecoveryRequired(ClaimedReadRecovery<'a, D, P>),
+}
+
+#[cfg(test)]
+pub(crate) struct ClaimedReadRecovery<'a, D, P> {
+    mmc : MmcReadIrqReceipt,
+    dma_transaction : ReadTransactionId,
+    recovery : crate::mmc::ReadCompletionRecovery<
+        crate::mmc::QuiescedReadDmaSession<'a, D, P>>,
+}
+
+#[cfg(test)]
+#[must_use = "retry cache recovery before archiving claimed read evidence"]
+pub(crate) struct ClaimedReadCacheRecovery<'a, D, P> {
+    evidence : ClaimedReadRecoveryEvidence,
+    session : crate::mmc::QuiescedReadDmaSession<'a, D, P>,
+}
+
+#[cfg(test)]
+pub(crate) struct ClaimedReadCacheRecoveryFailure<'a, D, P> {
+    pub error : DriverError,
+    pub recovery : ClaimedReadCacheRecovery<'a, D, P>,
+}
+
+#[cfg(test)]
+pub(crate) enum PairedMmcCompletionProgress<'a, D, P> {
+    Completed(crate::mmc::ReadCompleted<crate::mmc::QuiescedReadDmaSession<'a, D, P>>),
+    RecoveryRequired(ClaimedReadRecovery<'a, D, P>),
 }
 
 #[cfg(test)]
@@ -517,20 +571,21 @@ impl<'a, D : DmaCoherency, P> PairedAcknowledgedReadDmaSession<'a, D, P> {
         decoder : &C)
         -> Result<PairedDmaStatusProgress<'a, D, P>,
                   PairedDmaInspectionFailure<'a, D, P>> {
-        let Self { mmc, tracker } = self;
+        let Self { mmc, dma_transaction, tracker } = self;
         match tracker.inspect_dma_status(reader, decoder) {
             Ok(crate::mmc::ReadCompletionProgress::Pending(tracker)) =>
                 Ok(PairedDmaStatusProgress::Pending(
-                    PairedQuiescedReadDmaSession { mmc, tracker })),
+                    PairedQuiescedReadDmaSession { mmc, dma_transaction, tracker })),
             // The paired tracker is freshly constructed immediately before
             // DMA acknowledgement, so it cannot already contain MMC evidence.
             Ok(crate::mmc::ReadCompletionProgress::Completed(_)) =>
                 unreachable!("fresh paired tracker completed before MMC receipt"),
             Ok(crate::mmc::ReadCompletionProgress::RecoveryRequired(recovery)) =>
-                Ok(PairedDmaStatusProgress::RecoveryRequired { mmc, recovery }),
+                Ok(PairedDmaStatusProgress::RecoveryRequired(
+                    ClaimedReadRecovery { mmc, dma_transaction, recovery })),
             Err(failure) => Err(PairedDmaInspectionFailure {
                 error : failure.error,
-                session : Self { mmc, tracker : failure.tracker },
+                session : Self { mmc, dma_transaction, tracker : failure.tracker },
             }),
         }
     }
@@ -541,8 +596,59 @@ impl<'a, D, P> PairedQuiescedReadDmaSession<'a, D, P> {
     /// Consume the terminal MMC snapshot exactly once after DMA is quiesced.
     pub(crate) fn apply_mmc_receipt(
         self)
-        -> crate::mmc::ReadCompletionProgress<crate::mmc::QuiescedReadDmaSession<'a, D, P>> {
-        self.tracker.terminal_irq_observed(self.mmc.interrupts)
+        -> PairedMmcCompletionProgress<'a, D, P> {
+        match self.tracker.terminal_irq_observed(self.mmc.interrupts) {
+            crate::mmc::ReadCompletionProgress::Completed(completed) =>
+                PairedMmcCompletionProgress::Completed(completed),
+            crate::mmc::ReadCompletionProgress::RecoveryRequired(recovery) =>
+                PairedMmcCompletionProgress::RecoveryRequired(ClaimedReadRecovery {
+                    mmc : self.mmc,
+                    dma_transaction : self.dma_transaction,
+                    recovery,
+                }),
+            crate::mmc::ReadCompletionProgress::Pending(_) =>
+                unreachable!("terminal paired MMC receipt remained pending"),
+        }
+    }
+}
+
+#[cfg(test)]
+impl<'a, D : DmaCoherency, P : DmaCoherency> ClaimedReadRecovery<'a, D, P> {
+    pub(crate) const fn transaction(&self) -> ReadTransactionId { self.mmc.transaction }
+
+    pub(crate) const fn failure(&self) -> crate::mmc::ReadCompletionFailure {
+        self.recovery.failure
+    }
+
+    pub(crate) fn finish(self)
+        -> Result<ClaimedReadRecoveryEvidence,
+                  ClaimedReadCacheRecoveryFailure<'a, D, P>> {
+        let evidence = ClaimedReadRecoveryEvidence {
+            transaction : self.mmc.transaction,
+            mmc_interrupts : self.mmc.interrupts,
+            dma_transaction : self.dma_transaction,
+            completion_evidence : self.recovery.evidence,
+            failure : self.recovery.failure,
+        };
+        ClaimedReadCacheRecovery {
+            evidence,
+            session : self.recovery.into_quiesced_session(),
+        }.finish()
+    }
+}
+
+#[cfg(test)]
+impl<'a, D : DmaCoherency, P : DmaCoherency> ClaimedReadCacheRecovery<'a, D, P> {
+    pub(crate) fn finish(self)
+        -> Result<ClaimedReadRecoveryEvidence,
+                  ClaimedReadCacheRecoveryFailure<'a, D, P>> {
+        match self.session.finish() {
+            Ok(()) => Ok(self.evidence),
+            Err(failure) => Err(ClaimedReadCacheRecoveryFailure {
+                error : failure.error,
+                recovery : Self { evidence : self.evidence, session : failure.session },
+            }),
+        }
     }
 }
 
@@ -682,7 +788,9 @@ impl<'a, 'e, R : crate::apbdma::OrderIo, D, P>
         let dma_transaction = dma.transaction;
         match session.into_completion_tracker()
                      .acknowledge_dma_irq(dma.acknowledged) {
-            Ok(tracker) => Ok(PairedAcknowledgedReadDmaSession { mmc, tracker }),
+            Ok(tracker) => Ok(PairedAcknowledgedReadDmaSession {
+                mmc, dma_transaction, tracker,
+            }),
             Err(failure) => Err(PairedReadDmaIrqFailure {
                 mmc, dma_transaction, failure,
             }),
@@ -896,7 +1004,7 @@ where I : crate::liointc::RegisterIo
     let drained = drain_read_owners(mmc, dma, transaction)
         .expect("bindings were validated before recovery drain");
     Ok(ReadRecoveryReport {
-        transaction, cause, partial_mmc_interrupts, drained,
+        transaction, cause, partial_mmc_interrupts, drained, claimed : None,
     })
 }
 

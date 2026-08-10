@@ -10,6 +10,7 @@ use crate::{board_irq_owner::{BoardIrqOwner, BoundedMmcReadRecheck,
                               BoundedMmcReadRecheckError,
                               BoundedMmcReadRecheckStep, ArmedReadIrqs,
                               QuiescedReadIrqs, ReadyReadIrqPair,
+                              ClaimedReadRecoveryEvidence, DrainedReadIrqs,
                               ReadPendingPairError,
                               ReadRecoveryCause, ReadRecoveryReport,
                               ReadIrqRetireError, ReadTransactionId,
@@ -115,6 +116,12 @@ pub struct ReadCoordinatorRecoveryFailure {
     quiesced : QuiescedReadIrqs,
 }
 
+#[must_use = "recover the claimed evidence and retry the recovery service"]
+pub struct ReadClaimedRecoveryArchiveFailure {
+    pub error : ReadCoordinatorError,
+    pub evidence : ClaimedReadRecoveryEvidence,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadTerminalClaimError {
     WrongTransaction {
@@ -217,8 +224,10 @@ impl ReadCoordinatorState {
             Self::RecoveryRecorded(report) => {
                 snapshot.recovery_cause = Some(report.cause);
                 snapshot.partial_mmc_interrupts = Some(report.partial_mmc_interrupts);
-                snapshot.has_mmc_receipt = report.drained.mmc.is_some();
-                snapshot.has_dma_receipt = report.drained.dma.is_some();
+                snapshot.has_mmc_receipt = report.drained.mmc.is_some() ||
+                                           report.claimed.is_some();
+                snapshot.has_dma_receipt = report.drained.dma.is_some() ||
+                                           report.claimed.is_some();
             },
             Self::Reserved { .. } => {},
         }
@@ -633,6 +642,50 @@ pub struct ReadRecoveryService<'a> {
 impl ReadRecoveryService<'_> {
     pub const fn transaction(&self) -> ReadTransactionId { self.transaction }
 
+    /// Archive a receipt pair that was already removed from the runtime owner
+    /// table and whose DMA mappings have subsequently returned to CPU ownership.
+    pub fn archive_claimed(
+        mut self,
+        evidence : ClaimedReadRecoveryEvidence)
+        -> Result<(), ReadClaimedRecoveryArchiveFailure> {
+        let cause = match &*self.service {
+            ReadCoordinatorState::RecoveryPending { cause, .. } => *cause,
+            _ => unreachable!("recovery phase was validated before construction"),
+        };
+        if evidence.transaction() != self.transaction ||
+           evidence.dma_transaction() != self.transaction
+        {
+            let actual = if evidence.transaction() != self.transaction {
+                evidence.transaction()
+            } else {
+                evidence.dma_transaction()
+            };
+            return Err(ReadClaimedRecoveryArchiveFailure {
+                error : ReadCoordinatorError::WrongTransaction {
+                    expected : self.transaction, actual,
+                },
+                evidence,
+            });
+        }
+        let actual = ReadRecoveryCause::CompletionFailure(evidence.failure());
+        if cause != actual {
+            return Err(ReadClaimedRecoveryArchiveFailure {
+                error : ReadCoordinatorError::RecoveryCauseMismatch {
+                    expected : cause, actual,
+                },
+                evidence,
+            });
+        }
+        *self.service = ReadCoordinatorState::RecoveryRecorded(ReadRecoveryReport {
+            transaction : self.transaction,
+            cause,
+            partial_mmc_interrupts : evidence.mmc_interrupts(),
+            drained : DrainedReadIrqs { mmc : None, dma : None },
+            claimed : Some(evidence),
+        });
+        Ok(())
+    }
+
     /// Atomically retire software IRQ owners and publish their report into the
     /// coordinator slot. Both hardware interrupt sources remain masked.
     pub fn retire_and_record<I, R>(
@@ -741,6 +794,7 @@ mod tests {
             cause : ReadRecoveryCause::Timeout { polls_completed : 2 },
             partial_mmc_interrupts : 1 << 6,
             drained : DrainedReadIrqs { mmc : None, dma : None },
+            claimed : None,
         }
     }
 
@@ -838,6 +892,7 @@ mod tests {
             },
             partial_mmc_interrupts : 1 << 6,
             drained : DrainedReadIrqs { mmc : None, dma : None },
+            claimed : None,
         };
         slot.record_recovery(fault).unwrap_or_else(|_| panic!("report rejected"));
         let snapshot = slot.snapshot().unwrap();
@@ -935,6 +990,7 @@ mod tests {
             cause : ReadRecoveryCause::Timeout { polls_completed : 2 },
             partial_mmc_interrupts : 0,
             drained : DrainedReadIrqs { mmc : None, dma : None },
+            claimed : None,
         }).err().expect("mismatched recovery cause accepted");
         assert!(matches!(mismatch.error, ReadCoordinatorError::RecoveryCauseMismatch { .. }));
         slot.record_recovery(ReadRecoveryReport {
@@ -942,6 +998,7 @@ mod tests {
             cause,
             partial_mmc_interrupts : 0,
             drained : DrainedReadIrqs { mmc : None, dma : None },
+            claimed : None,
         }).unwrap_or_else(|_| panic!("matching timeout report rejected"));
         let recovered = slot.take_recovery(current).unwrap();
         assert_eq!(recovered.cause, cause);
