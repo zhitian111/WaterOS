@@ -1255,3 +1255,26 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] expose visionfive2 sd initialization`
+
+## 2026-08-10：批次 48——VisionFive 2 MMC 静态参数诊断
+
+### 任务与设计
+
+1. 审计发现 DTB 解析允许 `max-frequency` 和 `fifo-depth` 缺省，但 `initialize_controller` 直到较晚的配置阶段才返回错误，日志中的 blocker 不够明确。
+2. 将这两个必需的控制器调谐参数纳入 `MmcActivationBlocker`，使设备树静态资源诊断在任何 MMIO 访问前完成。
+3. 保留 hardware-evidence 闸门：clock/reset/IRQ/card path 未取得实机证据时，不能激活控制器或注册块设备。
+
+### 完成内容
+
+- [x] 新增 `MissingTargetFrequency` 和 `MissingFifoDepth` 静态 blocker。
+- [x] 增加缺失调谐参数的单测，确认不会进入 activation-ready。
+- [x] 不修改 JH7110 寄存器时序、pinmux 或供电假设。
+
+### 验证证据与限制
+
+- VisionFive2 驱动 crate 单测：11 项通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 DTB 变体、clock/reset/syscon、pinmux、供电、IRQ 和 SD 卡响应仍需实机确认；静态参数通过不等于 SD 可用。
+
+### 提交
+
+- `[fix] diagnose missing mmc tuning`

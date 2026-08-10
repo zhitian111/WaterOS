@@ -18,6 +18,8 @@ pub enum MmcActivationBlocker {
     MissingCiuClock,
     MissingReset,
     MissingSysreg,
+    MissingTargetFrequency,
+    MissingFifoDepth,
     HardwareEvidence,
 }
 
@@ -139,6 +141,12 @@ pub fn bring_up_plan(host : &MmcHostDescription) -> MmcBringUpPlan {
     if host.sysreg.is_none() {
         blockers.push(MmcActivationBlocker::MissingSysreg);
     }
+    if host.max_frequency_hz.is_none() {
+        blockers.push(MmcActivationBlocker::MissingTargetFrequency);
+    }
+    if host.fifo_depth.is_none() {
+        blockers.push(MmcActivationBlocker::MissingFifoDepth);
+    }
     blockers.push(MmcActivationBlocker::HardwareEvidence);
     MmcBringUpPlan { host : host.clone(), blockers }
 }
@@ -234,6 +242,21 @@ mod tests {
         assert!(plan.blockers.contains(&MmcActivationBlocker::MissingBiuClock));
         assert!(plan.blockers.contains(&MmcActivationBlocker::MissingSysreg));
         assert!(!plan.can_activate());
+        assert_eq!(plan.controller_config(), Err(MmcConfigError::InvalidStaticResources));
+    }
+
+    #[test]
+    fn missing_controller_tuning_is_a_static_blocker() {
+        let mut value = host();
+        value.max_frequency_hz = None;
+        value.fifo_depth = None;
+        let plan = bring_up_plan(&value);
+        assert!(plan.blockers.contains(&MmcActivationBlocker::MissingTargetFrequency));
+        assert!(plan.blockers.contains(&MmcActivationBlocker::MissingFifoDepth));
+        assert!(!plan.activation_ready(MmcHardwareEvidence { clock_verified : true,
+                                                             reset_verified : true,
+                                                             irq_verified : true,
+                                                             card_path_verified : true }));
         assert_eq!(plan.controller_config(), Err(MmcConfigError::InvalidStaticResources));
     }
 
