@@ -7092,3 +7092,28 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[feat] add loongson2k1000la dtb reset backend`
+
+## 2026-08-10：批次 174——明确 2K1000LA 时间频率回退契约
+
+### 本批任务与设计
+
+1. 审计发现所有 profile 共用 `os/src/boot_timebase.rs` 的 DTB `/cpus/timebase-frequency` 探测；不重复实现第二套板级解析。
+2. 将 2K1000LA 的 100 MHz 仅保留为命名的 `FALLBACK_TIMEBASE_HZ`，并通过统一入口接受启动期 DTB 覆盖。
+3. 补充频率值和 DTB 大端 cell 宽度边界测试，继续把真实 CPUCFG/固件频率校准标为实机任务。
+
+### 已完成
+
+- [x] `impl-loongson2k1000la::time` 暴露显式回退常量及非零频率校验。
+- [x] 平台时间单测覆盖回退值、0 值拒绝和最小合法值。
+- [x] `boot_timebase` 增加 32/64 位大端 cell 解析及错误宽度测试。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path components/wateros-platform/platform-impl/impl-loongson2k1000la/Cargo.toml --lib`：9 项通过。
+- `cargo check --manifest-path components/wateros-platform/platform-impl/impl-loongson2k1000la/Cargo.toml --target loongarch64-unknown-none`：通过。
+- 直接无 feature host 编译整个 `wateros` 二进制仍被仓库既有 arch/platform feature 配置阻断（`ArchTimeImpl` 等未选择），不作为本批回归失败归因；完整验证应使用 `make la_check`/目标 feature。
+- `UNVERIFIED_ON_HARDWARE`：2K1000LA 真实 stable counter 来源、频率漂移和 timer CSR 语义仍需实机确认。
+
+### 提交
+
+- 待提交：`[fix] make loongson time fallback explicit`

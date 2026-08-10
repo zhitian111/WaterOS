@@ -90,3 +90,21 @@ fn read_be_cell(raw : &[u8]) -> Option<u64> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::read_be_cell;
+
+    #[test]
+    fn accepts_standard_big_endian_cells() {
+        assert_eq!(read_be_cell(&[0x05, 0xf5, 0xe1, 0x00]), Some(100_000_000));
+        assert_eq!(read_be_cell(&[0, 0, 0, 0, 0, 0, 0, 1]), Some(1));
+    }
+
+    #[test]
+    fn rejects_wrong_property_widths() {
+        assert_eq!(read_be_cell(&[]), None);
+        assert_eq!(read_be_cell(&[0, 0, 0]), None);
+        assert_eq!(read_be_cell(&[0; 12]), None);
+    }
+}
