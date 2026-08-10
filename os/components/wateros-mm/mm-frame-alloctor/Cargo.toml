@@ -8,6 +8,7 @@
     impl-stack = { path = "./frame-alloctor-impl/impl-stack/", package = "wateros-mm-frame-alloctor-impl-stack" }
     api-v0 = { path = "./frame-alloctor-api/api-v0/", package = "wateros-mm-frame-alloctor-api-v0" }
     mm-api = { path = "../mm-api/api-v0", package = "wateros-mm-api-v0", default-features = true }
+    driver-api = { path = "../../wateros-driver/driver-api/api-v0", package = "wateros-driver-api-v0" }
     log = { version = "0.4.29" }
 
 [features]

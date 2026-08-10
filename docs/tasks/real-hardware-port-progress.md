@@ -2166,3 +2166,25 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - `cargo check -p wateros-driver-block-api-v0 --target riscv64gc-unknown-none-elf` 通过。
 - host `cargo test -p wateros-driver-block-api-v0` 未执行成功：该 no-std workspace 的默认依赖含 RISC-V SBI 内联寄存器，host 编译器拒绝 `a0`–`a7`；不是本批分区逻辑失败。
 - `UNVERIFIED_ON_HARDWARE`：真实 SD/eMMC 控制器返回的容量、坏块/读错误、掉电恢复和实体板热插拔时序仍待 VisionFive 2/Loongson 2K1000 实板验证。
+
+## 2026-08-10：批次 80——连续帧到 DMA mapping 的受控适配
+
+### 任务与设计
+
+1. 盘点发现 `OwnedPhysFrameSpan` 已经持有连续物理帧和回收责任，但尚未能直接生成公共 `DmaRegion`；驱动只能手工重复计算物理地址和长度。
+2. 在 frame allocator 聚合 crate 增加 `dma_region(virtual_address, alignment, device_address_bits)`，由调用方明确提供实际虚拟映射地址。
+3. 该方法只借用描述，不转移或复制 span 所有权；`DmaMapping` 的 cache 同步和 CPU/device ownership 仍由现有公共 API 管理，未引入伪造的 coherency 后端。
+
+### 完成内容
+
+- [x] `OwnedPhysFrameSpan` 可生成带独立 VA/PA、长度、对齐和设备地址宽度校验的 `DmaRegion`。
+- [x] 增加 `wateros-driver-api-v0` 依赖，保持适配位于内存分配器与驱动契约的连接层，不修改现有 allocator 回收路径。
+- [x] 增加单元测试，验证独立虚拟地址、物理首地址、连续长度、页对齐和设备地址宽度拒绝。
+
+### 验证证据与限制
+
+- `make check`（RISC-V64 release cargo check）通过，包含 frame allocator 新适配。
+- `cargo test --manifest-path components/wateros-driver/driver-api/api-v0/Cargo.toml --lib`：6 项通过。
+- `cargo test --manifest-path components/wateros-mm/mm-frame-alloctor/frame-alloctor-impl/impl-stack/Cargo.toml --no-default-features --features api-v0`：3 项通过。
+- frame allocator 聚合 crate 的独立 host/LoongArch 测试仍被仓库既有 `platform-arch` feature 配置阻断（缺少 `ArchTimeImpl`/`ArchInterruptImpl`/`ArchPagingImpl`），不是本适配逻辑的编译错误。
+- `UNVERIFIED_ON_HARDWARE`：虚拟地址映射是否可被设备访问、cache line/fence/coherency、IOMMU 和真实 DMA 停止时序仍需各平台实现并上板验证；当前 API 不允许默认后端静默放行。

@@ -4,6 +4,7 @@
 
 pub use api_v0::*;
 
+use driver_api::{dma::DmaRegion, DriverResult};
 use mm_api::addr::{PhysAddr, PhysPageNum, PAGE_SIZE};
 
 /// 独占拥有一页、可由内核通过 RAM 恒等映射访问的物理帧。
@@ -122,6 +123,27 @@ impl OwnedPhysFrameSpan {
             .frame_count()
     }
 
+    /// Describe this owned span as a DMA region without transferring its
+    /// allocation or assuming that virtual and physical addresses match.
+    ///
+    /// `virtual_address` must be the address of the mapping that the device
+    /// driver will use.  The span remains the owner and must outlive every
+    /// borrow of the returned region.  Platforms using the current identity
+    /// mapping may pass `self.as_bytes().as_ptr() as usize`, but that is an
+    /// explicit platform choice rather than a property of this API.
+    pub fn dma_region(&self,
+                      virtual_address : usize,
+                      alignment : usize,
+                      device_address_bits : u8)
+                      -> DriverResult<DmaRegion> {
+        DmaRegion::new(virtual_address,
+                       self.physical_address()
+                           .0 as u64,
+                       self.byte_len(),
+                       alignment,
+                       device_address_bits)
+    }
+
     /// 借用连续区间的只读恒等映射。
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
@@ -183,4 +205,25 @@ pub fn test_with_range(start_ppn : mm_api::addr::PhysPageNum, end_ppn : mm_api::
         log::info!("[frame-alloctor] dummy impl: no test");
     }
     log::trace!("[frame-alloctor] test end");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::mem::ManuallyDrop;
+
+    #[test]
+    fn dma_region_keeps_owned_span_physical_address_and_explicit_virtual_address() {
+        let span =
+            ManuallyDrop::new(OwnedPhysFrameSpan { span : FrameSpan::new(PhysPageNum(2), 2) });
+        let region = span.dma_region(0x20_000, PAGE_SIZE, 32)
+                         .unwrap();
+        assert_eq!(region.virtual_address(), 0x20_000);
+        assert_eq!(region.physical_address(),
+                   2 * PAGE_SIZE as u64);
+        assert_eq!(region.length(), 2 * PAGE_SIZE);
+        assert_eq!(region.alignment(), PAGE_SIZE);
+        assert_eq!(span.dma_region(0x20_000, PAGE_SIZE, 12),
+                   Err(driver_api::DriverError::InvalidParam));
+    }
 }
