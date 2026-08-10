@@ -1156,3 +1156,26 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] expose visionfive2 mmc controller config`
+
+## 2026-08-10：批次 27——VisionFive 2 MMC IRQ/硬件证据闸门
+
+### 任务与设计
+
+1. 审计确认 PLIC 已有 handler lease 生命周期，但 MMC bring-up plan 尚未表达“IRQ 已真实路由并收到设备确认”。
+2. 新增独立 `MmcHardwareEvidence`，要求 clock、reset、IRQ、card path 四类证据全部成立后才可判定计划 ready。
+3. 该判定为纯状态转换，不写 PLIC/MMC 寄存器；`can_activate()` 继续固定 false，等待未来显式硬件授权流程。
+
+### 完成内容
+
+- [x] 新增 `MmcHardwareEvidence` 与 `MmcBringUpPlan::activation_ready`。
+- [x] 测试默认缺证据保持 false、四项证据齐全时仅状态上允许继续、malformed 静态资源仍拒绝。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path components/wateros-driver/driver-impl/impl-jh7110-visionfive2/Cargo.toml --lib mmc::tests`：2 项通过。
+- `cargo check --manifest-path components/wateros-driver/driver-impl/impl-jh7110-visionfive2/Cargo.toml --target riscv64gc-unknown-none-elf`：通过。
+- `UNVERIFIED_ON_HARDWARE`：PLIC source route/claim-complete、MMC device-side IRQ、clock/reset/pinmux/供电和 card path 仍需实机证据；本批没有解除任何实际 activation。
+
+### 提交
+
+- `[feat] gate visionfive2 mmc on hardware evidence`

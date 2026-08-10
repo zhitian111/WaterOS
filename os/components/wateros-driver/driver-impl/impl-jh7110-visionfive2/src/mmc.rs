@@ -34,6 +34,14 @@ pub enum MmcConfigError {
     MissingFifoDepth,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MmcHardwareEvidence {
+    pub clock_verified : bool,
+    pub reset_verified : bool,
+    pub irq_verified : bool,
+    pub card_path_verified : bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcBringUpPlan {
     pub host : MmcHostDescription,
@@ -44,6 +52,16 @@ impl MmcBringUpPlan {
     /// Hardware activation remains deliberately unavailable until board
     /// clock/reset/pinmux/card and controller behavior are verified.
     pub const fn can_activate(&self) -> bool { false }
+
+    /// Evaluate externally supplied board evidence without performing any
+    /// register access. This is the only path that may eventually clear the
+    /// static `HardwareEvidence` blocker.
+    pub fn activation_ready(&self, evidence : MmcHardwareEvidence) -> bool {
+        self.blockers.len() == 1 &&
+        self.blockers[0] == MmcActivationBlocker::HardwareEvidence &&
+        evidence.clock_verified && evidence.reset_verified && evidence.irq_verified &&
+        evidence.card_path_verified
+    }
 
     /// Produce only protocol/controller parameters; this does not touch
     /// clocks, reset, pinmux, power or MMIO.
@@ -143,6 +161,11 @@ mod tests {
         let plan = bring_up_plan(&host());
         assert_eq!(plan.blockers, vec![MmcActivationBlocker::HardwareEvidence]);
         assert!(!plan.can_activate());
+        assert!(!plan.activation_ready(MmcHardwareEvidence::default()));
+        assert!(plan.activation_ready(MmcHardwareEvidence { clock_verified : true,
+                                                            reset_verified : true,
+                                                            irq_verified : true,
+                                                            card_path_verified : true }));
         assert_eq!(plan.controller_config(),
                    Ok(MmcControllerConfig { target_frequency_hz : 50_000_000,
                                              fifo_depth : 32,
