@@ -47,16 +47,18 @@ pub enum PartitionScanError {
     UnsupportedExtended,
     InvalidEntry,
     OverlappingEntries,
+    InvalidExtendedChain,
 }
 
 fn read_u32_le(bytes : &[u8]) -> u32 {
     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
 
-/// Read the legacy MBR primary partition table.
+/// Read the legacy MBR primary partition table and bounded EBR chains.
 ///
-/// GPT protective and extended partitions are reported explicitly instead of
-/// being exposed as ordinary data partitions.
+/// GPT protective partitions are reported explicitly instead of being exposed
+/// as ordinary data partitions. Common 0x05/0x0f/0x85 extended containers are
+/// followed through at most 32 EBRs.
 pub fn scan_mbr(device : &SharedBlockDevice) -> Result<Vec<MbrPartition>, PartitionScanError> {
     let mut sector = [0u8; BLOCK_SIZE];
     let total_blocks = {
@@ -73,6 +75,7 @@ pub fn scan_mbr(device : &SharedBlockDevice) -> Result<Vec<MbrPartition>, Partit
     }
 
     let mut partitions = Vec::new();
+    let mut extended = Vec::new();
     for index in 0..MBR_ENTRY_COUNT {
         let offset = MBR_PARTITION_TABLE_OFFSET + index * MBR_ENTRY_SIZE;
         let entry = &sector[offset..offset + MBR_ENTRY_SIZE];
@@ -85,9 +88,6 @@ pub fn scan_mbr(device : &SharedBlockDevice) -> Result<Vec<MbrPartition>, Partit
         if partition_type == 0xEE {
             return Err(PartitionScanError::ProtectiveGpt);
         }
-        if matches!(partition_type, 0x05 | 0x0F | 0x85) {
-            return Err(PartitionScanError::UnsupportedExtended);
-        }
         let end = start_lba.checked_add(sectors)
                            .ok_or(PartitionScanError::InvalidEntry)?;
         if partition_type == 0 || start_lba == 0 || sectors == 0 {
@@ -97,6 +97,10 @@ pub fn scan_mbr(device : &SharedBlockDevice) -> Result<Vec<MbrPartition>, Partit
             if end > total {
                 return Err(PartitionScanError::InvalidEntry);
             }
+        }
+        if matches!(partition_type, 0x05 | 0x0F | 0x85) {
+            extended.push((start_lba, sectors));
+            continue;
         }
         if partitions.iter()
                      .any(|prior : &MbrPartition| {
@@ -110,6 +114,27 @@ pub fn scan_mbr(device : &SharedBlockDevice) -> Result<Vec<MbrPartition>, Partit
                                        partition_type,
                                        start_lba,
                                        sectors });
+    }
+    for (index, (start, sectors)) in extended.iter().enumerate() {
+        let end = (*start).checked_add(*sectors).ok_or(PartitionScanError::InvalidEntry)?;
+        if partitions.iter().any(|partition| {
+            let partition_end = partition.start_lba + partition.sectors;
+            *start < partition_end && partition.start_lba < end
+        }) || extended[..index].iter().any(|(prior_start, prior_sectors)| {
+            let prior_end = *prior_start + *prior_sectors;
+            *start < prior_end && *prior_start < end
+        }) {
+            return Err(PartitionScanError::OverlappingEntries);
+        }
+    }
+    let mut logical_number = 5u8;
+    for (base, sectors) in extended {
+        parse_extended_chain(device,
+                             base,
+                             sectors,
+                             total_blocks,
+                             &mut logical_number,
+                             &mut partitions)?;
     }
     Ok(partitions)
 }
@@ -265,6 +290,75 @@ pub fn scan_gpt(device : &SharedBlockDevice) -> Result<Vec<GptPartition>, Partit
         });
     }
     Ok(partitions)
+}
+
+fn parse_extended_chain(device : &SharedBlockDevice,
+                        base : u64,
+                        sectors : u64,
+                        total_blocks : Option<u64>,
+                        logical_number : &mut u8,
+                        partitions : &mut Vec<MbrPartition>)
+                        -> Result<(), PartitionScanError> {
+    let container_end = base.checked_add(sectors).ok_or(PartitionScanError::InvalidEntry)?;
+    let mut current = base;
+    let mut visited = Vec::new();
+    for _ in 0..32 {
+        if current < base || current >= container_end || visited.contains(&current) {
+            return Err(PartitionScanError::InvalidExtendedChain);
+        }
+        visited.push(current);
+        let mut sector = [0u8; BLOCK_SIZE];
+        device.lock()
+              .read_blocks(Lba(current), &mut sector)
+              .map_err(PartitionScanError::Io)?;
+        if sector[MBR_SIGNATURE_OFFSET..] != [0x55, 0xAA] {
+            return Err(PartitionScanError::InvalidExtendedChain);
+        }
+        let data = &sector[MBR_PARTITION_TABLE_OFFSET..MBR_PARTITION_TABLE_OFFSET + MBR_ENTRY_SIZE];
+        let data_type = data[4];
+        let data_start = read_u32_le(&data[8..12]) as u64;
+        let data_sectors = read_u32_le(&data[12..16]) as u64;
+        if data_type == 0 || matches!(data_type, 0x05 | 0x0F | 0x85)
+            || data_start == 0 || data_sectors == 0
+        {
+            return Err(PartitionScanError::InvalidExtendedChain);
+        }
+        let start = current.checked_add(data_start).ok_or(PartitionScanError::InvalidEntry)?;
+        let end = start.checked_add(data_sectors).ok_or(PartitionScanError::InvalidEntry)?;
+        if start < base || end > container_end || total_blocks.is_some_and(|total| end > total) {
+            return Err(PartitionScanError::InvalidEntry);
+        }
+        if partitions.iter().any(|prior| {
+            let prior_end = prior.start_lba + prior.sectors;
+            start < prior_end && prior.start_lba < end
+        }) {
+            return Err(PartitionScanError::OverlappingEntries);
+        }
+        if *logical_number == u8::MAX {
+            return Err(PartitionScanError::InvalidExtendedChain);
+        }
+        partitions.push(MbrPartition { number : *logical_number,
+                                       partition_type : data_type,
+                                       start_lba : start,
+                                       sectors : data_sectors });
+        *logical_number += 1;
+
+        let link = &sector[MBR_PARTITION_TABLE_OFFSET + MBR_ENTRY_SIZE..
+                           MBR_PARTITION_TABLE_OFFSET + 2 * MBR_ENTRY_SIZE];
+        let link_type = link[4];
+        if link_type == 0 {
+            return Ok(());
+        }
+        if !matches!(link_type, 0x05 | 0x0F | 0x85) {
+            return Err(PartitionScanError::InvalidExtendedChain);
+        }
+        let link_start = read_u32_le(&link[8..12]) as u64;
+        if link_start == 0 {
+            return Err(PartitionScanError::InvalidExtendedChain);
+        }
+        current = base.checked_add(link_start).ok_or(PartitionScanError::InvalidEntry)?;
+    }
+    Err(PartitionScanError::InvalidExtendedChain)
 }
 
 fn read_u64_le(bytes : &[u8]) -> u64 {
@@ -435,6 +529,33 @@ mod tests {
         Arc::new(Mutex::new(Box::new(MemoryDisk { bytes })))
     }
 
+    fn disk_with_extended_chain() -> SharedBlockDevice {
+        let mut bytes = vec![0u8; BLOCK_SIZE * 64];
+        bytes[510..512].copy_from_slice(&[0x55, 0xAA]);
+        let primary = MBR_PARTITION_TABLE_OFFSET;
+        bytes[primary + 4] = 0x0F;
+        bytes[primary + 8..primary + 12].copy_from_slice(&4u32.to_le_bytes());
+        bytes[primary + 12..primary + 16].copy_from_slice(&40u32.to_le_bytes());
+        for (ebr_lba, data_lba, link_lba) in [(4u32, 1u32, Some(8u32)),
+                                               (12u32, 1u32, None)] {
+            let offset = ebr_lba as usize * BLOCK_SIZE;
+            bytes[offset + MBR_SIGNATURE_OFFSET..offset + BLOCK_SIZE]
+                .copy_from_slice(&[0x55, 0xAA]);
+            let entry = offset + MBR_PARTITION_TABLE_OFFSET;
+            bytes[entry + 4] = 0x83;
+            bytes[entry + 8..entry + 12].copy_from_slice(&data_lba.to_le_bytes());
+            bytes[entry + 12..entry + 16].copy_from_slice(&4u32.to_le_bytes());
+            if let Some(link_lba) = link_lba {
+                bytes[entry + MBR_ENTRY_SIZE + 4] = 0x0F;
+                bytes[entry + MBR_ENTRY_SIZE + 8..entry + MBR_ENTRY_SIZE + 12]
+                    .copy_from_slice(&link_lba.to_le_bytes());
+                bytes[entry + MBR_ENTRY_SIZE + 12..entry + MBR_ENTRY_SIZE + 16]
+                    .copy_from_slice(&32u32.to_le_bytes());
+            }
+        }
+        Arc::new(Mutex::new(Box::new(MemoryDisk { bytes })))
+    }
+
     fn refresh_gpt_crcs(bytes : &mut [u8]) {
         let primary_entries = bytes[BLOCK_SIZE * 2..BLOCK_SIZE * 2 + 4 * 128].to_vec();
         let entry_crc = crc32(&primary_entries);
@@ -478,6 +599,40 @@ mod tests {
         assert_eq!(partitions.len(), 2);
         assert_eq!(partitions[1].number, 2);
         assert_eq!(partitions[1].start_lba, 8);
+    }
+
+    #[test]
+    fn scans_bounded_extended_partition_chain() {
+        let partitions = scan_mbr(&disk_with_extended_chain()).unwrap();
+        assert_eq!(partitions,
+                   vec![MbrPartition { number : 5,
+                                       partition_type : 0x83,
+                                       start_lba : 5,
+                                       sectors : 4 },
+                         MbrPartition { number : 6,
+                                       partition_type : 0x83,
+                                       start_lba : 13,
+                                       sectors : 4 }]);
+    }
+
+    #[test]
+    fn rejects_extended_chain_cycle_and_out_of_range_data() {
+        let cycle = disk_with_extended_chain();
+        let mut ebr = [0u8; BLOCK_SIZE];
+        cycle.lock().read_blocks(Lba(12), &mut ebr).unwrap();
+        let entry = MBR_PARTITION_TABLE_OFFSET + MBR_ENTRY_SIZE;
+        ebr[entry + 4] = 0x0F;
+        ebr[entry + 8..entry + 12].copy_from_slice(&8u32.to_le_bytes());
+        ebr[entry + 12..entry + 16].copy_from_slice(&32u32.to_le_bytes());
+        cycle.lock().write_blocks(Lba(12), &ebr).unwrap();
+        assert_eq!(scan_mbr(&cycle), Err(PartitionScanError::InvalidExtendedChain));
+
+        let out_of_range = disk_with_extended_chain();
+        out_of_range.lock().read_blocks(Lba(4), &mut ebr).unwrap();
+        ebr[MBR_PARTITION_TABLE_OFFSET + 12..MBR_PARTITION_TABLE_OFFSET + 16]
+            .copy_from_slice(&100u32.to_le_bytes());
+        out_of_range.lock().write_blocks(Lba(4), &ebr).unwrap();
+        assert_eq!(scan_mbr(&out_of_range), Err(PartitionScanError::InvalidEntry));
     }
 
     #[test]
@@ -577,7 +732,7 @@ mod tests {
                    Err(PartitionScanError::ProtectiveGpt));
         let extended = disk_with_entries(&[(0x0F, 1, 16)]);
         assert_eq!(scan_mbr(&extended),
-                   Err(PartitionScanError::UnsupportedExtended));
+                   Err(PartitionScanError::InvalidExtendedChain));
         let overlap = disk_with_entries(&[(0x83, 1, 8),
                                           (0x83, 4, 8)]);
         assert_eq!(scan_mbr(&overlap),

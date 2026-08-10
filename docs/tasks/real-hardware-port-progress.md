@@ -6712,3 +6712,28 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - `[feat] add hid boot report decoder`
+
+## 2026-08-10：批次 159——支持有界 MBR extended/EBR 逻辑分区
+
+### 本批任务与设计
+
+1. 审计 `impl-dw-mmc` 后确认其协议层已有 12 项离线测试；板级时钟、reset、pinmux、DMA 仍不能在无硬件时猜测，因此不重复修改该层。
+2. 补齐物理 SD/磁盘常见的 MBR extended partition 链；只跟随 `0x05/0x0f/0x85` 容器和 EBR 链接。
+3. 每条 EBR 链最多 32 个节点，检测循环、签名损坏、容器越界、逻辑分区重叠和主/扩展容器互相重叠。
+4. 逻辑分区从 Linux 约定的分区号 5 开始，复用现有 `PartitionBlockDevice` 和 devfs 注册路径。
+
+### 已完成
+
+- [x] `scan_mbr` 支持常见 extended/EBR 链，并为逻辑分区建立有界 `MbrPartition` 描述。
+- [x] 扩展链失败时 fail-closed，不把 EBR 元数据暴露成普通文件系统分区。
+- [x] 新增双逻辑分区、循环链、逻辑分区越界和坏 EBR 签名测试；GPT/主分区路径保持兼容。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path os/components/wateros-driver/driver-block/block-api/api-v0/Cargo.toml`：11 项通过。
+- `cargo test --manifest-path os/components/wateros-driver/driver-block/block-impl/impl-dw-mmc/Cargo.toml`：12 项通过；本批确认 MMC 既有协议回归未受影响。
+- `UNVERIFIED_ON_HARDWARE`：真实固件可能使用 GPT、厂商私有分区类型或损坏后恢复策略；扩展分区仅覆盖上述三种常见类型，SD/eMMC 控制器传输和掉电一致性仍待实机。
+
+### 提交
+
+- `[feat] support bounded mbr extended partitions`
