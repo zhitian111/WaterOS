@@ -63,6 +63,10 @@ fn linux_vd_disk_path(idx: usize) -> String {
     format!("/dev/vd{}", letter)
 }
 
+fn linux_vd_partition_path(disk_number : usize, partition_number : u32) -> String {
+    format!("{}{}", linux_vd_disk_path(disk_number), partition_number)
+}
+
 // 同一路径不重复登记；新路径追加到 nodes 与 block_bindings。
 // 本方法代码由AI完成
 fn push_block_alias(inner: &mut DevFsImpl, path: String, dev: SharedBlockDevice) {
@@ -127,7 +131,7 @@ impl DevFsManager for KernelDevFsManager {
             }) else {
                 continue;
             };
-            let path = alloc::format!("{}{}", linux_vd_disk_path(disk_number), partition_number);
+            let path = linux_vd_partition_path(disk_number, *partition_number);
             push_block_alias(&mut inner, path, dev.clone());
         }
 

@@ -38,7 +38,7 @@ pub type SharedBlockDevice = Arc<Mutex<Box<dyn BlockDevice>>>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockDeviceRole {
     Disk { disk_number : usize },
-    Partition { parent_device_index : usize, partition_number : u8 },
+    Partition { parent_device_index : usize, partition_number : u32 },
 }
 
 struct RegisteredBlockDevice {
@@ -113,15 +113,35 @@ pub trait BlockDevice: Send {
 pub fn register_block_device(device: SharedBlockDevice) -> usize {
     let scan = scan_mbr(&device);
     let mut children = Vec::new();
-    if let Ok(partitions) = &scan {
-        for partition in partitions {
-            if let Ok(child) = PartitionBlockDevice::shared(device.clone(),
-                                                            partition.start_lba,
-                                                            partition.sectors)
-            {
-                children.push((partition.number, child));
+    match &scan {
+        Ok(partitions) => {
+            for partition in partitions {
+                if let Ok(child) = PartitionBlockDevice::shared(device.clone(),
+                                                                partition.start_lba,
+                                                                partition.sectors)
+                {
+                    children.push((partition.number as u32, child));
+                }
             }
         }
+        Err(PartitionScanError::ProtectiveGpt) => {
+            if let Ok(partitions) = scan_gpt(&device) {
+                for partition in partitions {
+                    if let Some(sectors) = partition.end_lba
+                                                     .checked_sub(partition.start_lba)
+                                                     .and_then(|count| count.checked_add(1))
+                {
+                    if let Ok(child) = PartitionBlockDevice::shared(device.clone(),
+                                                                    partition.start_lba,
+                                                                    sectors)
+                    {
+                        children.push((partition.number, child));
+                    }
+                }
+                }
+            }
+        }
+        Err(_) => {}
     }
 
     let mut devices = BLOCK_DEVICES.lock();
@@ -287,6 +307,56 @@ mod registry_tests {
             bytes[446 + 12..446 + 16].copy_from_slice(&2u32.to_le_bytes());
             Arc::new(Mutex::new(Box::new(Self { bytes })))
         }
+
+        fn shared_with_gpt_partition() -> SharedBlockDevice {
+            let mut bytes = vec![0u8; BLOCK_SIZE * 32];
+            bytes[510..512].copy_from_slice(&[0x55, 0xAA]);
+            bytes[446 + 4] = 0xEE;
+            bytes[446 + 8..446 + 12].copy_from_slice(&1u32.to_le_bytes());
+            bytes[446 + 12..446 + 16].copy_from_slice(&31u32.to_le_bytes());
+            let entries = &mut bytes[BLOCK_SIZE * 2..BLOCK_SIZE * 3];
+            entries[0] = 1;
+            entries[32..40].copy_from_slice(&4u64.to_le_bytes());
+            entries[40..48].copy_from_slice(&7u64.to_le_bytes());
+            let mut entries_crc = 0xFFFF_FFFFu32;
+            for byte in entries {
+                entries_crc ^= *byte as u32;
+                for _ in 0..8 {
+                    entries_crc = if entries_crc & 1 != 0 {
+                        (entries_crc >> 1) ^ 0xEDB8_8320
+                    } else {
+                        entries_crc >> 1
+                    };
+                }
+            }
+            entries_crc = !entries_crc;
+            let header = &mut bytes[BLOCK_SIZE..BLOCK_SIZE * 2];
+            header[..8].copy_from_slice(b"EFI PART");
+            header[8..12].copy_from_slice(&0x0001_0000u32.to_le_bytes());
+            header[12..16].copy_from_slice(&92u32.to_le_bytes());
+            header[24..32].copy_from_slice(&1u64.to_le_bytes());
+            header[32..40].copy_from_slice(&31u64.to_le_bytes());
+            header[40..48].copy_from_slice(&4u64.to_le_bytes());
+            header[48..56].copy_from_slice(&28u64.to_le_bytes());
+            header[72..80].copy_from_slice(&2u64.to_le_bytes());
+            header[80..84].copy_from_slice(&4u32.to_le_bytes());
+            header[84..88].copy_from_slice(&128u32.to_le_bytes());
+            header[88..92].copy_from_slice(&entries_crc.to_le_bytes());
+            let mut header_crc = 0xFFFF_FFFFu32;
+            for (index, byte) in header[..92].iter().enumerate() {
+                let byte = if (16..20).contains(&index) { 0 } else { *byte };
+                header_crc ^= byte as u32;
+                for _ in 0..8 {
+                    header_crc = if header_crc & 1 != 0 {
+                        (header_crc >> 1) ^ 0xEDB8_8320
+                    } else {
+                        header_crc >> 1
+                    };
+                }
+            }
+            header[16..20].copy_from_slice(&(!header_crc).to_le_bytes());
+            Arc::new(Mutex::new(Box::new(Self { bytes })))
+        }
     }
 
     impl BlockDevice for RegistryDisk {
@@ -332,5 +402,17 @@ mod registry_tests {
         let next_index = register_block_device(RegistryDisk::shared_with_partition());
         assert!(next_index > partition_index, "stable slots must not be reused");
         assert!(unregister_block_device(next_index));
+    }
+
+    #[test]
+    fn protective_mbr_publishes_gpt_partition_role() {
+        let disk_index = register_block_device(RegistryDisk::shared_with_gpt_partition());
+        let snapshot = block_devices_snapshot();
+        assert!(snapshot.iter().any(|(_, _, role)| {
+            matches!(role,
+                     BlockDeviceRole::Partition { parent_device_index, partition_number : 1 }
+                     if *parent_device_index == disk_index)
+        }));
+        assert!(unregister_block_device(disk_index));
     }
 }

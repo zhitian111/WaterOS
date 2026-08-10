@@ -54,6 +54,10 @@ fn linux_vd_disk_path(index: usize) -> String {
     format!("/dev/vd{}", letter)
 }
 
+fn linux_vd_partition_path(disk_number : usize, partition_number : u32) -> String {
+    format!("{}{}", linux_vd_disk_path(disk_number), partition_number)
+}
+
 // 本方法代码由AI完成
 fn push_node(nodes: &mut Vec<DevNode>, path: String, index: usize) {
     if nodes.iter().any(|n| n.path == path) {
@@ -97,7 +101,7 @@ pub fn refresh() -> usize {
             continue;
         };
         push_node(&mut nodes,
-                  format!("{}{}", linux_vd_disk_path(disk_number), partition_number),
+                  linux_vd_partition_path(disk_number, *partition_number),
                   *index);
     }
     logging::trace!("[fs::devfs] refresh done, block_nodes={}", nodes.len());
@@ -172,5 +176,10 @@ mod tests {
         assert!(unregister_block_device(index));
         assert!(matches!(lookup_block_device(path.as_str()), Err(FsError::NotFound)));
         assert!(!list_nodes().iter().any(|node| node.index == index));
+    }
+
+    #[test]
+    fn partition_alias_keeps_wide_gpt_entry_number() {
+        assert_eq!(linux_vd_partition_path(0, 300), "/dev/vda300");
     }
 }

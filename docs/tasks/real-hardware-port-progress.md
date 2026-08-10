@@ -1416,3 +1416,32 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[feat] add gpt partition scanner`
+
+## 2026-08-10：批次 35——GPT 分区注册与 devfs 别名
+
+### 任务与设计
+
+1. 将上一批的 GPT 只读扫描接入公共块设备注册表：普通 MBR 优先保持原行为，只有 protective MBR 才尝试 GPT。
+2. 将分区编号从 `u8` 扩展为 `u32`，避免 GPT entry index 截断；复用既有 `PartitionBlockDevice` 的范围检查和 I/O 转换。
+3. 两个 devfs 实现统一通过独立路径函数生成 `/dev/vdaN`，保持 MBR 兼容并支持较大的 GPT 编号。
+
+### 完成内容
+
+- [x] protective MBR 成功时在一次 topology 更新中发布整盘和 GPT 分区。
+- [x] GPT 分区使用 `end_lba - start_lba + 1` 的 checked 计算，异常布局不会注册子设备。
+- [x] `BlockDeviceRole::Partition.partition_number` 改为 `u32`，Mbr 编号显式提升。
+- [x] simple devfs 和 kernel devfs 都支持宽分区编号格式化。
+- [x] 新增小内存盘注册测试和 `/dev/vda300` 路径测试。
+
+### 验证证据与限制
+
+- block API 单测：6 项通过。
+- simple devfs 单测：2 项通过。
+- kernel devfs RISC-V64 检查：通过。
+- block API RISC-V64/LoongArch64 检查：均通过。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：GPT backup header、真实固件分区命名和 SD 卡 I/O 尚未上板；当前仅 protective-MBR 路径自动注册 GPT，GPT backup header 修复/恢复仍未实现。
+
+### 提交
+
+- `[feat] register gpt partitions in devfs`
