@@ -1,0 +1,42 @@
+[
+  {
+    "name": "virtio-drivers",
+    "version": "0.12.0",
+    "source": "https://github.com/rcore-os/virtio-drivers",
+    "license": "MIT",
+    "license_evidence": "Cargo registry metadata; not vendored",
+    "used_for": "virtio-blk, virtio-net, virtio-gpu and virtio-input"
+  },
+  {
+    "name": "smoltcp",
+    "version": "0.12.0",
+    "source": "https://github.com/smoltcp-rs/smoltcp",
+    "license": "0BSD",
+    "license_evidence": "Cargo registry metadata; not vendored",
+    "used_for": "IPv4/TCP/UDP network stack"
+  },
+  {
+    "name": "ext4plus",
+    "version": "0.1.0-rc.2",
+    "source": "https://github.com/arihant2math/ext4plus",
+    "license": "MIT OR Apache-2.0",
+    "license_evidence": "os/vendor/ext4plus/LICENSE-MIT and LICENSE-APACHE",
+    "used_for": "ext4 root filesystem backend"
+  },
+  {
+    "name": "ext4_rs",
+    "version": "1.3.3",
+    "source": "https://github.com/yuoo655/ext4_rs",
+    "license": "MIT",
+    "license_evidence": "os/vendor/ext4_rs/LICENSE",
+    "used_for": "optional ext4 filesystem backend"
+  },
+  {
+    "name": "another_ext4",
+    "version": "0.1.0",
+    "source": "local WaterOS vendor fork; upstream provenance requires review",
+    "license": "UNKNOWN",
+    "license_evidence": "MISSING: os/vendor/another_ext4 has no license file or package license field",
+    "used_for": "default ext4 backend"
+  }
+]

@@ -2099,6 +2099,27 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - `qemu-img info` 报告 raw 镜像 virtual-size=33554432；临时镜像已移出工作树。
 - `UNVERIFIED_ON_HARDWARE`：架构 init ABI、真实 SD/eMMC 写入、掉电行为和实体板根盘启动仍待验证。
 
+## 2026-08-10：批次 78——第三方组件许可证清单
+
+### 任务与设计
+
+1. 盘点真机移植实际使用的 virtio、网络和 ext4 第三方组件及版本。
+2. 建立机器可读清单，记录来源、版本、许可证、本地许可证证据和用途；缺失许可证明确标为 `UNKNOWN`，不作推断。
+3. 增加轻量 Python 校验，防止清单重复、缺字段或声明了不存在的 vendor 许可证文件。
+
+### 完成内容
+
+- [x] 新增 `docs/tasks/third-party-components.json` 和说明文档。
+- [x] 覆盖 `virtio-drivers 0.12.0`、`smoltcp 0.12.0`、`ext4plus`、`ext4_rs`、`another_ext4`。
+- [x] `another_ext4` 明确记录为许可证待法务/上游确认，不伪造授权结论。
+- [x] 新增 `test_third_party_components.py` 清单校验。
+
+### 验证证据与限制
+
+- 第三方清单测试：2 项通过。
+- root image 既有测试：6 项通过。
+- Registry 依赖许可证来自锁定 crate metadata；正式发布前仍需保留各上游 NOTICE/版权文本并完成 `another_ext4` 法务确认。
+
 ## 2026-08-10：批次 65——稳定 QMP 输入注入诊断
 
 ### 任务与设计
