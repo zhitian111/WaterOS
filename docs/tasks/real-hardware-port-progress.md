@@ -6589,3 +6589,27 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[test] verify aux mount in qemu smoke`
+
+## 2026-08-10：批次 154——LoongArch aux hook 编译与 QEMU 启动审计
+
+### 本批任务与设计
+
+1. 复核 aux hook 是否能进入 LoongArch64 kernel 构建路径。
+2. 使用与 RISC-V 相同的 `/dev/vda2` → `/data` → RO 配置，构建 LA pre/final kernel。
+3. 尝试用现有 LoongArch QEMU launch 复现 root/aux mount smoke；不修改平台启动参数以掩盖启动问题。
+
+### 已完成
+
+- [x] `make kernel-la EXTRA_FEATURES='remote-debug-monitor,operator-shell,gui'` 配置编译通过。
+- [x] `make kernel-la-pre` 同样通过，证明 aux hook 不依赖 RISC-V feature。
+- [x] 重新构建 16 MiB + 4 MiB 双分区镜像并完成镜像 verify。
+
+### 验证证据与限制
+
+- 当前环境中的 `qemu-system-loongarch64 -kernel kernel-la-pre ...` 在 12 秒内没有产生任何 guest console 输出，无法取得 root/aux mount 证据；RISC-V 端到端证据已在批次 153 获得。该现象属于现有 LA QEMU 启动环境/固件加载问题，不应伪报为 mount 失败或成功。
+- 临时 LA kernel/image 已清理。
+- `UNVERIFIED_ON_HARDWARE`：真实 LoongArch 固件入口、串口输出、SD/eMMC partition discovery 和 aux mount 仍需目标板或可启动的 LA QEMU 固件验证。
+
+### 提交
+
+- 本批计划提交：`[test] audit loongarch aux boot path`
