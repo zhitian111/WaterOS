@@ -921,6 +921,8 @@ mod tests {
 struct ElfPathSegmentLoader {
     path : String,
     params : ElfSegmentLoadParams,
+    #[cfg(feature = "vfs-root-read")]
+    handle : Option<Box<dyn vfs::api::VfsIoHandle>>,
 }
 
 impl ElfPathSegmentLoader {
@@ -936,7 +938,9 @@ impl ElfPathSegmentLoader {
                                                p_offset,
                                                filesz,
                                                vma_start,
-                                               vma_file_origin } }
+                                               vma_file_origin },
+               #[cfg(feature = "vfs-root-read")]
+               handle : None }
     }
 }
 
@@ -944,8 +948,50 @@ impl DemandPageLoader for ElfPathSegmentLoader {
     fn duplicate_box(&self) -> MmResult<Box<dyn DemandPageLoader>> {
         Ok(Box::new(Self { path : self.path
                                       .clone(),
-                           params:
-                               self.params.clone() }))
+                           params : self.params.clone(),
+                           #[cfg(feature = "vfs-root-read")]
+                           handle : match &self.handle {
+                               Some(handle) => Some(handle.duplicate()
+                                                          .map_err(|_| MmError::AccessViolation)?),
+                               None => None,
+                           } }))
+    }
+
+    fn acquire_page(&mut self,
+                    file_offset : usize,
+                    access : api_v0::mmap::PageFaultAccess)
+                    -> MmResult<api_v0::mmap::DemandPage> {
+        if !cfg!(feature = "file-page-sharing") {
+            return Ok(api_v0::mmap::DemandPage::CopyRequired);
+        }
+        #[cfg(feature = "vfs-root-read")]
+        {
+            use vfs::api::VfsOpenOps;
+            if access != api_v0::mmap::PageFaultAccess::Write {
+                let page_va = self.params.page_va_from_file_offset(file_offset);
+                let file_end = self.params.vbase.saturating_add(self.params.filesz);
+                let Some(page_end) = page_va.checked_add(api_v0::addr::PAGE_SIZE) else {
+                    return Ok(api_v0::mmap::DemandPage::CopyRequired);
+                };
+                if page_va < self.params.vbase || page_end > file_end {
+                    return Ok(api_v0::mmap::DemandPage::CopyRequired);
+                }
+                let backing_offset = self.params.p_offset + (page_va - self.params.vbase);
+                if self.handle.is_none() {
+                    self.handle = Some(vfs::active_impl::backend()
+                                           .open(&self.path, vfs::api::VfsOpenFlags::read())
+                                           .map_err(|_| MmError::AccessViolation)?);
+                }
+                if let Some(lease) = self.handle.as_mut()
+                                                .expect("ELF VFS handle")
+                                                .acquire_readonly_page(backing_offset as u64)
+                                                .map_err(|_| MmError::AccessViolation)?
+                {
+                    return Ok(api_v0::mmap::DemandPage::SharedReadOnly(lease));
+                }
+            }
+        }
+        Ok(api_v0::mmap::DemandPage::CopyRequired)
     }
 
     fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()> {

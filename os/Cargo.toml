@@ -64,6 +64,11 @@
         "runtime/tlsf-diagnostics",
         "syscall/user-copy-diagnostics",
     ]
+    file-page-sharing = [
+        "mm/file-page-sharing",
+        "syscall/file-page-sharing",
+        "vfs/file-page-sharing",
+    ]
     # 整个顶部 dashboard（CPU、内存、文件描述符与 syscall 摘要）；默认关闭。
     dashboard-debug = [ "dep:vfs", "stall-debug" ]
     # 完整内核 GUI；默认比赛构建不探测显示或启动刷新任务。

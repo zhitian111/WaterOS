@@ -15,6 +15,7 @@
     bringup-stats = [ "impl-kernel?/bringup-stats" ]
     default = [ "impl-kernel" ]
     impl-kernel = [ "api-v0", "dep:impl-kernel", "impl-kernel/impl-kernel" ]
+    file-page-sharing = [ "impl-kernel?/file-page-sharing" ]
     user-copy-diagnostics = [ "impl-kernel?/user-copy-diagnostics" ]
 [profile.dev]
     panic = "abort"

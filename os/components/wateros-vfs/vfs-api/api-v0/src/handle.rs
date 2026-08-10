@@ -267,6 +267,13 @@ impl<T: Any> VfsHandleAny for T {
 
 /// 流式读写的已打开对象（pipe、控制台、文件会话等）。
 pub trait VfsIoHandle: Send + VfsHandleAny {
+    /// Acquire a complete clean page suitable for a read-only private PTE.
+    fn acquire_readonly_page(&mut self,
+                             _offset : u64)
+                             -> VfsResult<Option<mm_api::mmap::SharedFilePageLease>> {
+        Ok(None)
+    }
+
     /// Capture owned state for a sequential read without waiting or doing I/O.
     fn prepare_read(&mut self, _max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
         Err(VfsError::Unsupported)

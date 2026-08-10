@@ -5,3 +5,4 @@
 
 [dependencies]
 spin = "0.10"
+mm-api = { path = "../../../wateros-mm/mm-api/api-v0", package = "wateros-mm-api-v0" }

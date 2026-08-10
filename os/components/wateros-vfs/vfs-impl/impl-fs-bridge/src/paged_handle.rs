@@ -26,7 +26,7 @@ use api_v0::{
 };
 use impl_page_cache::{global_cache, FileCacheKey, PageCacheIo};
 use spin::Mutex;
-use wateros_base_config::fs::{FileIoMode, FILE_IO_MODE};
+use wateros_base_config::fs::{FileIoMode, FILE_IO_MODE, FILE_PAGE_SIZE};
 use fs::{FsError, FsNodeId, SharedRwFs};
 
 use crate::read_lease::{try_zeroed, ReservationGuard, StagedReadLease};
@@ -334,6 +334,8 @@ impl FsPageIo {
 impl PageCacheIo for FsPageIo {
     type Error = VfsError;
 
+    fn cache_full_error(&self) -> Self::Error { VfsError::NoMemory }
+
 // 本方法代码由AI完成
     fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> Result<usize, VfsError> {
         if let Some(node) = self.stable_for_key(path) {
@@ -620,6 +622,51 @@ impl PagedFileHandle {
 }
 
 impl VfsIoHandle for PagedFileHandle {
+    fn acquire_readonly_page(&mut self,
+                             offset : u64)
+                             -> VfsResult<Option<mm_api::mmap::SharedFilePageLease>> {
+        if self.is_detached() || offset % FILE_PAGE_SIZE as u64 != 0 {
+            return Ok(None);
+        }
+        let size = self.current_size();
+        if offset.checked_add(FILE_PAGE_SIZE as u64).is_none_or(|end| end > size) {
+            return Ok(None);
+        }
+        let cache = global_cache(self.mount_gen);
+        let key = self.cache_file_key();
+        if key.stable.is_none() {
+            return Ok(None);
+        }
+        // The overwhelmingly common mmap-fault case is an already resident
+        // page.  Acquire it directly instead of first routing a one-byte read
+        // through the general cache path (which repeated the file/state locks
+        // and copied a byte that MM never consumes).
+        match cache.acquire_shared_readonly(&key, offset / FILE_PAGE_SIZE as u64, size) {
+            Ok(lease) => return Ok(Some(lease)),
+            Err(mm_api::error::MmError::NotMapped) => {}
+            Err(mm_api::error::MmError::AccessViolation |
+                mm_api::error::MmError::Unsupported) => return Ok(None),
+            Err(mm_api::error::MmError::OutOfMemory) => return Err(VfsError::NoSpace),
+            Err(_) => return Err(VfsError::Io),
+        }
+        let mut byte = [0u8; 1];
+        let mut io = self.page_io();
+        cache.read_key(&mut io,
+                       &key,
+                       size,
+                       offset,
+                       &mut byte,
+                       core::convert::identity)?;
+        match cache.acquire_shared_readonly(&key, offset / FILE_PAGE_SIZE as u64, size) {
+            Ok(lease) => Ok(Some(lease)),
+            Err(mm_api::error::MmError::NotMapped |
+                mm_api::error::MmError::AccessViolation |
+                mm_api::error::MmError::Unsupported) => Ok(None),
+            Err(mm_api::error::MmError::OutOfMemory) => Err(VfsError::NoSpace),
+            Err(_) => Err(VfsError::Io),
+        }
+    }
+
     fn prepare_read(&mut self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
         let reservation = ReservationGuard::begin(self.description.clone())?;
         let key = self.cache_file_key();

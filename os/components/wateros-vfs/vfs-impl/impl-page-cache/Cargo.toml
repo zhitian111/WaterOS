@@ -6,7 +6,12 @@
 [dependencies]
     log = "0.4"
     spin = "0.10.0"
-    wateros-base-config = { path = "../../../wateros-base/base-config", package = "wateros-base-config" }
+wateros-base-config = { path = "../../../wateros-base/base-config", package = "wateros-base-config" }
+mm-api = { path = "../../../wateros-mm/mm-api/api-v0", package = "wateros-mm-api-v0" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+frame-allocator = { path = "../../../wateros-mm/mm-frame-alloctor", package = "wateros-mm-frame-alloctor" }
 
 [features]
     default = [  ]
+    file-page-sharing = [ "mm-api/file-page-sharing" ]
