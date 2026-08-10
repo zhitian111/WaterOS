@@ -6445,3 +6445,27 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[fix] recheck devfs topology generation`
+
+## 2026-08-10：批次 148——收紧远程诊断 monitor 的命令边界
+
+### 本批任务与设计
+
+1. 审计 TCP remote-debug monitor 与 `operator-shell`：前者是无认证、无加密、只读诊断协议，后者仅用于本地启动 shell，不是远程 sshd。
+2. 保持开发期 monitor 的权限边界，不新增任意命令执行或身份认证假象。
+3. 修复超长输入静默截断问题，改为返回明确错误并保持会话开启。
+
+### 已完成
+
+- [x] 新增 `LineTooLong` 命令状态；超过 128 字节的输入返回 `ERR command too long`。
+- [x] 超长行的 overflow 状态在换行后清除，后续命令仍可继续执行。
+- [x] 增加协议层回归测试；remote-debug client 测试 6 项通过。
+- [x] 继续保留 `UNAUTHENTICATED_DEVELOPMENT_MONITOR` 文档警告和 QEMU loopback 绑定约束。
+
+### 验证证据与限制
+
+- 尝试直接对 `os` host/LoongArch target 做 cargo 检查时，被依赖 `sbi-rt` 的 RISC-V 内联寄存器约束阻断；该问题与本次 parser 改动无关，正式验证仍使用既有架构 Make/QEMU 流程。
+- `UNVERIFIED_ON_HARDWARE`：真实板网络栈、远程 TCP 接收及认证传输仍未验证；当前 monitor 绝不能暴露到不可信网络。
+
+### 提交
+
+- 本批计划提交：`[fix] reject overlong remote commands`

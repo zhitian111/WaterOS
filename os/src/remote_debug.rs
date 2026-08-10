@@ -35,11 +35,15 @@ enum Command {
     Blocks,
     Devfs,
     Quit,
+    LineTooLong,
     Empty,
     Unknown,
 }
 
 fn parse_command(line : &[u8]) -> Command {
+    if line.len() > MAX_LINE_LEN {
+        return Command::LineTooLong;
+    }
     let Ok(text) = str::from_utf8(line) else {
         return Command::Unknown;
     };
@@ -101,6 +105,9 @@ fn command_response(command : Command) -> (alloc::string::String, bool) {
         Command::Empty => (alloc::string::String::new(), false),
         Command::Unknown => {
             (alloc::string::String::from("unknown command; type 'help'\r\n"), false)
+        }
+        Command::LineTooLong => {
+            (alloc::string::String::from("ERR command too long\r\n"), false)
         }
     }
 }
@@ -269,6 +276,7 @@ fn serve_client(socket : &SocketRef) {
     }
     let mut line = [0u8; MAX_LINE_LEN];
     let mut line_len = 0usize;
+    let mut line_overflow = false;
     let mut last_was_cr = false;
     loop {
         let lease = match socket.prepare_receive(RECEIVE_CHUNK) {
@@ -292,8 +300,14 @@ fn serve_client(socket : &SocketRef) {
             }
             if byte == b'\n' || byte == b'\r' {
                 last_was_cr = byte == b'\r';
-                let (response, close) = command_response(parse_command(&line[..line_len]));
+                let command = if line_overflow {
+                    Command::LineTooLong
+                } else {
+                    parse_command(&line[..line_len])
+                };
+                let (response, close) = command_response(command);
                 line_len = 0;
+                line_overflow = false;
                 if !response.is_empty() && send_all(socket, response.as_bytes()).is_err() {
                     return;
                 }
@@ -311,6 +325,8 @@ fn serve_client(socket : &SocketRef) {
                 last_was_cr = false;
                 line[line_len] = byte;
                 line_len += 1;
+            } else {
+                line_overflow = true;
             }
         }
         if !matches!(lease.finish(received, true),
@@ -383,6 +399,13 @@ mod tests {
         assert_eq!(parse_command(b"reboot"),
                    Command::Unknown);
         assert_eq!(parse_command(&[0xFF]), Command::Unknown);
+    }
+
+    #[test]
+    fn overlong_command_is_rejected_without_closing_session() {
+        let (response, close) = super::command_response(parse_command(&[b'x'; 129]));
+        assert_eq!(response, "ERR command too long\r\n");
+        assert!(!close);
     }
 
     #[test]
