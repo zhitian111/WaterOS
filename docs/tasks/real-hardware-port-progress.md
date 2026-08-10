@@ -7190,3 +7190,27 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[feat] decode loongson pci bars`
+
+## 2026-08-10：批次 178——接入 PCI identity/BAR function snapshot
+
+### 本批任务与设计
+
+1. 将 BAR 解码接入完整 PCI function 只读快照，避免调用方分别读取 identity 和 BAR 而产生不一致。
+2. 快照先确认 vendor/device，再按 32/64 位 BAR 规则读取 0x10–0x24；64 位 BAR 消费相邻槽位。
+3. 未分配 BAR 记录为空；非法 BAR 保留 `bar_error`，不把部分结果提升为硬件激活证据。
+
+### 已完成
+
+- [x] 新增 `PciConfigSnapshot` 与 `PciSnapshotResult`。
+- [x] 新增 `probe_snapshot`，复用现有只读 ECAM reader/地址编码。
+- [x] fake ECAM 测试覆盖 identity、32 位 BAR、64 位 BAR 槽位消费和错误保留。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path components/wateros-driver/driver-impl/impl-loongson2k1000la/Cargo.toml --lib pci::tests`：8 项通过。
+- `cargo check --manifest-path components/wateros-driver/driver-impl/impl-loongson2k1000la/Cargo.toml --target loongarch64-unknown-none`：通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 ECAM 快照、BAR 分配策略、PCIe link 和 GMAC DMA/PHY/IRQ 仍需物理板；当前快照不会修改配置空间。
+
+### 提交
+
+- 待提交：`[feat] snapshot loongson pci function`

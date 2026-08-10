@@ -35,6 +35,19 @@ pub enum PciProbeResult {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PciConfigSnapshot {
+    pub identity : PciIdentity,
+    pub bars : [Option<PciBar>; 6],
+    pub bar_error : Option<PciBarError>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PciSnapshotResult {
+    Absent,
+    Present(PciConfigSnapshot),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PciBar {
     Io { index : u8, base : u32 },
     Memory32 { index : u8, base : u32, prefetchable : bool },
@@ -54,7 +67,7 @@ pub fn parse_bar(index : u8, low : u32, high : Option<u32>) -> Result<PciBar, Pc
     if index >= 6 {
         return Err(PciBarError::InvalidIndex);
     }
-    if low == 0 {
+    if low == 0 || low == u32::MAX {
         return Err(PciBarError::Unassigned);
     }
     if low & 1 != 0 {
@@ -73,6 +86,50 @@ pub fn parse_bar(index : u8, low : u32, high : Option<u32>) -> Result<PciBar, Pc
                                    prefetchable }),
         _ => Err(PciBarError::UnsupportedMemoryType),
     }
+}
+
+/// Read identity and BARs without writing PCI configuration space.
+pub fn probe_snapshot<R : ConfigReader>(reader : &R,
+                                        location : PciLocation)
+                                        -> PciSnapshotResult {
+    let identity = match probe(reader, location) {
+        PciProbeResult::Absent => return PciSnapshotResult::Absent,
+        PciProbeResult::Present(identity) => identity,
+    };
+    let mut bars = [None; 6];
+    let mut bar_error = None;
+    let mut index = 0u8;
+    while index < 6 {
+        let low = reader.read32(ecam_offset(location, 0x10 + u16::from(index) * 4).unwrap());
+        let memory64 = low & 1 == 0 && ((low >> 1) & 3) == 2;
+        let high = if memory64 && index < 5 {
+            Some(reader.read32(ecam_offset(location,
+                                           0x10 + u16::from(index + 1) * 4)
+                                         .unwrap()))
+        } else {
+            None
+        };
+        match parse_bar(index, low, high) {
+            Ok(bar) => {
+                bars[usize::from(index)] = Some(bar);
+                if memory64 {
+                    index += 1;
+                }
+            }
+            Err(PciBarError::Unassigned) => {
+                if memory64 && index == 5 {
+                    bar_error = Some(PciBarError::MissingUpperHalf);
+                } else if memory64 {
+                    index += 1;
+                }
+            }
+            Err(error) => {
+                bar_error.get_or_insert(error);
+            }
+        }
+        index += 1;
+    }
+    PciSnapshotResult::Present(PciConfigSnapshot { identity, bars, bar_error })
 }
 
 pub const fn bar_is_assigned(bar : Result<PciBar, PciBarError>) -> bool {
@@ -178,6 +235,21 @@ mod tests {
         }
     }
 
+    struct SnapshotFixture;
+    impl ConfigReader for SnapshotFixture {
+        fn read32(&self, offset : u64) -> u32 {
+            match offset & 0xfff {
+                0x00 => 0x1000_0014,
+                0x08 => 0x0200_0000,
+                0x10 => 0x8000_0008,
+                0x14 => 0,
+                0x18 => 0x0000_0004,
+                0x1c => 0x0000_0001,
+                _ => 0,
+            }
+        }
+    }
+
     #[test]
     fn ecam_encoding_matches_pci_layout() {
         assert_eq!(ecam_offset(PciLocation { bus : 2, device : 3, function : 1 }, 0x40),
@@ -256,5 +328,24 @@ mod tests {
         assert_eq!(parse_bar(0, 0x0000_0004, None), Err(PciBarError::MissingUpperHalf));
         assert_eq!(parse_bar(0, 0x0000_0006, None), Err(PciBarError::UnsupportedMemoryType));
         assert!(!bar_is_assigned(parse_bar(0, 0, None)));
+    }
+
+    #[test]
+    fn snapshot_reads_identity_and_consumes_64_bit_bar_pair() {
+        let PciSnapshotResult::Present(snapshot) =
+            probe_snapshot(&SnapshotFixture,
+                           PciLocation { bus : 0, device : 3, function : 0 })
+        else { panic!("fixture unexpectedly absent") };
+        assert_eq!(snapshot.identity.vendor_id, 0x0014);
+        assert_eq!(snapshot.bars[0],
+                   Some(PciBar::Memory32 { index : 0,
+                                           base : 0x8000_0000,
+                                           prefetchable : true }));
+        assert_eq!(snapshot.bars[1], None);
+        assert_eq!(snapshot.bars[2],
+                   Some(PciBar::Memory64 { index : 2,
+                                           base : 0x1_0000_0000,
+                                           prefetchable : false }));
+        assert_eq!(snapshot.bar_error, None);
     }
 }
