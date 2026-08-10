@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "root_image"))
 from qemu_smoke import (  # noqa: E402
     SmokeError,
     build_smoke_command,
+    parse_aux_mount_evidence,
     parse_root_mount_evidence,
     run_smoke,
 )
@@ -50,6 +51,12 @@ class RootImageQemuSmokeTests(unittest.TestCase):
         failure = parse_root_mount_evidence("[bringup][stage-00-bus] root mount failed: no device")
         self.assertEqual(failure.state, "failure")
         self.assertEqual(parse_root_mount_evidence("booting kernel").state, "absent")
+        self.assertEqual(parse_aux_mount_evidence(
+            "[bringup][stage-00-bus] aux ext4 mounted block=/dev/vda2 at /data ro=true"
+        ).state, "success")
+        self.assertEqual(parse_aux_mount_evidence(
+            "[bringup][stage-00-bus] aux mount failed block=/dev/vda2"
+        ).state, "failure")
 
     @patch("qemu_smoke.subprocess.run")
     def test_strict_smoke_requires_successful_mount_evidence(self, run) -> None:
@@ -63,6 +70,31 @@ class RootImageQemuSmokeTests(unittest.TestCase):
         run.return_value.stdout = "booting kernel\n"
         with self.assertRaisesRegex(SmokeError, "evidence missing"):
             run_smoke(["qemu-system-riscv64"], root=Path("."), timeout=1, require_root_mount=True)
+
+    @patch("qemu_smoke.subprocess.run")
+    def test_aux_mount_evidence_is_optional_but_strict_when_requested(self, run) -> None:
+        run.return_value = type(
+            "Completed", (), {"returncode": 0,
+                               "stdout": "[bringup][stage-00-bus] aux ext4 mounted block=/dev/vda2 at /data ro=true\n"}
+        )()
+        self.assertEqual(
+            run_smoke(["qemu-system-riscv64"], root=Path("."), timeout=1,
+                      require_aux_mount=True), 0
+        )
+
+    @patch("qemu_smoke.subprocess.run")
+    def test_long_running_kernel_can_succeed_after_collecting_mount_evidence(self, run) -> None:
+        import subprocess
+
+        run.side_effect = subprocess.TimeoutExpired(
+            ["qemu-system-riscv64"], 1,
+            output=("[fs::rootfs] mount root RW from /dev/vda1\n"
+                    "[bringup][stage-00-bus] aux ext4 mounted block=/dev/vda2 at /data ro=true\n"),
+        )
+        self.assertEqual(
+            run_smoke(["qemu-system-riscv64"], root=Path("."), timeout=1,
+                      require_root_mount=True, require_aux_mount=True), 0
+        )
 
 
 if __name__ == "__main__":

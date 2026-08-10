@@ -39,6 +39,8 @@ _ROOT_MOUNT_FAILURE_MARKERS = (
     "[fs] init: no root block device available",
     "[fs] init: lookup block device",
 )
+_AUX_MOUNT_SUCCESS_MARKER = "[bringup][stage-00-bus] aux ext4 mounted"
+_AUX_MOUNT_FAILURE_MARKER = "[bringup][stage-00-bus] aux mount failed"
 
 
 def parse_root_mount_evidence(output: str) -> RootMountEvidence:
@@ -49,6 +51,19 @@ def parse_root_mount_evidence(output: str) -> RootMountEvidence:
         if any(marker in line for marker in _ROOT_MOUNT_SUCCESS_MARKERS):
             return RootMountEvidence("success", line)
         if failure is None and any(marker in line for marker in _ROOT_MOUNT_FAILURE_MARKERS):
+            failure = line
+    if failure is not None:
+        return RootMountEvidence("failure", failure)
+    return RootMountEvidence("absent")
+
+
+def parse_aux_mount_evidence(output: str) -> RootMountEvidence:
+    """Classify optional aux mount evidence from the bring-up log."""
+    failure: str | None = None
+    for line in output.splitlines():
+        if _AUX_MOUNT_SUCCESS_MARKER in line:
+            return RootMountEvidence("success", line)
+        if failure is None and _AUX_MOUNT_FAILURE_MARKER in line:
             failure = line
     if failure is not None:
         return RootMountEvidence("failure", failure)
@@ -86,7 +101,8 @@ def build_smoke_command(
 
 
 def run_smoke(
-    command: list[str], *, root: Path, timeout: float, require_root_mount: bool = False
+    command: list[str], *, root: Path, timeout: float, require_root_mount: bool = False,
+    require_aux_mount: bool = False,
 ) -> int:
     try:
         completed = subprocess.run(
@@ -94,13 +110,26 @@ def run_smoke(
             cwd=root,
             timeout=timeout,
             check=False,
-            stdout=subprocess.PIPE if require_root_mount else None,
-            stderr=subprocess.STDOUT if require_root_mount else None,
-            text=require_root_mount,
+            stdout=subprocess.PIPE if (require_root_mount or require_aux_mount) else None,
+            stderr=subprocess.STDOUT if (require_root_mount or require_aux_mount) else None,
+            text=require_root_mount or require_aux_mount,
         )
     except FileNotFoundError as error:
         raise SmokeError(f"QEMU binary not found: {command[0]}") from error
     except subprocess.TimeoutExpired as error:
+        # A kernel normally keeps running after bring-up. In strict evidence
+        # mode, a timeout is successful if the requested mount lines were
+        # already emitted; subprocess has still terminated the child.
+        partial = error.stdout or ""
+        if isinstance(partial, bytes):
+            partial = partial.decode(errors="replace")
+        root_ok = (not require_root_mount or
+                   parse_root_mount_evidence(partial).state == "success")
+        aux_ok = (not require_aux_mount or
+                  parse_aux_mount_evidence(partial).state == "success")
+        if root_ok and aux_ok:
+            print("root-image-qemu-smoke: evidence collected before timeout")
+            return 0
         raise SmokeError(f"QEMU smoke timed out after {timeout:g}s") from error
     if completed.returncode != 0:
         return completed.returncode
@@ -113,6 +142,15 @@ def run_smoke(
             )
         if evidence.line:
             print("root-image-qemu-smoke: root mount evidence:", evidence.line)
+    if require_aux_mount:
+        evidence = parse_aux_mount_evidence(completed.stdout or "")
+        if evidence.state != "success":
+            raise SmokeError(
+                "aux mount evidence missing (state: "
+                f"{evidence.state}; expected configured ext4 aux mount)"
+            )
+        if evidence.line:
+            print("root-image-qemu-smoke: aux mount evidence:", evidence.line)
     return 0
 
 
@@ -129,6 +167,11 @@ def parser() -> argparse.ArgumentParser:
         "--require-root-mount",
         action="store_true",
         help="require a successful root-mount log line after QEMU exits",
+    )
+    result.add_argument(
+        "--require-aux-mount",
+        action="store_true",
+        help="require a successful configured aux-mount log line after QEMU exits",
     )
     result.add_argument("--timeout", type=float, default=30.0)
     return result
@@ -151,14 +194,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         command = build_smoke_command(args.arch, args.profile, image, kernel, root=root)
         print("root-image-qemu-smoke:", shlex.join(command))
-        if args.require_root_mount and not args.execute:
-            raise SmokeError("--require-root-mount requires --execute")
+        if (args.require_root_mount or args.require_aux_mount) and not args.execute:
+            raise SmokeError("mount evidence options require --execute")
         if args.execute:
             return run_smoke(
                 command,
                 root=root,
                 timeout=args.timeout,
                 require_root_mount=args.require_root_mount,
+                require_aux_mount=args.require_aux_mount,
             )
     except (ImageError, SmokeError) as error:
         print(f"root-image-qemu-smoke: error: {error}", file=sys.stderr)

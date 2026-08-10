@@ -6563,3 +6563,29 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] add optional aux boot mount`
+
+## 2026-08-10：批次 153——QEMU 端到端验证 aux 启动挂载
+
+### 本批任务与设计
+
+1. 扩展 `root_image/qemu_smoke.py`，增加可选 `--require-aux-mount`，只在显式请求时检查 aux 日志。
+2. QEMU 内核通常不会自行退出，因此严格 smoke 在 timeout 时保留已收集的 root/aux mount 输出作为成功证据。
+3. 默认 smoke 和单分区镜像路径保持不变。
+
+### 已完成
+
+- [x] 新增 aux mount success/failure parser 和 `--require-aux-mount` CLI 选项。
+- [x] 增加长运行 kernel timeout 后证据判定测试；QEMU smoke 测试 6 项通过。
+- [x] 构建 16 MiB MBR + 4 MiB aux ext4 镜像，root manifest 预置空 `/data`。
+- [x] 使用 `WATEROS_AUX_BLOCK_PATH=/dev/vda2`, `WATEROS_AUX_MOUNT_POINT=/data`, `WATEROS_AUX_READONLY=1` 构建 RISC-V kernel，并完成真实 QEMU 输出验证：
+  - `mount root RW from /dev/vda1`
+  - `aux ext4 mounted block=/dev/vda2 at /data ro=true`
+
+### 验证证据与限制
+
+- smoke 在 12 秒 timeout 前收集到两条挂载证据后成功返回；QEMU 进程按预期被终止，临时 kernel/image 已清理。
+- `UNVERIFIED_ON_HARDWARE`：真实 SD/eMMC 分区时序、挂载失败恢复、掉电一致性和自动挂载配置仍待实机。
+
+### 提交
+
+- 本批计划提交：`[test] verify aux mount in qemu smoke`
