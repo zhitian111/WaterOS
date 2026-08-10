@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import socket
 import sys
 import time
@@ -20,6 +21,7 @@ from typing import Any
 
 PROMPT = b"wos> "
 MAX_RESPONSE = 64 * 1024
+BOARD_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
 class MonitorProtocolError(RuntimeError):
@@ -153,7 +155,7 @@ def _parse_hex_or_na(name: str, value: str) -> int | None:
 
 
 def _valid_board_id(board_id: str) -> bool:
-    return bool(board_id) and len(board_id) <= 128 and all(ord(char) >= 0x20 for char in board_id)
+    return BOARD_ID_PATTERN.fullmatch(board_id) is not None
 
 
 def parse_mmc_evidence(response: str) -> MmcEvidence:
@@ -245,7 +247,7 @@ def write_mmc_evidence(path: Path, board_id: str, response: str,
                        *, captured_at: datetime | None = None) -> None:
     """Create, without overwriting, a compact host-side evidence record."""
     if not _valid_board_id(board_id):
-        raise ValueError("board_id must contain 1..128 printable characters")
+        raise ValueError("board_id must use 1..128 ASCII letters, digits, dot, underscore, or dash")
     evidence = parse_mmc_evidence(response)
     timestamp = captured_at or datetime.now(timezone.utc)
     if timestamp.tzinfo is None:
@@ -286,7 +288,7 @@ def main() -> int:
     if (args.mmc_evidence is None) != (args.board_id is None):
         parser.error("--mmc-evidence and --board-id must be used together")
     if args.board_id is not None and not _valid_board_id(args.board_id):
-        parser.error("--board-id must contain 1..128 printable characters")
+        parser.error("--board-id must use 1..128 ASCII letters, digits, dot, underscore, or dash")
 
     client = connect_with_retry(args.host, args.port, args.connect_timeout)
     try:

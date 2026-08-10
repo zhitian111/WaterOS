@@ -3885,3 +3885,70 @@ monitor 无认证和加密，只能在隔离开发网络使用；示例地址仅
 ### 提交
 
 - `[feat] capture LS2K1000 MMC remote evidence`
+
+## 2026-08-10：批次 81——LS2K1000 MMC 离线证据审计与覆盖清单
+
+### 任务与设计
+
+1. 对 evidence v1 归档重新计算 SHA-256、重解析原始响应并比较 stored parsed index。
+2. 增加版本化 manifest，显式定义两块板及冷启动/热重启/插卡等预期采集场景。
+3. 验证每个 `(board_id, scenario)` 唯一、文件身份匹配且路径不能逃逸 manifest 目录。
+4. CLI 对完整归档返回成功，对篡改、非法归档和覆盖不完整返回失败。
+5. verifier 必须完全离线、只读，不连接 monitor、不访问 MMIO、不修改证据。
+
+原始 `response` 继续是唯一权威数据；JSON 中的 `parsed` 只作为缓存索引。verifier 不信任该索引，
+而是调用同一稳定 parser 从 raw response 重建后执行完整结构比较。manifest 只引用独立小文件，
+不复制响应，因此两板多场景验证仍保持很小的磁盘占用。
+
+### 完成内容
+
+- [x] 新增 `mmc_evidence_verify.py` 和 `EvidenceVerificationError`。
+- [x] 单文件校验严格检查 evidence v1 顶层 schema、command、board ID、UTC 时间和硬件状态标记。
+- [x] 重新计算 raw response SHA-256，拒绝 response 与 digest 不一致。
+- [x] 重新调用 `parse_mmc_evidence()`，逐项比较 fields/gates/controller，拒绝派生索引篡改。
+- [x] 强制 `hardware_validation=unverified-observation`，拒绝手工提升为 verified。
+- [x] evidence/manifest 均限制为 64 KiB，读取后按实际 byte length 检查。
+- [x] 新增 `wateros-ls2k-mmc-manifest-v1`，支持任意显式板卡/场景矩阵。
+- [x] manifest 拒绝重复 board、重复 scenario、重复 evidence、未预期项、身份不匹配、绝对路径和 `..`/symlink 路径逃逸。
+- [x] `ManifestSummary` 稳定报告 expected、verified、missing 和 complete。
+- [x] CLI 提供互斥的 `--evidence FILE` 与 `--manifest FILE`；JSON 摘要便于自动化处理。
+- [x] 完整单文件/manifest 返回 0；manifest 缺项或校验错误返回 1。
+- [x] 采集端 board ID 与 manifest 统一收紧为 1..128 个 ASCII 字母、数字、点、下划线或短横线。
+
+### 使用方式
+
+```bash
+python3 os/scripts/mmc_evidence_verify.py --evidence board-a-cold.json
+python3 os/scripts/mmc_evidence_verify.py --manifest mmc-manifest.json
+```
+
+manifest 的 `expected` 定义板卡和场景，`evidence` 中的相对路径必须位于 manifest 同一目录树内。
+
+### 验证证据
+
+- 全部 52 项 Python host 测试通过；新增 verifier 测试 5 项，原 remote/QEMU 16 项继续通过。
+- tamper matrix 覆盖 raw response、SHA-256 间接不匹配、parsed controller、hardware validation 和 schema。
+- 两板 × `cold-no-card`/`cold-card`/`warm-card` 六场景 fixture 完整通过。
+- 删除一个场景后稳定报告 `board-b/warm-card`，CLI 返回 1；补齐后 `complete=true`。
+- manifest 负向测试覆盖重复 pair、板卡身份不匹配和目录逃逸。
+- CLI subprocess fixture 验证单文件成功 JSON 与不完整 manifest 失败 JSON。
+- `py_compile`、topology fixture/畸形 DTB 矩阵和 `git diff --check` 均通过；dtc warning 来自预期畸形输入。
+- 本批仅修改离线主机脚本，没有 Rust、内核、guest MMIO 或镜像变更，因此未生成大体积内核/磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：当前测试记录均由软件 fixture 生成，没有两块目标板的真实采集文件。
+- [ ] SHA-256 和 parsed-index 一致性只能发现归档内部篡改/损坏，不提供远端身份认证或数字签名。
+- [ ] manifest 的 expected matrix 由操作者定义；verifier 不知道板卡资产清单是否完整。
+- [ ] 场景名称是受限字符串但语义由团队约定，当前不能自动证明真的执行过断电冷启动或插拔卡片。
+- [ ] evidence 时间来自主机时钟，未使用可信时间戳服务。
+- [ ] 当前只支持 `trace=none assessment=unavailable` 的 evidence v1；未来 command probe 必须升级 schema/parser/verifier。
+- [ ] 下一批应提供受版本控制的两板采集 manifest 模板和操作步骤，并增加重复采样/跨场景 invariant 检查；真实文件到位前所有条目保持 missing。
+
+### 参考与许可证
+
+- 本批仅使用 Python 标准库，未引入第三方代码或许可证。
+
+### 提交
+
+- `[feat] verify LS2K1000 MMC evidence archives`

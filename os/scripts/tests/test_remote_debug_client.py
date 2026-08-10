@@ -158,6 +158,8 @@ class RemoteDebugClientTests(unittest.TestCase):
                                    captured_at=captured_at)
             with self.assertRaises(ValueError):
                 write_mmc_evidence(Path(directory) / "bad.json", "bad\nboard", MMC_RESPONSE)
+            with self.assertRaises(ValueError):
+                write_mmc_evidence(Path(directory) / "space.json", "board with space", MMC_RESPONSE)
 
 
 if __name__ == "__main__":
