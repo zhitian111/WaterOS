@@ -5256,3 +5256,46 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] archive LS2K1000 claimed read recovery`
+
+## 2026-08-10：批次 108——收紧 claimed read success finalize
+
+### 本批任务与设计
+
+1. 审计成功 pair 在 MMC/DMA tracker、completion evidence 和 cache finish 之间的所有权边界。
+2. 引入私有构造的 `ClaimedReadCompletionEvidence`，绑定两侧 transaction、MMC terminal snapshot 和三项完成事实。
+3. 成功 wrapper 必须先完成 quiesced cache finish，才能铸造 completion evidence。
+4. coordinator 增加 `CompletionFinalized` 状态；未经 finalized proof 的 `CompletionClaimed` 不得 release。
+5. 错误 generation、重复 finalize、invalid evidence 和 release-before-finalize 均保持原状态并可重试。
+
+### 已完成
+
+- [x] paired MMC success 不再直接暴露裸 `ReadCompleted`，改为携带 MMC/DMA transaction 的 `ClaimedReadCompletion`。
+- [x] 新增 `ClaimedReadCompletionCache` typestate；cache finish 失败返还 completion session，成功才产生私有 completion evidence。
+- [x] 新增 `ReadCoordinatorPhase/State::CompletionFinalized`。
+- [x] `ReadClaimedCompletionService::finalize` 校验同代双 transaction 和 `command_response_validated/data_finished/dma_finished` 全部为 true。
+- [x] `release` 对 `CompletionClaimed` 返回 `CompletionMustBeFinalized`，对 `CompletionFinalized` 才允许清空 slot。
+- [x] 成功集成测试覆盖 status decoder 重试、MMC receipt apply、cache finish、错误 DMA generation finalize、release 拒绝和正确 finalize/release。
+- [x] finalized evidence 的 DMA completion 语义来自已消费的线性 `AcknowledgedIrq` typestate，不复制第二份 IRQ token。
+- [x] owner-drain recovery、claimed failure archive 和既有 `RecoveryRecorded`/`take_recovery` 逻辑保持兼容。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 176 项全部通过。
+- 成功链明确经过 Terminal→CompletionClaimed→cache finish→CompletionFinalized→release；错误 generation 返回 evidence，slot 仍 CompletionClaimed。
+- release-before-finalize 返回 CompletionMustBeFinalized；修正 evidence 后进入 CompletionFinalized，slot 最终 Empty。
+- completion evidence 三项布尔事实全部来自 tracker；coordinator 不接受调用方单独传入布尔值。
+- RISC-V `make check`、LoongArch64 `make kernel-la` 全部通过。
+- Python host 测试 53 项全部通过；topology/畸形 DTB matrix 与 `git diff --check` 通过；dtc warning 来自预期畸形输入。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：真实 DMA cache invalidate、MMC terminal snapshot 可见性、IRQ 迟到和 controller clear/rearm 时序仍待 2K1000LA 实机验证。
+- [ ] success cache failure 的 retry typestate 已实现，但本批主要集成测试使用成功模型；需要单独组合 descriptor status success 与 payload CPU sync failure 的完整回归。
+- [ ] paired completion/session 与 success wrapper 仍为 `cfg(test)`，production 尚缺拥有 DMA mappings/channel 的长期 `ReadRequest`。
+- [ ] `CompletionFinalized` 只证明软件 tracker 与 cache finish 顺序；slot 仍不持有硬件 idle/condition-clear 证明，不能授权 rearm。
+- [ ] production runtime、publish permit、真实 status decoder、block callback、scheduler wake/deadline 与动态设备注册尚未接通。
+- [ ] 下一批应把 `ClaimedReadCompletion`/recovery 两类 test-only wrapper 合并进 production-owned request 状态机，并开始根文件系统/分区镜像与远程 shell 共有基础设施。
+
+### 提交
+
+- 本批计划提交：`[feat] finalize LS2K1000 claimed read success`

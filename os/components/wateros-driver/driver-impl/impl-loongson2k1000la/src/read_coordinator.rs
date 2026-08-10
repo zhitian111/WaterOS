@@ -10,6 +10,7 @@ use crate::{board_irq_owner::{BoardIrqOwner, BoundedMmcReadRecheck,
                               BoundedMmcReadRecheckError,
                               BoundedMmcReadRecheckStep, ArmedReadIrqs,
                               QuiescedReadIrqs, ReadyReadIrqPair,
+                              ClaimedReadCompletionEvidence,
                               ClaimedReadRecoveryEvidence, DrainedReadIrqs,
                               ReadPendingPairError,
                               ReadRecoveryCause, ReadRecoveryReport,
@@ -28,6 +29,7 @@ pub enum ReadCoordinatorPhase {
     Rechecking,
     Terminal,
     CompletionClaimed,
+    CompletionFinalized,
     RecoveryPending,
     RecoveryRecorded,
 }
@@ -62,6 +64,8 @@ pub enum ReadCoordinatorError {
         expected : ReadRecoveryCause,
         actual : ReadRecoveryCause,
     },
+    InvalidCompletionEvidence(crate::mmc::ReadCompletionEvidence),
+    CompletionMustBeFinalized,
     RecoveryMustBeRecorded,
     RecoveryMustBeTaken,
 }
@@ -122,6 +126,12 @@ pub struct ReadClaimedRecoveryArchiveFailure {
     pub evidence : ClaimedReadRecoveryEvidence,
 }
 
+#[must_use = "recover the completion evidence and retry finalization"]
+pub struct ReadCompletionFinalizeFailure {
+    pub error : ReadCoordinatorError,
+    pub evidence : ClaimedReadCompletionEvidence,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadTerminalClaimError {
     WrongTransaction {
@@ -166,6 +176,9 @@ enum ReadCoordinatorState {
     CompletionClaimed {
         transaction : ReadTransactionId,
     },
+    CompletionFinalized {
+        transaction : ReadTransactionId,
+    },
     RecoveryPending {
         transaction : ReadTransactionId,
         cause : ReadRecoveryCause,
@@ -181,6 +194,7 @@ impl ReadCoordinatorState {
             Self::Rechecking { transaction, .. } |
             Self::Terminal { transaction, .. } |
             Self::CompletionClaimed { transaction } |
+            Self::CompletionFinalized { transaction } |
             Self::RecoveryPending { transaction, .. } => *transaction,
             Self::RecoveryRecorded(report) => report.transaction,
         }
@@ -193,6 +207,7 @@ impl ReadCoordinatorState {
             Self::Rechecking { .. } => ReadCoordinatorPhase::Rechecking,
             Self::Terminal { .. } => ReadCoordinatorPhase::Terminal,
             Self::CompletionClaimed { .. } => ReadCoordinatorPhase::CompletionClaimed,
+            Self::CompletionFinalized { .. } => ReadCoordinatorPhase::CompletionFinalized,
             Self::RecoveryPending { .. } => ReadCoordinatorPhase::RecoveryPending,
             Self::RecoveryRecorded(_) => ReadCoordinatorPhase::RecoveryRecorded,
         }
@@ -220,6 +235,7 @@ impl ReadCoordinatorState {
             Self::Terminal { polls_completed, .. } =>
                 snapshot.polls_completed = Some(*polls_completed),
             Self::CompletionClaimed { .. } => {},
+            Self::CompletionFinalized { .. } => {},
             Self::RecoveryPending { cause, .. } => snapshot.recovery_cause = Some(*cause),
             Self::RecoveryRecorded(report) => {
                 snapshot.recovery_cause = Some(report.cause);
@@ -459,6 +475,9 @@ impl ReadCoordinatorSlot {
             if state.phase() == ReadCoordinatorPhase::RecoveryPending {
                 return Err(ReadCoordinatorError::RecoveryMustBeRecorded);
             }
+            if state.phase() == ReadCoordinatorPhase::CompletionClaimed {
+                return Err(ReadCoordinatorError::CompletionMustBeFinalized);
+            }
             Ok(())
         }) {
             Ok(()) => Ok(()),
@@ -630,6 +649,43 @@ impl ReadClaimedCompletionService<'_> {
             cause,
         };
         cause
+    }
+
+    pub fn finalize(
+        mut self,
+        evidence : ClaimedReadCompletionEvidence)
+        -> Result<(), ReadCompletionFinalizeFailure> {
+        if evidence.transaction() != self.transaction ||
+           evidence.dma_transaction() != self.transaction
+        {
+            let actual = if evidence.transaction() != self.transaction {
+                evidence.transaction()
+            } else {
+                evidence.dma_transaction()
+            };
+            return Err(ReadCompletionFinalizeFailure {
+                error : ReadCoordinatorError::WrongTransaction {
+                    expected : self.transaction, actual,
+                },
+                evidence,
+            });
+        }
+        let actual = evidence.completion_evidence();
+        let expected = crate::mmc::ReadCompletionEvidence {
+            command_response_validated : true,
+            data_finished : true,
+            dma_finished : true,
+        };
+        if actual != expected {
+            return Err(ReadCompletionFinalizeFailure {
+                error : ReadCoordinatorError::InvalidCompletionEvidence(actual),
+                evidence,
+            });
+        }
+        *self.service = ReadCoordinatorState::CompletionFinalized {
+            transaction : self.transaction,
+        };
+        Ok(())
     }
 }
 

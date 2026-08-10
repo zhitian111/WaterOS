@@ -315,6 +315,32 @@ impl ClaimedReadRecoveryEvidence {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClaimedReadCompletionEvidence {
+    transaction : ReadTransactionId,
+    mmc_interrupts : u32,
+    dma_transaction : ReadTransactionId,
+    completion_evidence : crate::mmc::ReadCompletionEvidence,
+}
+
+impl ClaimedReadCompletionEvidence {
+    pub const fn transaction(&self) -> ReadTransactionId { self.transaction }
+    pub const fn mmc_interrupts(&self) -> u32 { self.mmc_interrupts }
+    pub const fn dma_transaction(&self) -> ReadTransactionId { self.dma_transaction }
+    pub const fn completion_evidence(&self) -> crate::mmc::ReadCompletionEvidence {
+        self.completion_evidence
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn with_dma_transaction_fixture(
+        mut self,
+        transaction : ReadTransactionId)
+        -> Self {
+        self.dma_transaction = transaction;
+        self
+    }
+}
+
 #[derive(Debug)]
 #[must_use = "apply both same-generation IRQ receipts or retain them for recovery"]
 pub struct ReadyReadIrqPair {
@@ -442,8 +468,29 @@ pub(crate) struct ClaimedReadCacheRecoveryFailure<'a, D, P> {
 
 #[cfg(test)]
 pub(crate) enum PairedMmcCompletionProgress<'a, D, P> {
-    Completed(crate::mmc::ReadCompleted<crate::mmc::QuiescedReadDmaSession<'a, D, P>>),
+    Completed(ClaimedReadCompletion<'a, D, P>),
     RecoveryRequired(ClaimedReadRecovery<'a, D, P>),
+}
+
+#[cfg(test)]
+pub(crate) struct ClaimedReadCompletion<'a, D, P> {
+    mmc : MmcReadIrqReceipt,
+    dma_transaction : ReadTransactionId,
+    completed : crate::mmc::ReadCompleted<crate::mmc::QuiescedReadDmaSession<'a, D, P>>,
+}
+
+#[cfg(test)]
+#[must_use = "retry cache completion before finalizing claimed read evidence"]
+pub(crate) struct ClaimedReadCompletionCache<'a, D, P> {
+    evidence : ClaimedReadCompletionEvidence,
+    session : crate::mmc::QuiescedReadDmaSession<'a, D, P>,
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) struct ClaimedReadCompletionCacheFailure<'a, D, P> {
+    pub error : DriverError,
+    pub completion : ClaimedReadCompletionCache<'a, D, P>,
 }
 
 #[cfg(test)]
@@ -599,7 +646,11 @@ impl<'a, D, P> PairedQuiescedReadDmaSession<'a, D, P> {
         -> PairedMmcCompletionProgress<'a, D, P> {
         match self.tracker.terminal_irq_observed(self.mmc.interrupts) {
             crate::mmc::ReadCompletionProgress::Completed(completed) =>
-                PairedMmcCompletionProgress::Completed(completed),
+                PairedMmcCompletionProgress::Completed(ClaimedReadCompletion {
+                    mmc : self.mmc,
+                    dma_transaction : self.dma_transaction,
+                    completed,
+                }),
             crate::mmc::ReadCompletionProgress::RecoveryRequired(recovery) =>
                 PairedMmcCompletionProgress::RecoveryRequired(ClaimedReadRecovery {
                     mmc : self.mmc,
@@ -608,6 +659,43 @@ impl<'a, D, P> PairedQuiescedReadDmaSession<'a, D, P> {
                 }),
             crate::mmc::ReadCompletionProgress::Pending(_) =>
                 unreachable!("terminal paired MMC receipt remained pending"),
+        }
+    }
+}
+
+#[cfg(test)]
+impl<'a, D : DmaCoherency, P : DmaCoherency> ClaimedReadCompletion<'a, D, P> {
+    pub(crate) const fn evidence(&self) -> crate::mmc::ReadCompletionEvidence {
+        self.completed.evidence
+    }
+
+    pub(crate) fn finish(self)
+        -> Result<ClaimedReadCompletionEvidence,
+                  ClaimedReadCompletionCacheFailure<'a, D, P>> {
+        let evidence = ClaimedReadCompletionEvidence {
+            transaction : self.mmc.transaction,
+            mmc_interrupts : self.mmc.interrupts,
+            dma_transaction : self.dma_transaction,
+            completion_evidence : self.completed.evidence,
+        };
+        ClaimedReadCompletionCache {
+            evidence,
+            session : self.completed.into_quiesced_session(),
+        }.finish()
+    }
+}
+
+#[cfg(test)]
+impl<'a, D : DmaCoherency, P : DmaCoherency> ClaimedReadCompletionCache<'a, D, P> {
+    pub(crate) fn finish(self)
+        -> Result<ClaimedReadCompletionEvidence,
+                  ClaimedReadCompletionCacheFailure<'a, D, P>> {
+        match self.session.finish() {
+            Ok(()) => Ok(self.evidence),
+            Err(failure) => Err(ClaimedReadCompletionCacheFailure {
+                error : failure.error,
+                completion : Self { evidence : self.evidence, session : failure.session },
+            }),
         }
     }
 }

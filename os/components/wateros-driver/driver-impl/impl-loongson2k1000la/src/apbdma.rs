@@ -1894,15 +1894,35 @@ mod tests {
                 completed,
             _ => panic!("paired receipts did not complete their read"),
         };
-        assert_eq!(completed.evidence,
+        assert_eq!(completed.evidence(),
                    crate::mmc::ReadCompletionEvidence {
                        command_response_validated : true,
                        data_finished : true,
                        dma_finished : true,
                    });
-        completed.into_quiesced_session().finish().unwrap();
+        let evidence = completed.finish()
+                               .unwrap_or_else(|_| panic!("success cache finish failed"));
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
+        let wrong = crate::board_irq_owner::ReadTransactionId::new(124).unwrap();
+        let valid = evidence;
+        let invalid = evidence.with_dma_transaction_fixture(wrong);
+        let failure = coordinator.service_claimed_completion(transaction).unwrap()
+                                 .finalize(invalid)
+                                 .err().expect("wrong success generation finalized");
+        assert_eq!(failure.error,
+                   crate::read_coordinator::ReadCoordinatorError::WrongTransaction {
+                       expected : transaction, actual : wrong,
+                   });
+        assert_eq!(coordinator.release(transaction),
+                   Err(crate::read_coordinator::ReadCoordinatorError::CompletionMustBeFinalized));
+        match coordinator.service_claimed_completion(transaction).unwrap()
+                   .finalize(valid) {
+            Ok(()) => {},
+            Err(failure) => panic!("success finalize failed: {:?}", failure.error),
+        }
+        assert_eq!(coordinator.snapshot().unwrap().phase,
+                   crate::read_coordinator::ReadCoordinatorPhase::CompletionFinalized);
         coordinator.release(transaction).unwrap();
         assert_eq!(coordinator.state(),
                    crate::diagnostic_slot::DiagnosticSlotState::Empty);
