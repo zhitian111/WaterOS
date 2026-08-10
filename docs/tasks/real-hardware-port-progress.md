@@ -5588,3 +5588,34 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] archive LS2K1000 published recovery`
+
+## 2026-08-10：批次 118——绑定 ReadRequest 与 deferred DMA typestate
+
+### 本批任务与设计
+
+1. 复核公共任务中 rootfs、MBR 分区子设备、动态 `/dev` 和小镜像 builder 的现状；这些能力已由前序公共批次完成，本批不重复实现。
+2. 找出当前 2K1000LA production read path 的边界：`ReadRequestExecutor` 原先只能借出裸 `PreparedSession`，会丢失 deferred MMC read 的几何身份。
+3. 让 `ReadRequestDmaLease` 通过 `ReadDmaBinding` 校验 request、descriptor、payload、DATA 地址和 cache policy 后生成 `PreparedReadDmaSession`。
+4. 保留旧 `prepare_dma_session` 兼容入口，同时新增显式绑定入口；错误返回精确的 `ReadDmaIdentityError`，不转移 DMA ownership。
+
+### 已完成
+
+- [x] 新增 `ReadRequestDmaLease::prepare_read_session`，复用 production `ReadDmaBinding::bind` 与 APBDMA prepare typestate。
+- [x] 新增 `ReadRequestExecutor::prepare_bound_dma_session`，为后续 start → publish receipt → completion/recovery 链保留完整 `DeferredReadPlan`。
+- [x] 增加 host 测试，验证合法 request 可生成绑定的 prepared session 并 cancel 归还 CPU ownership。
+- [x] 维持旧裸 prepared API，避免现有调用方在真实 hardware activation 尚未验证前被强制迁移。
+
+### 验证证据
+
+- 驱动定向测试 `production_request_executor_binds_deferred_read_to_prepared_dma` 通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 APB DATA 地址、descriptor fetch、cache clean/invalidate、DMA start/stop 和 MMC command ordering 仍未由物理板确认；本批只证明软件身份校验与 host model 生命周期。
+
+### 已知限制、未验证与后续测试
+
+- [ ] prepared session 尚未从该 executor 直接连到真实 APBDMA executor、MMC publisher 和 IRQ owner；仍需下一批补齐 carrying session 的 start/publish facade。
+- [ ] `ReadRequestDmaLeaseError::DmaIdentity` 目前是软件错误分类，不代表 controller 或 DMA 硬件已接受该 plan。
+- [ ] 公共分区镜像能力尚未在本 LA 分支接入该 production read request，目标板 SD/eMMC block registration 仍待平台驱动完成。
+
+### 提交
+
+- 本批计划提交：`[feat] bind read request to dma typestate`

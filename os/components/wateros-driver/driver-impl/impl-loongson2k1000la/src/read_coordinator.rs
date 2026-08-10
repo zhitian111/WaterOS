@@ -86,6 +86,7 @@ pub enum ReadRequestDmaLeaseError {
     DescriptorAddressMismatch,
     PayloadAddressMismatch,
     PayloadLengthMismatch,
+    DmaIdentity(crate::mmc::ReadDmaIdentityError),
     Dma(DriverError),
 }
 
@@ -415,6 +416,19 @@ impl<D : DmaCoherency, P : DmaCoherency> ReadRequestDmaLease<D, P> {
     pub fn prepare_session(&mut self)
                            -> Result<PreparedSession<'_, D, P>, ReadRequestDmaLeaseError> {
         apbdma::prepare_session(self.plan, &mut self.descriptor, &mut self.payload)
+            .map_err(Into::into)
+    }
+
+    /// Prepare the request through the production MMC/DMA binding so the
+    /// deferred-read geometry remains attached to the APBDMA token.
+    pub fn prepare_read_session(
+        &mut self,
+        read : DeferredReadPlan)
+        -> Result<crate::mmc::PreparedReadDmaSession<'_, D, P>, ReadRequestDmaLeaseError> {
+        let binding = crate::mmc::ReadDmaBinding::bind(
+            &read, self.plan, &self.descriptor, &self.payload)
+            .map_err(ReadRequestDmaLeaseError::DmaIdentity)?;
+        binding.prepare(&mut self.descriptor, &mut self.payload)
             .map_err(Into::into)
     }
 }
@@ -1207,6 +1221,15 @@ impl<'a, D : DmaCoherency, P : DmaCoherency> ReadRequestExecutor<'a, D, P> {
         self.lease.prepare_session()
     }
 
+    /// Prepare a deferred read while retaining its request/transfer identity
+    /// for the subsequent start and MMC publish typestate.
+    pub fn prepare_bound_dma_session(
+        &mut self,
+        read : DeferredReadPlan)
+        -> Result<crate::mmc::PreparedReadDmaSession<'_, D, P>, ReadRequestDmaLeaseError> {
+        self.lease.prepare_read_session(read)
+    }
+
     /// Validate a deferred MMC plan and create a one-shot coordinator publish
     /// permit. This does not write MMC registers; the real command publisher
     /// remains a separate capability until hardware ordering is verified.
@@ -1492,6 +1515,30 @@ mod tests {
         executor.mark_published(2).unwrap();
         assert_eq!(executor.snapshot().unwrap().phase, ReadCoordinatorPhase::Published);
         executor.prepare_dma_session().unwrap().cancel().unwrap();
+        executor.release().unwrap();
+        assert_eq!(slot.state(), DiagnosticSlotState::Empty);
+    }
+
+    #[test]
+    fn production_request_executor_binds_deferred_read_to_prepared_dma() {
+        let slot = ReadCoordinatorSlot::new();
+        let request = ReadRequest::new(
+            transaction(12),
+            ReadBlockRequest::new(4, 2, 512, crate::mmc::ReadAddressing::Block).unwrap());
+        let handle = request.reserve(&slot).unwrap().commit();
+        let (transfer, descriptor, payload) = dma_plan_fixture(request);
+        let lease = ReadRequestDmaLease::bind(request, transfer, descriptor, payload).unwrap();
+        let mut executor = ReadRequestExecutor::bind(handle, lease).unwrap();
+        let mut read = deferred_plan_fixture(request, transfer);
+        read.setup_writes = [
+            crate::mmc::PlannedDataWrite {
+                offset : 0x2C,
+                value : u32::from(request.block().block_count) | 1 << 14 | 1 << 15,
+            },
+            crate::mmc::PlannedDataWrite { offset : 0x28, value : 512 },
+            crate::mmc::PlannedDataWrite { offset : 0x24, value : u32::MAX },
+        ];
+        executor.prepare_bound_dma_session(read).unwrap().cancel().unwrap();
         executor.release().unwrap();
         assert_eq!(slot.state(), DiagnosticSlotState::Empty);
     }
