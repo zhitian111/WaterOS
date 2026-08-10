@@ -32,6 +32,7 @@ enum Command {
     Ls2kIrq,
     Ls2kMmc,
     Capabilities,
+    Devfs,
     Quit,
     Empty,
     Unknown,
@@ -50,6 +51,7 @@ fn parse_command(line : &[u8]) -> Command {
         "ls2k-irq" => Command::Ls2kIrq,
         "ls2k-mmc" => Command::Ls2kMmc,
         "capabilities" | "caps" => Command::Capabilities,
+        "devfs" => Command::Devfs,
         "quit" | "exit" => Command::Quit,
         _ => Command::Unknown,
     }
@@ -71,7 +73,7 @@ fn send_all(socket : &SocketRef, mut data : &[u8]) -> Result<(), SocketSendError
 fn command_response(command : Command) -> (alloc::string::String, bool) {
     match command {
         Command::Help => (alloc::string::String::from("commands: help, ping, status, version, \
-                                                       capabilities, ls2k-irq, ls2k-mmc, quit\r\n"),
+                                                       capabilities, devfs, ls2k-irq, ls2k-mmc, quit\r\n"),
                           false),
         Command::Ping => (alloc::string::String::from("pong\r\n"), false),
         Command::Status => {
@@ -91,12 +93,34 @@ fn command_response(command : Command) -> (alloc::string::String, bool) {
         Command::Ls2kIrq => (ls2k_irq_response(), false),
         Command::Ls2kMmc => (ls2k_mmc_response(), false),
         Command::Capabilities => (capabilities_response(), false),
+        Command::Devfs => (devfs_response(), false),
         Command::Quit => (alloc::string::String::from("bye\r\n"), true),
         Command::Empty => (alloc::string::String::new(), false),
         Command::Unknown => {
             (alloc::string::String::from("unknown command; type 'help'\r\n"), false)
         }
     }
+}
+
+/// Return a bounded, read-only snapshot of the current software `/dev` view.
+/// This reports cached node paths only; it does not probe hardware or grant a
+/// shell. The output is intentionally capped for the line-oriented monitor.
+fn devfs_response() -> alloc::string::String {
+    let generation = fs::devfs::active_impl::generation();
+    let nodes = fs::devfs::active_impl::list_nodes();
+    let mut paths = alloc::string::String::new();
+    for (index, node) in nodes.iter().take(32).enumerate() {
+        if index != 0 {
+            paths.push(',');
+        }
+        paths.push_str(node.path.as_str());
+    }
+    let truncated = nodes.len() > 32;
+    format!("devfs generation={} nodes={} truncated={} paths={}\r\n",
+            generation,
+            nodes.len(),
+            truncated,
+            paths)
 }
 
 #[cfg(feature = "loongson2k1000la")]
@@ -315,6 +339,7 @@ mod tests {
         assert_eq!(parse_command(b"ls2k-irq"),
                    Command::Ls2kIrq);
         assert_eq!(parse_command(b" caps "), Command::Capabilities);
+        assert_eq!(parse_command(b" devfs "), Command::Devfs);
         assert_eq!(parse_command(b" ls2k-mmc "), Command::Ls2kMmc);
         assert_eq!(parse_command(b"\t"), Command::Empty);
     }

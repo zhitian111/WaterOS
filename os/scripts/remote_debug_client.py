@@ -116,6 +116,7 @@ def run_smoke(client: MonitorClient) -> list[CommandResult]:
         client.command("ping"),
         client.command("status"),
         client.command("version"),
+        client.command("devfs"),
         client.command("ls2k-mmc"),
     ]
     if results[0].response != "pong\r\n":
@@ -125,14 +126,16 @@ def run_smoke(client: MonitorClient) -> list[CommandResult]:
         raise MonitorProtocolError(f"incomplete status: {results[1].response!r}")
     if not results[2].response.startswith("WaterOS "):
         raise MonitorProtocolError(f"version failed: {results[2].response!r}")
+    if not results[3].response.startswith("devfs generation="):
+        raise MonitorProtocolError(f"invalid devfs response: {results[3].response!r}")
     mmc_prefixes = (
         "ls2k-mmc ",
         "ERR ls2k-mmc ",
         "ERR unavailable: ls2k-mmc ",
         "ERR unsupported: ls2k-mmc ",
     )
-    if not results[3].response.startswith(mmc_prefixes):
-        raise MonitorProtocolError(f"invalid ls2k-mmc response: {results[3].response!r}")
+    if not results[4].response.startswith(mmc_prefixes):
+        raise MonitorProtocolError(f"invalid ls2k-mmc response: {results[4].response!r}")
     results.append(client.quit())
     return results
 

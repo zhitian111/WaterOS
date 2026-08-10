@@ -5837,3 +5837,35 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] track devfs software-view generations`
+
+## 2026-08-10：批次 126——将 devfs 节点快照接入远程诊断
+
+### 本批任务与设计
+
+1. 盘点已有根盘镜像、MBR 分区 block device、动态 devfs 和 TCP monitor，避免重复实现已有能力。
+2. 增加独立只读 `devfs` 命令，输出软件视图 generation、节点总数、截断标志和最多 32 条路径。
+3. 更新 Python monitor smoke client，验证新协议字段；继续拒绝把 monitor 扩展为 SSH 或未授权通用 shell。
+4. 通过 host 单测/target 构建验证协议路径，并标注真实网卡、UART 和物理 `/dev` 行为的未验证边界。
+
+### 已完成
+
+- [x] remote-debug parser/help/response 增加 `devfs` 命令。
+- [x] monitor 读取 active devfs 的 generation 与节点快照，限制输出规模，避免诊断连接被异常节点表撑爆。
+- [x] Python smoke client 增加 devfs 响应检查。
+
+### 验证证据
+
+- remote-debug 解析单测覆盖 `devfs` 命令别名路径。
+- `python3 -m unittest discover -s os/scripts/tests -p 'test_remote_debug_client.py'` 通过（协议 mock 路径）。
+- `make check EXTRA_FEATURES=remote-debug-monitor` 与 `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 通过。
+- `UNVERIFIED_ON_HARDWARE`：真实网卡 TCP 收发、目标板 UART/SD/eMMC 设备节点、动态热插拔和节点权限仍待实机。
+
+### 已知限制、未验证与后续测试
+
+- [ ] monitor 仍无认证、加密、PTY 或用户态 shell，只能作为 loopback/受控 bring-up 诊断通道。
+- [ ] devfs 响应只列路径和代际，不提供逐节点权限、major/minor 或事件流；后续应与真实字符/输入设备生命周期结合。
+- [ ] 尚未在物理板或 QEMU 真实 TCP 会话中抓取 `devfs` 输出；当前验证依赖编译门禁与协议单测。
+
+### 提交
+
+- 本批计划提交：`[feat] expose devfs snapshot in debug monitor`
