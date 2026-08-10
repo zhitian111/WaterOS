@@ -1270,3 +1270,58 @@ codegraph explore "os/vendor/another_ext4 Ext4 split_path generic_lookup generic
   应优先选 pc-hot 指令占比和 wait-hot 阻塞时间同时较高的链路。
 - 完整日志：`/tmp/wateros-fs06a-after-rv.log`、
   `/tmp/wateros-fs06a-v2-after-rv.log`（本机临时文件，不提交）。
+
+## BLK-01A：VirtIO block 使用 direct descriptors
+
+状态：实验完成，代码已回退（2026-08-10）
+
+### 证据与目标调用链
+
+最新有效 pc-hot 中 `VirtQueue::add_notify_wait_pop` 累计约 27.20 亿条指令；其
+`add_indirect` 为每个块请求分配并清零 descriptor 数组。直达调用点归因显示
+`add_notify_wait_pop` 引起约 220,583 次 `__rust_alloc_zeroed`，随后还要执行对应释放。
+
+```text
+BlockDevice::read_blocks/write_blocks
+  -> VirtIOBlk::read_blocks/write_blocks
+     -> VirtQueue::add_notify_wait_pop
+        -> VirtQueue::add
+           -> add_indirect (当前：每请求分配/清零/释放)
+           -> add_direct   (目标：使用队列预分配 descriptor)
+```
+
+### 设计、边界与保留门槛
+
+1. 新增只供 VirtIO block 实现使用的 transport adapter，在 feature discovery 时屏蔽
+   `RING_INDIRECT_DESC` bit 28；`virtio-drivers` 其余协商和默认构造行为不变。
+2. RISC-V MMIO 和 LoongArch PCI block 均使用该 adapter；网络、显示、输入设备不变。
+3. 保持当前同步轮询、块缓存和文件系统语义。队列大小 16，一个 block 请求使用三个
+   descriptor；当前单请求在途模型不存在容量不足。
+4. 双架构 Final check/build 后，以 RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm
+   对照有效基线 880.44 s。pc-hot 必须确认 `add_indirect` 和其零分配调用消失；明确退化则
+   回退代码，只提交实验记录。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "VirtIOBlk new feature negotiation Transport read_device_features VirtQueue add add_direct add_indirect MMIO PCI block initialization exact source callers"
+```
+
+### 验证结果与结论
+
+- helper 单元测试 1/1 通过；四组 `ARCH={rv,la} PROFILE={pre,final}` check 及双架构
+  Final 构建通过，只有仓库既有 warning。RISC-V direct 版本能正常识别块设备、挂载 Ext4、
+  通过 VFS 自测，并完整跑完 CAgent 与 BuildStorm，无 panic/SIGSEGV。
+- 首轮宿主 1200 s 保护超时前尚未完成；确认轮放宽保护时间后完整成功：
+  `ok=true elapsed_s=896.66`，比有效基线 880.44 s 慢 16.22 s（+1.84%），超过既有约
+  10 s 波动范围。
+- 300 s pc-hot 确认 `add_indirect` 和其每请求零分配已从产物及动态调用中消失；
+  `add_notify_wait_pop` 约 26.54 亿条指令，较旧样本约 27.20 亿略降，但 TLSF 总热点几乎
+  不变，减少约 22 万次小分配不足以影响整体 allocator 成本。
+- 结论：direct descriptor 在当前同步单请求和 QEMU TCG 下没有兑现墙钟收益，反而稳定
+  退化。全部实现代码回退，仅保留本实验记录；有效基线仍为 880.44 s。后续不应把 direct
+  descriptor 作为中断基础设施前置条件：异步设计可继续保留 indirect，待出现多请求队列
+  深度和 descriptor 压力后再重新评估混合策略。
+- 临时结果：`/tmp/wateros-blk01a-after-rv.log`、
+  `/tmp/wateros-blk01a-confirm-rv.log`、`/tmp/wateros-blk01a-rv-pcs.txt`、
+  `/tmp/wateros-blk01a-rv-top80.txt`（不提交）。
