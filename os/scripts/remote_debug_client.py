@@ -59,6 +59,8 @@ class MonitorClient:
         banner = self._receive_until(PROMPT)
         if not banner.startswith(b"WaterOS development monitor\r\n"):
             raise MonitorProtocolError(f"unexpected banner: {banner!r}")
+        if b"protocol=1" not in banner or b"auth=none" not in banner:
+            raise MonitorProtocolError(f"monitor banner lacks protocol metadata: {banner!r}")
         self._banner = banner.decode("utf-8", errors="strict")
         return self._banner
 
@@ -96,14 +98,19 @@ def connect_with_retry(host: str, port: int, timeout: float) -> MonitorClient:
 
 def run_smoke(client: MonitorClient) -> list[CommandResult]:
     client.receive_banner()
-    results = [client.command("ping"), client.command("status"), client.command("version")]
-    if results[0].response != "pong\r\n":
-        raise MonitorProtocolError(f"ping failed: {results[0].response!r}")
+    results = [client.command("hello"), client.command("capabilities"),
+               client.command("ping"), client.command("status"), client.command("version")]
+    if "protocol=1" not in results[0].response or "hardware=unverified" not in results[0].response:
+        raise MonitorProtocolError(f"hello failed: {results[0].response!r}")
+    if "readonly=true" not in results[1].response or "auth=none" not in results[1].response:
+        raise MonitorProtocolError(f"capabilities failed: {results[1].response!r}")
+    if results[2].response != "pong\r\n":
+        raise MonitorProtocolError(f"ping failed: {results[2].response!r}")
     required_status = ("tick=", "online_cpus=", "heap_used=", "heap_free=", "heap_capacity=")
-    if not all(field in results[1].response for field in required_status):
-        raise MonitorProtocolError(f"incomplete status: {results[1].response!r}")
-    if not results[2].response.startswith("WaterOS "):
-        raise MonitorProtocolError(f"version failed: {results[2].response!r}")
+    if not all(field in results[3].response for field in required_status):
+        raise MonitorProtocolError(f"incomplete status: {results[3].response!r}")
+    if not results[4].response.startswith("WaterOS "):
+        raise MonitorProtocolError(f"version failed: {results[4].response!r}")
     results.append(client.quit())
     return results
 

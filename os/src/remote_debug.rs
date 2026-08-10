@@ -21,7 +21,8 @@ const MONITOR_PORT : u16 = 2323;
 const LISTEN_BACKLOG : usize = 1;
 const MAX_LINE_LEN : usize = 128;
 const RECEIVE_CHUNK : usize = 256;
-const BANNER : &[u8] = b"WaterOS development monitor\r\nType 'help' for commands.\r\nwos> ";
+const PROTOCOL_VERSION : u32 = 1;
+const BANNER : &[u8] = b"WaterOS development monitor\r\nprotocol=1 auth=none encryption=none hardware=unverified\r\nType 'help' for commands.\r\nwos> ";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Command {
@@ -29,6 +30,8 @@ enum Command {
     Ping,
     Status,
     Version,
+    Capabilities,
+    Hello,
     Quit,
     Empty,
     Unknown,
@@ -44,6 +47,8 @@ fn parse_command(line : &[u8]) -> Command {
         "ping" => Command::Ping,
         "status" => Command::Status,
         "version" => Command::Version,
+        "capabilities" | "caps" => Command::Capabilities,
+        "hello" => Command::Hello,
         "quit" | "exit" => Command::Quit,
         _ => Command::Unknown,
     }
@@ -65,7 +70,7 @@ fn send_all(socket : &SocketRef, mut data : &[u8]) -> Result<(), SocketSendError
 fn command_response(command : Command) -> (alloc::string::String, bool) {
     match command {
         Command::Help => {
-            (alloc::string::String::from("commands: help, ping, status, version, quit\r\n"), false)
+            (alloc::string::String::from("commands: help, hello, ping, status, version, capabilities, quit\r\n"), false)
         }
         Command::Ping => (alloc::string::String::from("pong\r\n"), false),
         Command::Status => {
@@ -82,6 +87,17 @@ fn command_response(command : Command) -> (alloc::string::String, bool) {
         Command::Version => (format!("WaterOS {}\r\n",
                                      env!("CARGO_PKG_VERSION")),
                              false),
+        Command::Capabilities => {
+            (format!("protocol={} transport=tcp auth=none encryption=none hardware=unverified \
+                      readonly=true commands=help,hello,ping,status,version,capabilities,quit\r\n",
+                     PROTOCOL_VERSION),
+             false)
+        }
+        Command::Hello => {
+            (format!("WaterOS monitor protocol={} auth=none encryption=none hardware=unverified\r\n",
+                     PROTOCOL_VERSION),
+             false)
+        }
         Command::Quit => (alloc::string::String::from("bye\r\n"), true),
         Command::Empty => (alloc::string::String::new(), false),
         Command::Unknown => {
@@ -188,7 +204,7 @@ pub fn start() { task::spawn_kernel_task(monitor_task, 0); }
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_command, Command};
+    use super::{command_response, parse_command, Command};
 
     #[test]
     fn command_parser_accepts_whitespace_and_aliases() {
@@ -204,5 +220,17 @@ mod tests {
         assert_eq!(parse_command(b"reboot"),
                    Command::Unknown);
         assert_eq!(parse_command(&[0xFF]), Command::Unknown);
+    }
+
+    #[test]
+    fn capabilities_are_explicitly_read_only_and_unverified() {
+        assert_eq!(parse_command(b"hello"), Command::Hello);
+        assert_eq!(parse_command(b"caps"), Command::Capabilities);
+        let (response, close) = command_response(Command::Capabilities);
+        assert!(!close);
+        assert!(response.contains("protocol=1"));
+        assert!(response.contains("auth=none"));
+        assert!(response.contains("readonly=true"));
+        assert!(response.contains("hardware=unverified"));
     }
 }

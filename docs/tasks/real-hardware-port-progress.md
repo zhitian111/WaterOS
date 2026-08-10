@@ -1523,3 +1523,30 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[fix] recover gpt backup in verifier`
+
+## 2026-08-10：批次 39——远程 monitor 协议能力自描述
+
+### 任务与设计
+
+1. 审计发现 TCP monitor 只有 banner、help、ping/status/version，客户端无法可靠判断协议版本、认证状态和硬件验证边界。
+2. 增加 `hello` 与 `capabilities` 命令，返回协议版本、传输方式、认证/加密状态、只读标志、命令清单和 `hardware=unverified`。
+3. 保持 monitor 不是 SSH、没有登录 shell，不新增未经认证的任意代码执行能力；旧命令继续兼容。
+
+### 完成内容
+
+- [x] Rust monitor banner 增加 protocol/auth/encryption/hardware 元数据。
+- [x] 新增 `hello`、`capabilities`/`caps` 命令和只读能力声明。
+- [x] Python QEMU monitor client smoke 现在验证 hello/capabilities，再执行旧 ping/status/version 流程。
+- [x] host parser 单测覆盖新命令及能力响应字段。
+
+### 验证证据与限制
+
+- `python3 -m py_compile os/scripts/remote_debug_client.py`：通过。
+- RISC-V64 `cargo check --manifest-path os/Cargo.toml --target riscv64gc-unknown-none-elf`：通过。
+- LoongArch64 检查在当前主机因 `sbi-rt` 使用 RISC-V inline-register 名称而失败，属于既有 cross-toolchain/target 配置限制，不是本批 monitor 代码错误。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：目标板 NIC/PHY、UART、IRQ 和真实 TCP 收发仍未验证；monitor 继续无认证/无加密，只允许隔离开发网络或 QEMU loopback。
+
+### 提交
+
+- `[feat] describe remote monitor capabilities`
