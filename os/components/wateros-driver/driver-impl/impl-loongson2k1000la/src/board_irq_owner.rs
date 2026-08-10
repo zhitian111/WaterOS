@@ -61,7 +61,15 @@ impl Default for ReadTransactionSequence {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadIrqOwnerError {
     AlreadyArmed,
+    NotArmed,
     PendingNotConsumed,
+    WrongTransaction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadIrqOwnerBinding {
+    Armed(ReadTransactionId),
+    Pending(ReadTransactionId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +94,66 @@ pub enum ReadIrqPairError {
 pub struct ReadIrqReceiptFailure<T> {
     pub error : ReadIrqPairError,
     pub receipt : T,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadPairOwner {
+    Mmc,
+    Dma,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadPairOwnerFailure {
+    pub owner : ReadPairOwner,
+    pub error : ReadIrqOwnerError,
+}
+
+#[derive(Debug)]
+pub struct DrainedReadIrqs {
+    pub mmc : Option<MmcReadIrqReceipt>,
+    pub dma : Option<ApbDmaReadIrqReceipt>,
+}
+
+/// Arm both read IRQ owners as one software transaction. A DMA-side failure
+/// rolls the newly armed MMC owner back before returning.
+pub fn arm_read_owners<R>(mmc : &mut MmcCommandOwner<R>,
+                          dma : &mut DeferredApbDmaOwner,
+                          transaction : ReadTransactionId)
+                          -> Result<(), ReadPairOwnerFailure> {
+    mmc.arm_read(transaction)
+       .map_err(|error| ReadPairOwnerFailure { owner : ReadPairOwner::Mmc, error })?;
+    if let Err(error) = dma.arm_read(transaction) {
+        mmc.read_armed = None;
+        return Err(ReadPairOwnerFailure { owner : ReadPairOwner::Dma, error });
+    }
+    Ok(())
+}
+
+/// Retire one generation from both owners after first validating both sides.
+/// Pending receipts are returned intact for completion or recovery handling.
+pub fn drain_read_owners<R>(mmc : &mut MmcCommandOwner<R>,
+                            dma : &mut DeferredApbDmaOwner,
+                            transaction : ReadTransactionId)
+                            -> Result<DrainedReadIrqs, ReadPairOwnerFailure> {
+    validate_binding(mmc.read_binding(), transaction)
+        .map_err(|error| ReadPairOwnerFailure { owner : ReadPairOwner::Mmc, error })?;
+    validate_binding(dma.read_binding(), transaction)
+        .map_err(|error| ReadPairOwnerFailure { owner : ReadPairOwner::Dma, error })?;
+    mmc.read_armed = None;
+    dma.armed = None;
+    Ok(DrainedReadIrqs { mmc : mmc.read_pending.take(),
+                         dma : dma.pending.take() })
+}
+
+fn validate_binding(binding : Option<ReadIrqOwnerBinding>,
+                    transaction : ReadTransactionId)
+                    -> Result<(), ReadIrqOwnerError> {
+    let bound = match binding {
+        Some(ReadIrqOwnerBinding::Armed(bound)) |
+        Some(ReadIrqOwnerBinding::Pending(bound)) => bound,
+        None => return Err(ReadIrqOwnerError::NotArmed),
+    };
+    if bound == transaction { Ok(()) } else { Err(ReadIrqOwnerError::WrongTransaction) }
 }
 
 /// Collect exactly one MMC and one APBDMA receipt from the same software
@@ -166,6 +234,11 @@ impl<R> MmcCommandOwner<R> {
     pub const fn last_read_error(&self) -> Option<ReadIrqOwnerError> {
         self.last_read_error
     }
+    pub fn read_binding(&self) -> Option<ReadIrqOwnerBinding> {
+        self.read_pending
+            .map(|receipt| ReadIrqOwnerBinding::Pending(receipt.transaction))
+            .or_else(|| self.read_armed.map(ReadIrqOwnerBinding::Armed))
+    }
     pub fn arm_read(&mut self, transaction : ReadTransactionId)
                     -> Result<(), ReadIrqOwnerError> {
         if self.read_pending.is_some() { return Err(ReadIrqOwnerError::PendingNotConsumed); }
@@ -173,6 +246,19 @@ impl<R> MmcCommandOwner<R> {
         self.read_armed = Some(transaction);
         self.last_read_error = None;
         Ok(())
+    }
+    pub fn disarm_read(&mut self, transaction : ReadTransactionId)
+                       -> Result<(), ReadIrqOwnerError> {
+        match self.read_binding() {
+            Some(ReadIrqOwnerBinding::Pending(_)) => {
+                Err(ReadIrqOwnerError::PendingNotConsumed)
+            },
+            binding => {
+                validate_binding(binding, transaction)?;
+                self.read_armed = None;
+                Ok(())
+            },
+        }
     }
     pub fn take_read_receipt(&mut self) -> Option<MmcReadIrqReceipt> {
         self.read_pending.take()
@@ -238,6 +324,11 @@ impl DeferredApbDmaOwner {
         self.pending.as_ref().map(|receipt| receipt.acknowledged.irq())
     }
     pub const fn last_error(&self) -> Option<DeferredApbDmaError> { self.last_error }
+    pub fn read_binding(&self) -> Option<ReadIrqOwnerBinding> {
+        self.pending.as_ref()
+            .map(|receipt| ReadIrqOwnerBinding::Pending(receipt.transaction))
+            .or_else(|| self.armed.map(ReadIrqOwnerBinding::Armed))
+    }
 
     pub fn arm_read(&mut self, transaction : ReadTransactionId)
                     -> Result<(), ReadIrqOwnerError> {
@@ -246,6 +337,20 @@ impl DeferredApbDmaOwner {
         self.armed = Some(transaction);
         self.last_error = None;
         Ok(())
+    }
+
+    pub fn disarm_read(&mut self, transaction : ReadTransactionId)
+                       -> Result<(), ReadIrqOwnerError> {
+        match self.read_binding() {
+            Some(ReadIrqOwnerBinding::Pending(_)) => {
+                Err(ReadIrqOwnerError::PendingNotConsumed)
+            },
+            binding => {
+                validate_binding(binding, transaction)?;
+                self.armed = None;
+                Ok(())
+            },
+        }
     }
 
     /// Take the one transaction-bound IRQ receipt retained for the DMA session.
@@ -465,5 +570,94 @@ mod tests {
         assert_eq!(dma.arm_read(second), Err(ReadIrqOwnerError::PendingNotConsumed));
         assert_eq!(dma.take_read_receipt().unwrap().transaction, first);
         assert_eq!(dma.arm_read(second), Ok(()));
+    }
+
+    #[test]
+    fn pair_arm_rolls_mmc_back_when_dma_is_already_bound() {
+        let current = transaction(51);
+        let occupied = transaction(50);
+        let mmc_irq = GlobalIrq::from_bank_local(0, 31).unwrap();
+        let dma_irq = GlobalIrq::from_bank_local(1, 13).unwrap();
+        let mut mmc = MmcCommandOwner::new(mmc_irq, MockRegisters::default());
+        let mut dma = DeferredApbDmaOwner::new(dma_irq);
+        dma.arm_read(occupied).unwrap();
+        assert_eq!(arm_read_owners(&mut mmc, &mut dma, current),
+                   Err(ReadPairOwnerFailure {
+                       owner : ReadPairOwner::Dma,
+                       error : ReadIrqOwnerError::AlreadyArmed,
+                   }));
+        assert_eq!(mmc.read_binding(), None);
+        assert_eq!(dma.read_binding(), Some(ReadIrqOwnerBinding::Armed(occupied)));
+        mmc.arm_read(current).unwrap();
+        assert_eq!(drain_read_owners(&mut mmc, &mut dma, current).unwrap_err(),
+                   ReadPairOwnerFailure {
+                       owner : ReadPairOwner::Dma,
+                       error : ReadIrqOwnerError::WrongTransaction,
+                   });
+        assert_eq!(mmc.read_binding(), Some(ReadIrqOwnerBinding::Armed(current)));
+        assert_eq!(dma.read_binding(), Some(ReadIrqOwnerBinding::Armed(occupied)));
+        assert_eq!(mmc.disarm_read(current), Ok(()));
+        assert_eq!(dma.disarm_read(current), Err(ReadIrqOwnerError::WrongTransaction));
+        assert_eq!(dma.disarm_read(occupied), Ok(()));
+    }
+
+    #[test]
+    fn pair_drain_retires_armed_generation_without_inventing_receipts() {
+        let current = transaction(61);
+        let mmc_irq = GlobalIrq::from_bank_local(0, 31).unwrap();
+        let dma_irq = GlobalIrq::from_bank_local(1, 13).unwrap();
+        let mut mmc = MmcCommandOwner::new(mmc_irq, MockRegisters::default());
+        let mut dma = DeferredApbDmaOwner::new(dma_irq);
+        arm_read_owners(&mut mmc, &mut dma, current).unwrap();
+        let drained = drain_read_owners(&mut mmc, &mut dma, current)
+            .unwrap_or_else(|_| panic!("matching armed generation did not drain"));
+        assert_eq!(drained.mmc, None);
+        assert_eq!(drained.dma, None);
+        assert_eq!(mmc.read_binding(), None);
+        assert_eq!(dma.read_binding(), None);
+        assert_eq!(drain_read_owners(&mut mmc, &mut dma, current).unwrap_err(),
+                   ReadPairOwnerFailure {
+                       owner : ReadPairOwner::Mmc,
+                       error : ReadIrqOwnerError::NotArmed,
+                   });
+    }
+
+    #[test]
+    fn pair_drain_prevalidates_generation_and_returns_pending_tokens() {
+        let current = transaction(71);
+        let wrong = transaction(72);
+        let mmc_irq = GlobalIrq::from_bank_local(0, 31).unwrap();
+        let dma_irq = GlobalIrq::from_bank_local(1, 13).unwrap();
+        let mut mmc = MmcCommandOwner::new(
+            mmc_irq,
+            MockRegisters { status : COMMAND_SENT | 1, writes : Vec::new() });
+        let mut dma = DeferredApbDmaOwner::new(dma_irq);
+        arm_read_owners(&mut mmc, &mut dma, current).unwrap();
+        assert_eq!(dma.handle(acknowledged(dma_irq)), IrqDisposition::KeepMasked);
+        assert_eq!(dma.disarm_read(current), Err(ReadIrqOwnerError::PendingNotConsumed));
+        assert_eq!(drain_read_owners(&mut mmc, &mut dma, wrong).unwrap_err(),
+                   ReadPairOwnerFailure {
+                       owner : ReadPairOwner::Mmc,
+                       error : ReadIrqOwnerError::WrongTransaction,
+                   });
+        assert_eq!(mmc.read_binding(), Some(ReadIrqOwnerBinding::Armed(current)));
+        assert_eq!(dma.read_binding(), Some(ReadIrqOwnerBinding::Pending(current)));
+
+        let drained = drain_read_owners(&mut mmc, &mut dma, current)
+            .unwrap_or_else(|_| panic!("matching pending generation did not drain"));
+        assert_eq!(drained.mmc, None);
+        let dma_receipt = drained.dma.expect("pending DMA token was lost");
+        assert_eq!(dma_receipt.transaction, current);
+        assert_eq!(dma_receipt.acknowledged.irq(), dma_irq);
+        assert_eq!(mmc.read_binding(), None);
+        assert_eq!(dma.read_binding(), None);
+
+        arm_read_owners(&mut mmc, &mut dma, wrong).unwrap();
+        assert_eq!(mmc.handle(acknowledged(mmc_irq)), IrqDisposition::KeepMasked);
+        assert_eq!(dma.handle(acknowledged(dma_irq)), IrqDisposition::KeepMasked);
+        let drained = drain_read_owners(&mut mmc, &mut dma, wrong)
+            .unwrap_or_else(|_| panic!("dual pending generation did not drain"));
+        assert_eq!(drained.mmc.unwrap().transaction, wrong);
+        assert_eq!(drained.dma.unwrap().transaction, wrong);
     }
 }

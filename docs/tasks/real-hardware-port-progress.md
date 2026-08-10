@@ -4625,3 +4625,49 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] pair LS2K1000 read IRQ generations`
+
+## 2026-08-10：批次 95——事务化 arm、abort 与读取 IRQ generation 退役
+
+### 本批任务与设计
+
+1. 消除 MMC arm 成功、DMA arm 失败后遗留半个 generation 的窗口。
+2. owner 提供按 generation 校验的 binding、disarm 与 pending 状态分类。
+3. 双 owner abort 必须先验证两侧，再同时 retire，防止错代操作只清掉一边。
+4. 已到达的 receipt 必须原样 drain；尤其 APBDMA `AcknowledgedIrq` 不得丢失或复制。
+5. 覆盖无 IRQ 启动失败、单路 IRQ、双路 IRQ、错代、重复 abort 和 owner occupied。
+
+### 已完成
+
+- [x] 新增 `ReadIrqOwnerBinding::{Armed, Pending}`，两种 owner 均可只读检查当前 generation/phase。
+- [x] `disarm_read(transaction)` 只撤销匹配 Armed；NotArmed/WrongTransaction/PendingNotConsumed 均不改变状态。
+- [x] `arm_read_owners` 先 arm MMC 再 arm DMA；DMA 拒绝时立即回滚本次 MMC arm，保留 DMA 原 binding。
+- [x] `drain_read_owners` 先验证 MMC、DMA 两侧均属于目标 generation，再一次性清除 armed/pending。
+- [x] `DrainedReadIrqs` 返回可选 MMC/DMA receipt；没有 IRQ 时不会臆造 receipt，单路/双路 pending 均完整返回。
+- [x] DMA-side generation mismatch 时 MMC binding 保持不变，证明双侧预检在 mutation 之前完成。
+- [x] pending DMA receipt 仍携带原线性 acknowledged token，可交给 APBDMA completion/status/stop recovery。
+- [x] retirement 只处理软件 owner 状态，不产生 source rearm、descriptor success 或 hardware-idle evidence。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 157 项全部通过；新增 3 项 pair arm/drain/retirement 故障测试。
+- 预占 DMA generation 时 pair arm 返回 DMA/AlreadyArmed，MMC 回到 None，DMA 原 generation 不变。
+- 手工构造 MMC=current、DMA=old 后 drain current 返回 DMA/WrongTransaction，两侧 binding 均保持原值。
+- 两侧 Armed 的启动失败模型 drain 后返回 `(None,None)` 并全部退役；重复 drain 返回 MMC/NotArmed。
+- DMA-only pending 时单 owner disarm 返回 PendingNotConsumed；错代 drain 不改变 Armed/Pending 状态。
+- 正确 drain 返回原 DMA receipt/IRQ；随后新 generation 可重新 arm，并能完整 drain MMC+DMA 两份 receipt。
+- production 组件 check、RISC-V `make check` 与 LoongArch64 `make kernel-la` 全部通过；仅有仓库既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过；dtc warning 来自预期畸形输入。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：软件 retire 不会清除设备上潜在的迟到 IRQ；retire 后仍不允许自动 rearm。
+- [ ] `UNVERIFIED_ON_HARDWARE`：pending DMA receipt 只能证明 LIOINTC mask/ack，不能证明 APBDMA stopped。
+- [ ] pair helper 当前操作两个直接 owner 引用；production runtime 中 owner 位于不同 slot，尚无跨 slot 原子借用事务。
+- [ ] startup executor 尚未将 prepare→arm owners→start DMA→publish MMC 串成一个 production typestate，因此本批启动失败由 owner model 覆盖。
+- [ ] drain 返回 receipt 后由调用者负责送入 completion/recovery；当前没有 must-use transaction guard 防止调用者遗忘 abort。
+- [ ] MMC source 的安全 rearm 需要 generation retired、controller condition cleared 与 session completion；APBDMA rearm 还需要未知的 device clear/idle 证据。
+- [ ] 下一批应增加 owning `ReadIrqArmGuard`，Drop 保持 fail-closed，显式 commit 后才能进入 started session；并设计 runtime 两 slot 的预约/归还协议。
+
+### 提交
+
+- 本批计划提交：`[feat] rollback LS2K1000 read IRQ arms`
