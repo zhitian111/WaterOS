@@ -5,6 +5,8 @@
 //!
 //! 并发边界：全局状态由 [`spin::Mutex`] 保护；[`KernelDevFsManager`] 为零大小类型，通过静态 `DEVFS` 访问。
 extern crate alloc;
+#[cfg(test)]
+extern crate std;
 
 use alloc::{format, string::String, string::ToString, vec::Vec};
 use api_v0::{DevFsManager, DevNode};
@@ -297,6 +299,8 @@ mod tests {
     use alloc::{boxed::Box, string::String, sync::Arc};
     use driver_input_api_v0::{register_input_device, unregister_input_device, InputDevice,
                               InputDeviceInfo, InputDeviceKind, RawInputEvent};
+    use std::sync::Mutex as TestMutex;
+    static TEST_LOCK : TestMutex<()> = TestMutex::new(());
     struct EmptyInput(InputDeviceInfo);
     impl InputDevice for EmptyInput {
         fn info(&self) -> &InputDeviceInfo { &self.0 }
@@ -306,6 +310,7 @@ mod tests {
     }
     #[test]
     fn input_slot_has_stable_event_node_until_unregister() {
+        let _guard = TEST_LOCK.lock().unwrap();
         let input = Arc::new(Mutex::new(Box::new(EmptyInput(InputDeviceInfo {
             name : String::from("devfs-test-input"), kind : InputDeviceKind::Keyboard,
             absolute_x : None, absolute_y : None,
@@ -313,6 +318,7 @@ mod tests {
         let index = register_input_device(input);
         let mut manager = KernelDevFsManager;
         let path = format!("/dev/input/event{index}");
+        manager.refresh();
         let node = manager.list_nodes()
                            .into_iter()
                            .find(|node| node.path == path)
@@ -331,6 +337,31 @@ mod tests {
         assert!(!manager.list_nodes().iter().any(|node| node.path == path));
         assert!(manager.lookup_character_device(&path).is_err());
         assert!(!unregister_input_device(index), "duplicate removal must be harmless");
+    }
+
+    #[test]
+    fn input_unregister_does_not_reuse_old_event_node_index() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let make_input = || {
+            Arc::new(Mutex::new(Box::new(EmptyInput(InputDeviceInfo {
+                name : String::from("devfs-generation-input"),
+                kind : InputDeviceKind::Pointer,
+                absolute_x : None,
+                absolute_y : None,
+            })) as Box<dyn InputDevice>))
+        };
+        let old_index = register_input_device(make_input());
+        let old_path = format!("/dev/input/event{old_index}");
+        assert!(unregister_input_device(old_index));
+        let new_index = register_input_device(make_input());
+        let new_path = format!("/dev/input/event{new_index}");
+        assert!(new_index > old_index, "registration slots must be monotonic");
+
+        let mut manager = KernelDevFsManager;
+        manager.refresh();
+        assert!(!manager.list_nodes().iter().any(|node| node.path == old_path));
+        assert!(manager.list_nodes().iter().any(|node| node.path == new_path));
+        assert!(unregister_input_device(new_index));
     }
 }
 

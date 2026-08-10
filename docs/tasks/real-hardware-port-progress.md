@@ -1996,6 +1996,27 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - 该 monitor 仍然 `auth=none encryption=none readonly=true`，仅适合隔离的 QEMU/bring-up 网络，不满足正式 SSH 登录安全要求。
 - `UNVERIFIED_ON_HARDWARE`：VisionFive 2/Loongson 2K1000LA NIC/PHY、真实 IRQ/DMA/cache、链路协商和实体网络仍待实机验证。
 
+## 2026-08-10：批次 68——输入设备注销与 devfs slot 稳定性
+
+### 任务与设计
+
+1. 审计输入注册表、evdev subscription 和 devfs refresh 的动态注销路径。
+2. 保持输入索引单调分配；注销后旧 `/dev/input/eventN` 消失，新设备不得复用旧 slot，已有旧句柄只允许 fail-closed。
+3. 用 fake keyboard/pointer 设备测试，不依赖实体 USB/HID 或大磁盘镜像。
+
+### 完成内容
+
+- [x] 新增 devfs 回归测试：注销设备后旧 event 节点消失，新注册设备使用更大的稳定索引。
+- [x] 修正 devfs 测试的全局拓扑竞态：测试使用串行锁，并在计数断言前显式 refresh，避免并行测试造成假失败。
+- [x] 增加 test-only `extern crate std`，不影响 `no_std` 生产构建。
+
+### 验证证据与限制
+
+- devfs kernel crate：2 项测试通过。
+- input API crate：7 项测试通过，包含 HID 解码、evdev 事务回滚和注销后的 subscription 失败关闭。
+- 注销 API 只处理注册表可见性；驱动必须在调用前停止 IRQ/DMA，这个顺序仍需硬件验证。
+- `UNVERIFIED_ON_HARDWARE`：真实 USB/HID 热插拔、控制器中断、DMA/cache 和实体板 `/dev` 生命周期仍待验证。
+
 ## 2026-08-10：批次 65——稳定 QMP 输入注入诊断
 
 ### 任务与设计
