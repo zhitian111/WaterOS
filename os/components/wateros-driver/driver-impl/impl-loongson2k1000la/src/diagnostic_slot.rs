@@ -5,6 +5,7 @@
 
 use core::{cell::UnsafeCell,
            mem::{ManuallyDrop, MaybeUninit},
+           ops::{Deref, DerefMut},
            sync::atomic::{AtomicU8, Ordering}};
 
 const EMPTY : u8 = 0;
@@ -72,19 +73,23 @@ impl<T> DiagnosticRuntimeSlot<T> {
     }
 
     pub fn with_live_mut<R>(&self, f : impl FnOnce(&mut T) -> R) -> Result<R, SlotError> {
+        let mut service = self.service()?;
+        Ok(f(&mut service))
+    }
+
+    /// Exclusively borrow the live value until the returned guard is dropped.
+    /// The slot remains SERVICING, never EMPTY, throughout the borrow.
+    pub fn service(&self) -> Result<RuntimeService<'_, T>, SlotError> {
         match self.state.compare_exchange(LIVE, SERVICING, Ordering::AcqRel, Ordering::Acquire) {
             Ok(_) => {}
             Err(EMPTY) => return Err(SlotError::Empty),
             Err(RESERVED) | Err(SERVICING) | Err(DRAINING) => return Err(SlotError::Busy),
             Err(_) => return Err(SlotError::Busy),
         }
-        let guard = ServiceGuard { slot : self };
-        // SAFETY: LIVE->SERVICING CAS grants this guard exclusive access and
+        // SAFETY: LIVE->SERVICING CAS grants the guard exclusive access and
         // commit publishes the initialized value before its Release store.
         let value = unsafe { (&mut *self.value.get()).assume_init_mut() };
-        let result = f(value);
-        drop(guard);
-        Ok(result)
+        Ok(RuntimeService { slot : self, value })
     }
 
     /// Exclusively quiesce and remove the live value.
@@ -144,8 +149,9 @@ impl<T> Drop for RuntimeReservation<'_, T> {
     }
 }
 
-struct ServiceGuard<'a, T> {
+pub struct RuntimeService<'a, T> {
     slot : &'a DiagnosticRuntimeSlot<T>,
+    value : &'a mut T,
 }
 
 struct DrainGuard<'a, T> {
@@ -161,7 +167,17 @@ impl<T> Drop for DrainGuard<'_, T> {
     }
 }
 
-impl<T> Drop for ServiceGuard<'_, T> {
+impl<T> Deref for RuntimeService<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target { self.value }
+}
+
+impl<T> DerefMut for RuntimeService<'_, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target { self.value }
+}
+
+impl<T> Drop for RuntimeService<'_, T> {
     fn drop(&mut self) {
         self.slot.state.store(LIVE, Ordering::Release);
     }
@@ -199,6 +215,12 @@ mod tests {
         });
         assert_eq!(result, Ok(7));
         assert_eq!(slot.with_live_mut(|value| *value), Ok(7));
+        let mut service = slot.service().unwrap();
+        assert_eq!(slot.state(), DiagnosticSlotState::Servicing);
+        assert_eq!(slot.service().err(), Some(SlotError::Busy));
+        *service += 1;
+        drop(service);
+        assert_eq!(slot.with_live_mut(|value| *value), Ok(8));
     }
 
     #[test]

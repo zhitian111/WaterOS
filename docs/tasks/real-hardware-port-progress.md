@@ -5010,3 +5010,54 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] persist LS2K1000 read coordinator state`
+
+## 2026-08-10：批次 103——独占 service 实际 masked recheck token
+
+### 本批任务与设计
+
+1. `BoundedMmcReadRecheck` 改为不可 Clone/Copy 的线性 token，避免 slot 与 worker 同时持有可推进副本。
+2. 通用 single-publication slot 增加 LIVE→SERVICING 独占 guard；guard 生命周期内绝不短暂进入 Empty。
+3. read coordinator 的 Rechecking 状态实际拥有 bounded token，不再只保存 remaining/polls 元数据。
+4. 每个 service 只执行一次 caller/runtime 提供的 masked MMC sample，并原子转换 Pending/Terminal/RecoveryPending。
+5. runtime/variant/generation 等可重试调度错误保留 token；MMC I/O/unknown fault 与 budget timeout 固化 recovery cause，禁止继续轮询。
+
+### 已完成
+
+- [x] `DiagnosticRuntimeSlot::service` 返回 `RuntimeService<T>`，LIVE→SERVICING CAS 后独占 `DerefMut`，drop 用 Release store 恢复 LIVE。
+- [x] `with_live_mut` 改为复用同一 service guard，原有闭包接口与新长期 guard 共用一套 UnsafeCell 安全边界。
+- [x] 移除 `BoundedMmcReadRecheck`、progress、failure 的 Clone/Copy；外部 step 仍在 Pending/错误时显式返还唯一 token。
+- [x] 抽出 crate-private `step_in_place`；slot 内直接原位推进 token，避免 service unwind 时留下 `Rechecking(None)`。
+- [x] `record_recheck` 现在消费实际 token；phase/progress/slot 错误通过 must-use `RecordRecheckFailure` 返还原 token。
+- [x] 新增 `ReadRecheckService` 与 `ReadCoordinatorStepProgress`；Pending 原位保留 token，Terminal 进入不可再 service 的 Terminal。
+- [x] Timeout 与 `MmcReadRecheckError` 进入 RecoveryPending；release 返回 `RecoveryMustBeRecorded`，必须先形成完整 stop/drain report。
+- [x] RecoveryPending 归档 report 时校验 exact cause；poll count/error 不一致返回 `RecoveryCauseMismatch` 和原 report。
+- [x] runtime slot、owner variant、binding/generation 错误返回 `ReadCoordinatorStepFailure`，实际 token 与预算原样留在 Rechecking。
+- [x] production publish permit、DMA start/status decoder、真实 activation 与 IRQ rearm 继续关闭。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 175 项全部通过；read coordinator 新增 service/drop、split terminal、timeout/fault、retryable generation、unwind 5 项。
+- service guard 存活时 slot 为 Servicing，snapshot、第二次 service 与 drain 均返回 Busy；drop 后恢复 Live/Rechecking。
+- 三次跨 service sample 依次 empty、`CSENT-only`、`DFIN`，remaining 2→1，第三步 Terminal(polls=3)，slot 从未暴露 Empty。
+- budget=1 的 empty sample 转为 RecoveryPending Timeout(1)；普通 release 被拒绝，cause 不匹配 report 被线性返还，匹配 report 可归档/take。
+- unknown-only status 转为 RecheckFault，polls=0、remaining=2，证明 fault 没有误耗预算。
+- runtime MMC owner 绑定另一 generation 时 step 返回 Binding(Armed(bound))；snapshot 仍为 current/Rechecking(2,0)，修正 owner 后同 token 可重试 Terminal。
+- 注入 RegisterIo panic 并 catch_unwind 后，RuntimeService drop 恢复 Live，in-place token 保持 remaining=2/polls=0；关闭 panic 后可重试 Terminal。
+- production 组件 test/check、RISC-V `make check` 与 LoongArch64 `make kernel-la` 全部通过；仅有仓库既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过；dtc warning 来自预期畸形输入。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：SERVICING 原子互斥已由 host CAS/reentry 模型验证，但真实 trap/worker 优先级、关中断边界和迟到 IRQ 时序未知。
+- [ ] `UNVERIFIED_ON_HARDWARE`：service 内 masked status read/W1C 的真实可见性与 Linux-derived 位语义仍需 2K1000LA 实测。
+- [ ] panic/unwind 测试只证明软件 guard/token 恢复；若 panic 发生在真实 W1C 已产生副作用之后，重试仍必须依赖 accumulator，而不能回滚硬件。
+- [ ] slot 不拥有 Published DMA session；timeout/fault 后 production 调用层仍需线性执行 stop→cache finish→owner drain→report。
+- [ ] `release` 可用于 Rechecking cancellation，但 slot 本身无法证明调用方已 stop DMA；生产整合层必须只在 quiesced/cancelled 证据后调用。
+- [ ] service 没有 deadline、wake time 或 backoff；仍由外部 worker 决定何时调用下一步。
+- [ ] Terminal 只证明 MMC owner 已形成 terminal receipt，不证明 DMA status 或整笔块请求完成。
+- [ ] production runtime 仍不构造 APBDMA owner，真实 publish/status/completion worker 与块层回调尚未接通。
+- [ ] 下一批应把本 slot 接入完整模型链路：reserve→publish→service timeout/fault→Published DMA stop/finish→owner recovery report→slot record/take，覆盖每个中间失败保持。
+
+### 提交
+
+- 本批计划提交：`[feat] service LS2K1000 read rechecks exclusively`

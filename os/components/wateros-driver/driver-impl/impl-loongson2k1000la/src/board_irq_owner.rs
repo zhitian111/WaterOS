@@ -74,7 +74,7 @@ pub enum MmcReadRecheckError {
     Ack(MmcIrqAckError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct BoundedMmcReadRecheck {
     transaction : ReadTransactionId,
     remaining : u16,
@@ -90,7 +90,7 @@ pub enum BoundedMmcReadRecheckError {
     Recheck(MmcReadRecheckError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum BoundedMmcReadRecheckProgress {
     Pending(BoundedMmcReadRecheck),
     Terminal {
@@ -104,6 +104,13 @@ pub enum BoundedMmcReadRecheckProgress {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BoundedMmcReadRecheckStep {
+    Pending,
+    Terminal,
+    Timeout,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 #[must_use = "recover the bounded recheck and retry or enter read recovery"]
 pub struct BoundedMmcReadRecheckFailure {
     pub error : BoundedMmcReadRecheckError,
@@ -145,29 +152,46 @@ impl BoundedMmcReadRecheck {
                                 BoundedMmcReadRecheckFailure>
     where I : crate::liointc::RegisterIo, R : RegisterIo
     {
-        let owner = runtime.owner_mut(mmc_irq).map_err(|error| {
-            BoundedMmcReadRecheckFailure {
-                error : BoundedMmcReadRecheckError::Runtime(error), recheck : self,
-            }
-        })?;
+        match self.step_in_place(runtime, mmc_irq) {
+            Ok(BoundedMmcReadRecheckStep::Pending) =>
+                Ok(BoundedMmcReadRecheckProgress::Pending(self)),
+            Ok(BoundedMmcReadRecheckStep::Terminal) =>
+                Ok(BoundedMmcReadRecheckProgress::Terminal {
+                    transaction : self.transaction,
+                    polls_completed : self.polls_completed,
+                }),
+            Ok(BoundedMmcReadRecheckStep::Timeout) =>
+                Ok(BoundedMmcReadRecheckProgress::Timeout {
+                    transaction : self.transaction,
+                    polls_completed : self.polls_completed,
+                }),
+            Err(error) => Err(BoundedMmcReadRecheckFailure { error, recheck : self }),
+        }
+    }
+
+    pub(crate) fn step_in_place<I, R>(
+        &mut self,
+        runtime : &mut crate::irq_runtime::BoardIrqRuntime<I, BoardIrqOwner<R>>,
+        mmc_irq : GlobalIrq)
+        -> Result<BoundedMmcReadRecheckStep, BoundedMmcReadRecheckError>
+    where I : crate::liointc::RegisterIo, R : RegisterIo
+    {
+        let owner = match runtime.owner_mut(mmc_irq) {
+            Ok(owner) => owner,
+            Err(error) => return Err(BoundedMmcReadRecheckError::Runtime(error)),
+        };
         let BoardIrqOwner::MmcCommand(owner) = owner else {
-            return Err(BoundedMmcReadRecheckFailure {
-                error : BoundedMmcReadRecheckError::OwnerVariant, recheck : self,
-            });
+            return Err(BoundedMmcReadRecheckError::OwnerVariant);
         };
         match owner.read_binding() {
             Some(ReadIrqOwnerBinding::Pending(transaction))
                 if transaction == self.transaction => {
-                    return Ok(BoundedMmcReadRecheckProgress::Terminal {
-                        transaction, polls_completed : self.polls_completed,
-                    });
+                    return Ok(BoundedMmcReadRecheckStep::Terminal);
                 },
             Some(ReadIrqOwnerBinding::Armed(transaction))
                 if transaction == self.transaction => {},
             binding => {
-                return Err(BoundedMmcReadRecheckFailure {
-                    error : BoundedMmcReadRecheckError::Binding(binding), recheck : self,
-                });
+                return Err(BoundedMmcReadRecheckError::Binding(binding));
             },
         }
         let result = owner.recheck_masked_read();
@@ -176,26 +200,18 @@ impl BoundedMmcReadRecheck {
                                       MmcIrqAckError::NoKnownPending)));
         if let Err(error) = result {
             if !no_pending {
-                return Err(BoundedMmcReadRecheckFailure {
-                    error : BoundedMmcReadRecheckError::Recheck(error), recheck : self,
-                });
+                return Err(BoundedMmcReadRecheckError::Recheck(error));
             }
         }
         self.remaining -= 1;
         self.polls_completed += 1;
         if result == Ok(true) {
-            return Ok(BoundedMmcReadRecheckProgress::Terminal {
-                transaction : self.transaction,
-                polls_completed : self.polls_completed,
-            });
+            return Ok(BoundedMmcReadRecheckStep::Terminal);
         }
         if self.remaining == 0 {
-            Ok(BoundedMmcReadRecheckProgress::Timeout {
-                transaction : self.transaction,
-                polls_completed : self.polls_completed,
-            })
+            Ok(BoundedMmcReadRecheckStep::Timeout)
         } else {
-            Ok(BoundedMmcReadRecheckProgress::Pending(self))
+            Ok(BoundedMmcReadRecheckStep::Pending)
         }
     }
 }
