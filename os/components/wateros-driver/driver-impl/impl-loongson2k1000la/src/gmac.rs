@@ -5,6 +5,7 @@
 
 use alloc::vec::Vec;
 
+use crate::pci::{bar_is_assigned, PciConfigSnapshot};
 use crate::topology::NetworkDescription;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +29,30 @@ pub struct GmacActivationEvidence {
     pub dma_verified : bool,
     pub irq_route_verified : bool,
     pub phy_link_verified : bool,
+}
+
+/// Convert read-only PCI evidence into the portion of the GMAC activation
+/// contract that can be proven without touching BARs, DMA or PHY registers.
+///
+/// `expected_vendor`/`expected_device` are optional because some firmware
+/// descriptions omit a stable PCI identity. Omitting either never weakens the
+/// class-code check, and all runtime datapath evidence remains false.
+pub fn evidence_from_pci_snapshot(snapshot : &PciConfigSnapshot,
+                                  expected_vendor : Option<u16>,
+                                  expected_device : Option<u16>)
+                                  -> GmacActivationEvidence {
+    let vendor_ok = expected_vendor.map_or(true,
+                                           |vendor| snapshot.identity.vendor_id == vendor);
+    let device_ok = expected_device.map_or(true,
+                                           |device| snapshot.identity.device_id == device);
+    let identity_verified = snapshot.identity.class_code == 0x02 && vendor_ok && device_ok;
+    let bar_assigned = snapshot.bar_error.is_none() &&
+                       snapshot.bars.iter().copied().flatten().any(|bar| {
+                           bar_is_assigned(Ok(bar))
+                       });
+    GmacActivationEvidence { pci_identity_verified : identity_verified,
+                             bar_assigned,
+                             ..GmacActivationEvidence::default() }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,5 +159,47 @@ mod tests {
         let GmacActivation::Deferred(blockers) = result else { panic!("unexpected ready") };
         assert_eq!(blockers, vec![GmacBlocker::InvalidPciFunction,
                                   GmacBlocker::InterruptNamesMismatch]);
+    }
+
+    #[test]
+    fn pci_snapshot_only_proves_identity_and_bar() {
+        let snapshot = crate::pci::PciConfigSnapshot {
+            identity : crate::pci::PciIdentity { location : crate::pci::PciLocation {
+                                                    bus : 0, device : 3, function : 0,
+                                                },
+                                                vendor_id : 0x0014,
+                                                device_id : 0x1000,
+                                                class_code : 0x02,
+                                                subclass : 0,
+                                                prog_if : 0 },
+            bars : [Some(crate::pci::PciBar::Memory32 { index : 0,
+                                                        base : 0x8000_0000,
+                                                        prefetchable : false }); 6],
+            bar_error : None,
+        };
+        let evidence = evidence_from_pci_snapshot(&snapshot, Some(0x0014), Some(0x1000));
+        assert!(evidence.pci_identity_verified);
+        assert!(evidence.bar_assigned);
+        assert!(!evidence.dma_verified);
+        assert!(!evidence.phy_link_verified);
+    }
+
+    #[test]
+    fn pci_snapshot_mismatch_or_bar_error_stays_deferred() {
+        let snapshot = crate::pci::PciConfigSnapshot {
+            identity : crate::pci::PciIdentity { location : crate::pci::PciLocation {
+                                                    bus : 0, device : 3, function : 0,
+                                                },
+                                                vendor_id : 0x1234,
+                                                device_id : 0x5678,
+                                                class_code : 0x02,
+                                                subclass : 0,
+                                                prog_if : 0 },
+            bars : [None; 6],
+            bar_error : Some(crate::pci::PciBarError::UnsupportedMemoryType),
+        };
+        let evidence = evidence_from_pci_snapshot(&snapshot, Some(0x0014), None);
+        assert!(!evidence.pci_identity_verified);
+        assert!(!evidence.bar_assigned);
     }
 }

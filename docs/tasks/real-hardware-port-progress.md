@@ -7214,3 +7214,26 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[feat] snapshot loongson pci function`
+
+## 2026-08-10：批次 179——将 PCI 快照接入 GMAC 静态证据
+
+### 本批任务与设计
+
+1. 审计发现 PCI snapshot 已能读取 identity/BAR，但 GMAC 的 `GmacActivationEvidence` 仍需手工填写，存在证据脱节。
+2. 新增 fail-closed 转换：按 network class code 和可选 vendor/device 约束形成 identity 证据；仅在无 BAR 解析错误且存在非零 BAR 时形成 BAR 证据。
+3. DMA、IRQ、PHY link 始终保持未验证状态，PCI 枚举不会直接解除 GMAC activation blocker。
+
+### 已完成
+
+- [x] 新增 `evidence_from_pci_snapshot`，连接 `PciConfigSnapshot` 与 GMAC activation contract。
+- [x] 增加匹配快照和 vendor/BAR 错误快照测试，验证静态证据不会越权。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path components/wateros-driver/driver-impl/impl-loongson2k1000la/Cargo.toml --lib gmac::tests`：5 项通过。
+- `cargo check --manifest-path components/wateros-driver/driver-impl/impl-loongson2k1000la/Cargo.toml --target loongarch64-unknown-none`：通过。
+- `UNVERIFIED_ON_HARDWARE`：vendor/device、BAR 真实性、PCIe link、DMA descriptor ownership、IRQ 路由、MDIO/PHY 和收发链路仍需目标板；本适配器只产生静态只读证据。
+
+### 提交
+
+- 待提交：`[feat] derive gmac evidence from pci snapshot`
