@@ -7117,3 +7117,28 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[fix] make loongson time fallback explicit`
+
+## 2026-08-10：批次 175——收紧 2K1000LA MMC MMIO 窗口边界
+
+### 本批任务与设计
+
+1. 审计 MMC：现有 `Host::preflight`、时钟配置、非数据命令轮询和 fake-register 故障矩阵已经存在；不能再添加绕过 `HostPreflightAuthority`/`ControllerPrerequisiteProof` 的启动入口。
+2. 将真实控制器窗口的基址、对齐和最小长度检查提取为纯函数，供 volatile 后端和 host 测试共用。
+3. 保持默认不激活：拓扑发现仍只生成 deferred plan，实际 MMIO 仍需显式 `unsafe` 权限和实机证据。
+
+### 已完成
+
+- [x] 新增 `validate_controller_region`，拒绝空基址、非 4 字节对齐和小于 0x68 的窗口。
+- [x] `VolatileRegisters::from_region` 复用该校验，避免构造路径和拓扑路径出现边界漂移。
+- [x] 增加 fake/纯逻辑边界测试；未改变真实控制器激活策略。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path components/wateros-driver/driver-impl/impl-loongson2k1000la/Cargo.toml --lib`：194 项通过。
+- `cargo check --manifest-path components/wateros-driver/driver-impl/impl-loongson2k1000la/Cargo.toml --target loongarch64-unknown-none`：通过。
+- 既有 3 个 dead-code warning 保持不变，未扩大本批风险范围。
+- `UNVERIFIED_ON_HARDWARE`：控制器寄存器实际映射、复位自清、命令响应字序、DMA/IRQ/电源和 SD 卡收发仍未在物理板验证；本批没有宣称 MMC 已可启动。
+
+### 提交
+
+- 待提交：`[fix] validate loongson mmc register window`

@@ -216,6 +216,15 @@ pub trait RegisterIo {
 }
 
 /// Raw volatile access to the topology-validated MMC controller window.
+pub fn validate_controller_region(region : MmioRegion) -> Result<(), MmcError> {
+    if region.base == 0 || region.base % 4 != 0 || region.size < MIN_CONTROLLER_WINDOW {
+        Err(MmcError::RegisterOutOfRange)
+    } else {
+        Ok(())
+    }
+}
+
+/// Raw volatile access to the topology-validated MMC controller window.
 #[cfg(target_arch = "loongarch64")]
 pub struct VolatileRegisters {
     base : *mut u8,
@@ -233,9 +242,7 @@ impl VolatileRegisters {
     /// `region` must be mapped device memory and exclusively owned for the
     /// lifetime of this backend. Physical behavior is UNVERIFIED_ON_HARDWARE.
     pub unsafe fn from_region(region : MmioRegion) -> Result<Self, MmcError> {
-        if region.base == 0 || region.base % 4 != 0 || region.size < MIN_CONTROLLER_WINDOW {
-            return Err(MmcError::RegisterOutOfRange);
-        }
+        validate_controller_region(region)?;
         Ok(Self { base : region.base as *mut u8,
                   size : region.size })
     }
@@ -4275,6 +4282,22 @@ mod tests {
                              fail_write : None,
                              ignore_control_write : false,
                              ignore_interrupt_enable_write : false }
+    }
+
+    #[test]
+    fn controller_region_validation_is_fail_closed() {
+        assert_eq!(validate_controller_region(MmioRegion { base : 0,
+                                                           size : MIN_CONTROLLER_WINDOW }),
+                   Err(MmcError::RegisterOutOfRange));
+        assert_eq!(validate_controller_region(MmioRegion { base : 0x1000_0002,
+                                                           size : MIN_CONTROLLER_WINDOW }),
+                   Err(MmcError::RegisterOutOfRange));
+        assert_eq!(validate_controller_region(MmioRegion { base : 0x1000_0000,
+                                                           size : MIN_CONTROLLER_WINDOW - 1 }),
+                   Err(MmcError::RegisterOutOfRange));
+        assert!(validate_controller_region(MmioRegion { base : 0x1000_0000,
+                                                        size : MIN_CONTROLLER_WINDOW })
+                    .is_ok());
     }
 
     fn command_host(registers : MockRegisters) -> Host<MockRegisters, CommandReady> {
