@@ -4961,3 +4961,52 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] report LS2K1000 read recovery evidence`
+
+## 2026-08-10：批次 102——持久化 read coordinator 独占生命周期
+
+### 本批任务与设计
+
+1. 为跨 trap/worker 的 deferred read 增加 production 可编译的 single-publication slot，但不连接真实硬件 activation。
+2. 复用已验证的原子 `DiagnosticRuntimeSlot`，以 RAII reservation 防止半初始化状态和并发重复发布。
+3. 用 transaction/generation 守卫 Reserved→Published→Rechecking→RecoveryRecorded 转换；迟到 worker 不得修改新事务。
+4. slot 只保存无借用的协调元数据和拥有所有权的 recovery report，不保存带 MMIO/DMA 借用的 session。
+5. 正常完成/取消必须显式 release；已记录的线性 recovery report 只能 take，普通 release 不得静默丢弃 evidence。
+
+### 已完成
+
+- [x] 新增 production 模块 `read_coordinator` 与 `ReadCoordinatorSlot`，底层复用 EMPTY/RESERVED/LIVE/SERVICING/DRAINING 原子协议。
+- [x] 新增 `ReadCoordinatorReservation`；reservation 未 commit 即 drop 会恢复 Empty，commit 后其他 reserve 返回 Reserved/AlreadyLive/Busy。
+- [x] 新增 `ReadCoordinatorPhase::{Reserved,Published,Rechecking,RecoveryRecorded}` 与可复制 `ReadCoordinatorSnapshot`。
+- [x] `mark_published` 拒绝零 poll budget，并只允许同 transaction 的 Reserved 状态单向转换。
+- [x] `record_recheck` 校验 `remaining + polls_completed == poll_budget`，wrong generation/phase/progress 全部保持 live state 不变。
+- [x] `record_recovery` 将完整 `ReadRecoveryReport` 移入 slot；失败通过 must-use `RecordRecoveryFailure` 返还原线性 report。
+- [x] snapshot 只暴露 cause、partial bits 与 receipt presence，不复制 `AcknowledgedIrq`。
+- [x] `take_recovery` 只接受同 generation 的 RecoveryRecorded 状态，成功移动 report 并重新开放 slot。
+- [x] `release` 支持发布前取消和正常完成，wrong generation 恢复 Live；RecoveryRecorded 返回 `RecoveryMustBeTaken`，禁止丢弃证据。
+- [x] 模块明确不执行 MMC publish、DMA start、MMIO 或 IRQ rearm，真实激活安全门保持关闭。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 170 项全部通过；新增 reservation/reentry、跨 worker 状态、线性 recovery take 3 项。
+- reservation 期间第二次 reserve 精确返回 Reserved；drop 后可重新 reserve，commit 后其他 transaction 返回 AlreadyLive。
+- 同代 Published(budget=4) 可记录 Rechecking(remaining=4,polls=0)；budget=3 的不一致 recheck 被拒绝且原 snapshot 保持。
+- stale generation 的 publish/release 均返回 expected/actual transaction；失败 drain 自动恢复 Live，正确 generation 随后可 release。
+- wrong-generation recovery record 返还原 report；正确 fault report 入 slot 后 snapshot 保留 partial `CSENT` 和 RecheckFault 摘要。
+- RecoveryRecorded 不能通过 release 清除；`take_recovery` 移出原 report 后 slot 回到 Empty，并能为下一 generation reserve。
+- production 组件 test/check、RISC-V `make check` 与 LoongArch64 `make kernel-la` 全部通过；仅有仓库既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过；dtc warning 来自预期畸形输入。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：worker 调度、trap 并发与迟到 IRQ 时序尚未在 2K1000LA 实机验证，slot 不能作为 rearm 许可。
+- [ ] slot 当前持久化 recheck 的 generation/budget/progress 元数据，不拥有实际 `BoundedMmcReadRecheck` token；调用层仍需线性保存该 token。
+- [ ] 带借用的 Published DMA session 不能放入 `'static` slot；production 尚需定义拥有 DMA mapping/channel 的请求对象或专用 worker ownership。
+- [ ] snapshot 的 receipt booleans 仅供诊断，实际 `AcknowledgedIrq` 只在 `take_recovery` 返回的 report 中可用。
+- [ ] 当前没有 scheduler wake/backoff/deadline 接口；Published/Rechecking 转换由调用者显式驱动。
+- [ ] success completion 尚无同类 report；调用方确认两路 completion 并处理 mappings 后才能调用 release，slot 本身无法验证该事实。
+- [ ] production diagnostic runtime 仍未构造 APBDMA owner，真实 MMC publish permit、status decoder、activation 和 block completion 回调均关闭。
+- [ ] 下一批应增加 read coordinator 的独占 service lease，使实际 `BoundedMmcReadRecheck` token 能进入/离开 worker service 而不让 slot 暂时 Vacant，并覆盖 service panic/drop/重入恢复。
+
+### 提交
+
+- 本批计划提交：`[feat] persist LS2K1000 read coordinator state`

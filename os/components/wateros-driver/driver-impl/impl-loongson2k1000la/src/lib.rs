@@ -19,6 +19,7 @@ pub mod irq_plan;
 pub mod cpu_parent;
 pub mod diagnostic_slot;
 pub mod diagnostic_irq;
+pub mod read_coordinator;
 pub mod liointc;
 pub mod mmc;
 pub mod mmc_diagnostic;
