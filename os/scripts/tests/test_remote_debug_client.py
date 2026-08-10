@@ -20,10 +20,14 @@ class RemoteDebugClientTests(unittest.TestCase):
         def server() -> None:
             with server_socket:
                 server_socket.sendall(
-                    b"WaterOS development monitor\r\nType 'help' for commands.\r\nwos> "
+                    b"WaterOS development monitor\r\n"
+                    b"protocol=1 auth=none encryption=none hardware=unverified\r\n"
+                    b"Type 'help' for commands.\r\nwos> "
                 )
                 stream = server_socket.makefile("rb")
                 responses = {
+                    b"hello\n": b"protocol=1 hardware=unverified\r\nwos> ",
+                    b"capabilities\n": b"readonly=true auth=none\r\nwos> ",
                     b"ping\n": b"pong\r\nwos> ",
                     b"status\n": (
                         b"tick=7 online_cpus=0x1 heap_used=8 heap_free=9 "
@@ -41,8 +45,10 @@ class RemoteDebugClientTests(unittest.TestCase):
         client = MonitorClient(client_socket)
         try:
             results = run_smoke(client)
-            self.assertEqual([result.command for result in results],
-                             ["ping", "status", "version", "quit"])
+            self.assertEqual(
+                [result.command for result in results],
+                ["hello", "capabilities", "ping", "status", "version", "quit"],
+            )
         finally:
             client.close()
             thread.join(timeout=2)
@@ -72,7 +78,9 @@ class RemoteDebugClientTests(unittest.TestCase):
                 ready, _ = listener.accept()
                 with ready:
                     ready.sendall(
-                        b"WaterOS development monitor\r\nType 'help' for commands.\r\nwos> "
+                        b"WaterOS development monitor\r\n"
+                        b"protocol=1 auth=none encryption=none hardware=unverified\r\n"
+                        b"Type 'help' for commands.\r\nwos> "
                     )
 
         thread = threading.Thread(target=server)

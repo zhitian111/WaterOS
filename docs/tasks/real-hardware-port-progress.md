@@ -1660,3 +1660,27 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - [x] 通过 QMP `query-commands` 确认 `input-send-event`，并发送按键按下/释放事件；QEMU 11.0.2 实测通过。
 - [x] 单测覆盖 QMP 命令构造；HMP 与 QMP smoke 均通过。
 - `UNVERIFIED_ON_HARDWARE`：该结果只证明 QEMU virtio-input 模型和 QMP 注入通道可用，尚未证明 WaterOS guest 驱动枚举、evdev 记录读取或真实板卡 USB/HID 中断链路。
+
+## 2026-08-10：批次 45——远程调试协议 loopback 回归
+
+### 任务与设计
+
+1. 审计发现 remote-debug 客户端已支持协议版本、能力和只读 smoke，但其 Python fixture 仍使用旧 banner/命令顺序，不能证明当前协议。
+2. 更新 socketpair 与 TCP listener fixture，使其模拟当前 `protocol=1 auth=none encryption=none hardware=unverified` banner、`hello`、`capabilities`、`ping/status/version` 和 `quit`。
+3. 保持 loopback 测试不伪装成真实 kernel/QEMU guest；生产服务仍是无认证、无加密的受信网络 bring-up 工具，QEMU 端口只允许 loopback 转发。
+
+### 完成内容
+
+- [x] 修复 remote-debug 客户端完整会话 fixture 与当前协议契约不一致的问题。
+- [x] 覆盖连接转发先接受后关闭、客户端重试并等待 guest ready 的路径。
+- [x] 保留 QEMU 端到端脚本 `remote_debug_qemu_smoke.py`，要求实际 kernel 与 sdcard 存在才执行。
+
+### 验证证据与限制
+
+- `python3 os/scripts/tests/test_remote_debug_client.py`：3 项通过。
+- `python3 os/scripts/tests/test_qemu_run.py`：10 项通过。
+- `UNVERIFIED_ON_HARDWARE`：本批为 host TCP loopback；完整 QEMU guest remote-debug 仍需构建可启动 WaterOS kernel/root image，真实板卡网络、权限与断线恢复仍待验证。
+
+### 提交
+
+- `[test] refresh remote debug protocol fixtures`
