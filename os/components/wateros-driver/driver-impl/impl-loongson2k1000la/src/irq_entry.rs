@@ -75,7 +75,7 @@ mod tests {
     fn topology(controllers : alloc::vec::Vec<InterruptControllerDescription>)
                 -> BoardTopology {
         BoardTopology { uarts : vec![], interrupt_controllers : controllers,
-                        mmc_hosts : vec![], dma_controllers : vec![] }
+                        mmc_hosts : vec![], dma_controllers : vec![], networks : vec![] }
     }
 
     #[test]

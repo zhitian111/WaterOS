@@ -102,6 +102,17 @@ pub struct DmaControllerDescription {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkDescription {
+    pub bus : u8,
+    pub device : u8,
+    pub function : u8,
+    pub interrupts : Vec<InterruptSpec>,
+    pub interrupt_names : Vec<String>,
+    pub phy_mode : Option<String>,
+    pub phy_handle : Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceSpecifier {
     pub provider_phandle : u32,
     pub args : Vec<u32>,
@@ -142,6 +153,7 @@ pub struct BoardTopology {
     pub interrupt_controllers : Vec<InterruptControllerDescription>,
     pub mmc_hosts : Vec<MmcDescription>,
     pub dma_controllers : Vec<DmaControllerDescription>,
+    pub networks : Vec<NetworkDescription>,
 }
 
 /// Coarse capability state exposed to bring-up diagnostics. Discovery is not
@@ -190,7 +202,7 @@ impl BoardTopology {
             dma : state(self.dma_controllers.len(), true),
             // No LA DTB network/input parser or target-board implementation is
             // registered yet; do not infer support from unrelated QEMU drivers.
-            network : CapabilityState::Unsupported,
+            network : state(self.networks.len(), true),
             input : CapabilityState::Unsupported,
         }
     }
@@ -211,6 +223,20 @@ fn has_compatible(node : fdt::node::FdtNode<'_, '_>, expected : &str) -> bool {
                     .any(|item| item == expected.as_bytes())
         })
         .unwrap_or(false)
+}
+
+fn pci_function(node : fdt::node::FdtNode<'_, '_>) -> DriverResult<(u8, u8, u8)> {
+    let raw = node.property("reg").ok_or(DriverError::InvalidDtb)?.value;
+    if raw.len() < 20 || raw.len() % 4 != 0 { return Err(DriverError::InvalidDtb); }
+    let first = read_be_u32(raw, 0).ok_or(DriverError::InvalidDtb)?;
+    Ok(((first >> 16) as u8, ((first >> 11) & 0x1f) as u8, ((first >> 8) & 7) as u8))
+}
+
+fn optional_string(node : fdt::node::FdtNode<'_, '_>, name : &str)
+                    -> DriverResult<Option<String>> {
+    let Some(raw) = node.property(name).map(|property| property.value) else { return Ok(None); };
+    let value = raw.strip_suffix(&[0]).ok_or(DriverError::InvalidDtb)?;
+    Ok(Some(String::from(core::str::from_utf8(value).map_err(|_| DriverError::InvalidDtb)?)))
 }
 
 fn string_list<'b, 'a : 'b>(node : fdt::node::FdtNode<'b, 'a>,
@@ -640,12 +666,27 @@ pub fn discover(fdt : &fdt::Fdt<'_>) -> DriverResult<BoardTopology> {
     let mut topology = BoardTopology { uarts : Vec::new(),
                                        interrupt_controllers : Vec::new(),
                                        mmc_hosts : Vec::new(),
-                                       dma_controllers : Vec::new() };
+                                       dma_controllers : Vec::new(),
+                                       networks : Vec::new() };
     for node in fdt.all_nodes() {
         if !enabled(node)? {
             continue;
         }
-        if has_compatible(node, "loongson,liointc-2.0") {
+        if node.name.starts_with("ethernet@") {
+            let (bus, device, function) = pci_function(node)?;
+            if device != 3 { continue; }
+            let interrupts = interrupt_specs(node)?;
+            if interrupts.is_empty() { return Err(DriverError::InvalidDtb); }
+            let interrupt_names = match node.property("interrupt-names") {
+                Some(_) => string_list(node, "interrupt-names")?.into_iter().map(String::from).collect(),
+                None => Vec::new(),
+            };
+            topology.networks.push(NetworkDescription {
+                bus, device, function, interrupts, interrupt_names,
+                phy_mode : optional_string(node, "phy-mode")?,
+                phy_handle : property_u32(node, "phy-handle"),
+            });
+        } else if has_compatible(node, "loongson,liointc-2.0") {
             let regs = regions(node)?;
             let names = string_list(node, "reg-names")?;
             if !(2..=5).contains(&regs.len()) ||
@@ -808,7 +849,8 @@ mod tests {
                                               }],
                                   interrupt_controllers : Vec::new(),
                                   mmc_hosts : Vec::new(),
-                                  dma_controllers : Vec::new() };
+                                  dma_controllers : Vec::new(),
+                                  networks : Vec::new() };
         let snapshot = topology.capability_snapshot();
         assert_eq!(snapshot.uart_count, 1);
         assert_eq!(snapshot.uart, CapabilityState::DeferredActivation);

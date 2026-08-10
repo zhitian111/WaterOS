@@ -789,7 +789,7 @@ mod tests {
 
     fn board(descriptions : Vec<InterruptControllerDescription>) -> BoardTopology {
         BoardTopology { uarts : vec![], interrupt_controllers : descriptions,
-                        mmc_hosts : vec![], dma_controllers : vec![] }
+                        mmc_hosts : vec![], dma_controllers : vec![], networks : vec![] }
     }
 
     #[test]

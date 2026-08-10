@@ -206,7 +206,7 @@ mod tests {
         BoardTopology { uarts : vec![],
                         interrupt_controllers : controllers,
                         mmc_hosts : vec![],
-                        dma_controllers : vec![] }
+                        dma_controllers : vec![], networks : vec![] }
     }
 
     fn spec(provider : u32, local : u32, trigger : u32) -> InterruptSpec {

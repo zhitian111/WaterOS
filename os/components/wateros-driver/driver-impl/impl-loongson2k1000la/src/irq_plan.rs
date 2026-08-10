@@ -284,6 +284,7 @@ mod tests {
                 card_detect : CardDetect::NonRemovable,
                 vmmc_supply : None, vqmmc_supply : None,
             }],
+            networks : vec![],
             dma_controllers : vec![DmaControllerDescription {
                 phandle : 20,
                 mmio : MmioRegion { base : 0x4000, size : 8 },

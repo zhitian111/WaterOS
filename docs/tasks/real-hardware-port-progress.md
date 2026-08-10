@@ -6350,3 +6350,26 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] add optional aux data partition`
+
+## 2026-08-10：批次 144——接入 2K1000LA GMAC 的 DTB 发现契约
+
+### 本批任务与设计
+
+1. 审计 2K1000LA 网络 bring-up；本批只做真实 GMAC/PHY 的 DTB 发现，不伪造寄存器初始化。
+2. 解析 `ethernet@3,*` 的 PCI function、interrupts、interrupt-names、phy-mode 和 phy-handle。
+3. 将网络能力从恒定 `Unsupported` 改为发现后的 `DeferredActivation`。
+
+### 已完成
+
+- [x] 新增 `NetworkDescription`，提取 PCI bus/device/function 和中断/PHY 拓扑证据。
+- [x] capability snapshot 反映网络节点数量，但不注册网络设备或触碰 GMAC MMIO。
+- [x] host 单测 186 项、LoongArch64 target `cargo check` 通过。
+
+### 验证证据与限制
+
+- 上游 2K1000 DTS 将 GMAC0/1 描述为 PCI device 3 的 function 0/1；实现仅消费拓扑字段。
+- `UNVERIFIED_ON_HARDWARE`：PCIe ECAM、BAR、DMA、MDIO/PHY、IRQ 和真实收发均未验证。
+
+### 提交
+
+- 本批计划提交：`[feat] add loongson gmac discovery contract`
