@@ -4,7 +4,9 @@ use core::ptr::{read_volatile, write_volatile};
 
 
 const PLIC_BASE: usize = 0x0c00_0000;
-const PLIC_ENABLE_BASE: usize = 0x0020_0000;
+// QEMU virt PLIC layout: priority 0x0, pending 0x1000, per-context enables
+// at 0x2000, and per-context threshold/claim at 0x200000.
+const PLIC_ENABLE_BASE: usize = 0x0000_2000;
 const PLIC_CONTEXT_BASE: usize = 0x0020_0000;
 const PLIC_CONTEXT_STRIDE: usize = 0x1000;
 const PLIC_ENABLE_STRIDE: usize = 0x80;

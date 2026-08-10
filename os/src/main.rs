@@ -282,8 +282,10 @@ mod qemu_riscv64_opensbi {
 
         bringup_driver_and_user();
         driver::interrupt::freeze();
-        platform::init_external_irq();
-        platform::arch::interrupt::enable_external_interrupt();
+        // Device IRQ controller bring-up is deferred until the platform MMIO
+        // mapping and a real VirtIO handler are installed.  Enabling it here
+        // would claim an unmapped PLIC context during the legacy synchronous
+        // block path.
         #[cfg(feature = "stall-debug")]
         crate::stall_debug::start();
         #[cfg(feature = "dashboard-debug")]
@@ -418,8 +420,8 @@ mod qemu_loongarch64_virt {
 
         bringup_driver_and_user();
         driver::interrupt::freeze();
-        platform::init_external_irq();
-        platform::arch::interrupt::enable_external_interrupt();
+        // See the RISC-V path above: keep external IRQs disabled until the
+        // asynchronous block phase owns the controller and its MMIO mapping.
         #[cfg(feature = "stall-debug")]
         crate::stall_debug::start();
         #[cfg(feature = "dashboard-debug")]

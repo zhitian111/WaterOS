@@ -1397,3 +1397,19 @@ codegraph explore "driver-api irq registry register_handler dispatch trap extern
 ```bash
 codegraph explore "driver IrqLine MachineDriver init_after_boot trap SupervisorExternal RISC-V sie PLIC LoongArch CPUIC EIOINTC PCH-PIC PCI interrupt-map exact source callers"
 ```
+
+## IRQ-01C：启动回归与链路审计
+
+状态：平台控制器暂不在启动阶段启用（2026-08-10）
+
+线上参数的 RISC-V `-snapshot` 全量运行在约 11 分钟后停在 cagent 前置阶段；日志同时
+记录了 `cpu=5` 的 `StorePageFault`，`fault_addr=0xc20b000`。该地址正是 PLIC
+supervisor context（hart 5）区域，说明当前内核的设备映射尚未覆盖 PLIC context，直接
+写 threshold/claim 会触发内核页故障。此前的 `PLIC_ENABLE_BASE` 也曾误写为
+`0x200000`，已修正为 QEMU virt 的 `0x2000`；但在 MMIO 映射和 VirtIO handler 完成
+前仍不能打开外部线。
+
+因此保留 registry、trap 分支和控制器代码供下一阶段使用，启动路径暂时只冻结 registry，
+不调用 `init_external_irq` 或 `enable_external_interrupt`，先恢复同步 block 基线。下一步
+必须先在平台 MMIO 映射层增加 PLIC/EIOINTC/PCH-PIC 区域并做无设备 handler 的 claim/
+complete 冒烟，再进入单请求中断等待；不能把“代码可编译”当作控制器已可运行。
