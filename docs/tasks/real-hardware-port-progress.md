@@ -7142,3 +7142,27 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[fix] validate loongson mmc register window`
+
+## 2026-08-10：批次 176——增加 2K1000LA PCIe ECAM 只读访问后端
+
+### 本批任务与设计
+
+1. 审计确认 GMAC 目前仅有 DTB 描述和 fake `ConfigReader`，没有可复用的真实 ECAM 读取层。
+2. 新增由 DTB `MmioRegion` 提供窗口的只读 volatile reader；绝不写 PCI 配置空间，越界读取返回全 1 并被解释为设备不存在。
+3. 不在启动流程自动探测或启用 GMAC，继续要求 PCI identity、BAR、DMA、IRQ 和 PHY 的独立实机证据。
+
+### 已完成
+
+- [x] `VolatileConfigReader::from_region` 校验非空、4 KiB 对齐和最小可读窗口。
+- [x] `probe_volatile` 复用现有 ECAM 地址编码和只读 identity/class 解码。
+- [x] 增加无效窗口边界单测；真实 MMIO 仍由 `unsafe` 调用方承担映射与独占责任。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path components/wateros-driver/driver-impl/impl-loongson2k1000la/Cargo.toml --lib pci::tests`：5 项通过。
+- `cargo check --manifest-path components/wateros-driver/driver-impl/impl-loongson2k1000la/Cargo.toml --target loongarch64-unknown-none`：通过。
+- `UNVERIFIED_ON_HARDWARE`：ECAM 基址/映射属性、PCI vendor/device、BAR 分配、PCIe link、GMAC DMA/PHY/IRQ 和真实收发仍需 2K1000LA 板验证；本批只提供只读探测能力。
+
+### 提交
+
+- 待提交：`[feat] add loongson pci ecam reader`
