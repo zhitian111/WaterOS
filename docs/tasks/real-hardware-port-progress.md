@@ -2260,6 +2260,25 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - 小镜像的串口已显示 monitor listening，但 remote-debug smoke 的宿主 TCP 转发仍连接拒绝；同时小镜像不含 `/glibc/cagent_testcode.sh`，其 NotFound 属于镜像内容限制，不是启动链路失败。网络转发和完整用户工作负载保持 `UNVERIFIED_ON_HARDWARE`。
 - `UNVERIFIED_ON_HARDWARE`：实体板上的 SD/eMMC 时序、真实 DMA/cache coherency、网络 PHY 和设备热插拔仍未验证。
 
+## 2026-08-10：批次 88——devfs 字符设备动态注销回归
+
+### 任务与设计
+
+1. 复查 driver topology generation 与 devfs `ensure_fresh` 的关系，确认设备注销后节点表和路径绑定都会重建。
+2. 现有 input 设备已经覆盖注册/注销；本批补齐字符设备（UART/serial alias）的动态路径回归。
+3. 保持驱动负责先停止硬件 I/O，再调用注销 API；devfs 只负责 generation 感知和快照重建。
+
+### 完成内容
+
+- [x] 新增内存字符设备测试替身，注册后验证 `/dev/ttyS<slot>` 节点和 lookup 绑定。
+- [x] 注销后验证旧节点和 lookup 均消失，重复注销返回 false；不复用旧 slot 的约束继续由字符 API 保证。
+- [x] 保持 input 动态 event 节点和 block partition 节点的既有稳定索引语义。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path components/wateros-fs/fs-devfs/devfs-impl/impl-kernel/Cargo.toml --lib`：3 项通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 UART/输入控制器停止顺序、中断屏蔽、DMA drain 和拔插事件仍需实体板；本批验证的是注销通知后的软件 `/dev` 一致性。
+
 ## 2026-08-10：批次 86——小镜像 remote-debug guest 生命周期诊断
 
 ### 任务与设计

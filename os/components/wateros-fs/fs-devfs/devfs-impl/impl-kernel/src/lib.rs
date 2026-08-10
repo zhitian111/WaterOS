@@ -297,6 +297,8 @@ impl DevFsManager for KernelDevFsManager {
 mod tests {
     use super::*;
     use alloc::{boxed::Box, string::String, sync::Arc};
+    use driver_character_api_v0::{register_character_device, unregister_character_device,
+                                 CharacterDevice, CharacterDeviceKind, CharacterDriverResult};
     use driver_input_api_v0::{register_input_device, unregister_input_device, InputDevice,
                               InputDeviceInfo, InputDeviceKind, RawInputEvent};
     use std::sync::Mutex as TestMutex;
@@ -307,6 +309,19 @@ mod tests {
         fn pop_event(&mut self) -> driver_input_api_v0::DriverResult<Option<RawInputEvent>> {
             Ok(None)
         }
+    }
+
+    struct EmptyCharacter;
+    impl CharacterDevice for EmptyCharacter {
+        fn read(&mut self, _buf : &mut [u8]) -> CharacterDriverResult<usize> {
+            Ok(0)
+        }
+
+        fn write(&mut self, buf : &[u8]) -> CharacterDriverResult<usize> {
+            Ok(buf.len())
+        }
+
+        fn device_kind(&self) -> CharacterDeviceKind { CharacterDeviceKind::Serial }
     }
     #[test]
     fn input_slot_has_stable_event_node_until_unregister() {
@@ -362,6 +377,24 @@ mod tests {
         assert!(!manager.list_nodes().iter().any(|node| node.path == old_path));
         assert!(manager.list_nodes().iter().any(|node| node.path == new_path));
         assert!(unregister_input_device(new_index));
+    }
+
+    #[test]
+    fn character_unregister_removes_tty_alias_and_binding() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let device = Arc::new(Mutex::new(Box::new(EmptyCharacter)
+                                         as Box<dyn CharacterDevice>));
+        let index = register_character_device(device);
+        let path = format!("/dev/ttyS{index}");
+        let mut manager = KernelDevFsManager;
+        manager.refresh();
+        assert!(manager.list_nodes().iter().any(|node| node.path == path));
+        assert!(manager.lookup_character_device(&path).is_ok());
+
+        assert!(unregister_character_device(index));
+        assert!(!manager.list_nodes().iter().any(|node| node.path == path));
+        assert!(manager.lookup_character_device(&path).is_err());
+        assert!(!unregister_character_device(index));
     }
 }
 
