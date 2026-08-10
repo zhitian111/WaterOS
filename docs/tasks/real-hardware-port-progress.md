@@ -6190,3 +6190,29 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] add atomic VFS device snapshots`
+
+## 2026-08-10：批次 138——补充 `/dev` 节点设备号与权限元数据
+
+### 本批任务与设计
+
+1. 审计 kernel/simple devfs 与 VFS snapshot 的节点结构，确认当前只有 path/type，无法表达设备号和权限。
+2. 为 devfs/VFS 节点增加可选 `major`、`minor` 与 `mode` 字段；未有平台真实号段时保持 `None`，不伪造 Linux 设备号。
+3. 为块设备、字符设备、伪节点和 DT 占位节点设置明确的默认权限，并透传到 FsBridge 原子快照。
+4. 用 input/block 动态节点 host 测试和双架构编译门禁验证兼容性。
+
+### 已完成
+
+- [x] kernel/simple/dummy devfs 节点模型增加 major/minor/mode 元数据。
+- [x] VFS `VfsDevNode` 与 snapshot 透传元数据；旧路径/type 查询保持兼容。
+- [x] 设备节点默认权限：普通设备 `0660`、伪字符节点 `0666`、DT 占位节点 `0444`。
+- [x] input 动态节点和 simple block 节点测试断言权限及未知号段为 `None`。
+- [x] `make check EXTRA_FEATURES=remote-debug-monitor`、`make kernel-la` 通过；devfs API host 编译测试通过。
+
+### 验证证据与限制
+
+- 目前 major/minor 为 `None` 是有意的保守语义；真实控制器驱动接入后需分配稳定号段并补充 ABI 测试。
+- `UNVERIFIED_ON_HARDWARE`：真实 udev/权限策略、USB/PS2/virtio-input 热插拔和板上设备号兼容性仍待目标板验证。
+
+### 提交
+
+- 本批计划提交：`[feat] expose dev node metadata`

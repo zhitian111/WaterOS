@@ -30,6 +30,12 @@ pub struct DevNode {
     pub path: String,
     /// 节点类型。
     pub node_type: DevNodeType,
+    /// Linux-style major number when the platform driver provides one.
+    pub major: Option<u32>,
+    /// Linux-style minor number when the platform driver provides one.
+    pub minor: Option<u32>,
+    /// Node permission bits (file type bits are kept outside this view).
+    pub mode: u16,
 }
 
 /// DevFS 管理器：刷新节点表、登记 DTB 占位路径、注册/查找块设备。

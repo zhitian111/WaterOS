@@ -32,6 +32,12 @@ pub struct DevNode {
     pub path: String,
     /// 节点类型。
     pub node_type: DevNodeType,
+    /// Linux-style major number, if known to this simplified backend.
+    pub major: Option<u32>,
+    /// Linux-style minor number, if known to this simplified backend.
+    pub minor: Option<u32>,
+    /// Permission bits for the node.
+    pub mode: u16,
     /// 在驱动枚举中的块设备索引。
     pub index: usize,
 }
@@ -64,6 +70,9 @@ fn push_node(nodes: &mut Vec<DevNode>, path: String, index: usize) {
         path,
         node_type: DevNodeType::Block,
         index,
+        major: None,
+        minor: None,
+        mode: 0o660,
     });
 }
 
@@ -182,7 +191,12 @@ mod tests {
         let path = list_nodes()
             .into_iter()
             .find(|node| node.index == index && node.path.starts_with("/dev/vd"))
-            .map(|node| node.path)
+            .map(|node| {
+                assert_eq!(node.mode, 0o660);
+                assert_eq!(node.major, None);
+                assert_eq!(node.minor, None);
+                node.path
+            })
             .expect("new disk should appear without explicit refresh");
         assert!(lookup_block_device(path.as_str()).is_ok());
         assert!(generation() > before);

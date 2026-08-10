@@ -75,6 +75,9 @@ fn push_block_alias(inner: &mut DevFsImpl, path: String, dev: SharedBlockDevice)
     inner.nodes.push(api_v0::DevNode {
         path: path.clone(),
         node_type: api_v0::DevNodeType::Block,
+        major: None,
+        minor: None,
+        mode: 0o660,
     });
     inner.block_bindings.push((path, dev));
 }
@@ -88,6 +91,9 @@ fn push_char_alias(inner: &mut DevFsImpl, path: String, dev: SharedCharacterDevi
     inner.nodes.push(api_v0::DevNode {
         path: path.clone(),
         node_type: api_v0::DevNodeType::Character,
+        major: None,
+        minor: None,
+        mode: 0o660,
     });
     inner.character_bindings.push((path, dev));
 }
@@ -168,6 +174,9 @@ impl DevFsManager for KernelDevFsManager {
                 inner.nodes.push(api_v0::DevNode {
                     path: String::from(path),
                     node_type: api_v0::DevNodeType::Character,
+                    major: None,
+                    minor: None,
+                    mode: 0o666,
                 });
             }
         }
@@ -176,6 +185,9 @@ impl DevFsManager for KernelDevFsManager {
             inner.nodes.push(api_v0::DevNode {
                 path,
                 node_type: api_v0::DevNodeType::Unsupported,
+                major: None,
+                minor: None,
+                mode: 0o444,
             });
         }
         inner.synced_generation = observed_generation;
@@ -221,6 +233,9 @@ impl DevFsManager for KernelDevFsManager {
             inner.nodes.push(api_v0::DevNode {
                 path: path.to_string(),
                 node_type: api_v0::DevNodeType::Block,
+                major: None,
+                minor: None,
+                mode: 0o660,
             });
             inner.view_generation = inner.view_generation.wrapping_add(1);
         }
@@ -257,6 +272,9 @@ impl DevFsManager for KernelDevFsManager {
             inner.nodes.push(api_v0::DevNode {
                 path: path.to_string(),
                 node_type: api_v0::DevNodeType::Character,
+                major: None,
+                minor: None,
+                mode: 0o660,
             });
             inner.view_generation = inner.view_generation.wrapping_add(1);
         }
@@ -319,7 +337,11 @@ mod tests {
         assert!(manager.list_nodes().iter().any(|node| node.path == path));
         let (registered_generation, registered_nodes) = snapshot();
         assert!(registered_generation > before);
-        assert!(registered_nodes.iter().any(|node| node.path == path));
+        let registered_node = registered_nodes.iter().find(|node| node.path == path)
+                                                   .expect("input node metadata should exist");
+        assert_eq!(registered_node.mode, 0o660);
+        assert_eq!(registered_node.major, None);
+        assert_eq!(registered_node.minor, None);
         assert!(manager.lookup_character_device(&path).is_ok());
         assert!(unregister_input_device(index));
         assert!(!manager.list_nodes().iter().any(|node| node.path == path));

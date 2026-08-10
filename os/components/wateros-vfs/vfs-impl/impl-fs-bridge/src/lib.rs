@@ -1165,12 +1165,18 @@ fn fs_dev_snapshot() -> VfsDevSnapshot {
                                          VfsDevNodeType::Unsupported
                                      },
                                  },
+                                 major : n.major,
+                                 minor : n.minor,
+                                 mode : n.mode,
                              })
                              .collect::<Vec<VfsDevNode>>();
     for path in ["/dev/zero", "/dev/urandom", "/dev/random"] {
         if !nodes.iter().any(|node| node.path == path) {
             nodes.push(VfsDevNode { path : String::from(path),
-                                    node_type : VfsDevNodeType::Character });
+                                    node_type : VfsDevNodeType::Character,
+                                    major : None,
+                                    minor : None,
+                                    mode : 0o666 });
         }
     }
     VfsDevSnapshot { generation, nodes }

@@ -21,6 +21,12 @@ pub struct VfsDevNode {
     pub path: String,
     /// 块/字符设备等粗分类。
     pub node_type: VfsDevNodeType,
+    /// Linux-style major number, when supplied by the driver.
+    pub major: Option<u32>,
+    /// Linux-style minor number, when supplied by the driver.
+    pub minor: Option<u32>,
+    /// Permission bits for the device node.
+    pub mode: u16,
 }
 
 /// Generation and nodes captured as one VFS device-directory view.
@@ -71,7 +77,10 @@ mod tests {
     impl VfsDevInventory for TestInventory {
         fn list_dev_nodes(&self) -> Vec<VfsDevNode> {
             vec![VfsDevNode { path : String::from("/dev/test"),
-                              node_type : VfsDevNodeType::Character }]
+                              node_type : VfsDevNodeType::Character,
+                              major : None,
+                              minor : None,
+                              mode : 0o660 }]
         }
 
         fn devfs_generation(&self) -> u64 { 7 }
