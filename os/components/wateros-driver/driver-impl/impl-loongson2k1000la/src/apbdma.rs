@@ -897,6 +897,33 @@ mod tests {
         }
     }
 
+    struct MockMmcCompletionRegisters {
+        interrupts : u32,
+        response : u32,
+        fail_first_read : bool,
+        operations : Vec<(bool, usize, u32)>,
+    }
+
+    impl crate::mmc::RegisterIo for MockMmcCompletionRegisters {
+        fn read32(&mut self, offset : usize) -> Result<u32, dw_mmc::mmc::MmcError> {
+            self.operations.push((true, offset, 0));
+            if self.fail_first_read && self.operations.len() == 1 {
+                return Err(dw_mmc::mmc::MmcError::RegisterOutOfRange);
+            }
+            match offset {
+                0x3C => Ok(self.interrupts),
+                0x14 => Ok(self.response),
+                _ => Err(dw_mmc::mmc::MmcError::RegisterOutOfRange),
+            }
+        }
+
+        fn write32(&mut self, offset : usize, value : u32)
+                   -> Result<(), dw_mmc::mmc::MmcError> {
+            self.operations.push((false, offset, value));
+            Ok(())
+        }
+    }
+
     #[derive(Default)]
     struct FaultOrderIo {
         value : u64,
@@ -1563,6 +1590,76 @@ mod tests {
             assert!(descriptor.is_cpu_owned());
             assert!(payload.is_cpu_owned());
         }
+    }
+
+    #[test]
+    fn command_observer_feeds_coalesced_snapshot_into_published_tracker() {
+        let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                      Direction::DeviceToMemory).unwrap();
+        let (mut descriptor, mut payload) = mappings(transfer);
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+        let tracker = published_read_tracker(transfer,
+                                             &mut descriptor,
+                                             &mut payload,
+                                             &mut executor);
+        let tracker = match tracker.dma_completed() {
+            crate::mmc::ReadCompletionProgress::Pending(tracker) => tracker,
+            _ => panic!("DMA fact completed read before command/data"),
+        };
+        let mut observer = crate::mmc::ReadCommandCompletionObserver::new(
+            MockMmcCompletionRegisters { interrupts : (1 << 6) | 1,
+                                         response : 0x900,
+                                         fail_first_read : false,
+                                         operations : Vec::new() },
+            crate::mmc::ReadCommandObservePermit::fixture(),
+            1).unwrap();
+        let completed = match tracker.observe_command(&mut observer) {
+            crate::mmc::ReadCompletionProgress::Completed(completed) => completed,
+            _ => panic!("coalesced CSENT/DFIN did not complete published tracker"),
+        };
+        assert_eq!(completed.evidence,
+                   crate::mmc::ReadCompletionEvidence {
+                       command_response_validated : true,
+                       data_finished : true,
+                       dma_finished : true,
+                   });
+        assert_eq!(observer.into_inner().operations,
+                   [(true, 0x3C, 0),
+                    (false, 0x3C, (1 << 6) | 1),
+                    (true, 0x14, 0),
+                    (false, 0x08, 0),
+                    (false, 0x0C, 0)]);
+        completed.into_published_session()
+                 .stop().unwrap()
+                 .finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+
+        let (mut descriptor, mut payload) = mappings(transfer);
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+        let tracker = published_read_tracker(transfer,
+                                             &mut descriptor,
+                                             &mut payload,
+                                             &mut executor);
+        let mut observer = crate::mmc::ReadCommandCompletionObserver::new(
+            MockMmcCompletionRegisters { interrupts : 0,
+                                         response : 0,
+                                         fail_first_read : true,
+                                         operations : Vec::new() },
+            crate::mmc::ReadCommandObservePermit::fixture(),
+            1).unwrap();
+        let recovery = match tracker.observe_command(&mut observer) {
+            crate::mmc::ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+            _ => panic!("observer IO failure did not preserve published recovery"),
+        };
+        assert_eq!(recovery.failure,
+                   crate::mmc::ReadCompletionFailure::Command(
+                       crate::mmc::ReadCommandFailure::Io));
+        recovery.into_published_session()
+                .stop().unwrap()
+                .finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
     }
 
     #[test]

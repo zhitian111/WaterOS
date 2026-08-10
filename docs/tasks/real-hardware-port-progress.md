@@ -4439,3 +4439,50 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] retain LS2K1000 DMA through read completion`
+## 2026-08-10：批次 91——观察 MMC 读命令完成与合并中断
+
+### 本批任务与设计
+
+1. 审计 non-data command 的 INT polling、W1C、RSP0 与 CARG/CCTL cleanup 顺序。
+2. 实现 permit-gated、one-shot、有界的读命令完成 observer。
+3. 在 CSENT 成功路径固定 INT read→W1C→RSP0→CARG=0→CCTL=0。
+4. 保存所有 poll 的 INT union，将与 CSENT 合并或早先出现的 DFIN/data error 原子送入 tracker。
+5. 任意 IO/timeout/CRC failure 都保留精确 stage、poll count、INT union，并携带 published running ownership recovery。
+
+### 已完成
+
+- [x] 新增 `ReadCommandObservePermit`，没有 production constructor，默认读路径继续关闭。
+- [x] 新增 `ReadCommandCompletionObserver<R>`、8 类 stage、stable failure 与 success receipt。
+- [x] poll limit=0 在任何 MMIO 前拒绝；observer 一旦尝试即禁止重复调用。
+- [x] command timeout 优先于 RESPCRC，二者优先于 CSENT；bounded poll exhaustion 返回 command Timeout。
+- [x] CSENT 后 W1C 全部已观察 known bits，再读 RSP0并依次清 CARG/CCTL。
+- [x] 新增原子 `command_observed(interrupts)`，data error/unknown 优先，command 与 DFIN 在同一次 tracker transition 中提交。
+- [x] observer failure bridge 同样先保留已观察 data error/unknown，避免后续 poll timeout 覆盖更具体错误。
+- [x] carrying published tracker 集成覆盖 CSENT|DFIN 与 DMA fact 合并完成、首读 IO failure recovery。
+- [x] 没有接入生产 IRQ owner、没有启用 response CRC policy、没有自动归还 DMA mapping。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 145 项全部通过；新增 4 项 observer/bridge 聚合测试。
+- delayed fixture 依次观察 0、DFIN、CSENT；receipt polls=3、INT union/ack=`DFIN|CSENT`。
+- 成功操作序列精确为 3 次 INT read、INT W1C、RSP0 read、CARG zero、CCTL zero。
+- IO fault matrix 覆盖 INT read、W1C write、RSP0 read、CARG cleanup、CCTL cleanup 五个阶段。
+- timeout/CRC matrix 覆盖 poll timeout、RESPCRC|CSENT、CTIMEOUT|RESPCRC|CSENT，并验证优先级。
+- 先观察 data timeout 后 poll exhaustion 时，tracker recovery 保留 DataTimeout而不是较晚 Command Timeout。
+- carrying fixture 中 DMA fact + CSENT|DFIN 原子完成；observer IO error 返回原 published session，均显式 stop/finish 后 CPU-owned。
+- production 组件 check 无新增 warning；LoongArch64 target 与带 remote-debug-monitor 的 kernel-la 构建通过。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：INT bits 是否持续到 W1C、CSENT/DFIN 是否合并，以及 RSP0 可读时点仍需逐板 trace。
+- [ ] `UNVERIFIED_ON_HARDWARE`：RESPCRC status 只做保守错误分类，CCTL.CHECK 仍未启用。
+- [ ] RegisterIo read/write failure 不提供 WriteEffect；W1C/cleanup failure 后不能安全重试 observer。
+- [ ] observer 是 bounded polling fixture，尚未绑定 masked/acknowledged MMC IRQ owner 生命周期。
+- [ ] DMA fact 仍是软件事件，尚未由 acknowledged APBDMA IRQ 与 descriptor status typestate 产生。
+- [ ] CMD18 的 CMD12/card state/partial blocks 仍未实现。
+- [ ] 下一批应将 acknowledged APBDMA IRQ、descriptor status inspection 与 tracker DMA fact 绑定，并在类型转换中保留 command/data evidence 和 mapping ownership。
+
+### 提交
+
+- 本批计划提交：`[feat] observe LS2K1000 MMC read commands`

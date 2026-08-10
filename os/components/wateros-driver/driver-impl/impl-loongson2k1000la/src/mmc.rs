@@ -1436,6 +1436,160 @@ impl<R : RegisterIo> ReadDataCommandPublisher<R> {
     }
 }
 
+/// Capability for the isolated read-command completion observer. No production
+/// constructor exists until the IRQ and CRC behavior is verified on hardware.
+pub struct ReadCommandObservePermit {
+    _private : (),
+}
+
+#[cfg(test)]
+impl ReadCommandObservePermit {
+    pub(crate) const fn fixture() -> Self { Self { _private : () } }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadCommandObserveStage {
+    PollInterrupts,
+    CommandTimeout,
+    ResponseCrc,
+    PollTimeout,
+    AcknowledgeInterrupts,
+    ReadResponse,
+    CleanupArgument,
+    CleanupControl,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadCommandObserveError {
+    AlreadyAttempted,
+    Command(ReadCommandFailure),
+    Io(MmcError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadCommandObserveFailure {
+    pub error : ReadCommandObserveError,
+    pub stage : Option<ReadCommandObserveStage>,
+    pub polls_completed : u16,
+    pub interrupt_union : u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadCommandObserveReceipt {
+    pub response : u32,
+    pub polls_completed : u16,
+    pub interrupt_union : u32,
+    pub acknowledged : u32,
+}
+
+/// One-shot bounded observer for a published CMD17/CMD18 response.
+///
+/// `UNVERIFIED_ON_HARDWARE`: interrupt coalescing, RSP0 validity and response
+/// CRC policy still require traces from both target boards.
+pub struct ReadCommandCompletionObserver<R> {
+    registers : R,
+    _permit : ReadCommandObservePermit,
+    poll_limit : u16,
+    attempted : bool,
+}
+
+impl<R : RegisterIo> ReadCommandCompletionObserver<R> {
+    pub fn new(registers : R,
+               permit : ReadCommandObservePermit,
+               poll_limit : u16)
+               -> Result<Self, DriverError> {
+        if poll_limit == 0 {
+            return Err(DriverError::InvalidParam);
+        }
+        Ok(Self { registers,
+                  _permit : permit,
+                  poll_limit,
+                  attempted : false })
+    }
+
+    pub fn into_inner(self) -> R { self.registers }
+
+    fn failure(error : ReadCommandObserveError,
+               stage : Option<ReadCommandObserveStage>,
+               polls_completed : u16,
+               interrupt_union : u32)
+               -> ReadCommandObserveFailure {
+        ReadCommandObserveFailure { error, stage, polls_completed, interrupt_union }
+    }
+
+    pub fn observe_once(&mut self)
+                        -> Result<ReadCommandObserveReceipt, ReadCommandObserveFailure> {
+        if self.attempted {
+            return Err(Self::failure(ReadCommandObserveError::AlreadyAttempted,
+                                     None,
+                                     0,
+                                     0));
+        }
+        self.attempted = true;
+        let mut interrupt_union = 0;
+        for poll in 1..=self.poll_limit {
+            let interrupts = self.registers.read32(REG_INT).map_err(|error| {
+                Self::failure(ReadCommandObserveError::Io(error),
+                              Some(ReadCommandObserveStage::PollInterrupts),
+                              poll - 1,
+                              interrupt_union)
+            })?;
+            interrupt_union |= interrupts;
+            if interrupt_union & INT_COMMAND_TIMEOUT != 0 {
+                return Err(Self::failure(
+                    ReadCommandObserveError::Command(ReadCommandFailure::Timeout),
+                    Some(ReadCommandObserveStage::CommandTimeout),
+                    poll,
+                    interrupt_union));
+            }
+            if interrupt_union & INT_RESPONSE_CRC != 0 {
+                return Err(Self::failure(
+                    ReadCommandObserveError::Command(ReadCommandFailure::ResponseCrc),
+                    Some(ReadCommandObserveStage::ResponseCrc),
+                    poll,
+                    interrupt_union));
+            }
+            if interrupt_union & INT_COMMAND_SENT == 0 {
+                continue;
+            }
+            let acknowledged = interrupt_union & INT_CLEAR;
+            self.registers.write32(REG_INT, acknowledged).map_err(|error| {
+                Self::failure(ReadCommandObserveError::Io(error),
+                              Some(ReadCommandObserveStage::AcknowledgeInterrupts),
+                              poll,
+                              interrupt_union)
+            })?;
+            let response = self.registers.read32(REG_RSP0).map_err(|error| {
+                Self::failure(ReadCommandObserveError::Io(error),
+                              Some(ReadCommandObserveStage::ReadResponse),
+                              poll,
+                              interrupt_union)
+            })?;
+            self.registers.write32(REG_CARG, 0).map_err(|error| {
+                Self::failure(ReadCommandObserveError::Io(error),
+                              Some(ReadCommandObserveStage::CleanupArgument),
+                              poll,
+                              interrupt_union)
+            })?;
+            self.registers.write32(REG_CCTL, 0).map_err(|error| {
+                Self::failure(ReadCommandObserveError::Io(error),
+                              Some(ReadCommandObserveStage::CleanupControl),
+                              poll,
+                              interrupt_union)
+            })?;
+            return Ok(ReadCommandObserveReceipt { response,
+                                                  polls_completed : poll,
+                                                  interrupt_union,
+                                                  acknowledged });
+        }
+        Err(Self::failure(
+            ReadCommandObserveError::Command(ReadCommandFailure::Timeout),
+            Some(ReadCommandObserveStage::PollTimeout),
+            self.poll_limit,
+            interrupt_union))
+    }
+}
+
 #[cfg(test)]
 pub(crate) trait ReadCommandPublisher {
     type Error;
@@ -1775,8 +1929,59 @@ impl<B> ReadCompletionTracker<B> {
         self.finish()
     }
 
+    /// Atomically record a validated response and the same interrupt snapshot
+    /// that carried CSENT. Data errors/unknown bits take priority, so a
+    /// coalesced DFIN cannot be lost between two tracker transitions.
+    pub fn command_observed(mut self, interrupts : u32) -> ReadCompletionProgress<B> {
+        for (bit, failure) in
+            [(INT_DATA_TIMEOUT, ReadCompletionFailure::DataTimeout),
+             (INT_RECEIVE_CRC, ReadCompletionFailure::ReceiveCrc),
+             (INT_TRANSMIT_CRC, ReadCompletionFailure::TransmitCrc),
+             (INT_PROGRAM_ERROR, ReadCompletionFailure::ProgramError)]
+        {
+            if interrupts & bit != 0 {
+                return self.fail(failure);
+            }
+        }
+        let unknown = interrupts & !INT_CLEAR;
+        if unknown != 0 {
+            return self.fail(ReadCompletionFailure::UnknownInterrupt(unknown));
+        }
+        if self.evidence.command_response_validated {
+            return self.fail(ReadCompletionFailure::DuplicateCommand);
+        }
+        if interrupts & INT_DATA_FINISHED != 0 && self.evidence.data_finished {
+            return self.fail(ReadCompletionFailure::DuplicateData);
+        }
+        self.evidence.command_response_validated = true;
+        self.evidence.data_finished |= interrupts & INT_DATA_FINISHED != 0;
+        self.finish()
+    }
+
     pub fn command_failed(self, failure : ReadCommandFailure) -> ReadCompletionProgress<B> {
         self.fail(ReadCompletionFailure::Command(failure))
+    }
+
+    #[cfg(test)]
+    fn command_observation_failed(self,
+                                  command_failure : ReadCommandFailure,
+                                  interrupts : u32)
+                                  -> ReadCompletionProgress<B> {
+        for (bit, failure) in
+            [(INT_DATA_TIMEOUT, ReadCompletionFailure::DataTimeout),
+             (INT_RECEIVE_CRC, ReadCompletionFailure::ReceiveCrc),
+             (INT_TRANSMIT_CRC, ReadCompletionFailure::TransmitCrc),
+             (INT_PROGRAM_ERROR, ReadCompletionFailure::ProgramError)]
+        {
+            if interrupts & bit != 0 {
+                return self.fail(failure);
+            }
+        }
+        let unknown = interrupts & !INT_CLEAR;
+        if unknown != 0 {
+            return self.fail(ReadCompletionFailure::UnknownInterrupt(unknown));
+        }
+        self.command_failed(command_failure)
     }
 
     /// Record one already-observed controller interrupt snapshot. Error bits
@@ -1815,6 +2020,26 @@ impl<B> ReadCompletionTracker<B> {
 
     pub fn dma_failed(self, failure : ReadDmaFailure) -> ReadCompletionProgress<B> {
         self.fail(ReadCompletionFailure::Dma(failure))
+    }
+}
+
+#[cfg(test)]
+impl<B> ReadCompletionTracker<B> {
+    pub(crate) fn observe_command<R : RegisterIo>(
+        self,
+        observer : &mut ReadCommandCompletionObserver<R>)
+        -> ReadCompletionProgress<B> {
+        match observer.observe_once() {
+            Ok(receipt) => self.command_observed(receipt.interrupt_union),
+            Err(failure) => {
+                let command_failure = match failure.error {
+                    ReadCommandObserveError::Command(failure) => failure,
+                    ReadCommandObserveError::AlreadyAttempted |
+                    ReadCommandObserveError::Io(_) => ReadCommandFailure::Io,
+                };
+                self.command_observation_failed(command_failure, failure.interrupt_union)
+            },
+        }
     }
 }
 
@@ -2729,6 +2954,106 @@ mod tests {
         assert!(publisher.publish_once(&read).is_ok());
     }
 
+    #[test]
+    fn read_command_observer_preserves_coalesced_data_and_fixed_cleanup_order() {
+        let mut observer = ReadCommandCompletionObserver::new(
+            read_observer_registers(&[0, INT_DATA_FINISHED, INT_COMMAND_SENT]),
+            ReadCommandObservePermit::fixture(),
+            3).unwrap();
+        let receipt = observer.observe_once().unwrap();
+        assert_eq!(receipt,
+                   ReadCommandObserveReceipt {
+                       response : 0x1234_5678,
+                       polls_completed : 3,
+                       interrupt_union : INT_DATA_FINISHED | INT_COMMAND_SENT,
+                       acknowledged : INT_DATA_FINISHED | INT_COMMAND_SENT,
+                   });
+        assert_eq!(observer.registers.operations,
+                   [ObserverOperation::Read(REG_INT),
+                    ObserverOperation::Read(REG_INT),
+                    ObserverOperation::Read(REG_INT),
+                    ObserverOperation::Write(REG_INT, INT_DATA_FINISHED | INT_COMMAND_SENT),
+                    ObserverOperation::Read(REG_RSP0),
+                    ObserverOperation::Write(REG_CARG, 0),
+                    ObserverOperation::Write(REG_CCTL, 0)]);
+        assert_eq!(observer.observe_once(),
+                   Err(ReadCommandObserveFailure {
+                       error : ReadCommandObserveError::AlreadyAttempted,
+                       stage : None,
+                       polls_completed : 0,
+                       interrupt_union : 0,
+                   }));
+    }
+
+    #[test]
+    fn read_command_observer_io_fault_matrix_retains_stage_and_snapshot() {
+        let stages = [ReadCommandObserveStage::PollInterrupts,
+                      ReadCommandObserveStage::AcknowledgeInterrupts,
+                      ReadCommandObserveStage::ReadResponse,
+                      ReadCommandObserveStage::CleanupArgument,
+                      ReadCommandObserveStage::CleanupControl];
+        for (index, stage) in stages.into_iter().enumerate() {
+            let mut registers = read_observer_registers(&[INT_COMMAND_SENT]);
+            registers.fail_operation = Some(index + 1);
+            let mut observer = ReadCommandCompletionObserver::new(
+                registers,
+                ReadCommandObservePermit::fixture(),
+                1).unwrap();
+            let expected_polls = if index == 0 { 0 } else { 1 };
+            let expected_union = if index == 0 { 0 } else { INT_COMMAND_SENT };
+            assert_eq!(observer.observe_once(),
+                       Err(ReadCommandObserveFailure {
+                           error : ReadCommandObserveError::Io(MmcError::RegisterOutOfRange),
+                           stage : Some(stage),
+                           polls_completed : expected_polls,
+                           interrupt_union : expected_union,
+                       }));
+            assert_eq!(observer.into_inner().operations.len(), index + 1);
+        }
+    }
+
+    #[test]
+    fn read_command_observer_classifies_bounded_timeout_and_crc_priority() {
+        assert!(matches!(ReadCommandCompletionObserver::new(
+                            read_observer_registers(&[]),
+                            ReadCommandObservePermit::fixture(),
+                            0),
+                         Err(DriverError::InvalidParam)));
+        let cases = [(&[0, 0][..],
+                      ReadCommandObserveStage::PollTimeout,
+                      ReadCommandFailure::Timeout,
+                      0),
+                     (&[INT_RESPONSE_CRC | INT_COMMAND_SENT][..],
+                      ReadCommandObserveStage::ResponseCrc,
+                      ReadCommandFailure::ResponseCrc,
+                      INT_RESPONSE_CRC | INT_COMMAND_SENT),
+                     (&[INT_COMMAND_TIMEOUT | INT_RESPONSE_CRC | INT_COMMAND_SENT][..],
+                      ReadCommandObserveStage::CommandTimeout,
+                      ReadCommandFailure::Timeout,
+                      INT_COMMAND_TIMEOUT | INT_RESPONSE_CRC | INT_COMMAND_SENT)];
+        for (interrupts, stage, failure, expected_union) in cases {
+            let mut observer = ReadCommandCompletionObserver::new(
+                read_observer_registers(interrupts),
+                ReadCommandObservePermit::fixture(),
+                2).unwrap();
+            let result = observer.observe_once().unwrap_err();
+            assert_eq!(result.error, ReadCommandObserveError::Command(failure));
+            assert_eq!(result.stage, Some(stage));
+            assert_eq!(result.interrupt_union, expected_union);
+        }
+
+        let mut observer = ReadCommandCompletionObserver::new(
+            read_observer_registers(&[INT_DATA_TIMEOUT]),
+            ReadCommandObservePermit::fixture(),
+            1).unwrap();
+        let recovery = match completion_tracker(5u8).observe_command(&mut observer) {
+            ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+            _ => panic!("observed data error was hidden by command poll timeout"),
+        };
+        assert_eq!(recovery.failure, ReadCompletionFailure::DataTimeout);
+        assert_eq!(recovery.reclaim_fixture(), 5);
+    }
+
     fn completion_tracker<B>(buffer : B) -> ReadCompletionTracker<B> {
         let request = ReadBlockRequest::new(0, 1, 512, ReadAddressing::Block).unwrap();
         let mut scratch = [0; 512];
@@ -3162,6 +3487,57 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum ObserverOperation {
+        Read(usize),
+        Write(usize, u32),
+    }
+
+    struct ReadObserverRegisters {
+        interrupts : alloc::vec::Vec<u32>,
+        next_interrupt : usize,
+        response : u32,
+        operations : alloc::vec::Vec<ObserverOperation>,
+        fail_operation : Option<usize>,
+    }
+
+    impl RegisterIo for ReadObserverRegisters {
+        fn read32(&mut self, offset : usize) -> Result<u32, MmcError> {
+            self.operations.push(ObserverOperation::Read(offset));
+            if self.fail_operation == Some(self.operations.len()) {
+                return Err(MmcError::RegisterOutOfRange);
+            }
+            match offset {
+                REG_INT => {
+                    let value = self.interrupts.get(self.next_interrupt)
+                                               .copied()
+                                               .unwrap_or(0);
+                    self.next_interrupt += 1;
+                    Ok(value)
+                },
+                REG_RSP0 => Ok(self.response),
+                _ => Err(MmcError::RegisterOutOfRange),
+            }
+        }
+
+        fn write32(&mut self, offset : usize, value : u32) -> Result<(), MmcError> {
+            self.operations.push(ObserverOperation::Write(offset, value));
+            if self.fail_operation == Some(self.operations.len()) {
+                Err(MmcError::RegisterOutOfRange)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn read_observer_registers(interrupts : &[u32]) -> ReadObserverRegisters {
+        ReadObserverRegisters { interrupts : interrupts.to_vec(),
+                                next_interrupt : 0,
+                                response : 0x1234_5678,
+                                operations : alloc::vec::Vec::new(),
+                                fail_operation : None }
     }
 
     impl RegisterIo for ObservationRegisters {
