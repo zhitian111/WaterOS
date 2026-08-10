@@ -59,6 +59,7 @@ pub struct CharDevHandle {
     device: SharedCharacterDevice,
     read_eof: bool,
     rtc: bool,
+    input_event: bool,
     tty: bool,
     tty_input: bool,
     tty_output: bool,
@@ -75,6 +76,7 @@ impl CharDevHandle {
             device,
             read_eof: false,
             rtc: false,
+            input_event: false,
             tty: true,
             tty_input: input,
             tty_output: !input,
@@ -91,6 +93,7 @@ impl CharDevHandle {
             device,
             read_eof: true,
             rtc: true,
+            input_event: false,
             tty: false,
             tty_input: false,
             tty_output: false,
@@ -108,6 +111,7 @@ impl CharDevHandle {
                 device,
                 read_eof: true,
                 rtc: false,
+                input_event: false,
                 tty: false,
                 tty_input: false,
                 tty_output: false,
@@ -121,6 +125,20 @@ impl CharDevHandle {
             handle.inode = path_inode(path);
             handle.accmode = accmode;
             handle
+        } else if is_input_event_dev_path(path) {
+            Self {
+                device,
+                read_eof: false,
+                rtc: false,
+                input_event: true,
+                tty: false,
+                tty_input: false,
+                tty_output: false,
+                nonblocking: Arc::new(AtomicBool::new(false)),
+                accmode,
+                mode: 0o20660,
+                inode: path_inode(path),
+            }
         } else {
             let mut handle = Self::new(device, accmode != 1);
             handle.accmode = accmode;
@@ -357,6 +375,10 @@ impl VfsIoHandle for CharDevHandle {
             let mut guard = self.device.lock();
             return guard.poll_revents(events).map_err(map_driver_err);
         }
+        if self.input_event {
+            let mut guard = self.device.lock();
+            return guard.poll_revents(events).map_err(map_driver_err);
+        }
         if self.read_eof {
 // 本变量代码由AI完成
             const POLLIN: i16 = 0x001;
@@ -420,7 +442,7 @@ impl VfsIoHandle for CharDevHandle {
 
 // 本方法代码由AI完成
     fn ioctl(&mut self, request: usize, arg: usize) -> VfsResult<isize> {
-        if !self.rtc {
+        if !self.rtc && !self.input_event {
             return Err(VfsError::Unsupported);
         }
         let mut guard = self.device.lock();
@@ -446,6 +468,7 @@ impl VfsIoHandle for CharDevHandle {
             device: self.device.clone(),
             read_eof: self.read_eof,
             rtc: self.rtc,
+            input_event: self.input_event,
             tty: self.tty,
             tty_input: self.tty_input,
             tty_output: self.tty_output,
@@ -479,6 +502,14 @@ pub fn is_rtc_dev_path(path: &str) -> bool {
     matches!(path, "/dev/misc/rtc" | "/dev/rtc0" | "/dev/rtc")
 }
 
+/// Return true for a dynamically published evdev input node.
+pub fn is_input_event_dev_path(path: &str) -> bool {
+    let Some(suffix) = path.strip_prefix("/dev/input/event") else {
+        return false;
+    };
+    !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 // 本方法代码由AI完成
 fn mode_for_devfs_path(path: &str) -> u16 {
     if path == "/dev/null" {
@@ -498,4 +529,53 @@ fn mode_for_devfs_path(path: &str) -> u16 {
 // 本方法代码由AI完成
 pub fn metadata_for_devfs_path(path: &str) -> VfsMetadata {
     char_metadata(mode_for_devfs_path(path), path_inode(path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use driver_character_api_v0::{CharacterDevice, CharacterDeviceKind};
+
+    struct InputFixture;
+
+    impl CharacterDevice for InputFixture {
+        fn prepare_read(&mut self, _max_len: usize) -> DriverResult<Option<CharacterReadReservation>> {
+            Ok(Some(CharacterReadReservation::new(1, b"event".to_vec())))
+        }
+
+        fn finish_read(
+            &mut self,
+            _reservation: CharacterReadReservation,
+            copied: usize,
+            _complete: bool,
+        ) -> DriverResult<CharacterReadFinish> {
+            Ok(CharacterReadFinish::Bytes(copied))
+        }
+
+        fn read(&mut self, _buf: &mut [u8]) -> DriverResult<usize> { Ok(0) }
+        fn write(&mut self, _buf: &[u8]) -> DriverResult<usize> { Err(DriverError::Unsupported) }
+        fn poll_revents(&mut self, events: i16) -> DriverResult<i16> { Ok(events & 0x001) }
+        fn ioctl(&mut self, _request: usize, _arg: usize) -> DriverResult<isize> { Ok(7) }
+        fn device_kind(&self) -> CharacterDeviceKind {
+            CharacterDeviceKind::InputEvent { input_index: 0 }
+        }
+    }
+
+    fn fixture() -> SharedCharacterDevice {
+        Arc::new(spin::Mutex::new(Box::new(InputFixture) as Box<dyn CharacterDevice>))
+    }
+
+    #[test]
+    fn input_event_path_is_not_tty_and_uses_device_read_poll_ioctl() {
+        assert!(is_input_event_dev_path("/dev/input/event0"));
+        assert!(!is_input_event_dev_path("/dev/input/event"));
+        assert!(!is_input_event_dev_path("/dev/input/eventx"));
+        let mut handle = CharDevHandle::from_devfs_path(fixture(), "/dev/input/event0", 0);
+        assert!(!handle.is_tty_char_device());
+        let mut bytes = [0u8; 8];
+        assert_eq!(handle.read(&mut bytes), Ok(5));
+        assert_eq!(&bytes[..5], b"event");
+        assert_eq!(handle.poll_revents(0x001), Ok(0x001));
+        assert_eq!(handle.ioctl(0x1234, 0), Ok(7));
+    }
 }

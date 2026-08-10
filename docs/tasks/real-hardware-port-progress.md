@@ -6764,3 +6764,29 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - `[test] verify qemu input devfs nodes`
+
+## 2026-08-10：批次 161——修正 `/dev/input/eventN` 的 VFS 字符句柄分流
+
+### 本批任务与设计
+
+1. 审计 evdev 字符设备的 VFS 打开路径，发现动态 `/dev/input/eventN` 节点会落入普通字符设备分支，并被错误标记为 TTY。
+2. 增加严格的 `event` 路径识别：只接受 `/dev/input/event` 后的十进制编号。
+3. input-event 句柄不接入 console TTY，读取走设备自身的 transactional `prepare_read/finish_read`，poll 走设备 `poll_revents`，ioctl 仅透传给设备默认契约。
+4. 不在驱动层解引用 ioctl 用户指针；能力查询仍需后续 syscall user-copy 任务实现。
+
+### 已完成
+
+- [x] `CharDevHandle::from_devfs_path` 为 `/dev/input/eventN` 建立独立句柄状态。
+- [x] 修正 input-event 的 read、poll、duplicate 状态和 ioctl 分流；TTY/RTC/null 路径行为保持不变。
+- [x] 增加路径识别和 mock input 字符设备回归测试，覆盖事件读取、poll 和 ioctl 转发边界。
+
+### 验证证据与限制
+
+- `make kernel-rv-pre EXTRA_FEATURES='gui,operator-shell'`：通过，确认 VFS 改动可进入 RISC-V kernel profile。
+- `cargo test --manifest-path os/components/wateros-driver/driver-input/input-api/api-v0/Cargo.toml`：前批 6 项通过；GUI/输入语义未改动。
+- 当前 fd-session crate 的独立 host test 受仓库既有 `platform-arch` 未选择 host implementation 阻断，未将该环境错误标为本批功能通过；kernel cross-build 提供编译证据。
+- `UNVERIFIED_ON_HARDWARE`：真实用户态 ioctl user-copy、evdev 能力 bitmap、USB/PS2 物理输入仍待后续 syscall 和实机任务。
+
+### 提交
+
+- `[fix] route input event nodes outside tty`
