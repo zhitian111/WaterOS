@@ -1206,3 +1206,67 @@ codegraph explore "normalize_absolute_path NormalizedPath resolve_route mount_na
   其他无需扩大临界区的热点。
 - 完整日志：`/tmp/wateros-mem05a-after-rv.log`、
   `/tmp/wateros-mem05a-v2-after-rv.log`（本机临时文件，不提交）。
+
+## FS-06A：ext4 借用式路径分量遍历
+
+状态：实验完成，代码已回退（2026-08-10）
+
+### 证据与调用链
+
+FS-04A 后 pc-hot 的直达 `__rust_alloc` callsite 显示，another_ext4 的路径拆分仍有多个热点：
+RawVec 增长约 618,912 次，`split_path` iterator/collect 相关分配约 339,191 次，额外 Vec
+构造约 49,916 次。CodeGraph 与当前源码确认：
+
+```text
+generic_lookup / generic_create
+  -> split_path
+     -> split('/').map(String::from).collect::<Vec<String>>()
+
+generic_remove / generic_rename
+  -> split_path -> Vec<String>
+  -> split_off(last) + parent components join("/") -> String
+  -> generic_lookup(parent String)
+     -> split_path -> another Vec<String>
+```
+
+### 设计、生命周期语义与保留门槛
+
+1. `split_path` 改为返回借用原始 `path` 的可克隆、双端 iterator；不生成 `Vec`，每个分量
+   保持 `&str`。通过仅在去除前导 `/` 后的空路径上屏蔽 iterator，保留旧实现的根路径为空
+   以及非根路径内部/尾部空分量形状。
+2. `generic_lookup` 直接顺序遍历；`generic_create` 使用 `peekable()` 判断末分量，替代
+   `enumerate + Vec::len`。
+3. 新增借用型 `lookup_parent_and_name`：`next_back()` 取末分量，剩余 iterator 直接逐级
+   lookup 父目录。remove/rename 不再 `split_off`、`join` 或再次拆分父路径。
+4. iterator 与末分量引用都不存入 Ext4 或 inode，只在同步调用栈内使用；不改变目录项、
+   inode、rename 原子性、错误码传播及磁盘格式。根路径用于 remove/rename 时由显式错误替代
+   旧实现的下标 panic。
+5. another_ext4 定向测试覆盖根、前导斜杠、内部/尾部空分量和双端遍历；双架构 Final
+   check/build 后以 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm 对照 880.44 s。明确改善才
+   保留。
+
+首轮零分配 iterator 完整 BuildStorm 为 899.66 s，较基线慢 19.22 s。功能正常，但
+iterator/filter/peek 的代码路径没有兑现分配下降。第二轮改用仓库 tmpfs 已采用的
+`Vec<&str>`：保留连续切片、长度和索引的简单代码形状，只消除逐分量 String；同时继续
+保留 parent 直接逐级 lookup，避免 join 和二次 split。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "os/vendor/another_ext4 Ext4 split_path generic_lookup generic_create generic_remove generic_rename lookup dir_find_entry rename exact source callers tests"
+```
+
+### 验证结果与结论
+
+- another_ext4 定向测试 4/4 通过；首轮双架构 Final check/build 通过。
+- 零分配借用 iterator 版本完整 BuildStorm 正常退出：
+  `ok=true elapsed_s=899.66`，比 880.44 s 慢 19.22 s（+2.18%）。
+- `Vec<&str>` 版本保留连续切片遍历，只去除逐分量 String，并继续避免 remove/rename
+  parent join；定向测试和 RISC-V Final check/build 通过，完整 BuildStorm 正常退出：
+  `ok=true elapsed_s=898.15`，比基线慢 17.71 s（+2.01%）。
+- 两种实现均无 panic/SIGSEGV 或尾部停滞，但退化方向一致。说明此处 alloc callsite 次数高，
+  实际成本却不是当前墙钟主导；旧实现拥有型连续数据的简单遍历/codegen 在 QEMU 下更有利。
+- 代码整体回退，有效基线仍为 880.44 s。后续不再仅依据 allocator call count 选择目标，
+  应优先选 pc-hot 指令占比和 wait-hot 阻塞时间同时较高的链路。
+- 完整日志：`/tmp/wateros-fs06a-after-rv.log`、
+  `/tmp/wateros-fs06a-v2-after-rv.log`（本机临时文件，不提交）。
