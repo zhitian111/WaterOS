@@ -53,6 +53,23 @@ def monitor_listening_seen(serial_tail: str) -> bool:
     return MONITOR_LISTEN_MARKER in serial_tail
 
 
+def guest_exit_diagnosis(process_returncode: int | None, serial_tail: str) -> str | None:
+    """Explain an early guest exit separately from a live network failure."""
+    if process_returncode is None:
+        return None
+    if monitor_listening_seen(serial_tail):
+        return (
+            "guest reached the monitor listen state but exited before host TCP "
+            "connection; the selected operator/rootfs likely shut the guest down "
+            "after its bring-up queue completed. Build the smoke kernel with "
+            "operator-shell or provide a long-lived user workload."
+        )
+    return (
+        f"guest exited before monitor listen marker (returncode={process_returncode}); "
+        "check kernel feature/profile and early boot logs."
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=("rv", "la"), default="rv")
@@ -102,7 +119,10 @@ def main() -> int:
             tail = serial_log.read().decode("utf-8", errors="replace")[-8000:]
             print("--- QEMU serial tail ---", file=sys.stderr)
             print(tail, file=sys.stderr)
-            if monitor_listening_seen(tail):
+            diagnosis = guest_exit_diagnosis(process.poll(), tail)
+            if diagnosis:
+                print(f"DIAGNOSIS: {diagnosis}", file=sys.stderr)
+            elif monitor_listening_seen(tail):
                 print(
                     "DIAGNOSIS: guest monitor reached listen state, but the host "
                     "forwarded TCP connection failed; inspect virtio-net RX/TCP "

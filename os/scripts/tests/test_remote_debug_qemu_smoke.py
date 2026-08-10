@@ -8,7 +8,12 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 
-from remote_debug_qemu_smoke import diagnose_inputs, monitor_listening_seen, qemu_binary_name
+from remote_debug_qemu_smoke import (
+    diagnose_inputs,
+    guest_exit_diagnosis,
+    monitor_listening_seen,
+    qemu_binary_name,
+)
 
 
 class RemoteDebugQemuSmokeTests(unittest.TestCase):
@@ -44,6 +49,12 @@ class RemoteDebugQemuSmokeTests(unittest.TestCase):
             )
         )
         self.assertFalse(monitor_listening_seen("network stack initialized"))
+
+    def test_early_guest_exit_is_not_reported_as_rx_failure(self):
+        serial = "[remote-debug] unauthenticated development monitor listening on tcp/2323"
+        diagnosis = guest_exit_diagnosis(0, serial)
+        self.assertIn("operator-shell", diagnosis)
+        self.assertIsNone(guest_exit_diagnosis(None, serial))
 
 
 if __name__ == "__main__":

@@ -2259,3 +2259,26 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - `root_image_qemu_smoke.py --partition-table gpt --size-mib 16`：通过。
 - 小镜像的串口已显示 monitor listening，但 remote-debug smoke 的宿主 TCP 转发仍连接拒绝；同时小镜像不含 `/glibc/cagent_testcode.sh`，其 NotFound 属于镜像内容限制，不是启动链路失败。网络转发和完整用户工作负载保持 `UNVERIFIED_ON_HARDWARE`。
 - `UNVERIFIED_ON_HARDWARE`：实体板上的 SD/eMMC 时序、真实 DMA/cache coherency、网络 PHY 和设备热插拔仍未验证。
+
+## 2026-08-10：批次 86——小镜像 remote-debug guest 生命周期诊断
+
+### 任务与设计
+
+1. 复现批次 85 中“小型 rootfs 串口显示 monitor listening，但 hostfwd 连接拒绝”的现象。
+2. 对比 guest 进程生命周期、QEMU `hostfwd` 参数和 monitor 监听状态；不在没有证据时修改 VirtIO 网络收发路径。
+3. 为 remote-debug smoke 增加 guest 提前退出诊断，并用保持 guest 存活的专用 operator-shell kernel 做端到端验证。
+
+### 完成内容
+
+- [x] 证实 16 MiB 镜像中的自动 bring-up 命令不存在，`user_operator` 默认 `on_exit=Shutdown` 会在 monitor 启动后关闭 guest；QEMU hostfwd 随进程退出而消失。
+- [x] `remote_debug_qemu_smoke.py` 新增 `guest_exit_diagnosis`，区分“guest 已监听后退出”和“guest 存活但 TCP 转发/RX 失败”。
+- [x] 新增回归测试，确保提前退出时提示 `operator-shell`/长驻 workload，而不是误报 VirtIO RX 问题。
+- [x] 使用 `EXTRA_FEATURES='remote-debug-monitor,operator-shell'` 构建专用 RISC-V kernel，配合同一 16 MiB GPT 镜像完成 monitor 全协议回归。
+
+### 验证证据与限制
+
+- `test_remote_debug_qemu_smoke.py`：5 项通过；`test_qemu_rootfs_guest_smoke.py`：3 项通过。
+- `root_image_qemu_smoke.py --partition-table gpt --size-mib 16`：通过。
+- `remote_debug_qemu_smoke.py`（operator-shell kernel）：`hello/capabilities/ping/status/version/quit` 全部通过。
+- 为节省磁盘空间清理了本工作树 `target/` 和本轮明确生成的 `/tmp` 临时产物；未触碰仓库中的大镜像或其他工作树。
+- 普通 `final` 自动 runner + 空 rootfs 的 remote monitor 仍会在 guest 退出前无法完成协议连接；这已由脚本明确诊断，不属于网络驱动已验证通过。`UNVERIFIED_ON_HARDWARE`：实体 NIC/PHY、DMA/cache coherency 和两平台实际 operator 配置仍待上板。
