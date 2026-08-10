@@ -19,6 +19,7 @@ use crate::{board_irq_owner::{BoardIrqOwner, BoundedMmcReadRecheck,
                               take_pending_read_irq_pair},
             diagnostic_slot::{DiagnosticRuntimeSlot, DiagnosticSlotState,
                               DrainError, RuntimeReservation, RuntimeService, SlotError},
+            apbdma::{self, Direction as ApbDmaDirection, PreparedSession, TransferPlan},
             irq_domain::GlobalIrq,
             mmc::{ReadBlockRequest, RegisterIo}};
 use api_v0::{dma::{DmaCoherency, DmaDirection, DmaMapping, DmaRegion}, DriverError};
@@ -76,6 +77,20 @@ pub enum ReadRequestBufferError {
     WrongLength { expected : usize, actual : usize },
     WrongDirection(DmaDirection),
     Dma(DriverError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadRequestDmaLeaseError {
+    InvalidPlan,
+    NotDeviceToMemory,
+    DescriptorAddressMismatch,
+    PayloadAddressMismatch,
+    PayloadLengthMismatch,
+    Dma(DriverError),
+}
+
+impl From<DriverError> for ReadRequestDmaLeaseError {
+    fn from(error : DriverError) -> Self { Self::Dma(error) }
 }
 
 impl From<DriverError> for ReadRequestBufferError {
@@ -341,6 +356,56 @@ impl<C : DmaCoherency> ReadRequestBuffer<C> {
 
     pub const fn is_cpu_owned(&self) -> bool { self.mapping.is_cpu_owned() }
 
+}
+
+/// Paired descriptor/payload mappings owned by one production read request.
+/// The plan and both mapping identities are checked before either mapping is
+/// handed to the APBDMA typestate machine.
+pub struct ReadRequestDmaLease<D, P> {
+    request : ReadRequest,
+    plan : TransferPlan,
+    descriptor : DmaMapping<D>,
+    payload : DmaMapping<P>,
+}
+
+impl<D : DmaCoherency, P : DmaCoherency> ReadRequestDmaLease<D, P> {
+    pub fn bind(request : ReadRequest,
+               plan : TransferPlan,
+               descriptor : DmaMapping<D>,
+               payload : DmaMapping<P>)
+               -> Result<Self, ReadRequestDmaLeaseError> {
+        let descriptor_region = descriptor.identity_region();
+        let payload_region = payload.identity_region();
+        if plan.direction != ApbDmaDirection::DeviceToMemory {
+            return Err(ReadRequestDmaLeaseError::NotDeviceToMemory);
+        }
+        if plan.byte_length != request.block.byte_length ||
+           !plan.invalidate_buffer_after || !plan.clean_descriptor_before {
+            return Err(ReadRequestDmaLeaseError::InvalidPlan);
+        }
+        if plan.descriptor_physical_address != descriptor_region.physical_address() {
+            return Err(ReadRequestDmaLeaseError::DescriptorAddressMismatch);
+        }
+        if plan.memory_physical_address != payload_region.physical_address() {
+            return Err(ReadRequestDmaLeaseError::PayloadAddressMismatch);
+        }
+        if payload_region.length() != request.block.byte_length ||
+           payload.identity_direction() != DmaDirection::FromDevice ||
+           descriptor.identity_direction() != DmaDirection::Bidirectional {
+            return Err(ReadRequestDmaLeaseError::PayloadLengthMismatch);
+        }
+        Ok(Self { request, plan, descriptor, payload })
+    }
+
+    pub const fn request(&self) -> ReadRequest { self.request }
+
+    pub const fn plan(&self) -> TransferPlan { self.plan }
+
+    pub fn prepare_session(&mut self)
+                           -> Result<PreparedSession<'_, D, P>, ReadRequestDmaLeaseError> {
+        apbdma::prepare_session(self.plan, &mut self.descriptor, &mut self.payload)
+            .map_err(Into::into)
+    }
 }
 
 impl ReadCoordinatorSlot {
@@ -1074,6 +1139,53 @@ mod tests {
                                             MockCoherency::default());
         assert_eq!(request.bind_dma_buffer(wrong_mapping).err(),
                    Some(ReadRequestBufferError::WrongLength { expected : 1024, actual : 512 }));
+    }
+
+    fn dma_plan_fixture(request : ReadRequest) ->
+                         (TransferPlan, DmaMapping<MockCoherency>, DmaMapping<MockCoherency>) {
+        let descriptor_region = DmaRegion::new(0x4000, 0x10_000, 64, 32, 32).unwrap();
+        let payload_region = DmaRegion::new(0x8000, 0x20_000,
+                                             request.block.byte_length, 32, 32).unwrap();
+        let descriptor = apbdma::HardwareDescriptor {
+            memory_address_low : payload_region.physical_address() as u32,
+            apb_address : 0x1fe2_c000,
+            length_words : (request.block.byte_length / 4) as u32,
+            step_length : 0,
+            step_times : 1,
+            command : 1 << 1,
+            status : 0,
+            next_address_low : 0,
+            next_address_high : 0,
+            memory_address_high : (payload_region.physical_address() >> 32) as u32,
+            reserved : [0; 2],
+        };
+        let plan = TransferPlan {
+            descriptor,
+            descriptor_physical_address : descriptor_region.physical_address(),
+            start_order : descriptor_region.physical_address() | 1 | 8,
+            memory_physical_address : payload_region.physical_address(),
+            byte_length : request.block.byte_length,
+            direction : ApbDmaDirection::DeviceToMemory,
+            invalidate_buffer_after : true,
+            clean_descriptor_before : true,
+        };
+        (plan,
+         DmaMapping::new(descriptor_region, DmaDirection::Bidirectional,
+                         MockCoherency::default()),
+         DmaMapping::new(payload_region, DmaDirection::FromDevice,
+                         MockCoherency::default()))
+    }
+
+    #[test]
+    fn production_request_dma_lease_binds_pair_before_prepare() {
+        let request = ReadRequest::new(
+            transaction(5),
+            ReadBlockRequest::new(0, 2, 512, crate::mmc::ReadAddressing::Block).unwrap());
+        let (plan, descriptor, payload) = dma_plan_fixture(request);
+        let mut lease = ReadRequestDmaLease::bind(request, plan, descriptor, payload).unwrap();
+        assert_eq!(lease.request(), request);
+        let prepared = lease.prepare_session().unwrap();
+        prepared.cancel().unwrap();
     }
 
     #[test]

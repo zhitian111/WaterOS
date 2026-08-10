@@ -5363,3 +5363,35 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] bind LS2K1000 read buffer lease`
+
+## 2026-08-10：批次 111——绑定 ReadRequest 的 descriptor/payload DMA lease
+
+### 本批任务与设计
+
+1. 复核既有 `OwnedTransferResources` 与 APBDMA typestate，确认 descriptor 与 payload 仍缺少统一请求代次校验。
+2. 新增生产态 `ReadRequestDmaLease<D, P>`，同时持有两路 `DmaMapping` 和不可变 `TransferPlan`。
+3. 绑定前校验请求 byte length、descriptor/payload 物理地址、方向和 cache 可见性计划；绑定后只调用已有 `prepare_session`。
+4. 用纯 host fixture 验证配对和 cancel，不把 prepare 当成硬件 start 证据。
+
+### 已完成
+
+- [x] `ReadRequestDmaLease::bind` 将 descriptor/payload mapping 与同一个 `ReadRequest`/`TransferPlan` 绑定。
+- [x] 拒绝非 DeviceToMemory、错误 descriptor 地址、错误 payload 地址/长度、读请求几何不一致或缺少 invalidate/clean 计划。
+- [x] `prepare_session` 复用 APBDMA 现有线性 typestate；prepared session 仍必须显式 cancel/start，lease 不复制 ownership token。
+- [x] 新增 host 测试覆盖合法配对、prepare、cancel 和请求 identity 保留。
+
+### 验证证据
+
+- 驱动完整 host 测试 179 项通过；新增配对 lease 测试实际走过 `prepare_transfer` 的 descriptor/status/方向校验。
+- 驱动 `cargo check`、RISC-V `make check`、LoongArch64 `make kernel-la` 与 Python host tests 均通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 APBDMA channel、descriptor 写入可见性、cache/barrier、stop/rearm 和迟到 IRQ 仍待物理板。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 当前 lease 尚未直接接入 block callback、MMC command publish 和 scheduler worker；下一步应把 request handle、lease 与 coordinator phase 组合成单一 production executor facade。
+- [ ] LoongArch `OwnedTransferResources` 的真实 frame allocator 路径仍只在目标架构编译，暂无物理机内存压力/回收证据。
+- [ ] QEMU/host 测试没有模拟 LS2K1000 专用 MMC APB routing 的真实寄存器副作用，相关行为必须保持 `UNVERIFIED_ON_HARDWARE`。
+
+### 提交
+
+- 本批计划提交：`[feat] bind LS2K1000 read dma lease`
