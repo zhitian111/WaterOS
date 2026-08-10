@@ -1973,6 +1973,29 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - 当前 manifest 是最小根目录骨架；真实平台仍需注入对应架构的 `/sbin/init`、用户态程序和板级设备节点策略。
 - `UNVERIFIED_ON_HARDWARE`：SD/eMMC 实际写卡、分区读取、cache coherency、flush/掉电恢复仍需 VisionFive 2 和 Loongson 2K1000 实机验证。
 
+## 2026-08-10：批次 67——双架构远程监视器 QEMU 端到端回归
+
+### 任务与设计
+
+1. 复核已有 TCP development monitor 是否仍能作为 SSH/登录 shell 之前的低成本远程调试下位方案。
+2. 分别构建启用 `remote-debug-monitor` 的 RISC-V 与 LoongArch64 final kernel，复用现有大根盘并启用 QEMU snapshot，避免修改基线镜像。
+3. 使用同一个脚本验证 banner、协议能力、只读状态、版本、退出和 host loopback 转发；不把该无认证/无加密通道当作生产 SSH。
+
+### 完成内容
+
+- [x] RISC-V `make kernel-rv-final EXTRA_FEATURES=remote-debug-monitor` 构建通过。
+- [x] LoongArch64 `make kernel-la-final EXTRA_FEATURES=remote-debug-monitor` 构建通过。
+- [x] RISC-V QEMU remote-debug smoke 端到端通过：`hello/capabilities/ping/status/version/quit` 全部成功。
+- [x] LoongArch64 QEMU remote-debug smoke 端到端通过：同一协议流程全部成功。
+- [x] 测试生成的约 140 MiB kernel 文件已移出工作树，未增加仓库占用。
+
+### 验证证据与限制
+
+- RV guest：monitor protocol=1，`online_cpus=0x1`，host port-forward 成功。
+- LA guest：monitor protocol=1，`online_cpus=0x1`，host port-forward 成功。
+- 该 monitor 仍然 `auth=none encryption=none readonly=true`，仅适合隔离的 QEMU/bring-up 网络，不满足正式 SSH 登录安全要求。
+- `UNVERIFIED_ON_HARDWARE`：VisionFive 2/Loongson 2K1000LA NIC/PHY、真实 IRQ/DMA/cache、链路协商和实体网络仍待实机验证。
+
 ## 2026-08-10：批次 65——稳定 QMP 输入注入诊断
 
 ### 任务与设计
