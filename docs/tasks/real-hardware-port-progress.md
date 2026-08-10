@@ -6469,3 +6469,27 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[fix] reject overlong remote commands`
+
+## 2026-08-10：批次 149——增加 2K1000LA PCIe ECAM 只读探测契约
+
+### 本批任务与设计
+
+1. 对照 QEMU LoongArch PCIe 枚举代码，抽取 ECAM `bus << 20 | device << 15 | function << 12 | register` 规则。
+2. 新增只读 `ConfigReader` 抽象，负责地址边界校验、vendor/device/class-code 解码和 absent 判定。
+3. 将 GMAC 激活前置条件增加 PCI identity 证据；没有 config-space 读证据时继续 deferred。
+
+### 已完成
+
+- [x] 新增 `pci.rs`：`PciLocation`、`ecam_offset`、`PciIdentity`、`PciProbeResult` 和纯 probe 函数。
+- [x] 覆盖 ECAM 编码、非对齐/越界寄存器、正常 identity、全 `0xffff` absent 四组 host 测试。
+- [x] GMAC `GmacActivationEvidence` 增加 `pci_identity_verified` gate。
+- [x] 2K1000LA crate host 测试 193 项通过；LoongArch64 `cargo check` 通过。
+
+### 验证证据与限制
+
+- 当前没有真实 ECAM volatile reader，不会写 PCI command/BAR，也不会把 probe 结果自动注册为网络设备。
+- `UNVERIFIED_ON_HARDWARE`：2K1000LA PCIe ECAM 基址、访问属性、vendor/device ID、BAR 分配及 GMAC function 均需实板 config dump 验证。
+
+### 提交
+
+- 本批计划提交：`[feat] add loongson pcie probe contract`

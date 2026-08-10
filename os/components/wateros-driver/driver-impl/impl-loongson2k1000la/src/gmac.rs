@@ -9,6 +9,7 @@ use crate::topology::NetworkDescription;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GmacBlocker {
+    PciIdentityNotVerified,
     InvalidPciFunction,
     MissingInterrupt,
     InterruptNamesMismatch,
@@ -22,6 +23,7 @@ pub enum GmacBlocker {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct GmacActivationEvidence {
+    pub pci_identity_verified : bool,
     pub bar_assigned : bool,
     pub dma_verified : bool,
     pub irq_route_verified : bool,
@@ -46,6 +48,9 @@ pub fn evaluate(description : &NetworkDescription,
                 evidence : GmacActivationEvidence)
                 -> GmacActivation {
     let mut blockers = Vec::new();
+    if !evidence.pci_identity_verified {
+        blockers.push(GmacBlocker::PciIdentityNotVerified);
+    }
     if description.device != 3 || description.function > 1 {
         blockers.push(GmacBlocker::InvalidPciFunction);
     }
@@ -107,6 +112,7 @@ mod tests {
     #[test]
     fn complete_evidence_produces_copyable_plan() {
         let result = evaluate(&description(), GmacActivationEvidence {
+            pci_identity_verified : true,
             bar_assigned : true, dma_verified : true,
             irq_route_verified : true, phy_link_verified : true,
         });
@@ -121,6 +127,7 @@ mod tests {
         malformed.function = 2;
         malformed.interrupt_names.pop();
         let result = evaluate(&malformed, GmacActivationEvidence {
+            pci_identity_verified : true,
             bar_assigned : true, dma_verified : true,
             irq_route_verified : true, phy_link_verified : true,
         });

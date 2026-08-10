@@ -30,6 +30,7 @@ pub mod apbdma_mmio;
 pub mod dma_memory;
 pub mod gpio;
 pub mod gmac;
+pub mod pci;
 mod machine;
 pub mod topology;
 #[cfg(feature = "uart-16550")]
