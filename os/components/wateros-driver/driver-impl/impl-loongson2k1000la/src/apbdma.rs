@@ -1377,6 +1377,194 @@ mod tests {
         assert!(payload.is_cpu_owned());
     }
 
+    #[derive(Clone, Copy)]
+    enum ReadFact {
+        Command,
+        Data,
+        Dma,
+    }
+
+    fn record_read_fact<B>(tracker : crate::mmc::ReadCompletionTracker<B>,
+                           fact : ReadFact)
+                           -> crate::mmc::ReadCompletionProgress<B> {
+        match fact {
+            ReadFact::Command => tracker.command_validated(),
+            ReadFact::Data => tracker.controller_interrupt(1),
+            ReadFact::Dma => tracker.dma_completed(),
+        }
+    }
+
+    fn published_read_tracker<'a, 'e>(
+        transfer : TransferPlan,
+        descriptor : &'a mut DmaMapping<MockCache>,
+        payload : &'a mut DmaMapping<MockCache>,
+        executor : &'e mut Executor<MockOrderIo>)
+        -> crate::mmc::ReadCompletionTracker<
+            crate::mmc::PublishedReadDmaSession<'a, 'e, MockOrderIo, MockCache, MockCache>> {
+        let recovery = crate::mmc::combined_recovery_fixture(0u8);
+        let read = *recovery.plan();
+        let running = crate::mmc::ReadDmaBinding::bind(&read,
+                                                       transfer,
+                                                       descriptor,
+                                                       payload).unwrap()
+                                                   .prepare(descriptor, payload).unwrap()
+                                                   .start(executor).unwrap();
+        let mut publisher = crate::mmc::ReadDataCommandPublisher::new(
+            MockMmcRegisters::default(),
+            crate::mmc::ReadDataPublishPermit::fixture());
+        running.publish(&mut publisher).unwrap()
+               .into_completion_tracker()
+    }
+
+    #[test]
+    fn published_read_tracker_keeps_dma_running_across_all_success_orders() {
+        let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                      Direction::DeviceToMemory).unwrap();
+        let orders = [[ReadFact::Command, ReadFact::Data, ReadFact::Dma],
+                      [ReadFact::Command, ReadFact::Dma, ReadFact::Data],
+                      [ReadFact::Data, ReadFact::Command, ReadFact::Dma],
+                      [ReadFact::Data, ReadFact::Dma, ReadFact::Command],
+                      [ReadFact::Dma, ReadFact::Command, ReadFact::Data],
+                      [ReadFact::Dma, ReadFact::Data, ReadFact::Command]];
+        for order in orders {
+            let (mut descriptor, mut payload) = mappings(transfer);
+            let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+            let mut tracker = Some(published_read_tracker(transfer,
+                                                          &mut descriptor,
+                                                          &mut payload,
+                                                          &mut executor));
+            for (index, fact) in order.into_iter().enumerate() {
+                let progress = record_read_fact(tracker.take().unwrap(), fact);
+                if index < 2 {
+                    tracker = Some(match progress {
+                        crate::mmc::ReadCompletionProgress::Pending(tracker) => tracker,
+                        _ => panic!("published read completed before all facts"),
+                    });
+                } else {
+                    let completed = match progress {
+                        crate::mmc::ReadCompletionProgress::Completed(completed) => completed,
+                        _ => panic!("published read did not complete after all facts"),
+                    };
+                    assert_eq!(completed.evidence,
+                               crate::mmc::ReadCompletionEvidence {
+                                   command_response_validated : true,
+                                   data_finished : true,
+                                   dma_finished : true,
+                               });
+                    completed.into_published_session()
+                             .stop().unwrap()
+                             .finish().unwrap();
+                }
+            }
+            assert!(descriptor.is_cpu_owned());
+            assert!(payload.is_cpu_owned());
+        }
+    }
+
+    #[test]
+    fn published_read_errors_return_running_session_for_stop_recovery() {
+        let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                      Direction::DeviceToMemory).unwrap();
+        let data_errors = [(1 << 1, crate::mmc::ReadCompletionFailure::DataTimeout),
+                           (1 << 2, crate::mmc::ReadCompletionFailure::ReceiveCrc),
+                           (1 << 3, crate::mmc::ReadCompletionFailure::TransmitCrc),
+                           (1 << 4, crate::mmc::ReadCompletionFailure::ProgramError),
+                           (1 << 31,
+                            crate::mmc::ReadCompletionFailure::UnknownInterrupt(1 << 31))];
+        for (interrupts, expected) in data_errors {
+            let (mut descriptor, mut payload) = mappings(transfer);
+            let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+            let tracker = published_read_tracker(transfer,
+                                                 &mut descriptor,
+                                                 &mut payload,
+                                                 &mut executor);
+            let recovery = match tracker.controller_interrupt(interrupts) {
+                crate::mmc::ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+                _ => panic!("published data error did not enter recovery"),
+            };
+            assert_eq!(recovery.failure, expected);
+            recovery.into_published_session()
+                    .stop().unwrap()
+                    .finish().unwrap();
+            assert!(descriptor.is_cpu_owned());
+            assert!(payload.is_cpu_owned());
+        }
+
+        for command_failure in [crate::mmc::ReadCommandFailure::Timeout,
+                                crate::mmc::ReadCommandFailure::ResponseCrc,
+                                crate::mmc::ReadCommandFailure::Io] {
+            let (mut descriptor, mut payload) = mappings(transfer);
+            let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+            let tracker = published_read_tracker(transfer,
+                                                 &mut descriptor,
+                                                 &mut payload,
+                                                 &mut executor);
+            let recovery = match tracker.command_failed(command_failure) {
+                crate::mmc::ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+                _ => panic!("published command error did not enter recovery"),
+            };
+            recovery.into_published_session()
+                    .stop().unwrap()
+                    .finish().unwrap();
+            assert!(descriptor.is_cpu_owned());
+            assert!(payload.is_cpu_owned());
+        }
+    }
+
+    #[test]
+    fn published_read_dma_failures_and_duplicates_preserve_running_ownership() {
+        let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                      Direction::DeviceToMemory).unwrap();
+        for dma_failure in [crate::mmc::ReadDmaFailure::Start,
+                            crate::mmc::ReadDmaFailure::Completion,
+                            crate::mmc::ReadDmaFailure::Stop] {
+            let (mut descriptor, mut payload) = mappings(transfer);
+            let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+            let tracker = published_read_tracker(transfer,
+                                                 &mut descriptor,
+                                                 &mut payload,
+                                                 &mut executor);
+            let recovery = match tracker.dma_failed(dma_failure) {
+                crate::mmc::ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+                _ => panic!("published DMA error did not enter recovery"),
+            };
+            assert_eq!(recovery.failure,
+                       crate::mmc::ReadCompletionFailure::Dma(dma_failure));
+            recovery.into_published_session()
+                    .stop().unwrap()
+                    .finish().unwrap();
+            assert!(descriptor.is_cpu_owned());
+            assert!(payload.is_cpu_owned());
+        }
+
+        for (fact, expected) in
+            [(ReadFact::Command, crate::mmc::ReadCompletionFailure::DuplicateCommand),
+             (ReadFact::Data, crate::mmc::ReadCompletionFailure::DuplicateData),
+             (ReadFact::Dma, crate::mmc::ReadCompletionFailure::DuplicateDma)]
+        {
+            let (mut descriptor, mut payload) = mappings(transfer);
+            let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+            let tracker = published_read_tracker(transfer,
+                                                 &mut descriptor,
+                                                 &mut payload,
+                                                 &mut executor);
+            let tracker = match record_read_fact(tracker, fact) {
+                crate::mmc::ReadCompletionProgress::Pending(tracker) => tracker,
+                _ => panic!("first completion fact was not pending"),
+            };
+            let recovery = match record_read_fact(tracker, fact) {
+                crate::mmc::ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+                _ => panic!("duplicate completion fact did not enter recovery"),
+            };
+            assert_eq!(recovery.failure, expected);
+            recovery.into_published_session()
+                    .stop().unwrap()
+                    .finish().unwrap();
+            assert!(descriptor.is_cpu_owned());
+            assert!(payload.is_cpu_owned());
+        }
+    }
+
     #[test]
     fn prepared_session_is_returned_when_low_level_executor_is_busy() {
         let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,

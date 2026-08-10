@@ -1490,6 +1490,10 @@ impl<'a, 'e, R : apbdma::OrderIo, D, P> RunningReadDmaSession<'a, 'e, R, D, P> {
 impl<'a, 'e, R : apbdma::OrderIo, D, P> PublishedReadDmaSession<'a, 'e, R, D, P> {
     pub(crate) const fn plan(&self) -> &DeferredReadPlan { &self.read }
 
+    pub(crate) fn into_completion_tracker(self) -> ReadCompletionTracker<Self> {
+        ReadCompletionTracker::new(self.read, self)
+    }
+
     pub(crate) fn stop(self)
                        -> Result<apbdma::QuiescedSession<'a, D, P>,
                                  apbdma::SessionFailure<apbdma::ExecutorError, Self>> {
@@ -1500,6 +1504,22 @@ impl<'a, 'e, R : apbdma::OrderIo, D, P> PublishedReadDmaSession<'a, 'e, R, D, P>
                 session : Self { read : self.read, dma : failure.session },
             }),
         }
+    }
+}
+
+#[cfg(test)]
+impl<'a, 'e, R, D, P> ReadCompleted<PublishedReadDmaSession<'a, 'e, R, D, P>> {
+    pub(crate) fn into_published_session(self)
+                                          -> PublishedReadDmaSession<'a, 'e, R, D, P> {
+        self.buffer
+    }
+}
+
+#[cfg(test)]
+impl<'a, 'e, R, D, P> ReadCompletionRecovery<PublishedReadDmaSession<'a, 'e, R, D, P>> {
+    pub(crate) fn into_published_session(self)
+                                          -> PublishedReadDmaSession<'a, 'e, R, D, P> {
+        ManuallyDrop::into_inner(self._buffer)
     }
 }
 

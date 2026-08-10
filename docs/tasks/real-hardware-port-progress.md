@@ -4395,3 +4395,47 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] stage LS2K1000 MMC read commands`
+## 2026-08-10：批次 90——绑定读完成证据与 running DMA ownership
+
+### 本批任务与设计
+
+1. 审计 `PublishedReadDmaSession` 与 `ReadCompletionTracker<B>` 的资源模型。
+2. 让真实 published session 本身成为 tracker 的 owned resource，而不是另存可伪造布尔 token。
+3. 覆盖 command response、DFIN/data error、DMA completion/failure 的所有成功和失败转换。
+4. completed/recovery 都只能取回仍携带 APBDMA running borrow 的 published session。
+5. 任一路径均需显式 stop/finish，completion evidence 不得直接恢复 CPU ownership。
+
+### 已完成
+
+- [x] `PublishedReadDmaSession::into_completion_tracker` 将同一 read plan 和 running APBDMA session 原子移入 tracker。
+- [x] 新增 published-session 专用 completed/recovery extractor；不会返回裸 buffer 或伪造 quiesce。
+- [x] 六种 command/data/DMA 成功排列全部接到真实 publisher+running DMA fixture。
+- [x] 五类 data/unknown interrupt error 全部归还携带 published session 的 recovery。
+- [x] command Timeout/ResponseCrc/Io 与 DMA Start/Completion/Stop failure 全部保留 running ownership。
+- [x] command、DFIN、DMA 三类重复 evidence 全部进入 recovery，并保留此前 evidence。
+- [x] 所有 test success/recovery 最终均显式 APBDMA stop/finish 后才恢复两份 mapping。
+- [x] 没有把 completion tracker 接入生产 IRQ owner，没有创建 production publish permit 或默认 block device。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 141 项全部通过；新增 3 项 published completion ownership 聚合测试。
+- 6 种成功排列中前两项始终 Pending，第三项才 Completed，evidence 三字段均为 true。
+- 每个 Completed 都仍返回 `PublishedReadDmaSession`；stop order write 与 cache finish 后 mapping 才 CPU-owned。
+- data error matrix 覆盖 timeout、receive CRC、transmit CRC、program error、unknown bit31。
+- explicit failure matrix 覆盖 3 种 command failure 与 3 种 DMA failure；duplicate matrix 覆盖三类 fact。
+- 每个 failure/repeat recovery 都可取回原 published session并显式 stop，没有资源或 executor borrow 丢失。
+- production 组件 check、LoongArch64 精确 target check 与带 remote-debug-monitor 的 kernel-la 构建通过；仅有既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：command response、DFIN、APBDMA completion 的真实中断先后与合并方式未知。
+- [ ] 当前 command_validated 仍由 fixture 提交，不读取 RSP0，也不证明响应 CRC policy。
+- [ ] DMA completion fact 仍是软件事件；尚未绑定 acknowledged APBDMA IRQ 和 descriptor status。
+- [ ] tracker complete 仅表示三项软件事实齐全，不表示 MMC/DMA 已 quiesced；本批刻意保留显式 stop。
+- [ ] CMD18 的 CMD12/card-state/partial-block recovery 尚未进入 completion tracker。
+- [ ] 下一批应实现隔离的读命令完成 observer：有界读取 INT/RSP0、固定 W1C/cleanup 顺序、完整 read/write fault stages，并将结果喂给 carrying published tracker。
+
+### 提交
+
+- 本批计划提交：`[feat] retain LS2K1000 DMA through read completion`
