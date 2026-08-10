@@ -1445,3 +1445,29 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[feat] register gpt partitions in devfs`
+
+## 2026-08-10：批次 36——GPT backup header 有界回退
+
+### 任务与设计
+
+1. 审计发现 GPT 注册只读取 LBA1 primary header；primary 损坏时，即使磁盘末尾 backup header 完好也会丢失分区。
+2. 抽取带 header LBA、磁盘总块数和期望 backup LBA 的解析路径，分别约束 primary 与 backup header 的互相指向。
+3. 正常路径只读 primary；primary 失败时最多尝试一次末尾 backup header，两个 header 都失败则返回 primary 错误并保持 fail-closed。
+
+### 完成内容
+
+- [x] `scan_gpt` 增加 primary→backup 有界回退。
+- [x] backup header 使用自身声明的 entry array LBA/数量/大小/CRC，不猜测固定偏移。
+- [x] 测试覆盖 primary 成功、primary 损坏但 backup 成功、两者均损坏、重叠和越界分区。
+
+### 验证证据与限制
+
+- block API 单测：6 项通过。
+- simple devfs 单测：2 项通过。
+- block API RISC-V64/LoongArch64 检查：均通过。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：尚未用真实 SD 卡验证 backup header 与固件工具链一致性；尚未实现 GPT header 修复写回或分区 GUID/名称导出。
+
+### 提交
+
+- `[fix] recover gpt backup header`
