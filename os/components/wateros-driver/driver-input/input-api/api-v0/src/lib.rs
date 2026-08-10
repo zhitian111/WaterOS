@@ -8,6 +8,8 @@ use character_api::{CharacterDevice, CharacterDeviceKind, CharacterReadFinish,
                     CharacterReadReservation, SharedCharacterDevice};
 use spin::Mutex;
 
+pub mod hid;
+
 pub use driver_api::{DriverError, DriverResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1736,3 +1736,28 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[test] add root image qemu smoke`
+
+## 2026-08-10：批次 50——USB HID boot report 公共解码层
+
+### 任务与设计
+
+1. 审计确认 virtio-input MMIO/PCI 后端已能把设备事件转为 `RawInputEvent`，但物理 USB HID 控制器尚无公共报告解码契约。
+2. 在 input API 层增加纯函数 boot keyboard/mouse decoder：键盘 8-byte report 维护 modifier/六键状态，鼠标支持 3/4-byte buttons、相对 X/Y 和 wheel。
+3. 对 rollover、重复键、未知 usage、未知按钮、短/错误长度 fail-closed；不接入 USB controller、IRQ、DMA、cache 或设备注册流程。
+
+### 完成内容
+
+- [x] 新增 `hid::decode_boot_keyboard` 和 `hid::decode_boot_mouse`。
+- [x] 输出现有 evdev 兼容 `RawInputEvent`，覆盖按键按下/释放、modifier、鼠标按钮和相对移动。
+- [x] 增加 4 项单测，覆盖状态转换、rollover、鼠标滚轮和 malformed report。
+
+### 验证证据与限制
+
+- input API crate 单测：6 项通过（含既有 evdev 测试）。
+- input aggregate crate 测试：通过。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 USB descriptor、interrupt transfer、HID 协议变体、DMA/cache、热插拔和两平台控制器仍待 QEMU guest/物理板验证；boot decoder 通过不等于 USB 驱动可用。
+
+### 提交
+
+- `[feat] add hid boot report decoder`
