@@ -44,6 +44,15 @@ pub fn ecam_offset(location : PciLocation, register : u16) -> Result<u64, PciPro
        register as u64)
 }
 
+/// Combine a DTB-provided ECAM base with an offset without wrapping.
+pub fn ecam_address(base : usize,
+                    location : PciLocation,
+                    register : u16)
+                    -> Result<usize, PciProbeError> {
+    let offset = ecam_offset(location, register)? as usize;
+    base.checked_add(offset).ok_or(PciProbeError::AddressOverflow)
+}
+
 pub trait ConfigReader {
     fn read32(&self, offset : u64) -> u32;
 }
@@ -86,6 +95,10 @@ mod tests {
         let location = PciLocation { bus : 0, device : 0, function : 0 };
         assert_eq!(ecam_offset(location, 2), Err(PciProbeError::InvalidRegister));
         assert_eq!(ecam_offset(location, 0x1000), Err(PciProbeError::InvalidRegister));
+        assert_eq!(ecam_address(usize::MAX, location, 0x1000),
+                   Err(PciProbeError::InvalidRegister));
+        assert_eq!(ecam_address(usize::MAX, PciLocation { bus : 1, device : 0, function : 0 }, 0),
+                   Err(PciProbeError::AddressOverflow));
     }
 
     #[test]

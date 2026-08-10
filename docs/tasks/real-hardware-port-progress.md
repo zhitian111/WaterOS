@@ -6493,3 +6493,26 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] add loongson pcie probe contract`
+
+## 2026-08-10：批次 150——补强 PCIe ECAM 基址边界并审计 aux 挂载入口
+
+### 本批任务与设计
+
+1. 审计双分区镜像完成后的启动流程；确认 aux 分区目前有构建和 block/devfs 暴露，但没有可安全复用的启动期 VFS mount namespace 公共入口。
+2. 不绕过现有 mount 生命周期硬接自动挂载；将 aux 自动挂载列为后续独立架构任务。
+3. 补强上一批 PCI probe：ECAM 相对偏移与 DTB base 相加必须 checked，拒绝地址包装。
+
+### 已完成
+
+- [x] 新增 `ecam_address`，统一校验寄存器对齐/范围和 base+offset 溢出。
+- [x] 增加溢出与非法寄存器 host 回归测试。
+- [x] PCI probe crate 目标架构 `cargo check` 通过；新增 PCI 四项测试通过。
+
+### 验证证据与限制
+
+- 当前仍没有真实 ECAM volatile reader、BAR 分配或 aux 自动挂载执行路径。
+- `UNVERIFIED_ON_HARDWARE`：ECAM 映射属性、PCI config access fault、真实 SD/eMMC aux mount 和掉电恢复待实机验证。
+
+### 提交
+
+- 本批计划提交：`[fix] bound loongson ecam addresses`
