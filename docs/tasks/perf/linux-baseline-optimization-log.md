@@ -908,3 +908,53 @@ codegraph explore "FileCacheKey FileCacheIndexKey GlobalCacheState.index read_ke
 - 结论：稳定键查询中的路径 Arc 引用计数不是当前可独立兑现的主要瓶颈；4.58 亿条
   `FileCacheKey::cmp` 指令主要成本更可能来自 BTree 查找本身。后续若继续优化页缓存索引，
   应测量命中率和树深，并评估固定容量哈希/分片索引，而不是只缩减键的拥有字段。
+
+## ALLOC-01B：融合 TLSF 分配统计与高水位检查
+
+状态：双轮完整测试无稳定收益并回退（2026-08-10）
+
+### 模块与热链
+
+```text
+GlobalAlloc::alloc
+  -> with_allocator_interrupt_guard
+     -> mem_stats
+        -> used_estimate.load + pool_len.load
+     -> TLSF mutex + allocate
+     -> estimate_add CAS
+  -> maybe_warn_high_water
+```
+
+TLSF 及其包装在 pc-hot 中是主要内存热点。当前普通分配为了只会打印一次的高水位告警，
+每次都在真正分配前读取两个原子统计值，成功后又单独更新用量；告警看到的还是分配前数据。
+
+### 设计与保留门槛
+
+1. 让 `estimate_add` 返回饱和更新后的用量；成功分配直接复用该结果做高水位检查。
+2. `pool_len` 等于初始化后不变的池容量；普通 alloc 用这一常量计算 free，不再每次调用
+   `mem_stats()`。显式统计查询仍保持原实现。
+3. 不改变 TLSF 算法、全局 mutex 临界区、关中断范围、布局、OOM 和非法释放策略；尤其不把
+   dealloc 的统计更新移入 TLSF 锁，避免重现 ALLOC-01A 的严重退化。
+4. 先跑 allocator 定向测试和双架构 Final check/build，再以 RISC-V 16 GiB/8 vCPU、
+   `-snapshot` 完整 BuildStorm 对照 900.64 s；无稳定改善即回退代码。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "InterruptSafeTlsfHeap GlobalAlloc alloc dealloc realloc estimate_add mem_stats maybe_warn_high_water with_allocator_interrupt_guard exact source and all callers"
+```
+
+### 验证结果与结论
+
+- allocator crate 裸 `cargo test` 因未选择架构 feature，在既有 `wateros-platform-arch` 中缺少
+  `ArchTimeImpl/ArchInterruptImpl/ArchPagingImpl` 而无法独立链接；失败发生在改动 crate 编译前。
+- `make check ARCH={rv,la} PROFILE=final` 与双架构 Final build：全部通过。
+- RISC-V 完整快照 BuildStorm 连续两轮均成功，无 panic/SIGSEGV：
+  - 首轮：`ok=true elapsed_s=895.78`，较 900.64 s 快 4.86 s（0.54%）；
+  - 复核：`ok=true elapsed_s=901.13`，较基线慢 0.49 s；
+  - 两轮均值 898.46 s，仅快 2.18 s（0.24%）。
+- 最慢一轮发生退化，差异未越过运行噪声，因而代码全部回退，仅保留记录。日志为
+  `/tmp/wateros-alloc01b-after-rv.log` 和 `/tmp/wateros-alloc01b-confirm-rv.log`。
+- 结论：普通分配前的两个统计 load 不是可独立兑现的主要成本。下一步 allocator 工作应先
+  获取真实尺寸分布/锁等待数据，再决定是否值得建设带旁路元数据的 per-CPU 小对象 cache；
+  不应继续做原子指令级微调。
