@@ -3765,3 +3765,58 @@ CARG/CCTL 为零且 INT 无残留，满足全部条件仍只能得到 `ObservedO
 ### 提交
 
 - `[feat] record LS2K1000 MMC command evidence`
+
+## 2026-08-10：批次 79——LS2K1000 MMC 只读 controller 远程诊断
+
+### 任务与设计
+
+1. 审计 `ls2k-mmc` 显式远程诊断的格式、MMIO 范围和错误映射。
+2. 为 command post、trace 与 assessment 提供固定字段、无额外分配的文本格式。
+3. 只在操作者显式请求 `ls2k-mmc` 时读取 controller post state；默认启动路径保持零新增 MMC MMIO。
+4. 诊断不得构造 `Host`、复位/开时钟、执行命令、清中断或执行 cleanup。
+5. 没有生产命令 trace 时必须明确输出 `trace=none assessment=unavailable`，不得伪造 assessment。
+
+远程响应复用 monitor 已有的 `String`，新增片段通过 `core::fmt::Write` 写入，因此 formatter
+本身不要求 `Vec` 或按 trace 长度分配。controller 观察严格复用上一批的
+`CARG → CCTL → CSTS → DSTS → INT` 固定只读顺序；任一读取失败仍输出 stage 和已取得的 partial fields。
+
+### 完成内容
+
+- [x] 新增 `write_command_post()`，稳定输出原始 CARG/CCTL/CSTS/DSTS/INT、idle/clean 和 known/unknown INT。
+- [x] controller 读取失败输出稳定 stage code、此前成功字段，并以 `na` 标记尚未取得的字段。
+- [x] 新增 `write_command_trace()`，覆盖全部现有 `CommandStage`、response width、sample/drop、INT union、response mask、cleanup 与 outcome。
+- [x] 新增 `write_command_assessment()`，稳定输出 disposition 和各判定因子；文本本身不代表授权 token。
+- [x] 新增 `VolatileDiagnosis`，把 prerequisite diagnosis 与 controller post observation 作为一次显式请求的结果返回。
+- [x] `diagnose_volatile()` 在完成静态规划和 prerequisite reads 后才建立 controller 只读后端，不构造 `Host`。
+- [x] driver facade 把 post state 附加到 `ls2k-mmc` 响应，并映射 controller backend 初始化错误。
+- [x] 当前远程请求不执行 command，因此固定附加 `trace=none assessment=unavailable`。
+- [x] machine init、默认启动、command policy gate、数据路径、DMA 与 blocker 均未改变。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 119 项全部通过；新增 2 项 formatter 测试。
+- 固定缓冲区测试逐字验证 post、trace、assessment 成功格式，并验证容量不足返回 `fmt::Error`。
+- failure fixture 验证 `read-dsts` stage、partial CARG/CCTL/CSTS 和 DSTS/INT `na` 均被保留。
+- 上一批 post observer 测试继续验证恰好五次读取、固定顺序、零写入，以及五个失败点的 partial evidence。
+- topology fixture/畸形 DTB 矩阵通过；dtc 仅输出刻意构造畸形输入的预期 warning。
+- remote client 与 QEMU launcher 的 13 项 Python host 测试通过。
+- LoongArch64 target check 与 `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 通过；仅有仓库既有 warning。
+- `git diff --check` 通过；没有执行 QEMU 无法代表的物理 MMC 访问。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：controller volatile read 的可达性、端序、device ordering 与读取副作用需在两块目标板逐板验证。
+- [ ] 显式诊断假定调用期间没有其他 controller owner；当前尚无生产 owner，但未来接入存储栈前必须落实互斥。
+- [ ] controller snapshot 没有 generation counter，不能证明 prerequisite 与 controller fields 属于同一硬件瞬间。
+- [ ] 当前没有执行 command，因而没有真实 trace 或 assessment；输出已显式标记 unavailable。
+- [ ] 外层 monitor 响应仍使用既有 `String`；仅新增 evidence formatter 是无额外分配的。
+- [ ] post state 即使显示 idle/clean 也只能作为观察证据，不能解除 CRC/busy policy gate 或生成 capability。
+- [ ] 下一批应扩展主机端远程客户端：解析并校验 controller evidence 字段，保存带板卡身份与时间戳的采集记录，为未来上板形成可重复的 evidence capture 流程。
+
+### 参考与许可证
+
+- `docs/references/loongson2-mmc-upstream.md`
+
+### 提交
+
+- `[feat] expose LS2K1000 MMC controller evidence`

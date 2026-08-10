@@ -14,7 +14,7 @@ use crate::{
     topology::{CardDetect, MmcDescription},
 };
 use alloc::{format, string::String};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::{fmt::{self, Write}, sync::atomic::{AtomicBool, Ordering}};
 
 /// Non-blocking exclusion for explicit physical diagnostic reads.
 pub struct DiagnosticGate {
@@ -115,6 +115,144 @@ fn pinctrl_error_code(error : PinctrlError) -> &'static str {
     }
 }
 
+fn post_stage_code(stage : mmc::CommandPostObservationStage) -> &'static str {
+    match stage {
+        mmc::CommandPostObservationStage::ReadArgument => "read-carg",
+        mmc::CommandPostObservationStage::ReadControl => "read-cctl",
+        mmc::CommandPostObservationStage::ReadCommandStatus => "read-csts",
+        mmc::CommandPostObservationStage::ReadDataStatus => "read-dsts",
+        mmc::CommandPostObservationStage::ReadInterrupts => "read-int",
+    }
+}
+
+fn write_optional_hex(output : &mut impl Write, value : Option<u32>) -> fmt::Result {
+    match value {
+        Some(value) => write!(output, "{value:#x}"),
+        None => output.write_str("na"),
+    }
+}
+
+/// Append a stable, allocation-free controller post-observation fragment.
+pub fn write_command_post(
+    output : &mut impl Write,
+    post : Result<mmc::CommandPostSnapshot, mmc::CommandPostObservationFailure>)
+    -> fmt::Result {
+    match post {
+        Ok(post) => write!(output,
+                           "controller=ok carg={:#x} cctl={:#x} csts={:#x} dsts={:#x} int={:#x} \
+                            idle={} clean={} int_known={:#x} int_unknown={:#x}",
+                           post.argument,
+                           post.control,
+                           post.command_status,
+                           post.data_status,
+                           post.interrupts,
+                           u8::from(post.command_status & (1 << 8) == 0 &&
+                                    post.data_status & 3 == 0),
+                           u8::from(post.argument == 0 && post.control == 0),
+                           post.interrupts & 0x3FF,
+                           post.interrupts & !0x3FF),
+        Err(failure) => {
+            write!(output, "controller=error:{} carg=", post_stage_code(failure.stage))?;
+            write_optional_hex(output, failure.argument)?;
+            output.write_str(" cctl=")?;
+            write_optional_hex(output, failure.control)?;
+            output.write_str(" csts=")?;
+            write_optional_hex(output, failure.command_status)?;
+            output.write_str(" dsts=")?;
+            write_optional_hex(output, failure.data_status)?;
+            output.write_str(" int=na")
+        }
+    }
+}
+
+fn response_code(response : mmc::ResponseType) -> &'static str {
+    match response {
+        mmc::ResponseType::None => "none",
+        mmc::ResponseType::Short => "short",
+        mmc::ResponseType::Long => "long",
+    }
+}
+
+fn command_stage_code(stage : mmc::CommandStage) -> &'static str {
+    use mmc::CommandStage::*;
+    match stage {
+        ClearInterrupts => "clear-int",
+        WriteArgument => "write-carg",
+        StartCommand => "start",
+        PollInterrupts => "poll-int",
+        CommandTimeout => "command-timeout",
+        ResponseCrc => "response-crc",
+        PollTimeout => "poll-timeout",
+        AcknowledgeCompletion => "ack-completion",
+        ReadResponse0 => "read-rsp0",
+        ReadResponse1 => "read-rsp1",
+        ReadResponse2 => "read-rsp2",
+        ReadResponse3 => "read-rsp3",
+        CleanupArgument => "cleanup-carg",
+        CleanupControl => "cleanup-cctl",
+        RevalidateCommandStatus => "revalidate-csts",
+        RevalidateDataStatus => "revalidate-dsts",
+        RevalidateInterrupts => "revalidate-int",
+        RevalidateBusy => "revalidate-busy",
+        RevalidateUnknownInterrupt => "revalidate-unknown-int",
+        RevalidateClearInterrupts => "revalidate-clear-int",
+        RevalidateInterruptReadback => "revalidate-int-readback",
+        RevalidateInterruptStillPending => "revalidate-int-pending",
+        RevalidateCleanupArgument => "revalidate-cleanup-carg",
+        RevalidateCleanupControl => "revalidate-cleanup-cctl",
+        RevalidateArgumentReadback => "revalidate-carg-readback",
+        RevalidateArgumentMismatch => "revalidate-carg-mismatch",
+        RevalidateControlReadback => "revalidate-cctl-readback",
+        RevalidateControlMismatch => "revalidate-cctl-mismatch",
+    }
+}
+
+/// Append stable bounded command-trace fields without allocating.
+pub fn write_command_trace(output : &mut impl Write, trace : mmc::CommandTrace) -> fmt::Result {
+    write!(output,
+           "trace=present cmd={} arg={:#x} response={} validation=unchecked cctl=",
+           trace.command_index,
+           trace.argument,
+           response_code(trace.response))?;
+    write_optional_hex(output, trace.programmed_control)?;
+    write!(output,
+           " samples={} dropped={} int_union={:#x} rsp_mask={:#x} cleanup={}/{} outcome=",
+           trace.interrupt_sample_count,
+           trace.dropped_interrupt_samples,
+           trace.interrupt_union,
+           trace.response_read_mask,
+           u8::from(trace.cleanup_argument_written),
+           u8::from(trace.cleanup_control_written))?;
+    match trace.outcome {
+        mmc::CommandTraceOutcome::InFlight => output.write_str("in-flight"),
+        mmc::CommandTraceOutcome::Completed => output.write_str("completed"),
+        mmc::CommandTraceOutcome::Failed(stage) => {
+            write!(output, "failed:{}", command_stage_code(stage))
+        }
+    }
+}
+
+/// Append a stable assessment fragment; it never represents authorization.
+pub fn write_command_assessment(output : &mut impl Write,
+                                assessment : mmc::CommandValidationAssessment)
+                                -> fmt::Result {
+    let disposition = match assessment.disposition {
+        mmc::CommandEvidenceDisposition::ObservedOnly => "observed-only",
+        mmc::CommandEvidenceDisposition::IncompleteTrace => "incomplete-trace",
+        mmc::CommandEvidenceDisposition::UnsafeState => "unsafe-state",
+    };
+    write!(output,
+           "assessment={} completed={} trace_complete={} idle={} clean={} int_known={:#x} \
+            int_unknown={:#x}",
+           disposition,
+           u8::from(assessment.command_completed),
+           u8::from(assessment.trace_complete),
+           u8::from(assessment.controller_idle),
+           u8::from(assessment.command_registers_clean),
+           assessment.known_interrupts,
+           assessment.unknown_interrupts)
+}
+
 /// Stable single-line representation used by the remote development monitor.
 pub fn format_diagnosis(diagnosis : Diagnosis) -> String {
     format_diagnosis_with_observation(diagnosis, IrqObservation::Unavailable)
@@ -126,6 +264,21 @@ pub fn format_diagnosis_with_irq(diagnosis : Diagnosis,
                                  -> String {
     format_diagnosis_with_observation(diagnosis,
                                       mmc_prerequisite::irq_observation(irq))
+}
+
+/// Stable remote-monitor line with an explicitly requested controller
+/// post-state observation. No command trace exists because diagnosis is read-only.
+pub fn format_diagnosis_with_irq_and_post(
+    diagnosis : Diagnosis,
+    irq : crate::diagnostic_irq::DiagnosticIrqSnapshot,
+    post : Result<mmc::CommandPostSnapshot, mmc::CommandPostObservationFailure>)
+    -> String {
+    let mut output = format_diagnosis_with_irq(diagnosis, irq);
+    output.truncate(output.len().saturating_sub(2));
+    output.push(' ');
+    write_command_post(&mut output, post).expect("String formatting is infallible");
+    output.push_str(" trace=none assessment=unavailable\r\n");
+    output
 }
 
 fn format_diagnosis_with_observation(diagnosis : Diagnosis, irq : IrqObservation) -> String {
@@ -243,6 +396,14 @@ pub enum VolatileDiagnosisError {
     ClockBackend(ClockError),
     GpioBackend(GpioError),
     PinctrlBackend(PinctrlError),
+    ControllerBackend(dw_mmc::mmc::MmcError),
+}
+
+#[cfg(target_arch = "loongarch64")]
+pub struct VolatileDiagnosis {
+    pub diagnosis : Diagnosis,
+    pub controller_post:
+        Result<mmc::CommandPostSnapshot, mmc::CommandPostObservationFailure>,
 }
 
 #[cfg(target_arch = "loongarch64")]
@@ -307,7 +468,7 @@ impl pinctrl::RegisterIo for TargetPinctrlRegisters {
 /// available for these reads. Register behavior is `UNVERIFIED_ON_HARDWARE`.
 #[cfg(target_arch = "loongarch64")]
 pub unsafe fn diagnose_volatile(description : &MmcDescription)
-                                -> Result<Diagnosis, VolatileDiagnosisError> {
+                                -> Result<VolatileDiagnosis, VolatileDiagnosisError> {
     use crate::topology::{GpioProvider, MmcClockProvider, PinctrlProvider};
 
     mmc::plan(description).map_err(VolatileDiagnosisError::Plan)?;
@@ -344,11 +505,19 @@ pub unsafe fn diagnose_volatile(description : &MmcDescription)
         }
         None | Some(PinctrlProvider::Unsupported) => TargetPinctrlRegisters::Unused,
     };
+    // SAFETY: delegated to this function's caller. The post observer performs
+    // only fixed-order volatile reads and never constructs a Host.
+    let mut controller_registers = unsafe {
+        mmc::VolatileRegisters::from_region(description.controller_mmio)
+    }.map_err(VolatileDiagnosisError::ControllerBackend)?;
 
-    diagnose(description,
-             &mut clock_registers,
-             &mut gpio_registers,
-             &mut pinctrl_registers).map_err(VolatileDiagnosisError::Plan)
+    let diagnosis = diagnose(description,
+                             &mut clock_registers,
+                             &mut gpio_registers,
+                             &mut pinctrl_registers).map_err(VolatileDiagnosisError::Plan)?;
+    let controller_post = mmc::observe_command_post_state(&mut controller_registers);
+    Ok(VolatileDiagnosis { diagnosis,
+                           controller_post })
 }
 
 #[cfg(test)]
@@ -361,6 +530,31 @@ mod tests {
     use alloc::{vec, vec::Vec};
     use api_v0::MmioRegion;
 
+    struct FixedBuffer<const N : usize> {
+        bytes : [u8; N],
+        len : usize,
+    }
+
+    impl<const N : usize> FixedBuffer<N> {
+        fn new() -> Self { Self { bytes : [0; N],
+                                 len : 0 } }
+
+        fn text(&self) -> &str { core::str::from_utf8(&self.bytes[..self.len]).unwrap() }
+    }
+
+    impl<const N : usize> core::fmt::Write for FixedBuffer<N> {
+        fn write_str(&mut self, value : &str) -> core::fmt::Result {
+            let end = self.len.checked_add(value.len())
+                              .ok_or(core::fmt::Error)?;
+            if end > N {
+                return Err(core::fmt::Error);
+            }
+            self.bytes[self.len..end].copy_from_slice(value.as_bytes());
+            self.len = end;
+            Ok(())
+        }
+    }
+
     #[test]
     fn diagnostic_gate_rejects_reentry_and_reopens_on_drop() {
         let gate = DiagnosticGate::new();
@@ -370,6 +564,69 @@ mod tests {
         drop(guard);
         assert!(gate.try_enter()
                     .is_ok());
+    }
+
+    #[test]
+    fn command_evidence_format_is_stable_and_bounded() {
+        let post = mmc::CommandPostSnapshot { argument : 0,
+                                              control : 0,
+                                              command_status : 0,
+                                              data_status : 0,
+                                              interrupts : 0 };
+        let mut output = FixedBuffer::<256>::new();
+        write_command_post(&mut output, Ok(post)).unwrap();
+        assert_eq!(output.text(),
+                   "controller=ok carg=0x0 cctl=0x0 csts=0x0 dsts=0x0 int=0x0 idle=1 \
+                    clean=1 int_known=0x0 int_unknown=0x0");
+
+        let trace = mmc::CommandTrace { command_index : 8,
+                                        argument : 0x1AA,
+                                        response : mmc::ResponseType::Short,
+                                        validation : mmc::ResponseValidation::Unchecked,
+                                        programmed_control : Some(0x348),
+                                        interrupt_samples : [0; mmc::COMMAND_TRACE_CAPACITY],
+                                        interrupt_sample_count : 2,
+                                        dropped_interrupt_samples : 1,
+                                        interrupt_union : 0x140,
+                                        response_read_mask : 1,
+                                        cleanup_argument_written : true,
+                                        cleanup_control_written : false,
+                                        outcome:
+                                            mmc::CommandTraceOutcome::Failed(
+                                                mmc::CommandStage::CleanupControl) };
+        let mut output = FixedBuffer::<256>::new();
+        write_command_trace(&mut output, trace).unwrap();
+        assert_eq!(output.text(),
+                   "trace=present cmd=8 arg=0x1aa response=short validation=unchecked cctl=0x348 \
+                    samples=2 dropped=1 int_union=0x140 rsp_mask=0x1 cleanup=1/0 \
+                    outcome=failed:cleanup-cctl");
+
+        let assessment = mmc::assess_command_validation(trace, post);
+        let mut output = FixedBuffer::<192>::new();
+        write_command_assessment(&mut output, assessment).unwrap();
+        assert_eq!(output.text(),
+                   "assessment=incomplete-trace completed=0 trace_complete=0 idle=1 clean=1 \
+                    int_known=0x0 int_unknown=0x0");
+
+        let mut too_small = FixedBuffer::<8>::new();
+        assert_eq!(write_command_post(&mut too_small, Ok(post)),
+                   Err(core::fmt::Error));
+    }
+
+    #[test]
+    fn command_post_failure_format_retains_partial_fields() {
+        let failure = mmc::CommandPostObservationFailure {
+            stage : mmc::CommandPostObservationStage::ReadDataStatus,
+            error : dw_mmc::mmc::MmcError::RegisterOutOfRange,
+            argument : Some(0),
+            control : Some(0),
+            command_status : Some(1 << 8),
+            data_status : None,
+        };
+        let mut output = FixedBuffer::<160>::new();
+        write_command_post(&mut output, Err(failure)).unwrap();
+        assert_eq!(output.text(),
+                   "controller=error:read-dsts carg=0x0 cctl=0x0 csts=0x100 dsts=na int=na");
     }
 
     #[derive(Default)]

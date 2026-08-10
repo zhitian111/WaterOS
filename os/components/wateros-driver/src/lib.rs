@@ -136,6 +136,7 @@ pub enum Loongson2k1000MmcDiagnosticError {
     ClockBackend,
     GpioBackend,
     PinctrlBackend,
+    ControllerBackend,
 }
 
 /// Explicitly collect and format read-only 2K1000 MMC prerequisite evidence.
@@ -149,7 +150,7 @@ pub unsafe fn diagnose_loongson2k1000_mmc()
     use impl_loongson2k1000la::mmc_diagnostic::VolatileDiagnosisError;
 
     // SAFETY: forwarded to the caller-visible contract above.
-    let diagnosis = unsafe { impl_loongson2k1000la::diagnose_mmc_once() }.map_err(|error| {
+    let snapshot = unsafe { impl_loongson2k1000la::diagnose_mmc_once() }.map_err(|error| {
         match error {
             impl_loongson2k1000la::MmcDiagnosticError::Busy => {
                 Loongson2k1000MmcDiagnosticError::Busy
@@ -172,10 +173,17 @@ pub unsafe fn diagnose_loongson2k1000_mmc()
             impl_loongson2k1000la::MmcDiagnosticError::Diagnosis(
                 VolatileDiagnosisError::PinctrlBackend(_),
             ) => Loongson2k1000MmcDiagnosticError::PinctrlBackend,
+            impl_loongson2k1000la::MmcDiagnosticError::Diagnosis(
+                VolatileDiagnosisError::ControllerBackend(_),
+            ) => Loongson2k1000MmcDiagnosticError::ControllerBackend,
         }
     })?;
     let irq = impl_loongson2k1000la::diagnostic_irq::snapshot();
-    Ok(impl_loongson2k1000la::mmc_diagnostic::format_diagnosis_with_irq(diagnosis, irq))
+    Ok(impl_loongson2k1000la::mmc_diagnostic::format_diagnosis_with_irq_and_post(
+        snapshot.diagnosis,
+        irq,
+        snapshot.controller_post,
+    ))
 }
 
 /// 自检入口：依次调用 API 与各子系统测试钩子；QEMU 实现会跑探测路径，dummy

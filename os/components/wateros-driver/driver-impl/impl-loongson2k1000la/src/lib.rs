@@ -122,7 +122,7 @@ pub fn with_topology<R>(f : impl FnOnce(Option<&BoardTopology>) -> R) -> R {
 /// `UNVERIFIED_ON_HARDWARE`; this function never activates the MMC host.
 #[cfg(target_arch = "loongarch64")]
 pub unsafe fn diagnose_mmc_once()
-    -> Result<mmc_diagnostic::Diagnosis, MmcDiagnosticError> {
+    -> Result<mmc_diagnostic::VolatileDiagnosis, MmcDiagnosticError> {
     let _guard = MMC_DIAGNOSTIC_GATE.try_enter().map_err(|_| MmcDiagnosticError::Busy)?;
     let description = with_topology(|topology| {
         let topology = topology.ok_or(MmcDiagnosticError::TopologyUnavailable)?;
