@@ -5869,3 +5869,37 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] expose devfs snapshot in debug monitor`
+
+## 2026-08-10：批次 127——暴露架构根盘 manifest 与小镜像参数
+
+### 本批任务与设计
+
+1. 审计既有 `root_image.py`、MBR 分区解析和 Make 入口，确认脚本已经支持 manifest/容量，但 Make target 未转发这些参数。
+2. 增加 `ROOT_IMAGE_MANIFEST` 与 `ROOT_IMAGE_SIZE_MIB`，让 RISC-V/LoongArch 可以使用各自的用户态文件清单，同时保留默认 32 MiB 行为。
+3. 保持镜像生成、ext4 校验、路径逃逸检查和原子替换集中在 Python 工具；Make 只负责参数编排。
+4. 使用临时 16 MiB 镜像完成实际 build/verify，避免在仓库或磁盘留下大镜像。
+
+### 已完成
+
+- [x] Makefile 的 build/verify target 均转发自定义 manifest。
+- [x] Makefile 支持 `ROOT_IMAGE_SIZE_MIB`，默认值仍为 32 MiB。
+- [x] README 补充架构清单和 16 MiB 测试用法。
+- [x] 增加 Make 参数静态回归测试。
+
+### 验证证据
+
+- 自定义 manifest + 16 MiB 稀疏镜像实际构建成功：MBR start=2048、30,720 sectors。
+- 同一 manifest 的独立 verify 成功，临时镜像已清理。
+- root-image Python 单测 5 项通过，`py_compile` 与 `git diff --check` 通过。
+- `make check EXTRA_FEATURES=remote-debug-monitor`、`make kernel-la EXTRA_FEATURES=remote-debug-monitor` 使用同一工作树构建门禁均通过。
+- `UNVERIFIED_ON_HARDWARE`：架构相关 ELF/动态链接器闭包、真实 SD/eMMC 写入、启动固件和掉电一致性仍待目标板。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 仓库只提供通用最小清单；包含 BusyBox、动态链接器和应用的 rv64/la64 发布清单仍需按工具链产物生成。
+- [ ] Make 参数只改变镜像构建输入，不会自动把新镜像注入目标板烧录或 QEMU 启动流程；仍需显式设置 `ROOT_IMAGE`/`WOS_SDCARD`。
+- [ ] 当前镜像仍为单 MBR 主分区；GPT、扩展分区和多数据分区尚未实现。
+
+### 提交
+
+- 本批计划提交：`[feat] parameterize physical root image manifests`

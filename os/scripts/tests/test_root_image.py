@@ -16,6 +16,14 @@ from root_image import ImageError, build_image, populate_staging, parse_mbr_sect
 
 
 class RootImageTests(unittest.TestCase):
+    def test_make_targets_forward_manifest_and_size(self) -> None:
+        makefile = ROOT_IMAGE.parents[1] / "Makefile"
+        text = makefile.read_text(encoding="utf-8")
+        self.assertIn("ROOT_IMAGE_MANIFEST ?=", text)
+        self.assertIn("ROOT_IMAGE_SIZE_MIB ?= 32", text)
+        self.assertIn('--manifest "$(ROOT_IMAGE_MANIFEST)"', text)
+        self.assertIn('--size-mib "$(ROOT_IMAGE_SIZE_MIB)"', text)
+
     def test_parse_single_linux_partition(self) -> None:
         sector = bytearray(512)
         sector[510:512] = b"\x55\xaa"

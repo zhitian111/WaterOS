@@ -75,6 +75,8 @@ SNAPSHOT ?= $(if $(WOS_QEMU_SNAPSHOT),$(WOS_QEMU_SNAPSHOT),$(if $(filter 1,$(WRI
 SDCARD ?= $(if $(strip $(WOS_SDCARD)),$(WOS_SDCARD),$(SELECTED_IMAGE))
 ROOT_IMAGE ?= ./wateros-root.img
 ROOT_IMAGE_TOOL := ./scripts/root_image/root_image.py
+ROOT_IMAGE_MANIFEST ?= ./scripts/root_image/rootfs-manifest.json
+ROOT_IMAGE_SIZE_MIB ?= 32
 PORT ?= 1234
 START_PAUSED ?= 1
 FAULTS ?= 0
@@ -478,11 +480,13 @@ check: validate-config $(SELECTED_CHECK_TARGET)
 
 physical-root-image:
 	$(call INFO, "构建物理机/QEMU 共用根盘 $(ROOT_IMAGE)...")
-	@python3 $(ROOT_IMAGE_TOOL) build --force --output "$(ROOT_IMAGE)"
+	@python3 $(ROOT_IMAGE_TOOL) build --force --output "$(ROOT_IMAGE)" \
+		--manifest "$(ROOT_IMAGE_MANIFEST)" --size-mib "$(ROOT_IMAGE_SIZE_MIB)"
 
 verify-physical-root-image:
 	$(call INFO, "只读验证根盘 $(ROOT_IMAGE)...")
-	@python3 $(ROOT_IMAGE_TOOL) verify --image "$(ROOT_IMAGE)"
+	@python3 $(ROOT_IMAGE_TOOL) verify --image "$(ROOT_IMAGE)" \
+		--manifest "$(ROOT_IMAGE_MANIFEST)"
 
 rv_user_mode_program:
 	$(call INFO, "开始为 riscv 平台生成用户态测试用程序...")

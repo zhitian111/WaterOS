@@ -14,6 +14,13 @@ Build and independently verify an image from `os/`:
 ```bash
 make physical-root-image ROOT_IMAGE=./wateros-root.img
 make verify-physical-root-image ROOT_IMAGE=./wateros-root.img
+
+# 例如为某个架构使用独立清单，并保持小镜像用于测试
+make physical-root-image ROOT_IMAGE=./wateros-rv64.img \
+  ROOT_IMAGE_MANIFEST=./my-rootfs-manifest-rv64.json \
+  ROOT_IMAGE_SIZE_MIB=16
+make verify-physical-root-image ROOT_IMAGE=./wateros-rv64.img \
+  ROOT_IMAGE_MANIFEST=./my-rootfs-manifest-rv64.json
 ```
 
 The build requires `sfdisk`, `mkfs.ext4`, `e2fsck`, `dumpe2fs`, and `debugfs`.
@@ -21,6 +28,11 @@ It never mounts the image and does not require `sudo`. A replacement is built
 and verified in the destination directory before atomically replacing an old
 image. Use `--force` (the Make target does this) only when replacing the named
 output is intended.
+
+`ROOT_IMAGE_MANIFEST` is passed to both build and verify, so the same
+architecture-specific manifest is checked after construction. `ROOT_IMAGE_SIZE_MIB`
+defaults to 32 and may be reduced to 16 for small host/QEMU tests (the tool
+still enforces a 1 MiB-aligned partition and ext4 metadata minimum).
 
 Each manifest file entry must contain an absolute guest `path`, an octal
 `mode`, and exactly one of `content` or `source`. Relative sources are resolved
