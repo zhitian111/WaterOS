@@ -383,6 +383,10 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 task::schedule_tick();
             }
         }
+        #[cfg(feature = "qemu-riscv64-opensbi")]
+        TrapCause::Interrupt(Interrupt::SupervisiorExternel) => {
+            irq::dispatch_external();
+        }
         _ => {
             if cx.returns_to_user() {
                 let signal = match trap_cause {

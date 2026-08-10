@@ -12,6 +12,7 @@
     block = { path = "../../driver-block", package = "wateros-driver-block", default-features = true, features = [
         "api-v0",
         "impl-virtio-mmio",
+        "impl-virtio-mmio-interrupt",
     ] }
     character = { path = "../../driver-character", package = "wateros-driver-character", default-features = true, features = [
         "impl-rtc-stub",
@@ -31,7 +32,9 @@
     ] }
     fs = { path = "../../../wateros-fs", package = "wateros-fs", default-features = true }
     wateros-base-config = { path = "../../../wateros-base/base-config", package = "wateros-base-config" }
-    platform = { path = "../../../wateros-platform", package = "wateros-platform", default-features = false, features = [ "impl-qemu-riscv64-opensbi" ] }
+    platform = { path = "../../../wateros-platform", package = "wateros-platform", default-features = false, features = [
+        "impl-qemu-riscv64-opensbi",
+    ] }
 
 [features]
     api-v0 = [  ]

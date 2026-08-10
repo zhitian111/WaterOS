@@ -97,3 +97,15 @@ pub fn disable_soft_interrupt() {
         sie::clear_ssoft();
     }
 }
+
+/// Enables supervisor external interrupts on the current hart.
+#[inline]
+pub fn enable_external_interrupt() {
+    unsafe { sie::set_sext(); }
+}
+
+/// Disables supervisor external interrupts on the current hart.
+#[inline]
+pub fn disable_external_interrupt() {
+    unsafe { sie::clear_sext(); }
+}

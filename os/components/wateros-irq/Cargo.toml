@@ -1,0 +1,15 @@
+[package]
+    name = "wateros-irq"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    irq-framework = "=0.3.2"
+    log = "0.4.29"
+    platform = { path = "../wateros-platform", package = "wateros-platform", default-features = false }
+    spin = "0.10.0"
+    task = { path = "../wateros-task", package = "wateros-task", default-features = true }
+
+[features]
+    default = [  ]
+    riscv-plic = [ "platform/impl-qemu-riscv64-opensbi" ]

@@ -68,6 +68,7 @@ impl MultiClassScheduler {
                                        });
         Some(CpuSnapshot { cpu_id,
                            online : cpu.online(),
+                           boot_context_active : cpu.boot_context_active,
                            current_task_id : cpu.current_task_id(),
                            idle_task_id : cpu.idle_task_id,
                            current_is_idle,

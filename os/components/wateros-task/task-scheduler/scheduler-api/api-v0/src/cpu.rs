@@ -599,6 +599,8 @@ impl CPUState {
 pub struct CpuSnapshot {
     pub cpu_id : CpuId,
     pub online : bool,
+    /// `run_first_task` 尚未完成实际 boot-stack → task-stack 切换。
+    pub boot_context_active : bool,
     pub current_task_id : Option<TaskId>,
     pub idle_task_id : Option<TaskId>,
     pub current_address_space : Option<AddressSpaceHandle>,

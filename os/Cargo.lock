@@ -275,6 +275,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "irq-framework"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99dd422fcaa35776b64a0bc94b670d2ec4ea25f062da6533db3e17d5174d16d5"
+
+[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -586,6 +592,7 @@ dependencies = [
  "wateros-fs",
  "wateros-gui",
  "wateros-ipc",
+ "wateros-irq",
  "wateros-klog",
  "wateros-mm",
  "wateros-network",
@@ -712,9 +719,11 @@ dependencies = [
  "virtio-drivers",
  "wateros-driver-api-v0",
  "wateros-driver-block-api-v0",
+ "wateros-irq",
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor",
  "wateros-runtime-logging",
+ "wateros-task",
 ]
 
 [[package]]
@@ -1297,6 +1306,17 @@ name = "wateros-ipc-waitqueue-impl-task"
 version = "0.1.0"
 dependencies = [
  "wateros-ipc-waitqueue-api-v0",
+ "wateros-task",
+]
+
+[[package]]
+name = "wateros-irq"
+version = "0.1.0"
+dependencies = [
+ "irq-framework",
+ "log",
+ "spin",
+ "wateros-platform",
  "wateros-task",
 ]
 
