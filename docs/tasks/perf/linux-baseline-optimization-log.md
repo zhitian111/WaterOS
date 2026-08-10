@@ -1134,3 +1134,75 @@ codegraph explore "copy_user_path_cstr copy_from_user ActiveUserMemoryOps user_c
   窗口；在 WaterOS 尚无 exception-table/fault fixup 基础设施时优先处理其他热点。
 - 完整日志：`/tmp/wateros-mem04a-after-rv.log`、
   `/tmp/wateros-mem04a-v2-after-rv.log`（本机临时文件，不提交）。
+
+## MEM-05A：消除 VFS 路由的 mount namespace 快照与重复路径分配
+
+状态：实验完成，代码已回退（2026-08-10）
+
+### 证据与调用链
+
+对 FS-04A 后 300 s pc-hot 中所有直达 `__rust_alloc` 的指令按 callsite 计数并符号化，主要
+来源包括：
+
+- `normalize_absolute_path`：2,167,046 次；
+- `String::clone` 内部分配：2,125,385 次；
+- mount namespace / fs-bridge 路由相关分配：约 1,039,941 次；
+- `resolve_material_route`：1,039,754 次；
+- symlink resolver：单个 callsite 36–46 万次；
+- ext4 `split_path` / RawVec 增长：约 34–62 万次。
+
+CodeGraph 确认每次普通 VFS 路由都复制完整挂载命名空间，并为已经规范化的路径连续创建
+两份拥有型字符串：
+
+```text
+lookup / metadata / open / read / write
+  -> resolve_route
+     -> mount_namespace_snapshot
+        -> MountNamespace::clone
+           -> Vec<MountEntry>::clone + mount String clones
+     -> resolve_material_route
+        -> normalize_absolute_path -> NormalizedPath(String)
+        -> String::from(normalized.as_str())
+```
+
+### 设计、并发语义与保留门槛
+
+1. `resolve_route` 改为通过现有 `with_current_namespace` 在 registry guard 下只读借用 namespace；
+   `resolve_material_route` 仍返回完全拥有的 `FsRoute`，guard 在任何后端 FS 操作前释放。
+2. 不修改 fork 的 mount namespace 深拷贝、`CLONE_NEWNS`、共享 namespace、mount/unmount
+   更新语义。热路径只是从“锁内克隆后解锁并遍历副本”改为“锁内遍历原表并构造结果”。
+3. 旧快照本就在 registry 锁内执行 Vec/String 分配；新路径不引入新的
+   allocator-under-registry 锁序，且显著缩短锁内分配工作。`resolve_material_route` 不调用
+   后端文件系统；返回后才进入 root/ext4/procfs。
+4. `NormalizedPath` 增加消费式 `into_string()`，路由直接取得其唯一 String 缓冲区，避免
+   `String::from(as_str())` 的第二次分配；保留现有 `as_str()` API。
+5. 定向测试覆盖规范化结果消费、root/aux/bind 路由不变量；双架构 Final check/build 后，
+   用 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm 对照 880.44 s。明确改善才保留。
+
+首轮同时启用“借用 namespace”和“转移规范化 String”后完整 BuildStorm 为 904.59 s，较
+基线慢 24.15 s。功能正常且完整退出，但扩大 mount registry 临界区带来的串行化超过了
+省下的快照克隆成本。因此第二轮恢复原有短临界区/namespace snapshot，只保留
+`NormalizedPath::into_string()`，单独验证消除约 104 万次重复 String 分配的价值。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "normalize_absolute_path NormalizedPath resolve_route mount_namespace_snapshot with_current_namespace resolve_material_route MountNamespace MountEntry FsRoute rel_under_mount join_mount_path all callers exact source tests lock ordering"
+```
+
+### 验证结果与结论
+
+- VFS API 定向测试 6/6 通过；fs-bridge 的裸 host test 因现有平台 crate 未选择
+  `ArchPagingImpl` 无法独立链接，真实双架构 Final check/build 均通过。
+- 首轮“借用 namespace + String 所有权转移”完整 BuildStorm 正常退出：
+  `ok=true elapsed_s=904.59`，比 880.44 s 慢 24.15 s（+2.74%）。说明把 mount
+  registry guard 延长到路径规范化/路由匹配会形成比 clone 更昂贵的串行化。
+- 第二轮恢复 namespace snapshot，只保留 String 所有权转移：完整 BuildStorm 正常退出，
+  `ok=true elapsed_s=883.96`，比基线慢 3.52 s（+0.40%）。减少一次分配没有兑现为可测
+  墙钟收益，按“明确改善才保留”的门槛整体回退。
+- 两轮均无 panic/SIGSEGV 或尾部停滞。有效基线仍为 880.44 s。
+- 后续若优化 mount namespace，应考虑 Linux 风格的不可变/引用计数 mount tree 或按 generation
+  缓存解析快照，而不是在单一全局锁下借用遍历；但在缺少 RCU/read-side 基础设施时优先处理
+  其他无需扩大临界区的热点。
+- 完整日志：`/tmp/wateros-mem05a-after-rv.log`、
+  `/tmp/wateros-mem05a-v2-after-rv.log`（本机临时文件，不提交）。
