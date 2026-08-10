@@ -313,7 +313,15 @@ mod tests {
         let index = register_input_device(input);
         let manager = KernelDevFsManager;
         let path = format!("/dev/input/event{index}");
-        assert!(manager.list_nodes().iter().any(|node| node.path == path));
+        let node = manager.list_nodes()
+                           .into_iter()
+                           .find(|node| node.path == path)
+                           .expect("input event node should be visible");
+        let metadata = node.metadata();
+        assert_eq!(metadata.major, 13);
+        assert_eq!(metadata.minor, index as u32);
+        assert_eq!(metadata.mode, 0o600);
+        assert_ne!(metadata.capabilities & api_v0::DEV_CAP_INPUT, 0);
         assert!(manager.lookup_character_device(&path).is_ok());
         assert!(unregister_input_device(index));
         assert!(!manager.list_nodes().iter().any(|node| node.path == path));

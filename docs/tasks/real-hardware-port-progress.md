@@ -1577,3 +1577,29 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[feat] expose devfs device metadata`
+
+## 2026-08-10：批次 41——输入事件节点 metadata 回归
+
+### 任务与设计
+
+1. 审计发现 input API 和 dynamic devfs 注册/注销已有 host 覆盖，但 devfs 测试没有断言 `/dev/input/eventN` 的设备号、权限和 capability。
+2. 扩展 kernel devfs 输入节点测试，验证 topology refresh 后路径与 metadata 同时可见。
+3. 注销后继续验证节点和 lookup 消失，确保 metadata 不会掩盖动态生命周期错误。
+
+### 完成内容
+
+- [x] 输入节点 smoke 断言 major=13、minor=registry index、mode=0600 和 input capability。
+- [x] 保留注册前后 topology generation 驱动的刷新与注销行为。
+- [x] 不新增未经验证的 USB/HID 控制器 MMIO 或事件注入逻辑。
+
+### 验证证据与限制
+
+- kernel devfs input 动态测试：1 项通过。
+- input API 单测：2 项通过。
+- kernel devfs RISC-V64 检查：通过。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 USB/HID descriptor、IRQ/DMA/cache、热插拔和 QEMU guest 键鼠事件注入仍需后续端到端验证。
+
+### 提交
+
+- `[test] cover input devfs metadata`
