@@ -17,7 +17,7 @@ class FlashError(RuntimeError):
 
 
 def validate_target(source: Path, target: Path, *, allow_regular_file: bool,
-                    confirmed: bool) -> int:
+                    confirmed: bool, dry_run: bool) -> int:
     if not source.is_file():
         raise FlashError(f"source image not found: {source}")
     if source.resolve() == target.resolve():
@@ -29,7 +29,7 @@ def validate_target(source: Path, target: Path, *, allow_regular_file: bool,
     is_block = stat.S_ISBLK(target_stat.st_mode)
     if not is_block and not (allow_regular_file and stat.S_ISREG(target_stat.st_mode)):
         raise FlashError("target must be a block device (or an explicitly allowed regular file)")
-    if is_block and not confirmed:
+    if is_block and not confirmed and not dry_run:
         raise FlashError("writing a block device requires --yes-i-really-mean-it")
     source_size = source.stat().st_size
     if source_size == 0:
@@ -42,7 +42,7 @@ def validate_target(source: Path, target: Path, *, allow_regular_file: bool,
 def flash(source: Path, target: Path, *, allow_regular_file: bool = False,
           confirmed: bool = False, dry_run: bool = False) -> int:
     size = validate_target(source, target, allow_regular_file=allow_regular_file,
-                           confirmed=confirmed)
+                           confirmed=confirmed, dry_run=dry_run)
     if dry_run:
         return size
     with source.open("rb") as src, target.open("r+b", buffering=0) as dst:

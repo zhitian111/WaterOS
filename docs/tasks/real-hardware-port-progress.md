@@ -6990,3 +6990,28 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[feat] add safe physical image flasher`
+
+## 2026-08-10：批次 170——修正 flasher dry-run 与写入确认边界
+
+### 本批任务与设计
+
+1. 复核上一批 flash helper 与 README 示例，发现 `--dry-run --target /dev/sdX` 仍会因为缺少确认标志而提前失败，无法完成只读检查。
+2. 将 block-device confirmation 限制到实际写入路径；dry-run 只执行 source/target 类型、容量和路径检查，不打开目标写入。
+3. 保持 regular-file 默认拒绝和真实写入的显式确认要求不变。
+
+### 已完成
+
+- [x] `flash()`/`validate_target()` 增加 dry-run 语义，真实 block device dry-run 不再要求确认。
+- [x] flash helper 测试扩展到 4 项；root-image/QEMU 脚本回归保持通过。
+- [x] README 中的 dry-run `/dev/sdX` 示例与实际行为一致。
+
+### 验证证据与限制
+
+- `python3 -m unittest discover -s os/scripts/tests -p 'test_flash_image.py'`：4 项通过。
+- `python3 -m unittest discover -s os/scripts/tests -p 'test_root_image*.py'`：18 项通过。
+- `py_compile`、`git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：未对真实块设备执行写入；目标设备卸载、容量、flush、掉电恢复仍需板上验证。
+
+### 提交
+
+- 待提交：`[fix] allow physical image dry runs`

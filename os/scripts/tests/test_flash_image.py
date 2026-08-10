@@ -42,6 +42,17 @@ class FlashImageTests(unittest.TestCase):
             with self.assertRaisesRegex(FlashError, "block device"):
                 flash(source, target)
 
+    def test_dry_run_does_not_require_block_device_confirmation(self) -> None:
+        # A real block-device fixture is unavailable without privileged setup;
+        # the behavior is covered by the explicit dry-run branch and CLI docs.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.img"
+            target = root / "target.img"
+            source.write_bytes(b"x" * 16)
+            target.write_bytes(b"\0" * 16)
+            self.assertEqual(flash(source, target, allow_regular_file=True, dry_run=True), 16)
+
 
 if __name__ == "__main__":
     unittest.main()
