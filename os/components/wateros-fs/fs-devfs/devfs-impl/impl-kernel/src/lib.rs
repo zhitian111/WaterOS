@@ -336,7 +336,7 @@ mod tests {
         let before = generation();
         let input = Arc::new(Mutex::new(Box::new(EmptyInput(InputDeviceInfo {
             name : String::from("devfs-test-input"), kind : InputDeviceKind::Keyboard,
-            absolute_x : None, absolute_y : None,
+            absolute_x : None, absolute_y : None, ..InputDeviceInfo::default()
         })) as Box<dyn InputDevice>));
         let index = register_input_device(input);
         let manager = KernelDevFsManager;

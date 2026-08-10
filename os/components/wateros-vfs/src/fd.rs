@@ -233,6 +233,11 @@ pub fn current_fd_is_rtc(fd : usize) -> VfsResult<bool> {
     })
 }
 
+/// 当前任务下 `fd` 是否为 evdev 节点，并返回输入设备注册索引。
+pub fn current_fd_input_event_index(fd : usize) -> VfsResult<Option<usize>> {
+    with_current_io(fd, |handle| Ok(handle.input_event_index()))
+}
+
 /// `dup(oldfd)`：复制到 ≥ `minfd` 的最低可用 fd。
 pub fn dup_fd(oldfd : usize, minfd : usize) -> VfsResult<usize> {
     let task_id = current_task_id()?;

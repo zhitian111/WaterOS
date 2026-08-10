@@ -1701,6 +1701,7 @@ dependencies = [
  "spin",
  "wateros-base-config",
  "wateros-cred",
+ "wateros-driver-input",
  "wateros-ipc",
  "wateros-klog",
  "wateros-mm",

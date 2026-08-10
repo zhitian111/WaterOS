@@ -7,7 +7,7 @@ use api_v0::UserRet;
 use vfs::api::VfsError;
 
 use crate::sys::time::rtc::sys_rtc_ioctl;
-use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
+use crate::user_copy::{copy_from_user_struct, copy_to_user, copy_to_user_struct};
 use crate::vfs_util::vfs_error_to_errno;
 
 const TCGETS: u32 = 0x5401;
@@ -25,6 +25,40 @@ const TIOCNOTTY: u32 = 0x5422;
 const TIOCGSID: u32 = 0x5429;
 const RTC_RD_TIME: u32 = 0x8024_7009;
 const RTC_SET_TIME: u32 = 0x4024_700a;
+const EVIOCGVERSION: u32 = 0x8004_4501;
+const EVIOCGID: u32 = 0x8008_4502;
+
+fn evdev_ioc(dir: u32, size: usize, nr: u32) -> u32 {
+    (dir << 30) | ((size as u32 & 0x3fff) << 16) | (0x45 << 8) | (nr & 0xff)
+}
+
+fn evdev_query_ioctl(request: u32, argp: usize, index: usize) -> UserRet {
+    if argp == 0 { return UserRet::from_error(ErrNo::EFAULT); }
+    let Ok(info) = driver_input::input_device_info(index) else {
+        return UserRet::from_error(ErrNo::EINVAL);
+    };
+    let size = ((request >> 16) & 0x3fff) as usize;
+    let mut output = [0u8; 64];
+    let output_len = if request == EVIOCGVERSION {
+        if size != 4 { return UserRet::from_error(ErrNo::EINVAL); }
+        output[..4].copy_from_slice(&0x0001_0001u32.to_le_bytes()); 4
+    } else if request == EVIOCGID {
+        if size != 8 { return UserRet::from_error(ErrNo::EINVAL); }
+        let fields = [info.id.bustype, info.id.vendor, info.id.product, info.id.version];
+        for (offset, field) in fields.into_iter().enumerate() { output[offset * 2..offset * 2 + 2].copy_from_slice(&field.to_le_bytes()); }
+        8
+    } else if (request & 0xff00) == (0x45 << 8) && (request & 0xff) == 0x06 {
+        if size == 0 { return UserRet::from_error(ErrNo::EINVAL); }
+        let name = info.name.as_bytes();
+        let len = name.len().min(size.saturating_sub(1)).min(output.len() - 1);
+        output[..len].copy_from_slice(&name[..len]); output[len] = 0; len + 1
+    } else if (request & 0xff00) == (0x45 << 8) && (request & 0xff) >= 0x20 {
+        let event = (request & 0xff) - 0x20;
+        let bits : &[u8] = match event { 0 => &info.event_types.to_le_bytes(), 1 => &info.key_bits, 2 => &info.relative_bits, 3 => &info.absolute_bits, _ => return UserRet::from_error(ErrNo::ENOTTY) };
+        let len = size.min(bits.len()).min(output.len()); output[..len].copy_from_slice(&bits[..len]); len
+    } else { return UserRet::from_error(ErrNo::ENOTTY); };
+    match copy_to_user(argp, &output[..output_len]) { Ok(n) if n == output_len => UserRet::from_success(0), Ok(_) => UserRet::from_error(ErrNo::EFAULT), Err(e) => UserRet::from_error(e) }
+}
 
 fn ioctl_req(raw: usize) -> u32 {
     raw as u32
@@ -249,6 +283,10 @@ pub(crate) fn sys_ioctl(args: SyscallArgs) -> UserRet {
         return tty_char_ioctl(request, argp);
     }
 
+    if let Ok(Some(index)) = vfs::fd::current_fd_input_event_index(fd) {
+        return evdev_query_ioctl(request, argp, index);
+    }
+
     if request == FIONREAD {
         return pipe_fionread(fd, argp);
     }
@@ -320,4 +358,23 @@ fn pipe_fionread(fd: usize, argp: usize) -> UserRet {
 
 fn global_ioctl_fallback(fd: usize, request: u32, argp: usize) -> UserRet {
     ioctl_enotty(request, Some(fd), argp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn evdev_requests_use_linux_ioc_encoding() {
+        assert_eq!(evdev_ioc(2, 4, 1), EVIOCGVERSION);
+        assert_eq!(evdev_ioc(2, 8, 2), EVIOCGID);
+        assert_eq!(evdev_ioc(2, 32, 0x20), 0x8020_4520);
+        assert_eq!(((evdev_ioc(2, 17, 0x26) >> 16) & 0x3fff), 17);
+    }
+
+    #[test]
+    fn evdev_zero_arg_is_rejected_before_device_lookup() {
+        assert_eq!(EVIOCGVERSION & 0xff, 1);
+        assert_eq!(((EVIOCGVERSION >> 16) & 0x3fff), 4);
+    }
 }

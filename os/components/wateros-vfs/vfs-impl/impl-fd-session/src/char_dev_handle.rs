@@ -60,6 +60,7 @@ pub struct CharDevHandle {
     read_eof: bool,
     rtc: bool,
     input_event: bool,
+    input_index: Option<usize>,
     tty: bool,
     tty_input: bool,
     tty_output: bool,
@@ -77,6 +78,7 @@ impl CharDevHandle {
             read_eof: false,
             rtc: false,
             input_event: false,
+            input_index: None,
             tty: true,
             tty_input: input,
             tty_output: !input,
@@ -94,6 +96,7 @@ impl CharDevHandle {
             read_eof: true,
             rtc: true,
             input_event: false,
+            input_index: None,
             tty: false,
             tty_input: false,
             tty_output: false,
@@ -112,6 +115,7 @@ impl CharDevHandle {
                 read_eof: true,
                 rtc: false,
                 input_event: false,
+                input_index: None,
                 tty: false,
                 tty_input: false,
                 tty_output: false,
@@ -131,6 +135,7 @@ impl CharDevHandle {
                 read_eof: false,
                 rtc: false,
                 input_event: true,
+                input_index: input_event_dev_index(path),
                 tty: false,
                 tty_input: false,
                 tty_output: false,
@@ -457,6 +462,10 @@ impl VfsIoHandle for CharDevHandle {
         self.tty
     }
 
+    fn input_event_index(&self) -> Option<usize> {
+        self.input_index
+    }
+
 // 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         Ok(char_metadata(self.mode, self.inode))
@@ -469,6 +478,7 @@ impl VfsIoHandle for CharDevHandle {
             read_eof: self.read_eof,
             rtc: self.rtc,
             input_event: self.input_event,
+            input_index: self.input_index,
             tty: self.tty,
             tty_input: self.tty_input,
             tty_output: self.tty_output,
@@ -508,6 +518,10 @@ pub fn is_input_event_dev_path(path: &str) -> bool {
         return false;
     };
     !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn input_event_dev_index(path: &str) -> Option<usize> {
+    path.strip_prefix("/dev/input/event")?.parse().ok()
 }
 
 // 本方法代码由AI完成

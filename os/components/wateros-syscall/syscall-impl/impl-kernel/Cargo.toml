@@ -10,6 +10,7 @@
     cred = { path = "../../../wateros-cred/", package = "wateros-cred", default-features = false, optional = true }
     mm = { path = "../../../wateros-mm/", package = "wateros-mm", default-features = true, optional = true }
     vfs = { path = "../../../wateros-vfs/", package = "wateros-vfs", default-features = false, optional = true }
+    driver-input = { path = "../../../wateros-driver/driver-input/", package = "wateros-driver-input", default-features = false, optional = true }
     tty = { path = "../../../wateros-tty/", package = "wateros-tty", default-features = true, optional = true }
     network = { path = "../../../wateros-network/", package = "wateros-network", default-features = true, optional = true }
     log = { version = "0.4.29" }
@@ -30,6 +31,7 @@
         "dep:mm",
         "dep:tty",
         "dep:vfs",
+        "dep:driver-input",
         "ipc/futex",
         "ipc/pipe",
         "ipc/shm",
@@ -37,6 +39,7 @@
         "mm/api-v0",
         "vfs/bridge-fs-api",
         "vfs/impl-fd-session",
+        "driver-input/api-v0",
     ]
     impl-kernel = [
         "api-v0",

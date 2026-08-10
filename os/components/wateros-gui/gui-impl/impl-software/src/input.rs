@@ -297,7 +297,8 @@ mod tests {
             info : InputDeviceInfo { name : String::from("dynamic-test"),
                                      kind : InputDeviceKind::Keyboard,
                                      absolute_x : None,
-                                     absolute_y : None },
+                                     absolute_y : None,
+                                     ..InputDeviceInfo::default() },
         })));
         let index = input::register_input_device(device);
         let mut bridge = InputBridge::new();

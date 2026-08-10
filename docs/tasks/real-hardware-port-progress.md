@@ -6790,3 +6790,29 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - `[fix] route input event nodes outside tty`
+
+## 2026-08-10：批次 162——安全分层实现 evdev 查询 ioctl 与输入能力元数据
+
+### 本批任务与设计
+
+1. VFS 只识别 `/dev/input/eventN` 并暴露注册索引；用户地址校验和写回全部留在 syscall user-copy 层，驱动不解引用用户指针。
+2. 输入 API 增加稳定的 `InputDeviceId`、事件类型以及 key/relative/absolute 能力 bitmap；VirtIO 输入设备使用现有探测结果填充能力，设备 ID 标记为 virtio 总线（产品号暂为驱动库未暴露的 0）。
+3. syscall 实现 `EVIOCGVERSION`、`EVIOCGID`、变长 `EVIOCGNAME` 和 `EVIOCGBIT`（EV_SYN/KEY/REL/ABS）；未知请求、错误长度和写入方向保持 `ENOTTY/EINVAL`。
+
+### 已完成
+
+- [x] `VfsIoHandle::input_event_index`、fd 查询辅助和 `CharDevHandle` duplicate 状态已接通。
+- [x] 输入设备元数据与两个 VirtIO 后端能力 bitmap 已补齐；GUI/devfs 测试 fixture 同步更新。
+- [x] evdev 查询 ioctl 通过既有 `copy_to_user` 安全写回，空指针在设备查询前返回 `EFAULT`。
+- [x] 增加 ioctl 编码、长度字段和零参数边界 host 单元测试。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path os/components/wateros-driver/driver-input/input-api/api-v0/Cargo.toml`：6 项通过。
+- `make kernel-rv-pre EXTRA_FEATURES='gui,operator-shell'`：通过。
+- syscall crate 独立 host test 仍受仓库既有 `platform-arch` 未选择 host implementation 阻断；该环境问题与本批改动无关，已保留 kernel cross-build 证据。
+- `UNVERIFIED_ON_HARDWARE`：EVIOCGBIT 与真实 Linux evdev 用户态兼容性、VirtIO 产品号、真实 USB/HID 能力以及 LoongArch/目标板仍需 QEMU/实机回归；当前实现尚未支持写入型 evdev ioctl、ABS 参数详细查询和真实时间戳。
+
+### 提交
+
+- 待提交：`[feat] add safe evdev query ioctls`

@@ -6,7 +6,7 @@ extern crate alloc;
 use alloc::{string::String, vec::Vec};
 use core::{ptr, ptr::NonNull};
 use api_v0::{
-    AbsoluteAxis, DriverError, DriverResult, InputDevice, InputDeviceInfo, InputDeviceKind,
+    AbsoluteAxis, DriverError, DriverResult, InputDevice, InputDeviceId, InputDeviceInfo, InputDeviceKind,
     RawInputEvent,
 };
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
@@ -183,6 +183,12 @@ fn query_info<H : Hal, T : virtio_drivers::transport::Transport>(inner : &mut Vi
     let lower = name.to_ascii_lowercase();
     let has_relative = inner.ev_bits(2).is_ok_and(|bits| bits.iter().any(|byte| *byte != 0));
     let has_absolute = inner.ev_bits(3).is_ok_and(|bits| bits.iter().any(|byte| *byte != 0));
+    let mut key_bits = [0u8; 64];
+    if let Ok(bits) = inner.ev_bits(1) { let len = bits.len().min(key_bits.len()); key_bits[..len].copy_from_slice(&bits[..len]); }
+    let mut relative_bits = [0u8; 8];
+    if let Ok(bits) = inner.ev_bits(2) { let len = bits.len().min(relative_bits.len()); relative_bits[..len].copy_from_slice(&bits[..len]); }
+    let mut absolute_bits = [0u8; 8];
+    if let Ok(bits) = inner.ev_bits(3) { let len = bits.len().min(absolute_bits.len()); absolute_bits[..len].copy_from_slice(&bits[..len]); }
     let kind = if lower.contains("keyboard") {
         InputDeviceKind::Keyboard
     } else if has_relative || has_absolute || lower.contains("tablet") || lower.contains("mouse") {
@@ -196,5 +202,9 @@ fn query_info<H : Hal, T : virtio_drivers::transport::Transport>(inner : &mut Vi
     });
     let absolute_x = if has_absolute { axis(0) } else { None };
     let absolute_y = if has_absolute { axis(1) } else { None };
-    InputDeviceInfo { name, kind, absolute_x, absolute_y }
+    let event_types = 1 | ((key_bits.iter().any(|byte| *byte != 0) as u32) << 1)
+        | ((has_relative as u32) << 2) | ((has_absolute as u32) << 3);
+    InputDeviceInfo { name, kind, absolute_x, absolute_y,
+                      id : InputDeviceId { bustype : 0x06, vendor : 0x1af4, product : 0, version : 0 },
+                      event_types, key_bits, relative_bits, absolute_bits }
 }

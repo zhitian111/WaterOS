@@ -29,6 +29,14 @@ pub struct AbsoluteAxis {
     pub maximum : i32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct InputDeviceId {
+    pub bustype : u16,
+    pub vendor : u16,
+    pub product : u16,
+    pub version : u16,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// 初始化时固定的输入设备元数据。
 pub struct InputDeviceInfo {
@@ -36,6 +44,24 @@ pub struct InputDeviceInfo {
     pub kind : InputDeviceKind,
     pub absolute_x : Option<AbsoluteAxis>,
     pub absolute_y : Option<AbsoluteAxis>,
+    pub id : InputDeviceId,
+    pub event_types : u32,
+    pub key_bits : [u8; 64],
+    pub relative_bits : [u8; 8],
+    pub absolute_bits : [u8; 8],
+}
+
+impl Default for InputDeviceInfo {
+    fn default() -> Self {
+        Self { name : String::new(), kind : InputDeviceKind::Unknown,
+               absolute_x : None, absolute_y : None, id : InputDeviceId::default(),
+               event_types : 0, key_bits : [0; 64], relative_bits : [0; 8], absolute_bits : [0; 8] }
+    }
+}
+
+pub fn input_device_info(index : usize) -> DriverResult<InputDeviceInfo> {
+    let device = input_device_at(index).ok_or(DriverError::InvalidParam)?;
+    Ok(device.lock().info().clone())
 }
 
 /// 与 Linux evdev/virtio-input 兼容的三元组。
@@ -292,7 +318,9 @@ mod tests {
         register_input_device(Arc::new(Mutex::new(Box::new(TestInput {
             info : InputDeviceInfo { name : String::from("test-input"),
                                      kind : InputDeviceKind::Keyboard,
-                                     absolute_x : None, absolute_y : None },
+                                     absolute_x : None, absolute_y : None,
+                                     id : InputDeviceId::default(), event_types : 0,
+                                     key_bits : [0; 64], relative_bits : [0; 8], absolute_bits : [0; 8] },
             events : events.iter().copied().collect(),
         }))))
     }

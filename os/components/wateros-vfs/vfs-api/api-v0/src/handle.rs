@@ -353,6 +353,11 @@ pub trait VfsIoHandle: Send + VfsHandleAny {
         false
     }
 
+    /// 若为 `/dev/input/eventN`，返回稳定的输入设备注册索引。
+    fn input_event_index(&self) -> Option<usize> {
+        None
+    }
+
     /// `poll`/`ppoll` 就绪位查询；默认不支持（`POLLNVAL` 由 syscall 层处理）。
     fn poll_revents(&mut self, events: i16) -> VfsResult<i16> {
         let _ = events;
