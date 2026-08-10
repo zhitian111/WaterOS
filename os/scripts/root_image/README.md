@@ -4,8 +4,8 @@ This directory contains the rootless image builder intended for QEMU and real
 SD-card/disk deployment. Its default layout is deliberately small:
 
 - 32 MiB sparse raw disk;
-- DOS/MBR disk id `0x574f5301`;
-- one Linux partition (`0x83`) starting at sector 2048 (1 MiB alignment);
+- DOS/MBR disk id `0x574f5301` by default, or GPT via `--partition-table gpt`;
+- one Linux partition starting at sector 2048 (1 MiB alignment);
 - 4 KiB ext4 blocks, fixed UUID and label, no journal, with 64-bit descriptors;
 - root contents declared by `rootfs-manifest.json`.
 
@@ -14,6 +14,8 @@ Build and independently verify an image from `os/`:
 ```bash
 make physical-root-image ROOT_IMAGE=./wateros-root.img
 make verify-physical-root-image ROOT_IMAGE=./wateros-root.img
+# GPT layout (the default remains MBR for compatibility)
+make physical-root-image ROOT_IMAGE=./wateros-gpt.img ROOT_PARTITION_TABLE=gpt
 ```
 
 The build requires `sfdisk`, `mkfs.ext4`, `e2fsck`, `dumpe2fs`, and `debugfs`.
@@ -37,6 +39,7 @@ descriptor layout. QEMU regression tests cover this constraint. The journal is
 disabled to keep the image small; WaterOS therefore does not yet promise
 power-loss recovery for writes to this root filesystem.
 
-The image has been exercised with QEMU virtio-blk. SD/eMMC controllers, cache
+The builder and verifier validate both MBR and GPT headers/entry arrays, including
+CRC and partition bounds. The image has been exercised with QEMU virtio-blk. SD/eMMC controllers, cache
 coherency, write barriers, flush semantics, and power-loss behavior still need
 validation on each physical board.

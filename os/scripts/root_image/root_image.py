@@ -24,7 +24,9 @@ DEFAULT_UUID = "574f5300-0000-4000-8000-000000000001"
 DEFAULT_LABEL = "WATEROS_ROOT"
 DEFAULT_DISK_ID = "0x574f5301"
 MBR_SIGNATURE = b"\x55\xaa"
+GPT_SIGNATURE = b"EFI PART"
 LINUX_PARTITION_TYPE = 0x83
+GPT_LINUX_TYPE_GUID = bytes.fromhex("af3dc60f838472478e793d69d8477de4")
 
 
 class ImageError(RuntimeError):
@@ -37,6 +39,7 @@ class Partition:
     partition_type: int
     start_sector: int
     sectors: int
+    table: str = "mbr"
 
     @property
     def byte_offset(self) -> int:
@@ -174,6 +177,71 @@ def parse_mbr_sector(sector: bytes, image_bytes: int) -> list[Partition]:
     return partitions
 
 
+def crc32(data: bytes) -> int:
+    value = 0xFFFFFFFF
+    for byte in data:
+        value ^= byte
+        for _ in range(8):
+            value = (value >> 1) ^ 0xEDB88320 if value & 1 else value >> 1
+    return (~value) & 0xFFFFFFFF
+
+
+def parse_gpt_image(image: Path) -> list[Partition]:
+    image_bytes = image.stat().st_size
+    total_sectors = image_bytes // SECTOR_SIZE
+    with image.open("rb") as source:
+        source.seek(SECTOR_SIZE)
+        header = source.read(SECTOR_SIZE)
+        if header[:8] != GPT_SIGNATURE or len(header) != SECTOR_SIZE:
+            raise ImageError("missing GPT header")
+        header_size = struct.unpack_from("<I", header, 12)[0]
+        current_lba, backup_lba = struct.unpack_from("<QQ", header, 24)
+        first_usable, last_usable = struct.unpack_from("<QQ", header, 40)
+        entries_lba, entry_count, entry_size, entries_crc = struct.unpack_from(
+            "<QIII", header, 72
+        )
+        if not 92 <= header_size <= SECTOR_SIZE or current_lba != 1:
+            raise ImageError("invalid GPT header")
+        if backup_lba >= total_sectors or first_usable > last_usable >= total_sectors:
+            raise ImageError("GPT usable range is invalid")
+        header_copy = bytearray(header[:header_size])
+        expected_crc = struct.unpack_from("<I", header, 16)[0]
+        header_copy[16:20] = b"\0\0\0\0"
+        if crc32(bytes(header_copy)) != expected_crc:
+            raise ImageError("GPT header CRC mismatch")
+        if not 128 <= entry_size <= 1024 or entry_size % 8 or entry_count > 4096:
+            raise ImageError("unsupported GPT entry layout")
+        entry_bytes = entry_count * entry_size
+        entry_sectors = (entry_bytes + SECTOR_SIZE - 1) // SECTOR_SIZE
+        if entries_lba == 0 or entries_lba + entry_sectors > total_sectors:
+            raise ImageError("GPT entry array extends beyond image")
+        source.seek(entries_lba * SECTOR_SIZE)
+        entries = source.read(entry_bytes)
+        if len(entries) != entry_bytes or crc32(entries) != entries_crc:
+            raise ImageError("GPT entry array CRC mismatch")
+    partitions: list[Partition] = []
+    for index in range(entry_count):
+        entry = entries[index * entry_size : (index + 1) * entry_size]
+        if entry[:16] == b"\0" * 16:
+            continue
+        start, end = struct.unpack_from("<QQ", entry, 32)
+        if start < first_usable or start > end or end > last_usable:
+            raise ImageError(f"GPT partition {index + 1} is out of range")
+        if entry[:16] == GPT_LINUX_TYPE_GUID:
+            partition_type = LINUX_PARTITION_TYPE
+        else:
+            partition_type = 0
+        partition = Partition(index + 1, partition_type, start, end - start + 1, "gpt")
+        if partition.byte_offset + partition.byte_length > image_bytes:
+            raise ImageError(f"GPT partition {index + 1} extends beyond image")
+        partitions.append(partition)
+    for index, left in enumerate(partitions):
+        for right in partitions[index + 1 :]:
+            if left.start_sector <= right.start_sector + right.sectors - 1 and right.start_sector <= left.start_sector + left.sectors - 1:
+                raise ImageError("overlapping GPT partitions")
+    return partitions
+
+
 def read_partitions(image: Path) -> list[Partition]:
     try:
         image_bytes = image.stat().st_size
@@ -181,20 +249,25 @@ def read_partitions(image: Path) -> list[Partition]:
             sector = source.read(SECTOR_SIZE)
     except OSError as error:
         raise ImageError(f"cannot read image {image}: {error}") from error
+    if len(sector) == SECTOR_SIZE and sector[510:512] == MBR_SIGNATURE and sector[450] == 0xEE:
+        return parse_gpt_image(image)
     return parse_mbr_sector(sector, image_bytes)
 
 
-def make_partition_table(image: Path, image_bytes: int, start_sector: int) -> Partition:
+def make_partition_table(image: Path, image_bytes: int, start_sector: int, table: str = "mbr") -> Partition:
     total_sectors = image_bytes // SECTOR_SIZE
-    sectors = total_sectors - start_sector
+    sectors = total_sectors - start_sector - (34 if table == "gpt" else 0)
+    sectors -= sectors % (DEFAULT_BLOCK_SIZE // SECTOR_SIZE)
     if sectors <= 0:
         raise ImageError("image is too small for requested partition start")
-    specification = (
-        "label: dos\n"
-        f"label-id: {DEFAULT_DISK_ID}\n"
-        "unit: sectors\n\n"
-        f"{start_sector},{sectors},83\n"
-    )
+    if table == "mbr":
+        specification = ("label: dos\n" f"label-id: {DEFAULT_DISK_ID}\n" "unit: sectors\n\n"
+                         f"{start_sector},{sectors},83\n")
+    elif table == "gpt":
+        specification = ("label: gpt\n" f"first-lba: {start_sector}\n" "unit: sectors\n\n"
+                         f"{start_sector},{sectors},L\n")
+    else:
+        raise ImageError(f"unsupported partition table: {table}")
     run(["sfdisk", "--quiet", str(image)], input_text=specification)
     partition = read_partitions(image)
     if len(partition) != 1:
@@ -222,7 +295,8 @@ def build_image(args: argparse.Namespace) -> list[str]:
             temporary_image = Path(raw_path)
             with temporary_image.open("wb") as output:
                 output.truncate(image_bytes)
-            partition = make_partition_table(temporary_image, image_bytes, args.start_sector)
+            partition = make_partition_table(temporary_image, image_bytes, args.start_sector,
+                                             getattr(args, "partition_table", "mbr"))
             if partition.partition_type != LINUX_PARTITION_TYPE:
                 raise ImageError("root partition has unexpected MBR type")
             if partition.byte_length % DEFAULT_BLOCK_SIZE != 0:
@@ -365,11 +439,12 @@ def parser() -> argparse.ArgumentParser:
     default_manifest = Path(__file__).with_name("rootfs-manifest.json")
     result = argparse.ArgumentParser(description=__doc__)
     subcommands = result.add_subparsers(dest="command", required=True)
-    build = subcommands.add_parser("build", help="build a raw MBR/ext4 root image")
+    build = subcommands.add_parser("build", help="build a raw MBR/GPT ext4 root image")
     build.add_argument("--output", type=Path, required=True)
     build.add_argument("--manifest", type=Path, default=default_manifest)
     build.add_argument("--size-mib", type=int, default=DEFAULT_IMAGE_MIB)
     build.add_argument("--start-sector", type=int, default=DEFAULT_START_SECTOR)
+    build.add_argument("--partition-table", choices=("mbr", "gpt"), default="mbr")
     build.add_argument("--uuid", default=DEFAULT_UUID)
     build.add_argument("--label", default=DEFAULT_LABEL)
     build.add_argument("--force", action="store_true")

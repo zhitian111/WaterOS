@@ -12,7 +12,7 @@ from unittest.mock import patch
 ROOT_IMAGE = Path(__file__).resolve().parents[1] / "root_image"
 sys.path.insert(0, str(ROOT_IMAGE))
 
-from root_image import ImageError, build_image, populate_staging, parse_mbr_sector
+from root_image import ImageError, build_image, parse_gpt_image, populate_staging, parse_mbr_sector
 
 
 class RootImageTests(unittest.TestCase):
@@ -87,6 +87,36 @@ class RootImageTests(unittest.TestCase):
                     build_image(args)
             self.assertEqual(output.read_bytes(), b"known-good")
             self.assertEqual(list(root.glob(".root.img.*.tmp")), [])
+
+    def test_build_and_parse_small_gpt_image(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "manifest.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "directories": [{"path": "/etc", "mode": "0755"}],
+                        "files": [{"path": "/etc/layout", "content": "gpt\n"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output = root / "gpt.img"
+            args = argparse.Namespace(
+                output=output,
+                manifest=manifest,
+                size_mib=16,
+                start_sector=2048,
+                partition_table="gpt",
+                uuid="574f5300-0000-4000-8000-000000000001",
+                label="WATEROS_ROOT",
+                force=True,
+            )
+            build_image(args)
+            partitions = parse_gpt_image(output)
+            self.assertEqual(len(partitions), 1)
+            self.assertEqual(partitions[0].table, "gpt")
+            self.assertEqual(partitions[0].start_sector, 2048)
 
 
 if __name__ == "__main__":

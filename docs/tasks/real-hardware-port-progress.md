@@ -1471,3 +1471,30 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[fix] recover gpt backup header`
+
+## 2026-08-10：批次 37——物理根镜像支持 GPT 布局
+
+### 任务与设计
+
+1. 审计确认 Rust block API 已支持 GPT，但 root image builder 仍只能生成 MBR，物理 SD 卡部署无法用同一工具验证 GPT 布局。
+2. 增加 `--partition-table mbr|gpt`，默认保持 MBR；GPT 使用 `sfdisk` 生成标准 primary/backup header 和 Linux filesystem GUID 分区。
+3. verifier 根据 protective MBR 识别 GPT，校验 header/entry CRC、可用范围、Linux 分区类型、ext4 和 manifest 内容。
+
+### 完成内容
+
+- [x] Python builder 支持 MBR/GPT 两种布局，GPT 自动为 backup metadata 保留末尾 34 个 sector。
+- [x] GPT 分区长度按 4 KiB ext4 block 对齐，仍从 LBA 2048 开始。
+- [x] `make physical-root-image ROOT_PARTITION_TABLE=gpt` 可选择 GPT 输出；默认命令兼容旧 MBR。
+- [x] 新增 16 MiB 临时 GPT image 的真实构建、解析和 verifier 测试。
+
+### 验证证据与限制
+
+- `python3 -m unittest discover -s os/scripts/tests -p 'test_root_image.py'`：5 项通过。
+- 临时 16 MiB GPT 镜像：构建与 `verify` 均通过，镜像由 `TemporaryDirectory` 自动清理。
+- `make -n physical-root-image ROOT_PARTITION_TABLE=gpt`：确认 Make 参数传递正确。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 SD/eMMC 控制器读写、掉电一致性、固件对 GPT backup header 的处理仍需两块板实测；本批不提交生成镜像。
+
+### 提交
+
+- `[feat] build gpt physical root images`
