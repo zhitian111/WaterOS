@@ -46,6 +46,12 @@ pub fn alloc_error_handler(layout : core::alloc::Layout) -> ! {
     runtime::heap_allocator::handle_alloc_error(layout)
 }
 
+#[cfg(feature = "slab-allocator")]
+fn request_slab_drain_ipi(targets : u64) -> bool {
+    platform::smp::send_ipi(base::cpu::CpuMask::from_bits(targets),
+                            platform::smp::IpiKind::AllocatorDrain).is_ok()
+}
+
 // ── 共享 bring-up ──────────────────────────────────────────────
 
 /// 网络协议栈轮询任务：周期性驱动 smoltcp 收发包。
@@ -225,6 +231,8 @@ mod qemu_riscv64_opensbi {
         platform::arch::interrupt::enable_soft_interrupt();
         platform::timer::set_timer_after_ms(100).expect("AP set initial timer");
         task::set_cpu_online(cpu_id);
+        #[cfg(feature = "slab-allocator")]
+        runtime::heap_allocator::note_allocator_cpu_online(cpu_id.raw());
         platform::interrupt::enable_global_interrupt().expect("AP enable global interrupt");
         task::run_first_task()
     }
@@ -266,12 +274,16 @@ mod qemu_riscv64_opensbi {
         runtime::logging::init();
         crate::boot_timebase::probe_and_init_timebase(dtb_pa);
         runtime::heap_allocator::init();
+        #[cfg(feature = "slab-allocator")]
+        runtime::heap_allocator::register_slab_drain_request(crate::request_slab_drain_ipi);
         platform::arch::init();
         task::init();
         task::set_timekeeper_cpu(cpu_id);
         #[cfg(feature = "dashboard-debug")]
         crate::dashboard::init();
         crate::trap_handler::init();
+        #[cfg(feature = "slab-allocator")]
+        runtime::heap_allocator::note_allocator_cpu_online(cpu_id.raw());
         // MM 初始化
         let memory_end = platform::physical_ram_end_exclusive();
         mm::kernel_mm::init(dtb_pa, memory_end);
@@ -356,6 +368,8 @@ mod qemu_loongarch64_virt {
         platform::arch::interrupt::enable_soft_interrupt();
         platform::timer::set_timer_after_ms(100).expect("AP set initial timer");
         task::set_cpu_online(cpu_id);
+        #[cfg(feature = "slab-allocator")]
+        runtime::heap_allocator::note_allocator_cpu_online(cpu_id.raw());
         platform::interrupt::enable_global_interrupt().expect("AP enable global interrupt");
         task::run_first_task()
     }
@@ -385,6 +399,8 @@ mod qemu_loongarch64_virt {
         klog::init();
         runtime::logging::init();
         runtime::heap_allocator::init();
+        #[cfg(feature = "slab-allocator")]
+        runtime::heap_allocator::register_slab_drain_request(crate::request_slab_drain_ipi);
         platform::arch::cpu::init_current_cpu(cpu_id).expect("BSP init current CPU");
         platform::arch::init();
         let _ = platform::smp::init_ipi();
@@ -404,6 +420,8 @@ mod qemu_loongarch64_virt {
         #[cfg(feature = "dashboard-debug")]
         crate::dashboard::init();
         crate::trap_handler::init();
+        #[cfg(feature = "slab-allocator")]
+        runtime::heap_allocator::note_allocator_cpu_online(cpu_id.raw());
         platform::arch::paging::init_paging_disable_mmu();
 
         let memory_end = platform::physical_ram_end_exclusive();

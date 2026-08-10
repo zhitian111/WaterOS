@@ -344,6 +344,10 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             if pending & platform::smp::IpiKind::TlbShootdown.bits() != 0 {
                 let _ = mm::kernel_mm::handle_tlb_shootdown_ipi();
             }
+            #[cfg(feature = "slab-allocator")]
+            if pending & platform::smp::IpiKind::AllocatorDrain.bits() != 0 {
+                runtime::heap_allocator::handle_slab_drain_ipi();
+            }
             if pending & platform::smp::IpiKind::TaskNotify.bits() != 0 {
                 if cx.returns_to_user() {
                     return_to_user_signal_delivery(authoritative, trap_cause, cx, None);

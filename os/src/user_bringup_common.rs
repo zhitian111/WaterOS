@@ -147,6 +147,9 @@ pub fn run_one_elf_argv_env_exit(log_tag : &str,
 
     syscall::log_thread_bringup_stats_summary();
 
+    #[cfg(feature = "tlsf-diagnostics")]
+    runtime::heap_allocator::emit_buildstorm_counters();
+
     trace!("[{log_tag}] END path={elf_path} exit_code={exit_code}");
     Some(exit_code)
 }

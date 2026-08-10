@@ -9,8 +9,14 @@
 
 mod interrupt_guard;
 mod stress;
+#[cfg(all(feature = "impl-tlsf", feature = "slab-allocator"))]
+mod slab;
+#[cfg(all(feature = "impl-tlsf", feature = "tlsf-diagnostics"))]
+mod tlsf_diagnostics;
 
 use config::mm::KERNEL_HEAP_SIZE;
+#[cfg(all(feature = "impl-tlsf", feature = "slab-allocator"))]
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 #[cfg(all(feature = "impl-tlsf", feature = "impl-linked-list-allocator"))]
 compile_error!("enable only one of `impl-tlsf` or `impl-linked-list-allocator`");
@@ -29,6 +35,10 @@ use backend_linked_list as backend;
 use backend_tlsf as backend;
 
 pub use stress::heap_fragmentation_stress_report;
+#[cfg(all(feature = "impl-tlsf", feature = "tlsf-diagnostics"))]
+pub use tlsf_diagnostics::{emit_buildstorm_counters, snapshot as tlsf_diagnostics,
+                           TlsfDiagnosticClass, TlsfDiagnostics,
+                           CLASS_LABELS as TLSF_DIAGNOSTIC_CLASS_LABELS};
 
 /// 内核堆用量快照。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,7 +51,94 @@ pub struct HeapMemStats {
     pub capacity : usize,
 }
 
+/// Slab ownership split.  `tlsf_owned` is the bytes reserved as slab spans;
+/// the other three fields partition usable object bytes within those spans.
+#[cfg(all(feature = "impl-tlsf", feature = "slab-allocator"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SlabMemStats {
+    pub application_live : usize,
+    pub per_cpu_cached : usize,
+    pub central_free : usize,
+    pub tlsf_owned : usize,
+}
+
+#[cfg(all(feature = "impl-tlsf", feature = "slab-allocator"))]
+pub fn slab_mem_stats() -> SlabMemStats {
+    let stats = slab::mem_stats();
+    SlabMemStats { application_live : stats.application_live,
+                   per_cpu_cached : stats.per_cpu_cached,
+                   central_free : stats.central_free,
+                   tlsf_owned : stats.tlsf_owned }
+}
+
 pub(crate) use backend::HEAP_ALLOCATOR;
+
+#[cfg(all(feature = "impl-tlsf", feature = "slab-allocator"))]
+type DrainRequest = fn(u64) -> bool;
+#[cfg(all(feature = "impl-tlsf", feature = "slab-allocator"))]
+static DRAIN_REQUEST : AtomicUsize = AtomicUsize::new(0);
+#[cfg(all(feature = "impl-tlsf", feature = "slab-allocator"))]
+static ONLINE_CPUS : AtomicU64 = AtomicU64::new(0);
+#[cfg(all(feature = "impl-tlsf", feature = "slab-allocator"))]
+static DRAIN_EPOCH : AtomicUsize = AtomicUsize::new(0);
+#[cfg(all(feature = "impl-tlsf", feature = "slab-allocator"))]
+static DRAIN_ACTIVE : AtomicBool = AtomicBool::new(false);
+#[cfg(all(feature = "impl-tlsf", feature = "slab-allocator"))]
+static DRAIN_ACK : [AtomicUsize; config::task::MAX_CPUS] =
+    [const { AtomicUsize::new(0) }; config::task::MAX_CPUS];
+
+/// Install the allocation-free platform hook used to deliver slab-drain IPIs.
+#[cfg(all(feature = "impl-tlsf", feature = "slab-allocator"))]
+pub fn register_slab_drain_request(handler : DrainRequest) {
+    DRAIN_REQUEST.store(handler as usize, Ordering::Release);
+}
+
+/// Publish a CPU only after its IPI receive path is ready.
+#[cfg(all(feature = "impl-tlsf", feature = "slab-allocator"))]
+pub fn note_allocator_cpu_online(cpu : usize) {
+    if cpu < u64::BITS as usize {
+        ONLINE_CPUS.fetch_or(1u64 << cpu, Ordering::Release);
+    }
+}
+
+#[cfg(all(feature = "impl-tlsf", feature = "slab-allocator"))]
+pub(crate) fn request_remote_slab_drain() {
+    if DRAIN_ACTIVE.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
+        return;
+    }
+    let current = arch::cpu::current_cpu_id().raw();
+    let targets = ONLINE_CPUS.load(Ordering::Acquire) & !(1u64 << current);
+    let raw = DRAIN_REQUEST.load(Ordering::Acquire);
+    if targets != 0 && raw != 0 {
+        let epoch = DRAIN_EPOCH.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+        let request : DrainRequest = unsafe { core::mem::transmute(raw) };
+        if request(targets) {
+            let mut pending = targets;
+            while pending != 0 {
+                let cpu = pending.trailing_zeros() as usize;
+                if DRAIN_ACK[cpu].load(Ordering::Acquire) == epoch {
+                    pending &= !(1u64 << cpu);
+                } else {
+                    core::hint::spin_loop();
+                }
+            }
+        }
+    }
+    DRAIN_ACTIVE.store(false, Ordering::Release);
+}
+
+/// IPI receive-side operation; performs no allocation and acknowledges only
+/// after the local magazine objects have reached central lists/TLSF.
+#[cfg(all(feature = "impl-tlsf", feature = "slab-allocator"))]
+pub fn handle_slab_drain_ipi() {
+    interrupt_guard::with_allocator_interrupt_guard(|| unsafe {
+        backend::drain_local_slabs();
+    });
+    let cpu = arch::cpu::current_cpu_id().raw();
+    if cpu < DRAIN_ACK.len() {
+        DRAIN_ACK[cpu].store(DRAIN_EPOCH.load(Ordering::Acquire), Ordering::Release);
+    }
+}
 
 /// 返回当前内核堆用量（`used`/`free`/`capacity`）。
 ///
