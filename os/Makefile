@@ -75,6 +75,7 @@ SNAPSHOT ?= $(if $(WOS_QEMU_SNAPSHOT),$(WOS_QEMU_SNAPSHOT),$(if $(filter 1,$(WRI
 SDCARD ?= $(if $(strip $(WOS_SDCARD)),$(WOS_SDCARD),$(SELECTED_IMAGE))
 ROOT_IMAGE ?= ./wateros-root.img
 ROOT_IMAGE_TOOL := ./scripts/root_image/root_image.py
+ROOT_MANIFEST ?= ./scripts/root_image/rootfs-manifest.json
 ROOT_PARTITION_TABLE ?= mbr
 ROOT_SOURCE_ROOT ?=
 PORT ?= 1234
@@ -482,12 +483,14 @@ physical-root-image:
 	$(call INFO, "构建物理机/QEMU 共用根盘 $(ROOT_IMAGE)...")
 	@python3 $(ROOT_IMAGE_TOOL) build --force --partition-table "$(ROOT_PARTITION_TABLE)" \
 		$(if $(strip $(ROOT_SOURCE_ROOT)),--source-root "$(ROOT_SOURCE_ROOT)",) \
+		--manifest "$(ROOT_MANIFEST)" \
 		--output "$(ROOT_IMAGE)"
 
 verify-physical-root-image:
 	$(call INFO, "只读验证根盘 $(ROOT_IMAGE)...")
 	@python3 $(ROOT_IMAGE_TOOL) verify \
 		$(if $(strip $(ROOT_SOURCE_ROOT)),--source-root "$(ROOT_SOURCE_ROOT)",) \
+		--manifest "$(ROOT_MANIFEST)" \
 		--image "$(ROOT_IMAGE)"
 
 rv_user_mode_program:

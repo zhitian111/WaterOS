@@ -2078,6 +2078,27 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - 实际 Make build/verify：32 MiB GPT 镜像通过，生成物已移至临时目录。
 - `UNVERIFIED_ON_HARDWARE`：实际架构 init ABI、SD/eMMC 写入、掉电行为和实体板根盘启动仍待验证。
 
+## 2026-08-10：批次 74——架构 manifest Make 集成
+
+### 任务与设计
+
+1. 复查上一批 Make staging 入口，发现它仍固定使用通用 `rootfs-manifest.json`，无法声明架构专用 init/用户程序。
+2. 增加可选 `ROOT_MANIFEST`，与 `ROOT_SOURCE_ROOT` 一起传递给 build/verify；默认值保持不变。
+3. 用临时架构 manifest、`/sbin/init` fixture 和 32 MiB GPT 镜像做实际 Make/QEMU image 验证。
+
+### 完成内容
+
+- [x] Makefile 新增 `ROOT_MANIFEST`。
+- [x] build/verify 目标均传递自定义 manifest。
+- [x] README 增加自定义 manifest + source-root 示例。
+
+### 验证证据与限制
+
+- `make -n` 参数展开正确。
+- 自定义 manifest 的实际 Make build/verify 通过。
+- `qemu-img info` 报告 raw 镜像 virtual-size=33554432；临时镜像已移出工作树。
+- `UNVERIFIED_ON_HARDWARE`：架构 init ABI、真实 SD/eMMC 写入、掉电行为和实体板根盘启动仍待验证。
+
 ## 2026-08-10：批次 65——稳定 QMP 输入注入诊断
 
 ### 任务与设计
