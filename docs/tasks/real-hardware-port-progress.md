@@ -1603,3 +1603,28 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[test] cover input devfs metadata`
+
+## 2026-08-10：批次 42——输入事件 host smoke
+
+### 任务与设计
+
+1. 审计确认 Rust input/evdev/devfs 已有 host 单测，但缺少一个可直接运行、无需大镜像的键盘/鼠标事件链路 smoke。
+2. 新增 Python fixture，复刻固定 16-byte event record、keyboard/mouse 事件、event 节点命名和动态注销语义。
+3. 明确该 smoke 只验证协议/节点契约，不把 host fixture 结果冒充 virtio-input、USB HID 或物理板中断证据。
+
+### 完成内容
+
+- [x] 新增 `os/scripts/input_event_smoke.py`，可独立执行并输出 smoke 结果。
+- [x] 新增 Python 单测覆盖键盘按键、鼠标相对移动、固定 record 长度和注销节点。
+- [x] metadata 断言与 devfs major=13、0600、input capability 契约一致。
+
+### 验证证据与限制
+
+- `python3 os/scripts/input_event_smoke.py`：通过。
+- `python3 -m unittest discover -s os/scripts/tests -p 'test_input_event_smoke.py'`：2 项通过。
+- `py_compile` 与 `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 QEMU guest 事件注入、virtio-input/USB HID descriptor、IRQ/DMA/cache 和两块板热插拔仍待端到端测试。
+
+### 提交
+
+- `[test] add input event host smoke`
