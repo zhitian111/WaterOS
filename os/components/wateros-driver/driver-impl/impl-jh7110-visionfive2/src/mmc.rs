@@ -263,6 +263,48 @@ mod tests {
         Arc::new(Mutex::new(Box::new(ProbeDisk { total, fail })))
     }
 
+    struct MbrDisk {
+        bytes : Vec<u8>,
+    }
+
+    impl BlockDevice for MbrDisk {
+        fn total_blocks(&self) -> Option<u64> {
+            Some((self.bytes.len() / BLOCK_SIZE) as u64)
+        }
+
+        fn read_blocks(&mut self, start : Lba, output : &mut [u8]) -> block::DriverResult<()> {
+            if output.len() != BLOCK_SIZE {
+                return Err(DriverError::InvalidParam);
+            }
+            let offset = usize::try_from(start.0)
+                .ok()
+                .and_then(|lba| lba.checked_mul(BLOCK_SIZE))
+                .ok_or(DriverError::InvalidParam)?;
+            let end = offset.checked_add(output.len()).ok_or(DriverError::InvalidParam)?;
+            if end > self.bytes.len() {
+                return Err(DriverError::IoError);
+            }
+            output.copy_from_slice(&self.bytes[offset..end]);
+            Ok(())
+        }
+
+        fn write_blocks(&mut self, _start : Lba, _input : &[u8]) -> block::DriverResult<()> {
+            Err(DriverError::Unsupported)
+        }
+    }
+
+    fn mbr_disk() -> SharedBlockDevice {
+        let mut bytes = vec![0u8; 4096 * BLOCK_SIZE];
+        bytes[510] = 0x55;
+        bytes[511] = 0xaa;
+        // One Linux-style primary partition: LBA 1..16.
+        let entry = 446;
+        bytes[entry + 4] = 0x83;
+        bytes[entry + 8..entry + 12].copy_from_slice(&1u32.to_le_bytes());
+        bytes[entry + 12..entry + 16].copy_from_slice(&16u32.to_le_bytes());
+        Arc::new(Mutex::new(Box::new(MbrDisk { bytes })))
+    }
+
     #[test]
     fn registration_requires_capacity_and_first_read() {
         let before = block::block_device_count();
@@ -274,6 +316,24 @@ mod tests {
         let index = register_readonly_block_device(probe_disk(Some(1), false)).unwrap();
         assert!(block::block_device_count() > before);
         assert!(block::unregister_block_device(index));
+    }
+
+    #[test]
+    fn registration_exposes_mbr_partition_and_removes_it_with_parent() {
+        let disk_index = register_readonly_block_device(mbr_disk()).unwrap();
+        let snapshot = block::block_devices_snapshot();
+        let partition_index = snapshot.iter()
+            .find_map(|(index, _, role)| match role {
+                block::BlockDeviceRole::Partition { parent_device_index, partition_number }
+                    if *parent_device_index == disk_index && *partition_number == 1 => Some(*index),
+                _ => None,
+            })
+            .expect("registered MBR partition");
+        assert!(snapshot.iter().any(|(index, _, role)| {
+            *index == disk_index && matches!(role, block::BlockDeviceRole::Disk { .. })
+        }));
+        assert!(block::unregister_block_device(disk_index));
+        assert!(block::block_device_at(partition_index).is_none());
     }
 
     #[test]

@@ -1302,3 +1302,27 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[fix] diagnose missing mmc tuning`
+
+## 2026-08-10：批次 58——VisionFive 2 SD 注册与 MBR 分区链路
+
+### 任务与设计
+
+1. 复查 SD 只读注册闸门：容量和 LBA0 probe 失败必须在进入共有 block registry 前返回，成功路径则交给共有分区扫描器处理。
+2. 用 2MiB 内存 MBR fixture 模拟已初始化 SD 卡，验证注册后同时出现整盘与分区角色，并验证移除整盘会级联移除分区。
+3. 不执行 JH7110 控制器寄存器、DMA、IRQ、时钟、复位或供电操作；真实 SD 行为继续标注 `UNVERIFIED_ON_HARDWARE`。
+
+### 完成内容
+
+- [x] 新增 `MbrDisk` 小型只读 fixture，覆盖有效 MBR、边界读取和不支持写入。
+- [x] 新增注册后 MBR partition role 断言，确认共有 registry/devfs 的分区语义能够被 VisionFive 2 注册入口复用。
+- [x] 新增父盘注销后分区槽位清理断言。
+
+### 验证证据与限制
+
+- VisionFive 2 驱动 crate 全部 lib 单测：13 项通过。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 SD CMD/PIO、卡容量、JH7110 IRQ/DMA/cache、掉电一致性和物理卡热插拔仍需实机验证。
+
+### 提交
+
+- `[test] verify visionfive2 partition registration`
