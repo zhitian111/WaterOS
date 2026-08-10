@@ -995,7 +995,6 @@ impl Sv39AddressSpace {
         // 独占帧：原地恢复 W，无需复制
         if frame_ref_count(old_ppn).map_err(MmError::from)? <= 1 {
             pte.set(old_ppn, new_flags);
-            platform::arch::paging::flush_address_space_translations();
             return Ok(true);
         }
 
@@ -1010,12 +1009,22 @@ impl Sv39AddressSpace {
         }
         frame_dealloc_result(old_ppn).map_err(MmError::from)?;
         pte.set(new_ppn, new_flags);
-        platform::arch::paging::flush_address_space_translations();
         Ok(true)
     }
 
     // 本方法代码由AI完成
     pub fn handle_cow_fault(&mut self, fault_addr : VirtAddr) -> MmResult<bool> {
+        let changed = self.handle_cow_page(fault_addr.floor_page())?;
+        if changed {
+            platform::arch::paging::flush_address_space_translations();
+        }
+        Ok(changed)
+    }
+
+    /// Same as [`Self::handle_cow_fault`], but the caller owns TLB invalidation.
+    pub(crate) fn handle_cow_fault_no_flush(&mut self,
+                                            fault_addr : VirtAddr)
+                                            -> MmResult<bool> {
         self.handle_cow_page(fault_addr.floor_page())
     }
 

@@ -122,8 +122,12 @@ pub mod kernel_mm_impl {
         if parent_aspace_ptr == 0 {
             return Err(MmError::InvalidAddress);
         }
-        crate::user_aspace::with_user_aspace_mut_and_flush(parent_aspace_ptr,
-            |aspace| aspace.handle_cow_fault(VirtAddr(fault_addr)))
+        crate::user_aspace::with_user_aspace_mut_and_page_flush(parent_aspace_ptr,
+            fault_addr,
+            |aspace| {
+                let changed = aspace.handle_cow_fault_no_flush(VirtAddr(fault_addr))?;
+                Ok((changed, changed))
+            })
     }
 
     /// 销毁用户地址空间：递归释放所有用户页帧和页表帧。
