@@ -12,7 +12,8 @@ from unittest.mock import patch
 ROOT_IMAGE = Path(__file__).resolve().parents[1] / "root_image"
 sys.path.insert(0, str(ROOT_IMAGE))
 
-from root_image import ImageError, build_image, parse_gpt_image, populate_staging, parse_mbr_sector
+from root_image import (ImageError, build_image, parse_gpt_image, populate_staging,
+                        parse_mbr_sector, manifest_file_contents)
 
 
 class RootImageTests(unittest.TestCase):
@@ -65,6 +66,32 @@ class RootImageTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ImageError, "unsafe"):
                 populate_staging(manifest, staging)
+
+    def test_source_root_is_required_to_contain_relative_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source_root = root / "rootfs"
+            source_root.mkdir()
+            (source_root / "init").write_bytes(b"init")
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({"files": [{"path": "/sbin/init",
+                                                        "mode": "0755",
+                                                        "source": "init"}]}),
+                                encoding="utf-8")
+            staging = root / "staging"
+            populate_staging(manifest, staging, source_root)
+            self.assertEqual((staging / "sbin/init").read_bytes(), b"init")
+            self.assertEqual(manifest_file_contents(manifest, source_root)["/sbin/init"], b"init")
+            manifest.write_text(json.dumps({"files": [{"path": "/sbin/init",
+                                                        "source": "../escape"}]}),
+                                encoding="utf-8")
+            with self.assertRaisesRegex(ImageError, "escapes source root"):
+                populate_staging(manifest, staging, source_root)
+            manifest.write_text(json.dumps({"files": [{"path": "/sbin/init",
+                                                        "source": str(source_root / "init")}]}),
+                                encoding="utf-8")
+            with self.assertRaisesRegex(ImageError, "must be relative"):
+                populate_staging(manifest, staging, source_root)
 
     def test_failed_force_build_preserves_existing_image(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

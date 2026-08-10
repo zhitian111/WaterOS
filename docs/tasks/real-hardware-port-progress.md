@@ -2036,6 +2036,28 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - `wateros-driver-api-v0` DMA 测试：6 项通过。
 - `UnsupportedDmaCoherency` 仍 fail-closed；真实 IOMMU、总线地址窗口、cache flush/invalidate、IRQ 完成顺序仍需两平台实机验证。
 
+## 2026-08-10：批次 72——架构 rootfs staging 注入
+
+### 任务与设计
+
+1. 审计物理根盘 builder 的 manifest/source 机制，确认它能否安全注入架构构建出的 `/sbin/init` 和用户态文件。
+2. 增加可选 `--source-root`，让 manifest 中的相对 source 从指定 rootfs staging tree 解析。
+3. 保留旧行为（未指定 source-root 时相对 manifest 目录解析），并拒绝 source-root 模式下的绝对路径和 `..` 逃逸。
+
+### 完成内容
+
+- [x] `build`/`verify` 子命令新增 `--source-root`。
+- [x] staging 写入与 manifest 内容校验共用同一安全路径解析逻辑。
+- [x] README 增加 VisionFive 2/架构 rootfs 注入示例。
+- [x] 增加小型 init fixture，覆盖成功复制、路径逃逸和绝对路径拒绝。
+
+### 验证证据与限制
+
+- root image 单元测试：6 项通过。
+- QEMU image wrapper 测试：2 项通过。
+- 16 MiB GPT QEMU image smoke：通过。
+- `UNVERIFIED_ON_HARDWARE`：架构用户态 ABI、真实 SD 写入、掉电一致性和实体板根盘启动仍待验证。
+
 ## 2026-08-10：批次 65——稳定 QMP 输入注入诊断
 
 ### 任务与设计

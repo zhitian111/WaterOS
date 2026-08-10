@@ -101,7 +101,28 @@ def staging_path(root: Path, guest: PurePosixPath) -> Path:
     return root.joinpath(*guest.parts[1:])
 
 
-def populate_staging(manifest_path: Path, staging: Path) -> list[str]:
+def resolve_manifest_source(manifest_path: Path,
+                            source_value: str,
+                            source_root: Path | None = None) -> Path:
+    source = Path(source_value)
+    if source_root is None:
+        if not source.is_absolute():
+            source = manifest_path.parent / source
+        return source
+    if source.is_absolute():
+        raise ImageError("source must be relative when --source-root is used")
+    root = source_root.resolve()
+    candidate = (root / source).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as error:
+        raise ImageError(f"source escapes source root: {source_value!r}") from error
+    return candidate
+
+
+def populate_staging(manifest_path: Path,
+                     staging: Path,
+                     source_root: Path | None = None) -> list[str]:
     manifest = load_manifest(manifest_path)
     required_paths: list[str] = []
     for entry in manifest.get("directories", []):
@@ -134,9 +155,7 @@ def populate_staging(manifest_path: Path, staging: Path) -> list[str]:
             source_value = entry["source"]
             if not isinstance(source_value, str):
                 raise ImageError(f"source for {guest} must be a string")
-            source = Path(source_value)
-            if not source.is_absolute():
-                source = manifest_path.parent / source
+            source = resolve_manifest_source(manifest_path, source_value, source_root)
             if not source.is_file():
                 raise ImageError(f"manifest source does not exist: {source}")
             shutil.copyfile(source, destination)
@@ -301,7 +320,9 @@ def build_image(args: argparse.Namespace) -> list[str]:
     try:
         with tempfile.TemporaryDirectory(prefix="wateros-root-staging-") as temporary:
             staging = Path(temporary)
-            required_paths = populate_staging(args.manifest.resolve(), staging)
+            source_root = getattr(args, "source_root", None)
+            required_paths = populate_staging(args.manifest.resolve(), staging,
+                                              source_root.resolve() if source_root else None)
             descriptor, raw_path = tempfile.mkstemp(
                 prefix=f".{image.name}.", suffix=".tmp", dir=image.parent
             )
@@ -419,7 +440,7 @@ def manifest_paths(path: Path) -> list[str]:
     return paths
 
 
-def manifest_file_contents(path: Path) -> dict[str, bytes]:
+def manifest_file_contents(path: Path, source_root: Path | None = None) -> dict[str, bytes]:
     manifest = load_manifest(path)
     contents: dict[str, bytes] = {}
     for entry in manifest.get("files", []):
@@ -439,9 +460,7 @@ def manifest_file_contents(path: Path) -> dict[str, bytes]:
             source_value = entry["source"]
             if not isinstance(source_value, str):
                 raise ImageError(f"source for {guest} must be a string")
-            source = Path(source_value)
-            if not source.is_absolute():
-                source = path.parent / source
+            source = resolve_manifest_source(path, source_value, source_root)
             try:
                 contents[guest] = source.read_bytes()
             except OSError as error:
@@ -461,10 +480,14 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--partition-table", choices=("mbr", "gpt"), default="mbr")
     build.add_argument("--uuid", default=DEFAULT_UUID)
     build.add_argument("--label", default=DEFAULT_LABEL)
+    build.add_argument("--source-root", type=Path,
+                       help="root directory for relative manifest source files")
     build.add_argument("--force", action="store_true")
     verify = subcommands.add_parser("verify", help="verify partition, ext4 and manifest paths")
     verify.add_argument("--image", type=Path, required=True)
     verify.add_argument("--manifest", type=Path, default=default_manifest)
+    verify.add_argument("--source-root", type=Path,
+                        help="root directory for relative manifest source files")
     return result
 
 
@@ -474,18 +497,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "build":
             required = build_image(args)
             manifest = args.manifest.resolve()
-            partition = verify_image(
-                args.output.resolve(), required, manifest_file_contents(manifest)
-            )
+            partition = verify_image(args.output.resolve(), required,
+                                     manifest_file_contents(manifest,
+                                                            args.source_root.resolve()
+                                                            if args.source_root else None))
             print(
                 f"built {args.output}: start={partition.start_sector} "
                 f"sectors={partition.sectors} bytes={args.output.stat().st_size}"
             )
         else:
             manifest = args.manifest.resolve()
-            partition = verify_image(
-                args.image.resolve(), manifest_paths(manifest), manifest_file_contents(manifest)
-            )
+            partition = verify_image(args.image.resolve(), manifest_paths(manifest),
+                                     manifest_file_contents(manifest,
+                                                            args.source_root.resolve()
+                                                            if args.source_root else None))
             print(
                 f"verified {args.image}: start={partition.start_sector} "
                 f"sectors={partition.sectors}"

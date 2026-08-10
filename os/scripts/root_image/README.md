@@ -29,6 +29,19 @@ Each manifest file entry must contain an absolute guest `path`, an octal
 against the manifest directory. Add architecture-specific binaries through a
 separate manifest rather than committing generated images.
 
+For a generated architecture-specific root tree, pass
+`--source-root ./rootfs` to both `build` and `verify`. In that mode every
+manifest `source` must be relative to the supplied root and path traversal or
+absolute host paths are rejected:
+
+```bash
+python3 scripts/root_image/root_image.py build --partition-table gpt \
+  --source-root ./rootfs --manifest ./visionfive2-manifest.json \
+  --output ./visionfive2-root.img --force
+python3 scripts/root_image/root_image.py verify --source-root ./rootfs \
+  --manifest ./visionfive2-manifest.json --image ./visionfive2-root.img
+```
+
 The fixed layout and metadata make builds predictable. Byte-for-byte identity
 across different e2fsprogs versions is not guaranteed; release automation
 should pin the host tool versions if that property becomes necessary.
