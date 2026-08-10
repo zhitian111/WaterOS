@@ -6842,3 +6842,27 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[test] verify remote debug QEMU sessions`
+
+## 2026-08-10：批次 164——2K1000LA 板级适配状态审计与回归门禁
+
+### 本批任务与设计
+
+1. 复查 2K1000LA 的 UART、IRQ/LIOINTC、MMC/APBDMA、PCI/GMAC、pinctrl、时钟和 DTB 拓扑代码，避免在没有实体板的情况下猜测 PM/reset 或寄存器写入序列。
+2. 对当前仍标记 `UNVERIFIED_ON_HARDWARE` 的物理路径保持 fail-closed；本批不解除 MMC/GMAC activation blocker，也不把 QEMU virt 设备当作 2K1000LA 证据。
+3. 用完整 host 测试和 LoongArch target check 作为公共适配回归门禁，确认前序诊断状态机没有被输入、分区和远程 monitor 改动破坏。
+
+### 已完成
+
+- [x] 确认 2K1000LA 已具备 DTB 拓扑解析、UART 注册契约、IRQ/时钟/MMC/GMAC 只读诊断和明确 activation blockers；缺失的是需要板级寄存器/电气证据的最终激活，不适合无硬件臆测实现。
+- [x] 保持 `impl-loongson2k1000la` 安全默认路径：MMC/GMAC 仍 deferred，PM/reset 仍返回 `Unsupported`，未新增未经验证的 MMIO 写入口。
+- [x] 运行 2K1000LA driver crate host 回归：193 项通过。
+- [x] 运行 LoongArch64 target check（`api-v0`）：通过。
+
+### 验证证据与限制
+
+- host 回归覆盖 APBDMA/MMC 事务、IRQ 生命周期、时钟快照、pinctrl/GPIO、PCI/GMAC 发现、拓扑和诊断 formatter。
+- `UNVERIFIED_ON_HARDWARE`：真实板的 PM/reset-controller、CPU/总线时钟频率、PCIe ECAM/BAR、GMAC DMA/PHY、MMC 电源/pinctrl/IRQ/掉电行为仍必须在两块板到位后按简报中的证据顺序验证；本批没有宣称这些功能已完成。
+
+### 提交
+
+- 待提交：`[test] audit loongson2k1000 bringup gates`
