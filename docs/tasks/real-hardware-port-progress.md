@@ -1364,3 +1364,28 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[feat] add bounded dma subregions`
+
+## 2026-08-10：批次 33——公共 DMA 默认一致性后端 fail-closed
+
+### 任务与设计
+
+1. 审计确认仓库没有 RISC-V/LoongArch 真实 `DmaCoherency` 实现，不能用空操作掩盖 cache maintenance 缺口。
+2. 新增显式 `UnsupportedDmaCoherency`，所有同步调用返回 `Unsupported`，并保持 mapping 的 CPU ownership。
+3. 真实平台后端未来必须独立实现 cache flush/invalidate、fence 和设备方向语义后再替换该后端。
+
+### 完成内容
+
+- [x] 公共 DMA API 提供默认 fail-closed coherency backend。
+- [x] 测试验证 prepare 失败不会把 mapping 转移给 device。
+- [x] 未创建任何空实现或架构特定伪 cache 指令。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path components/wateros-driver/driver-api/api-v0/Cargo.toml --lib`：5 项通过。
+- RISC-V64 裸机目标检查：通过。
+- LoongArch64 裸机目标检查：通过。
+- `UNVERIFIED_ON_HARDWARE`：两架构 cache line、DMA coherency、fence 和设备实际读写仍未验证；默认后端会阻止真实 DMA。
+
+### 提交
+
+- `[fix] fail closed dma coherency default`

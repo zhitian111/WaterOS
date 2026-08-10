@@ -95,6 +95,27 @@ pub trait DmaCoherency {
                     -> DriverResult<()>;
 }
 
+/// Explicit fail-closed backend for platforms that have not implemented
+/// cache maintenance yet. It is preferable to a silent no-op backend: a
+/// caller must opt into a real platform implementation before DMA starts.
+pub struct UnsupportedDmaCoherency;
+
+impl DmaCoherency for UnsupportedDmaCoherency {
+    fn sync_for_device(&mut self,
+                       _region : DmaRegion,
+                       _direction : DmaDirection)
+                       -> DriverResult<()> {
+        Err(DriverError::Unsupported)
+    }
+
+    fn sync_for_cpu(&mut self,
+                    _region : DmaRegion,
+                    _direction : DmaDirection)
+                    -> DriverResult<()> {
+        Err(DriverError::Unsupported)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Owner {
     Cpu,
@@ -215,5 +236,14 @@ mod tests {
         assert_eq!(region.subregion(4096, 1, 1, 64), Err(DriverError::InvalidParam));
         assert_eq!(region.subregion(0, 0, 64, 64), Err(DriverError::InvalidParam));
         assert_eq!(region.subregion(1, 64, 64, 64), Err(DriverError::InvalidParam));
+    }
+
+    #[test]
+    fn unsupported_backend_never_transfers_device_ownership() {
+        let region = DmaRegion::new(0x4000, 0x8000, 64, 32, 32).unwrap();
+        let mut mapping = DmaMapping::new(region, DmaDirection::Bidirectional,
+                                          UnsupportedDmaCoherency);
+        assert_eq!(mapping.prepare_for_device(), Err(DriverError::Unsupported));
+        assert_eq!(mapping.cpu_region(), Ok(region));
     }
 }
