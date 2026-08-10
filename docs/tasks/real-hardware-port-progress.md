@@ -7307,3 +7307,27 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - `[feat] connect pci snapshot to ahci contract`
+
+## 2026-08-10：批次 54——AHCI ABAR 尺寸证据闸门
+
+### 任务与设计
+
+1. 复查 PCI→AHCI 转换发现它使用 0x100 最小诊断窗口，但上一版 `evidence_ready` 没有独立要求真实 BAR size 已验证。
+2. 增加 `abar_size_verified` 硬件证据和 `AbarSizeUnverified` blocker；最小窗口只能用于静态计划，不能解除激活闸门。
+3. 保持 PCI 只读、不做 BAR size probing、不进行 AHCI MMIO 或 DMA。
+
+### 已完成
+
+- [x] AHCI evidence readiness 现在同时要求 ABAR size、DMA、IRQ 和 link 证据。
+- [x] 合法 snapshot 单测覆盖缺少尺寸证据时的 deferred 行为。
+- [x] 更新 32/64-bit PCI BAR 转换后的硬件证据语义。
+
+### 验证证据与限制
+
+- Loongson 平台完整 lib 单测：204 项通过。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 BAR size、ECAM、ABAR 访问、AHCI port link、DMA/cache、IRQ 和 SATA block registration 仍需实板验证。
+
+### 提交
+
+- `[fix] require ahci abar size evidence`

@@ -50,6 +50,7 @@ pub fn snapshot_from_pci(snapshot : &PciConfigSnapshot,
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AhciBlocker {
     InvalidAbar,
+    AbarSizeUnverified,
     InvalidVersion,
     NoImplementedPorts,
     MissingIrq,
@@ -59,6 +60,7 @@ pub enum AhciBlocker {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AhciHardwareEvidence {
+    pub abar_size_verified : bool,
     pub dma_verified : bool,
     pub irq_verified : bool,
     pub link_verified : bool,
@@ -75,10 +77,12 @@ impl AhciActivationPlan {
     pub const fn can_activate(&self) -> bool { false }
 
     pub fn evidence_ready(&self, evidence : AhciHardwareEvidence) -> bool {
-        self.blockers.len() == 2 &&
+        self.blockers.len() == 3 &&
+        self.blockers.contains(&AhciBlocker::AbarSizeUnverified) &&
         self.blockers.contains(&AhciBlocker::DmaUnverified) &&
         self.blockers.contains(&AhciBlocker::HardwareEvidence) &&
-        evidence.dma_verified && evidence.irq_verified && evidence.link_verified
+        evidence.abar_size_verified && evidence.dma_verified && evidence.irq_verified &&
+        evidence.link_verified
     }
 }
 
@@ -88,6 +92,9 @@ pub fn diagnose(snapshot : AhciSnapshot) -> AhciActivationPlan {
        snapshot.abar.size < 0x100 {
         blockers.push(AhciBlocker::InvalidAbar);
     }
+    // PCI BAR size probing is intentionally not implemented. A minimal
+    // diagnostic window must never be treated as the controller's real size.
+    blockers.push(AhciBlocker::AbarSizeUnverified);
     // AHCI 1.x+ is encoded as major in bits 23..16 and minor in 15..0.
     if snapshot.version == 0 || snapshot.version >> 16 == 0 {
         blockers.push(AhciBlocker::InvalidVersion);
@@ -150,10 +157,13 @@ mod tests {
     fn valid_snapshot_stays_deferred_without_board_evidence() {
         let plan = diagnose(snapshot());
         assert_eq!(plan.blockers,
-                   alloc::vec![AhciBlocker::DmaUnverified, AhciBlocker::HardwareEvidence]);
+                   alloc::vec![AhciBlocker::AbarSizeUnverified,
+                               AhciBlocker::DmaUnverified,
+                               AhciBlocker::HardwareEvidence]);
         assert!(!plan.can_activate());
         assert!(!plan.evidence_ready(AhciHardwareEvidence::default()));
-        assert!(plan.evidence_ready(AhciHardwareEvidence { dma_verified : true,
+        assert!(plan.evidence_ready(AhciHardwareEvidence { abar_size_verified : true,
+                                                           dma_verified : true,
                                                            irq_verified : true,
                                                            link_verified : true }));
     }
@@ -168,7 +178,8 @@ mod tests {
         assert!(plan.blockers.contains(&AhciBlocker::InvalidVersion));
         assert!(plan.blockers.contains(&AhciBlocker::NoImplementedPorts));
         assert!(plan.blockers.contains(&AhciBlocker::MissingIrq));
-        assert!(!plan.evidence_ready(AhciHardwareEvidence { dma_verified : true,
+        assert!(!plan.evidence_ready(AhciHardwareEvidence { abar_size_verified : true,
+                                                             dma_verified : true,
                                                              irq_verified : true,
                                                              link_verified : true }));
     }
