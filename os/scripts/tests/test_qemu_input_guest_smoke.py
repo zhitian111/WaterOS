@@ -18,6 +18,7 @@ class QemuInputGuestSmokeTests(unittest.TestCase):
             "registered virtio-input #1 kind=Pointer\n"
             "input devices registered: count=2\n"
             "devfs refreshed input=2\n"
+            "[gui] input events received=4\n"
         )
         self.assertEqual(missing_markers(serial), [])
         self.assertIn("input=2", missing_markers(serial[: serial.index("input=2")]))

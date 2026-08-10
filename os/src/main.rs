@@ -84,10 +84,17 @@ extern "C" fn network_poller_task(_arg : usize) -> ! {
 #[cfg(feature = "gui")]
 extern "C" fn gui_refresh_task(_arg : usize) -> ! {
     let mut frame = 0u64;
+    let mut last_input_events = 0u64;
     loop {
         let _ = gui::push_input(gui::InputEvent::Tick(frame));
         let _ = gui::update_default_desktop(frame);
         let _ = gui::render_if_dirty();
+        if let Ok(snapshot) = gui::runtime_snapshot() {
+            if snapshot.input_events_received != last_input_events {
+                last_input_events = snapshot.input_events_received;
+                info!("[gui] input events received={}", last_input_events);
+            }
+        }
 
         // 默认桌面拥有这些事件；未来由专用 GUI 服务任务把事件转交应用。
         while let Ok(Some(event)) = gui::poll_event() {

@@ -20,6 +20,7 @@ pub struct GuiRuntimeSnapshot {
     pub frames_rendered : u64,
     pub frames_presented : u64,
     pub dropped_input : u64,
+    pub input_events_received : u64,
     pub dirty : bool,
 }
 
@@ -36,6 +37,7 @@ pub struct GuiRuntime {
     frames_rendered : u64,
     frames_presented : u64,
     dropped_input : u64,
+    input_events_received : u64,
 }
 
 impl GuiRuntime {
@@ -60,7 +62,8 @@ impl GuiRuntime {
                   output : VecDeque::with_capacity(OUTPUT_QUEUE_CAPACITY),
                   frames_rendered : 0,
                   frames_presented : 0,
-                  dropped_input : 0 })
+                  dropped_input : 0,
+                  input_events_received : 0 })
     }
 
     pub fn size(&self) -> Size { self.surface.size() }
@@ -83,6 +86,7 @@ impl GuiRuntime {
                              frames_rendered : self.frames_rendered,
                              frames_presented : self.frames_presented,
                              dropped_input : self.dropped_input,
+                             input_events_received : self.input_events_received,
                              dirty : !self.dirty.is_empty() }
     }
 
@@ -138,6 +142,7 @@ impl GuiRuntime {
     pub fn poll_hardware_input(&mut self) -> usize {
         let events = self.input_bridge.poll(self.size(), 128);
         let count = events.len();
+        self.input_events_received = self.input_events_received.saturating_add(count as u64);
         for event in events {
             let _ = self.push_input(event);
         }

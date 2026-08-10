@@ -1930,6 +1930,27 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - remote-debug monitor：本次 kernel profile 未启用 monitor，连接按预期超时；这不是 GPT/根盘失败。
 - `UNVERIFIED_ON_HARDWARE`：真实 SD/eMMC/AHCI 控制器、DMA/cache/IRQ、写入掉电恢复以及 VisionFive 2/Loongson 2K1000 物理板仍未验证。
 
+## 2026-08-10：批次 64——QEMU guest 输入事件注入链路
+
+### 任务与设计
+
+1. 在已有 virtio-input 枚举和 devfs 节点证据上，验证 QMP 注入事件是否到达 GUI 输入轮询。
+2. 在 GUI runtime snapshot 中增加累计硬件输入事件计数，并由 GUI 任务仅在计数变化时输出诊断日志；不改变输入 ABI 或驱动时序。
+3. 扩展 guest smoke 启动 QMP、注入键盘按键和 tablet 绝对坐标事件，区分设备枚举成功但事件未到达的情况。
+
+### 完成内容
+
+- [x] `GuiRuntimeSnapshot` 增加 `input_events_received`，GUI 任务输出 `[gui] input events received=` marker。
+- [x] guest smoke 增加 QMP socket 和 `input-send-event` 注入，要求 GUI 输入计数 marker。
+- [x] 更新 Python marker 单测；`make check`（RISC-V profile）通过。
+
+### 验证证据与限制
+
+- Python guest smoke 单测：2 项通过。
+- RISC-V `make check`：通过（仓库既有 warnings）。
+- QEMU guest 事件注入尚需在带 GUI kernel/root image 上实际运行脚本确认；本批代码保留失败时 QMP/串口诊断。
+- `UNVERIFIED_ON_HARDWARE`：真实 USB/HID 控制器、IRQ/DMA/cache、热插拔及 VisionFive 2/Loongson 2K1000 实板输入仍未验证。
+
 ### 提交
 
 - `[fix] expose virtio block capacity`
