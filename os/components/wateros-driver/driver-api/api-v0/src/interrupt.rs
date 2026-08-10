@@ -33,6 +33,7 @@ static REGISTRY: Mutex<[Option<Entry>; MAX_IRQ_HANDLERS]> = Mutex::new([None; MA
 static FROZEN: AtomicBool = AtomicBool::new(false);
 static HANDLED: AtomicU64 = AtomicU64::new(0);
 static SPURIOUS: AtomicU64 = AtomicU64::new(0);
+static RUNTIME_READY: AtomicBool = AtomicBool::new(false);
 
 /// 注册一个 handler；只能在设备 IRQ 开启前调用。
 ///
@@ -68,6 +69,18 @@ pub unsafe fn register_handler(
 /// 冻结启动期 registry；之后只能分发，不能再注册。
 pub fn freeze() {
     FROZEN.store(true, Ordering::Release);
+}
+
+/// Mark platform claim/complete and global interrupt delivery as operational.
+/// Drivers may only enter interrupt-based waits after this point.
+pub fn enable_runtime_dispatch() {
+    RUNTIME_READY.store(true, Ordering::Release);
+}
+
+/// Whether device drivers may rely on IRQ delivery instead of polling.
+#[inline]
+pub fn runtime_dispatch_ready() -> bool {
+    RUNTIME_READY.load(Ordering::Acquire)
 }
 
 /// 分发一个已由平台控制器 claim 的 IRQ。

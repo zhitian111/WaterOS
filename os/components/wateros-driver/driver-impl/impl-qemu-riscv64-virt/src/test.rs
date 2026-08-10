@@ -14,7 +14,7 @@ pub fn virtio_blk_probe_test() -> DriverResult<()> {
         return Err(DriverError::NotFound);
     };
     drop(blk);
-    let mut dev = VirtioBlkDevice::from_mmio(mmio)?;
+    let mut dev = VirtioBlkDevice::from_mmio(mmio, None)?;
     let mut buf = [0u8; BLOCK_SIZE];
     dev.read_blocks(Lba(0), &mut buf)?;
     log::info!("[driver] virtio-blk read block0 ok, first16={:02x?}", &buf[..16]);

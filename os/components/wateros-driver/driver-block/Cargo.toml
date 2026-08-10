@@ -19,4 +19,5 @@
     impl-block-cache = [ "dep:impl-block-cache" ]
     impl-dummy = [  ]
     impl-virtio-mmio = [ "dep:impl-virtio-mmio" ]
+    interrupt-wait = [ "impl-virtio-mmio", "impl-virtio-mmio/interrupt-wait" ]
     impl-virtio-pci = [ "dep:impl-virtio-pci" ]

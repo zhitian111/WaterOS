@@ -292,6 +292,7 @@ mod qemu_riscv64_opensbi {
         platform::arch::interrupt::enable_soft_interrupt();
         platform::timer::set_timer_after_ms(100).unwrap();
         platform::interrupt::enable_global_interrupt().unwrap();
+        driver::interrupt::enable_runtime_dispatch();
         task::run_first_task()
     }
 }
@@ -428,6 +429,7 @@ mod qemu_loongarch64_virt {
         platform::arch::interrupt::enable_soft_interrupt();
         platform::timer::set_timer_after_ms(100).unwrap();
         platform::interrupt::enable_global_interrupt().unwrap();
+        driver::interrupt::enable_runtime_dispatch();
         task::run_first_task()
     }
 }

@@ -8,7 +8,7 @@ api-v0 = { path = "../../input-api/api-v0", package = "wateros-driver-input-api-
 driver-api = { path = "../../../driver-api/api-v0", package = "wateros-driver-api-v0" }
 frame-alloctor = { path = "../../../../wateros-mm/mm-frame-alloctor", package = "wateros-mm-frame-alloctor" }
 mm-api = { path = "../../../../wateros-mm/mm-api/api-v0", package = "wateros-mm-api-v0" }
-virtio-drivers = "=0.12.0"
+virtio-drivers = "=0.13.0"
 
 [features]
 default = []

@@ -53,6 +53,10 @@
     # 比赛阶段决定根镜像中的用户态 bring-up 队列。
     final_online = [  ]
     final_online_smp_test = [ "final_online" ]
+    # 性能回归入口：跳过 cagent，只执行线上同一份 BuildStorm 脚本。
+    final-buildstorm-only = [ "final_online" ]
+    # 实验性单请求 VirtIO block IRQ 等待；验收显示当前锁粒度下明显退化，Final 不启用。
+    block-interrupt-wait = [ "driver/block-interrupt-wait" ]
     pre = [  ]
     # 开发/诊断启动行为由编译期选择，不再通过 QEMU bootargs 传入。
     operator-run = [  ]

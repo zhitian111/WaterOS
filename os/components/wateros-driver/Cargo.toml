@@ -77,6 +77,7 @@
         "impl-qemu-loongarch64-virt?/block-cache",
         "impl-qemu-riscv64-virt?/block-cache",
     ]
+    block-interrupt-wait = [ "block/interrupt-wait" ]
     impl-dummy = [  ]
     impl-qemu-loongarch64-virt = [
         "dep:impl-qemu-loongarch64-virt",

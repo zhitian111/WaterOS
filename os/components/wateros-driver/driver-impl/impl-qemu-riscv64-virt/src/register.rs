@@ -72,7 +72,7 @@ pub(crate) fn probe_virtio_devices() -> Vec<String> {
         let mut handled = false;
         if claimed_by_block && info.device_type == DeviceType::Block {
             handled = true;
-            match VirtioBlkDevice::from_mmio(mmio) {
+            match VirtioBlkDevice::from_mmio(mmio, info.irq.map(|irq| api_v0::interrupt::IrqNumber(irq.irq))) {
                 Ok(dev) => {
                     let shared = {
                         #[cfg(feature = "block-cache")]

@@ -110,7 +110,14 @@ const BRINGUP_COMMANDS : &[BringupCommand] = &[
     ];
 
 /// 线上决赛镜像的两组 glibc 测例，路径与 `final_test_case/README.md` 一致。
-#[cfg(all(feature = "final_online", feature = "final_online_smp_test"))]
+#[cfg(all(feature = "final_online", feature = "final-buildstorm-only"))]
+const BRINGUP_COMMANDS : &[BringupCommand] =
+    &[BringupCommand { program : "/glibc/buildstorm_testcode.sh",
+                       argv : &["/glibc/buildstorm_testcode.sh"] }];
+
+#[cfg(all(feature = "final_online",
+          feature = "final_online_smp_test",
+          not(feature = "final-buildstorm-only")))]
 const BRINGUP_COMMANDS : &[BringupCommand] =
     &[BringupCommand { program : "/glibc/busybox",
                        argv : &["sh",
@@ -126,7 +133,8 @@ const BRINGUP_COMMANDS : &[BringupCommand] =
                        argv : &["/glibc/buildstorm_testcode.sh"] }];
 
 #[cfg(all(feature = "final_online",
-          not(feature = "final_online_smp_test")))]
+          not(feature = "final_online_smp_test"),
+          not(feature = "final-buildstorm-only")))]
 const BRINGUP_COMMANDS : &[BringupCommand] =
     &[BringupCommand { program : "/glibc/cagent_testcode.sh",
                        argv : &["/glibc/cagent_testcode.sh"] },
