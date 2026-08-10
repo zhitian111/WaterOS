@@ -3,9 +3,7 @@
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 
 use api_v0::{DeviceInfo, DeviceType, MmioRegion};
-use block::{
-    block_subsystem_claims_device, register_block_device, BlockDevice, VirtioBlkDevice,
-};
+use block::{block_subsystem_claims_device, register_block_device, VirtioBlkDevice};
 #[cfg(feature = "block-cache")]
 use block::BlockCacheManager;
 use network::{
@@ -72,7 +70,11 @@ pub(crate) fn probe_virtio_devices() -> Vec<String> {
         let mut handled = false;
         if claimed_by_block && info.device_type == DeviceType::Block {
             handled = true;
-            match VirtioBlkDevice::from_mmio(mmio) {
+            let device = match info.irq {
+                Some(irq) => VirtioBlkDevice::from_mmio_with_irq(mmio, irq.irq),
+                None => VirtioBlkDevice::from_mmio(mmio),
+            };
+            match device {
                 Ok(dev) => {
                     let shared = {
                         #[cfg(feature = "block-cache")]

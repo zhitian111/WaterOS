@@ -10,6 +10,10 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+#[cfg(feature = "interrupt")]
+use alloc::sync::Arc;
+#[cfg(feature = "interrupt")]
+use core::sync::atomic::{AtomicUsize, Ordering};
 use core::ptr;
 use core::ptr::NonNull;
 
@@ -18,6 +22,8 @@ use driver_api::MmioRegion;
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
 use mm_api::addr::PhysPageNum;
 use virtio_drivers::device::blk::VirtIOBlk;
+#[cfg(feature = "interrupt")]
+use virtio_drivers::device::blk::{BlkReq, BlkResp};
 use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
 use virtio_drivers::{BufferDirection, Hal, PhysAddr, PAGE_SIZE};
 
@@ -111,6 +117,24 @@ unsafe impl Hal for VirtioMmioHal {
 pub struct VirtioBlkDevice {
     /// `virtio-drivers` 侧已握手的传输与队列状态。
     inner: VirtIOBlk<VirtioMmioHal, MmioTransport<'static>>,
+    #[cfg(feature = "interrupt")]
+    interrupt: Option<Arc<InterruptCompletion>>,
+}
+
+#[cfg(feature = "interrupt")]
+struct InterruptCompletion {
+    generation: AtomicUsize,
+}
+
+#[cfg(feature = "interrupt")]
+impl InterruptCompletion {
+    fn new() -> Self {
+        Self { generation: AtomicUsize::new(0) }
+    }
+
+    fn signal(&self) {
+        self.generation.fetch_add(1, Ordering::Release);
+    }
 }
 
 impl VirtioBlkDevice {
@@ -123,13 +147,125 @@ impl VirtioBlkDevice {
             unsafe { MmioTransport::new(header, mmio.size) }.map_err(|_| DriverError::Unsupported)?;
         let inner = VirtIOBlk::<VirtioMmioHal, MmioTransport>::new(transport)
             .map_err(|_| DriverError::Unsupported)?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            #[cfg(feature = "interrupt")]
+            interrupt : None,
+        })
+    }
+
+    /// 初始化 VirtIO 块设备，并使用 `hwirq` 通知请求完成；注册失败时保留轮询模式。
+    #[cfg(feature = "interrupt")]
+    pub fn from_mmio_with_irq(mmio : MmioRegion, hwirq : u32) -> DriverResult<Self> {
+        let mut device = Self::from_mmio(mmio)?;
+        let completion = Arc::new(InterruptCompletion::new());
+        let signal = completion.clone();
+        let base = mmio.base;
+        match irq::request(hwirq,
+                           false,
+                           move |_| {
+                               // VirtIO-MMIO InterruptStatus/InterruptACK 位于 0x60/0x64。
+                               // ISR 不获取块设备锁，避免与睡眠等待完成的提交线程锁反转。
+                               let status = unsafe {
+                                   core::ptr::read_volatile((base + 0x60) as *const u32)
+                               };
+                               if status == 0 {
+                                   // Another delivery may already have acknowledged this level
+                                   // interrupt before the PLIC completion becomes visible.
+                                   return irq::IrqReturn::Handled;
+                               }
+                               unsafe {
+                                   core::ptr::write_volatile((base + 0x64) as *mut u32, status)
+                               };
+                               signal.signal();
+                               irq::IrqReturn::Handled
+                           })
+        {
+            Ok(_) => {
+                device.inner.enable_interrupts();
+                device.interrupt = Some(completion);
+                logging::info!("[virtio-blk] interrupt completion enabled irq={}", hwirq);
+            }
+            Err(error) => {
+                logging::warn!("[virtio-blk] IRQ {} registration failed ({:?}); retaining polling mode",
+                               hwirq,
+                               error);
+            }
+        }
+        Ok(device)
+    }
+
+    #[cfg(feature = "interrupt")]
+    fn wait_for_token(&mut self, token : u16, completion : &InterruptCompletion) {
+        loop {
+            if self.inner.peek_used() == Some(token) {
+                return;
+            }
+            let observed = completion.generation.load(Ordering::Acquire);
+            if self.inner.peek_used() == Some(token) {
+                return;
+            }
+            irq::wait_for_interrupt(|| {
+                completion.generation.load(Ordering::Acquire) != observed ||
+                self.inner.peek_used() == Some(token)
+            });
+        }
+    }
+
+    #[cfg(feature = "interrupt")]
+    fn read_blocks_interrupt(&mut self,
+                             start_block : Lba,
+                             buf : &mut [u8])
+                             -> DriverResult<()> {
+        let completion = self.interrupt
+                             .as_ref()
+                             .cloned()
+                             .ok_or(DriverError::Unsupported)?;
+        let mut request = BlkReq::default();
+        let mut response = BlkResp::default();
+        let token = unsafe {
+            self.inner.read_blocks_nb(start_block.0 as usize,
+                                      &mut request,
+                                      buf,
+                                      &mut response)
+        }.map_err(|_| DriverError::IoError)?;
+        self.wait_for_token(token, &completion);
+        unsafe { self.inner.complete_read_blocks(token, &request, buf, &mut response) }
+            .map_err(|_| DriverError::IoError)
+    }
+
+    #[cfg(feature = "interrupt")]
+    fn write_blocks_interrupt(&mut self,
+                              start_block : Lba,
+                              buf : &[u8])
+                              -> DriverResult<()> {
+        let completion = self.interrupt
+                             .as_ref()
+                             .cloned()
+                             .ok_or(DriverError::Unsupported)?;
+        let mut request = BlkReq::default();
+        let mut response = BlkResp::default();
+        let token = unsafe {
+            self.inner.write_blocks_nb(start_block.0 as usize,
+                                       &mut request,
+                                       buf,
+                                       &mut response)
+        }.map_err(|_| DriverError::IoError)?;
+        self.wait_for_token(token, &completion);
+        unsafe { self.inner.complete_write_blocks(token, &request, buf, &mut response) }
+            .map_err(|_| DriverError::IoError)
     }
 }
 
 impl BlockDevice for VirtioBlkDevice {
     /// 以 LBA 为单位读入 `buf`；长度须为块大小的整数倍，否则由 VirtIO 层返回错误。
     fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
+        #[cfg(feature = "interrupt")]
+        {
+            if self.interrupt.is_some() && irq::can_wait() {
+                return self.read_blocks_interrupt(start_block, buf);
+            }
+        }
         self.inner
             .read_blocks(start_block.0 as usize, buf)
             .map_err(|_| DriverError::IoError)
@@ -143,9 +279,16 @@ impl BlockDevice for VirtioBlkDevice {
                             start_block.0,
                             buf.len());
         }
-        let result = self.inner
-                         .write_blocks(start_block.0 as usize, buf)
-                         .map_err(|_| DriverError::IoError);
+        #[cfg(feature = "interrupt")]
+        let result = if self.interrupt.is_some() && irq::can_wait() {
+            self.write_blocks_interrupt(start_block, buf)
+        } else {
+            self.inner.write_blocks(start_block.0 as usize, buf)
+                      .map_err(|_| DriverError::IoError)
+        };
+        #[cfg(not(feature = "interrupt"))]
+        let result = self.inner.write_blocks(start_block.0 as usize, buf)
+                               .map_err(|_| DriverError::IoError);
         if probe {
             match &result {
                 Ok(()) => {

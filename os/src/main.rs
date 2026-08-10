@@ -115,16 +115,17 @@ fn bringup_driver_and_user() {
         Ok(()) => {
             #[cfg(feature = "gui")]
             match (|| -> gui::GuiResult<()> {
-                gui::initialize()?;
-                gui::install_default_desktop()?;
-                let _ = gui::render()?;
-                Ok(())
-            })() {
+                      gui::initialize()?;
+                      gui::install_default_desktop()?;
+                      let _ = gui::render()?;
+                      Ok(())
+                  })() {
                 Ok(()) => {
                     task::spawn_kernel_task(gui_refresh_task, 0);
                     info!("[gui] wateros-gui desktop and refresh task ready");
                 }
-                Err(error) => warn!("[gui] initialization skipped: {:?}", error),
+                Err(error) => warn!("[gui] initialization skipped: {:?}",
+                                    error),
             }
             match driver::machine().realtime_ns() {
                 Ok(Some(ns)) => {
@@ -218,6 +219,7 @@ mod qemu_riscv64_opensbi {
               cpu_id.raw());
         platform::arch::cpu::init_current_cpu(cpu_id).expect("AP init current CPU");
         platform::arch::init();
+        irq::init_current_cpu().expect("initialize AP external IRQ context");
         let _ = platform::smp::init_ipi();
         platform::arch::paging::activate_address_space_token_and_flush(mm::kernel_mm::kernel_satp());
         // 开 AP 定时器中断，使 idle 能被 tick 唤醒从而从全局就绪队列取任务
@@ -268,6 +270,7 @@ mod qemu_riscv64_opensbi {
         runtime::heap_allocator::init();
         platform::arch::init();
         task::init();
+        irq::init().expect("initialize external IRQ framework");
         task::set_timekeeper_cpu(cpu_id);
         #[cfg(feature = "dashboard-debug")]
         crate::dashboard::init();

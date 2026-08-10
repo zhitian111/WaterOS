@@ -384,6 +384,9 @@ pub mod console {
 /// 墙上时钟（`CLOCK_REALTIME` 偏移 + 单调时钟）。
 pub mod wall_clock;
 
+/// External interrupt-controller operations for the active platform.
+pub mod external_irq;
+
 /// 中断控制原语再导出：属于 **arch** 层（如 `sie` / `sstatus`），非 platform impl。
 pub mod interrupt {
     pub use arch::interrupt::*;
