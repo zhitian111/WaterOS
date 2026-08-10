@@ -1075,3 +1075,62 @@ codegraph explore "another_ext4 Ext4 read_inode write_inode_with_csum write_inod
 固定容量 snapshot cache 同时消除了重复 inode 解码复制、Box/TLSF 分配和多数 block-cache
 查询，收益显著且与 pc-hot 变化一致，因此保留。后续文件优化应继续优先减少“读取结构体即
 分配拥有副本”的模式，而不是只改 memcpy 实现。
+
+## MEM-04A：用户路径按页批量读取
+
+状态：实验完成，代码已回退（2026-08-10）
+
+### 证据与调用链
+
+FS-04A 后的 300 s pc-hot 中，`copy_from_user` 仍约 7.9 亿条指令；其直接
+`memcpy` callsite 在改前样本有 4,949,253 次。CodeGraph 展开后发现通用 MM 拷贝已经按
+页处理，但 syscall 路径字符串辅助函数反而逐字节调用它：
+
+```text
+openat / newfstatat / execve / unlinkat / renameat / ...
+  -> copy_user_path_cstr
+     -> for each byte: ActiveUserMemoryOps::copy_from_user(1 byte)
+        -> {Sv39,LoongArch64}UserMemoryOps::copy_from_user
+        -> with_user_aspace_mut（每字节重新取得地址空间锁）
+        -> translate_addr_with_perm（每字节重新走页表）
+        -> copy_from_slice(1 byte)
+```
+
+### 设计、语义边界与保留门槛
+
+1. 不修改 `UserMemoryOps` 稳定接口和双架构 MM 实现；只把 `copy_user_path_cstr` 改为每次
+   读取“当前用户页剩余字节数”和 `max` 剩余长度的较小者，再在内核缓冲区中扫描 NUL。
+2. 找到 NUL 后立即返回，不读取下一页；因此终止符后的未映射页面仍不触发 EFAULT。单页
+   是当前页表权限与映射的最小粒度，读取终止符所在页的剩余已映射字节不会扩大跨页 fault
+   边界。
+3. 使用 `checked_add` 验证地址推进，保留空指针、`max == 0`、无 NUL 时
+   `ENAMETOOLONG`、无效 UTF-8 时 `EINVAL` 和页访问失败时 `EFAULT` 的现有语义。
+4. 定向测试覆盖页内 NUL、跨页扫描长度以及最大长度无 NUL 的扫描决策；随后跑双架构
+   Final check/build 和 RISC-V 16 GiB/8 vCPU、`-snapshot` 完整 BuildStorm。只有相对
+   880.44 s 有明确改善且完整退出才保留。
+
+首轮实现直接读取当前页全部剩余范围，完整 BuildStorm 为 898.65 s，比基线慢 18.21 s。
+该版本把常见几十字节路径放大为最多约 4 KiB 的 memcpy/扫描，抵消了页表遍历收益。因此
+第二轮仍保持不跨页，但把单次窗口限制为 128 字节：常见路径通常一次完成，最坏额外读取
+限制为 127 字节。最终保留与否以第二轮完整测试为准。
+
+恢复上下文命令：
+
+```bash
+codegraph explore "copy_user_path_cstr copy_from_user ActiveUserMemoryOps user_copy copy_from_user_in_aspace with_user_aspace_mut translate_addr_with_perm openat newfstatat execve unlinkat renameat exact source callers tests"
+```
+
+### 验证结果与结论
+
+- 首轮按整页剩余范围读取：双架构 Final check/build 通过；RISC-V 完整 BuildStorm 正常退出，
+  `ok=true elapsed_s=898.65`，比 880.44 s 基线慢 18.21 s（+2.07%）。
+- 第二轮限制为 128 字节窗口：RISC-V Final check/build 通过；完整 BuildStorm 正常退出，
+  `ok=true elapsed_s=901.04`，比基线慢 20.60 s（+2.34%）。
+- 两个版本均无 panic/SIGSEGV，功能语义通过完整比赛镜像，但墙钟退化具有一致方向，排除
+  “仅整页过读过大”这一单一原因。批量复制增加的内存流量、扫描和较长锁持有时间未被减少
+  的页表 walk 抵消。
+- 代码全部回退，有效基线仍为 880.44 s。本链后续若重做，应使用类似 Linux
+  `strncpy_from_user` 的架构级 fault-safe word-at-a-time 读取，不能在 syscall 层先复制固定
+  窗口；在 WaterOS 尚无 exception-table/fault fixup 基础设施时优先处理其他热点。
+- 完整日志：`/tmp/wateros-mem04a-after-rv.log`、
+  `/tmp/wateros-mem04a-v2-after-rv.log`（本机临时文件，不提交）。
