@@ -14,6 +14,7 @@ pub mod boot;
 pub mod console;
 /// 平台持有的引导 DTB 指针。
 pub mod dtb;
+pub mod external_irq;
 /// QEMU LoongArch64 平台物理内存布局解析。
 pub mod memory;
 pub mod reset;

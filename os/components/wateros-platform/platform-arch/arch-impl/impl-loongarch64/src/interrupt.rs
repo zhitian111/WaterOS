@@ -15,6 +15,9 @@ const CRMD_IE: usize = 1 << 2;
 const ECFG_TIMER_INTERRUPT_ENABLE: usize = 1 << 11;
 /// `ECFG.IS.IPI`：LoongArch IPI 中断使能位。
 const ECFG_IPI_INTERRUPT_ENABLE: usize = 1 << 12;
+/// EIOINTC is wired to CPU interrupt input 3 on QEMU virt.  Hardware
+/// interrupt inputs occupy ESTAT/ECFG bits 2..9, hence input 3 is bit 5.
+const ECFG_EXTERNAL_INTERRUPT_ENABLE: usize = 1 << 5;
 /// LoongArch IOCSR IPI pending/clear 寄存器。
 const IOCSR_IPI_STATUS: usize = 0x1000;
 const IOCSR_IPI_CLEAR: usize = 0x100C;
@@ -24,6 +27,20 @@ const IOCSR_IPI_CLEAR: usize = 0x100C;
 /// PLATFORM_BOUNDARY: 这些操作只影响当前 CPU 的 CRMD/ECFG/IOCSR 状态；IPI transport
 /// 的目标选择和 mailbox 参数仍由 QEMU platform profile 维护。
 pub struct LoongArch64ArchInterrupt;
+
+impl LoongArch64ArchInterrupt {
+    /// Enable the platform's external device interrupt line.
+    #[inline]
+    pub fn enable_external_interrupt() {
+        write_csr::<CSR_ECFG>(read_csr::<CSR_ECFG>() | ECFG_EXTERNAL_INTERRUPT_ENABLE);
+    }
+
+    /// Disable the platform's external device interrupt line.
+    #[inline]
+    pub fn disable_external_interrupt() {
+        write_csr::<CSR_ECFG>(read_csr::<CSR_ECFG>() & !ECFG_EXTERNAL_INTERRUPT_ENABLE);
+    }
+}
 
 #[inline]
 fn read_csr<const CSR: usize>() -> usize {

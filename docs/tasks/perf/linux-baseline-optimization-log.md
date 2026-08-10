@@ -1357,6 +1357,30 @@ codegraph explore "driver-api irq registry register_handler dispatch trap extern
 - 下一步接入双架构平台控制器后再独立提交；若控制器测试失败，回退平台接线，不回退
   已验证的 registry API。
 
+## IRQ-01B：外部中断平台接线
+
+状态：双架构代码接线完成；LoongArch 运行验证受缺少镜像阻塞（2026-08-10）
+
+### 设计与实现
+
+- RISC-V 使用 QEMU virt DTB 的 PLIC（`0x0c00_0000`），按 hart supervisor context
+  初始化 priority/enable/threshold，并提供 claim/complete。
+- 架构层新增 Supervisor External Interrupt enable/disable；trap handler 循环 claim，
+  调用 IRQ registry，再 complete 后继续 claim。
+- LoongArch 使用 QEMU virt DTB 对应的 EIOINTC IOCSR 地址（ENABLE 0x1600、ISR 0x1800、
+  ROUTE 0x1c00）和 PCH-PIC（0x10000000），将 PCI INTx 16..19 路由至当前 CPU；CPU
+  hardware interrupt 3 按 ESTAT/ECFG bit 5 解码。
+
+### 当前验证
+
+- `make check ARCH=rv PROFILE=final` 通过。
+- `make check ARCH=la PROFILE=final` 通过。
+- `make kernel-la-final` 通过；LoongArch QEMU smoke 暂缺 `sdcard-la.img`，未伪造结果。
+- RISC-V `kernel-rv-final` 使用 `-snapshot` 启动 smoke 通过，出现 `[fs] init end` 和
+  `all commands finished`，无 panic/SIGSEGV。
+- 尚未提交：控制器代码需先完成一次提交前审阅；当前尚未注册 VirtIO handler，IRQ
+  registry 仍只处理未来 block phase 的设备中断。
+
 ## IRQ-01：双架构设备中断基础设施
 
 状态：实施中（2026-08-10）

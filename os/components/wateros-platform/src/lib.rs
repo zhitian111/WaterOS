@@ -57,6 +57,35 @@ pub fn dtb_pa() -> usize {
     }
 }
 
+/// 初始化当前 CPU 的设备外部中断控制器。
+pub fn init_external_irq() {
+    let hart = arch::cpu::current_cpu_id().raw();
+    #[cfg(feature = "impl-qemu-riscv64-opensbi")]
+    let _ = impl_qemu_riscv64_opensbi::external_irq::init_for_current_hart(hart);
+    #[cfg(feature = "impl-qemu-loongarch64-virt")]
+    let _ = impl_qemu_loongarch64_virt::external_irq::init_for_current_cpu(hart);
+}
+
+/// Claim one pending external IRQ on the current CPU.
+pub fn claim_external_irq() -> Option<u32> {
+    let hart = arch::cpu::current_cpu_id().raw();
+    #[cfg(feature = "impl-qemu-riscv64-opensbi")]
+    { return impl_qemu_riscv64_opensbi::external_irq::claim(hart); }
+    #[cfg(feature = "impl-qemu-loongarch64-virt")]
+    { return impl_qemu_loongarch64_virt::external_irq::claim(hart); }
+    #[cfg(not(any(feature = "impl-qemu-riscv64-opensbi", feature = "impl-qemu-loongarch64-virt")))]
+    { None }
+}
+
+/// Complete one claimed external IRQ.
+pub fn complete_external_irq(irq: u32) {
+    let hart = arch::cpu::current_cpu_id().raw();
+    #[cfg(feature = "impl-qemu-riscv64-opensbi")]
+    impl_qemu_riscv64_opensbi::external_irq::complete(hart, irq);
+    #[cfg(feature = "impl-qemu-loongarch64-virt")]
+    impl_qemu_loongarch64_virt::external_irq::complete(hart, irq);
+}
+
 /// 物理 RAM 上界（不包含），用于恒等映射与帧分配器；QEMU 实现从平台持有的
 /// DTB 解析，其它配置返回回退常量。
 pub fn physical_ram_end_exclusive() -> usize {

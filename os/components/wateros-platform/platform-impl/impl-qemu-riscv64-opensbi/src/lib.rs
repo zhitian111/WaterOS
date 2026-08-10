@@ -20,6 +20,7 @@ pub mod boot;
 pub mod console;
 /// 平台持有的引导 DTB 指针。
 pub mod dtb;
+pub mod external_irq;
 /// QEMU RISC-V 平台物理内存布局解析。
 pub mod memory;
 /// OpenSBI system reset 后端。

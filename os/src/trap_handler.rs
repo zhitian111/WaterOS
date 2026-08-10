@@ -355,6 +355,14 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 task::schedule_reschedule();
             }
         }
+        TrapCause::Interrupt(Interrupt::SupervisiorExternel) => {
+            // Platform code owns claim/complete; the driver registry owns device
+            // dispatch. Drain all pending sources before returning to user mode.
+            while let Some(irq) = platform::claim_external_irq() {
+                let _ = driver::interrupt::dispatch(driver::interrupt::IrqNumber(irq));
+                platform::complete_external_irq(irq);
+            }
+        }
         TrapCause::Interrupt(Interrupt::SupervisiorTimer) => {
             if let Err(err) = platform::timer::set_timer_after_ms(TIMER_REARM_MS) {
                 panic!("failed to re-arm timer in trap: {:?}",

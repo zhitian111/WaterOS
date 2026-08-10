@@ -281,6 +281,9 @@ mod qemu_riscv64_opensbi {
         wait_for_secondary_online(requested_aps);
 
         bringup_driver_and_user();
+        driver::interrupt::freeze();
+        platform::init_external_irq();
+        platform::arch::interrupt::enable_external_interrupt();
         #[cfg(feature = "stall-debug")]
         crate::stall_debug::start();
         #[cfg(feature = "dashboard-debug")]
@@ -414,6 +417,9 @@ mod qemu_loongarch64_virt {
         wait_for_secondary_online(requested_aps);
 
         bringup_driver_and_user();
+        driver::interrupt::freeze();
+        platform::init_external_irq();
+        platform::arch::interrupt::enable_external_interrupt();
         #[cfg(feature = "stall-debug")]
         crate::stall_debug::start();
         #[cfg(feature = "dashboard-debug")]

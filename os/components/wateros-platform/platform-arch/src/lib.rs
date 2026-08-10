@@ -197,6 +197,22 @@ pub mod interrupt {
     }
 
     #[inline]
+    pub fn enable_external_interrupt() {
+        #[cfg(feature = "impl-riscv64")]
+        impl_riscv64::interrupt::Riscv64ArchInterrupt::enable_external_interrupt();
+        #[cfg(feature = "impl-loongarch64")]
+        impl_loongarch64::interrupt::LoongArch64ArchInterrupt::enable_external_interrupt();
+    }
+
+    #[inline]
+    pub fn disable_external_interrupt() {
+        #[cfg(feature = "impl-riscv64")]
+        impl_riscv64::interrupt::Riscv64ArchInterrupt::disable_external_interrupt();
+        #[cfg(feature = "impl-loongarch64")]
+        impl_loongarch64::interrupt::LoongArch64ArchInterrupt::disable_external_interrupt();
+    }
+
+    #[inline]
     pub fn disable_soft_interrupt() {
         #[cfg(feature = "impl-riscv64")]
         impl_riscv64::interrupt::disable_soft_interrupt();

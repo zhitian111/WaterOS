@@ -70,6 +70,16 @@ impl ArchTimerInterruptControl for Riscv64ArchInterrupt {
     }
 }
 
+impl Riscv64ArchInterrupt {
+    /// 开启监管态外部中断（PLIC 设备 IRQ）。
+    #[inline]
+    pub fn enable_external_interrupt() { unsafe { sie::set_sext(); } }
+
+    /// 关闭监管态外部中断。
+    #[inline]
+    pub fn disable_external_interrupt() { unsafe { sie::clear_sext(); } }
+}
+
 /// 清除监督态软中断（SSIP），即写 `sip.SSIP = 0`。
 ///
 /// IPI_SYNC: 在取 pending reason 前或后均可，但必须在 trap 返回前调用；否则 SSIP
