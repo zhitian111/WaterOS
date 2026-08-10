@@ -7377,3 +7377,22 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - `[ref] tighten gmac evidence contract`
+
+## 2026-08-10：批次 70——Loongson GMAC 元数据 fail-closed
+
+### 任务与设计
+
+1. 审计 GMAC activation plan 对 PHY handle、PHY mode 和中断描述的静态有效性检查。
+2. 将零 PHY handle、空 PHY mode、零 parent phandle 或非法中断 cell 数量判定为无效元数据，即使其余 PCI/DMA/IRQ/PHY 运行时证据为真也不得激活。
+3. 仅增加纯数据验证，不执行 PCI BAR、MAC/PHY、DMA 或 IRQ MMIO。
+
+### 已完成
+
+- [x] 新增 `InvalidPhyHandle`、`InvalidPhyMode`、`InvalidInterrupt` blockers。
+- [x] `evaluate` 在 activation-ready 前拒绝上述无效元数据。
+- [x] 增加组合 malformed metadata 回归测试。
+
+### 验证证据与限制
+
+- Loongson 平台 crate 完整 lib 单测：207 项通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 GMAC PCI/ECAM、MAC/PHY 寄存器、DMA/cache、IRQ route、PHY link 和网络收发仍需实体板验证。

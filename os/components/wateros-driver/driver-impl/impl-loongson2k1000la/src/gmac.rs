@@ -16,6 +16,9 @@ pub enum GmacBlocker {
     InterruptNamesMismatch,
     MissingPhyMode,
     MissingPhyHandle,
+    InvalidPhyMode,
+    InvalidPhyHandle,
+    InvalidInterrupt,
     BarNotAssigned,
     DmaNotVerified,
     IrqRouteNotVerified,
@@ -98,6 +101,11 @@ pub fn evaluate(description : &NetworkDescription,
     }
     if description.interrupts.is_empty() {
         blockers.push(GmacBlocker::MissingInterrupt);
+    } else if description.interrupts.iter().any(|interrupt| {
+        interrupt.parent_phandle == 0 || interrupt.cell_count == 0 ||
+        interrupt.cell_count as usize > interrupt.cells.len()
+    }) {
+        blockers.push(GmacBlocker::InvalidInterrupt);
     }
     if !description.interrupt_names.is_empty() &&
        description.interrupt_names.len() != description.interrupts.len()
@@ -106,9 +114,13 @@ pub fn evaluate(description : &NetworkDescription,
     }
     if description.phy_mode.is_none() {
         blockers.push(GmacBlocker::MissingPhyMode);
+    } else if description.phy_mode.as_deref().is_some_and(str::is_empty) {
+        blockers.push(GmacBlocker::InvalidPhyMode);
     }
     if description.phy_handle.is_none() {
         blockers.push(GmacBlocker::MissingPhyHandle);
+    } else if description.phy_handle == Some(0) {
+        blockers.push(GmacBlocker::InvalidPhyHandle);
     }
     if !evidence.bar_assigned { blockers.push(GmacBlocker::BarNotAssigned); }
     if !evidence.dma_verified { blockers.push(GmacBlocker::DmaNotVerified); }
@@ -239,5 +251,19 @@ mod tests {
             };
             assert!(blockers.contains(&blocker));
         }
+    }
+
+    #[test]
+    fn zero_phy_handle_empty_mode_and_malformed_irq_are_deferred() {
+        let mut malformed = description();
+        malformed.phy_handle = Some(0);
+        malformed.phy_mode = Some(String::new());
+        malformed.interrupts[0].parent_phandle = 0;
+        let GmacActivation::Deferred(blockers) = evaluate(&malformed,
+                                                           GmacActivationEvidence::complete())
+        else { panic!("invalid metadata must not activate") };
+        assert!(blockers.contains(&GmacBlocker::InvalidPhyHandle));
+        assert!(blockers.contains(&GmacBlocker::InvalidPhyMode));
+        assert!(blockers.contains(&GmacBlocker::InvalidInterrupt));
     }
 }
