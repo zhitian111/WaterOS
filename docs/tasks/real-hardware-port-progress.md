@@ -6138,3 +6138,29 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] build GPT root images`
+
+## 2026-08-10：批次 136——验证 GPT backup header 与分区数组
+
+### 本批任务与设计
+
+1. 审计 GPT builder 已写入但 verify 尚未检查的 backup header/entry array。
+2. 增加尾部 metadata 校验：current/backup LBA 互换、backup entry-array LBA、CRC 和 primary/backup 数组一致性。
+3. 保持 MBR verify 路径不变，仅对 protective MBR+GPT 镜像启用 backup 校验。
+4. 用小镜像测试正常与损坏 backup，并重新执行双架构门禁。
+
+### 已完成
+
+- [x] `verify_gpt_backup` 从文件尾按需读取 backup GPT metadata，不把整张镜像载入内存。
+- [x] `verify_image` 对 GPT 镜像强制校验 backup header、entry CRC 和数组一致性。
+- [x] 新增 backup header 损坏回归测试；root-image Python 测试 7 项通过。
+- [x] 16 MiB GPT 镜像实际 build/verify 成功。
+- [x] `make check EXTRA_FEATURES=remote-debug-monitor` 与 `make kernel-la` 通过；构建产物已清理。
+
+### 验证证据与限制
+
+- primary/backup GPT metadata 已在 host 工具侧同时验证；QEMU 根挂载 smoke 已在上一批对同类 GPT 镜像通过。
+- `UNVERIFIED_ON_HARDWARE`：真实介质掉电时 backup header 恢复策略、写屏障和控制器错误注入仍需目标板测试。
+
+### 提交
+
+- 本批计划提交：`[test] verify GPT backup metadata`

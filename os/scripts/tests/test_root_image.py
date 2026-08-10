@@ -19,6 +19,7 @@ from root_image import (
     parse_gpt_sectors,
     populate_staging,
     parse_mbr_sector,
+    verify_gpt_backup,
 )
 
 
@@ -68,6 +69,19 @@ class RootImageTests(unittest.TestCase):
             self.assertEqual(parsed, [partition])
             self.assertEqual(partition.start_sector, 2048)
             self.assertEqual(partition.sectors % 8, 0)
+
+    def test_rejects_corrupt_gpt_backup_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            image = Path(temporary) / "gpt.img"
+            with image.open("wb") as output:
+                output.truncate(16 * 1024 * 1024)
+            make_gpt_partition_table(image, image.stat().st_size, 2048)
+            verify_gpt_backup(image)
+            with image.open("r+b") as target:
+                target.seek(image.stat().st_size - 512 + 60)
+                target.write(b"x")
+            with self.assertRaisesRegex(ImageError, "backup header CRC"):
+                verify_gpt_backup(image)
 
     def test_manifest_populates_modes_and_rejects_escape(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

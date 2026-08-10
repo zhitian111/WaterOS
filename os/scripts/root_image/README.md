@@ -40,7 +40,8 @@ defaults to 32 and may be reduced to 16 for small host/QEMU tests (the tool
 still enforces a 1 MiB-aligned partition and ext4 metadata minimum). The
 `ROOT_IMAGE_PARTITION_TABLE` Make variable defaults to `mbr`; `gpt` emits a
 protective MBR, primary/backup GPT metadata and a CRC-checked Linux root
-partition.
+partition. Verification also checks that the backup header and entry array
+match the primary metadata.
 
 Each manifest file entry must contain an absolute guest `path`, an octal
 `mode`, and exactly one of `content` or `source`. Relative sources are resolved

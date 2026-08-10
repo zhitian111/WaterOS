@@ -248,6 +248,47 @@ def read_partitions(image: Path) -> list[Partition]:
     return partitions
 
 
+def verify_gpt_backup(image: Path) -> None:
+    """Verify the GPT backup header and entry array without loading the image."""
+    image_bytes = image.stat().st_size
+    total_sectors = image_bytes // SECTOR_SIZE
+    with image.open("rb") as source:
+        source.seek(SECTOR_SIZE)
+        primary = source.read(SECTOR_SIZE)
+        if primary[:8] != GPT_SIGNATURE:
+            raise ImageError("missing GPT primary header")
+        backup_lba = struct.unpack_from("<Q", primary, 32)[0]
+        entries_lba = struct.unpack_from("<Q", primary, 72)[0]
+        entry_count, entry_size = struct.unpack_from("<II", primary, 80)
+        entries_bytes = entry_count * entry_size
+        entry_sectors = (entries_bytes + SECTOR_SIZE - 1) // SECTOR_SIZE
+        if backup_lba != total_sectors - 1 or backup_lba <= entry_sectors:
+            raise ImageError("invalid GPT backup header LBA")
+        source.seek(entries_lba * SECTOR_SIZE)
+        primary_entries = source.read(entries_bytes)
+        source.seek((backup_lba - entry_sectors) * SECTOR_SIZE)
+        backup_entries = source.read(entries_bytes)
+        source.seek(backup_lba * SECTOR_SIZE)
+        backup = bytearray(source.read(SECTOR_SIZE))
+    if len(backup) != SECTOR_SIZE or backup[:8] != GPT_SIGNATURE:
+        raise ImageError("missing GPT backup header")
+    header_size = struct.unpack_from("<I", backup, 12)[0]
+    stored_crc = struct.unpack_from("<I", backup, 16)[0]
+    backup[16:20] = b"\0" * 4
+    if not 92 <= header_size <= SECTOR_SIZE or _crc32(backup[:header_size]) != stored_crc:
+        raise ImageError("invalid GPT backup header CRC")
+    current_lba, declared_backup = struct.unpack_from("<QQ", backup, 24)
+    if current_lba != backup_lba or declared_backup != 1:
+        raise ImageError("GPT backup header LBA pair is inconsistent")
+    declared_entries_lba = struct.unpack_from("<Q", backup, 72)[0]
+    if declared_entries_lba != backup_lba - entry_sectors:
+        raise ImageError("GPT backup entry-array LBA is inconsistent")
+    if _crc32(backup_entries) != struct.unpack_from("<I", backup, 88)[0]:
+        raise ImageError("invalid GPT backup entry-array CRC")
+    if primary_entries != backup_entries:
+        raise ImageError("GPT primary and backup entry arrays differ")
+
+
 def make_partition_table(
     image: Path, image_bytes: int, start_sector: int, table_type: str = "mbr"
 ) -> Partition:
@@ -357,6 +398,10 @@ def verify_image(
     image: Path, required_paths: Iterable[str], expected_files: dict[str, bytes] | None = None
 ) -> Partition:
     partitions = read_partitions(image)
+    with image.open("rb") as source:
+        protective_type = source.read(SECTOR_SIZE)[446 + 4]
+    if protective_type == 0xEE:
+        verify_gpt_backup(image)
     if len(partitions) != 1:
         raise ImageError(f"expected one root partition, found {len(partitions)}")
     partition = partitions[0]
