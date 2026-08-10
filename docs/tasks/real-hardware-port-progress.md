@@ -3707,3 +3707,61 @@ policy 必须等待额外上游或逐板证据。
 ### 提交
 
 - `[feat] reject unverified LS2K1000 MMC response policies`
+
+## 2026-08-10：批次 78——LS2K1000 MMC command validation evidence recorder
+
+### 任务与设计
+
+1. 为未来逐板验证 CHECK/RESPCRC/BUSYEND 定义固定大小、可审计的 command software trace。
+2. trace 只能记录命令路径已经执行的访问，不为采样额外写控制器，也不按 poll_limit 动态分配。
+3. 增加固定顺序的 post-command read-only snapshot，保留每个读取失败点之前的 partial evidence。
+4. 将 trace 与 snapshot 分类为 ObservedOnly/IncompleteTrace/UnsafeState，但绝不生成 response-policy token。
+5. 覆盖容量截断、成功/失败 outcome、post snapshot 顺序、fault matrix 和 assessment 降级。
+
+每条 trace 固定保存最多 8 个 INT poll sample，并额外保存 union 与 dropped count。post snapshot 固定读取
+`CARG → CCTL → CSTS → DSTS → INT`。assessment 要求 trace 未截断、命令完成、controller idle、
+CARG/CCTL 为零且 INT 无残留，满足全部条件仍只能得到 `ObservedOnly`。
+
+### 完成内容
+
+- [x] 新增 `COMMAND_TRACE_CAPACITY=8`、`CommandTrace` 与 `CommandTraceOutcome`。
+- [x] trace 保存 command index/argument、response width、validation policy、实际 programmed CCTL、8 个 INT sample、dropped count 与 INT union。
+- [x] trace 保存 response read mask、两个 cleanup write 是否成功，以及 Completed/Failed(stage) outcome。
+- [x] `CommandOutcome::Completed` 返回 trace；`CommandRecovery` 同样持有失败 trace，不丢失命令期证据。
+- [x] poll 样本超过 8 个时只饱和增加 dropped count，不分配 Vec、不覆盖先前样本。
+- [x] 新增 `observe_command_post_state()`，严格以 CARG/CCTL/CSTS/DSTS/INT 顺序只读采样。
+- [x] 新增 `CommandPostObservationFailure`，记录失败 stage、IO error 和此前成功的 partial fields。
+- [x] 新增 `assess_command_validation()` 和稳定 disposition；trace 截断优先标为 IncompleteTrace。
+- [x] 完整、idle、clean、零 INT 的健康 fixture 仅返回 ObservedOnly；任何失败/残留状态返回 UnsafeState。
+- [x] assessment 无 token 构造器、无 unsafe bypass，也不改变 Host typestate 或 CRC/busy descriptor gate。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 117 项全部通过；新增 2 项覆盖 bounded trace/assessment 和 post-observation fault matrix。
+- 10 次空 poll fixture 保留前 8 项、报告 dropped=2、union=0 和 Failed(PollTimeout)，没有动态容量增长。
+- healthy command fixture 的 trace 记录 response mask/cleanup/outcome；post snapshot 后只得到 ObservedOnly。
+- 相同 snapshot 配合截断 trace 降级为 IncompleteTrace；非零 CCTL snapshot 降级为 UnsafeState。
+- post observer 验证精确五次读取顺序；5 个 read failure 点分别保留 0/1/2/3/4 个 partial fields。
+- 既有 command fault matrices 继续通过，证明 trace 加入后 ownership、cleanup 与 recovery 行为未回退。
+- topology fixture/畸形 DTB 矩阵通过；dtc 仅输出刻意构造畸形输入的预期 warning。
+- remote client 与 QEMU launcher 的 13 项 Python host 测试通过。
+- LoongArch64 target check 与 `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 通过；仅有仓库既有 warning。
+- `git diff --check` 通过；全部验证使用内存寄存器模型，没有物理 MMC 访问。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：采样的 INT/CSTS/DSTS/CARG/CCTL 含义、时序关联和 posted-read ordering 均需逐板确认。
+- [ ] 固定 8 项 trace 会对长轮询截断；dropped>0 明确不可作为完整证据，未来真机 probe 应使用较小且受控的 poll budget。
+- [ ] trace 与 post snapshot 没有硬件 generation counter；调用者必须在同一独占 Host session 中立即采样，assessment 本身不证明二者来自同一时刻/设备。
+- [ ] public diagnostic structs 可被软件构造或修改，因此只能用于日志/人工审计，不能承担不可伪造的 capability。
+- [ ] ObservedOnly 只证明软件规则下的 snapshot 干净，不证明物理 CRC、busy、时钟波形或卡片协议正确。
+- [ ] 仍没有生产 command caller；当前 recorder 只由 host MMIO model 覆盖，未来上板 probe 必须先取得完整 prerequisite proof。
+- [ ] 下一批应为 trace/post/assessment 增加固定、无分配的远程文本格式，并把只读 post snapshot 接入显式 `ls2k-mmc` 诊断；不得自动执行命令或解除 policy gate。
+
+### 参考与许可证
+
+- `docs/references/loongson2-mmc-upstream.md`
+
+### 提交
+
+- `[feat] record LS2K1000 MMC command evidence`

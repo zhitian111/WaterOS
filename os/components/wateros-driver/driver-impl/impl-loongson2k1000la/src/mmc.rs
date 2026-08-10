@@ -961,21 +961,81 @@ pub enum CommandResponse {
     Long([u32; 4]),
 }
 
+/// Maximum number of individual interrupt polls retained per command trace.
+pub const COMMAND_TRACE_CAPACITY : usize = 8;
+
+/// Terminal software classification recorded for one command attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandTraceOutcome {
+    InFlight,
+    Completed,
+    Failed(CommandStage),
+}
+
+/// Bounded software evidence captured from accesses already performed by one
+/// command. It is diagnostic evidence, never response-policy authorization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandTrace {
+    pub command_index : u8,
+    pub argument : u32,
+    pub response : ResponseType,
+    pub validation : ResponseValidation,
+    pub programmed_control : Option<u32>,
+    pub interrupt_samples : [u32; COMMAND_TRACE_CAPACITY],
+    pub interrupt_sample_count : u8,
+    pub dropped_interrupt_samples : u32,
+    pub interrupt_union : u32,
+    pub response_read_mask : u8,
+    pub cleanup_argument_written : bool,
+    pub cleanup_control_written : bool,
+    pub outcome : CommandTraceOutcome,
+}
+
+impl CommandTrace {
+    fn new(command : CommandDescriptor) -> Self {
+        Self { command_index : command.index,
+               argument : command.argument,
+               response : command.response,
+               validation : ResponseValidation::Unchecked,
+               programmed_control : None,
+               interrupt_samples : [0; COMMAND_TRACE_CAPACITY],
+               interrupt_sample_count : 0,
+               dropped_interrupt_samples : 0,
+               interrupt_union : 0,
+               response_read_mask : 0,
+               cleanup_argument_written : false,
+               cleanup_control_written : false,
+               outcome : CommandTraceOutcome::InFlight }
+    }
+
+    fn record_interrupt(&mut self, interrupts : u32) {
+        self.interrupt_union |= interrupts;
+        let index = usize::from(self.interrupt_sample_count);
+        if index < COMMAND_TRACE_CAPACITY {
+            self.interrupt_samples[index] = interrupts;
+            self.interrupt_sample_count += 1;
+        } else {
+            self.dropped_interrupt_samples = self.dropped_interrupt_samples.saturating_add(1);
+        }
+    }
+}
+
 impl<R : RegisterIo> Host<R, CommandReady> {
     /// Execute a non-data command by bounded polling.
     ///
     /// Register definitions and W1C interrupt behavior follow the upstream
     /// Linux driver. Physical response ordering remains UNVERIFIED_ON_HARDWARE.
     pub fn execute_command(mut self, command : CommandDescriptor) -> CommandOutcome<R> {
+        let mut trace = CommandTrace::new(command);
         if let Err(error) = self.registers
                                 .write32(REG_INT, INT_CLEAR)
         {
-            return self.command_failure(CommandStage::ClearInterrupts, error);
+            return self.command_failure(CommandStage::ClearInterrupts, error, trace);
         }
         if let Err(error) = self.registers
                                 .write32(REG_CARG, command.argument)
         {
-            return self.command_failure(CommandStage::WriteArgument, error);
+            return self.command_failure(CommandStage::WriteArgument, error, trace);
         }
         let mut control = command.index as u32 | CCTL_HOST | CCTL_START;
         match command.response {
@@ -988,27 +1048,34 @@ impl<R : RegisterIo> Host<R, CommandReady> {
         if let Err(error) = self.registers
                                 .write32(REG_CCTL, control)
         {
-            return self.command_failure(CommandStage::StartCommand, error);
+            return self.command_failure(CommandStage::StartCommand, error, trace);
         }
+        trace.programmed_control = Some(control);
         for _ in 0..self.poll_limit {
             let interrupts = match self.registers
                                        .read32(REG_INT)
             {
                 Ok(interrupts) => interrupts,
-                Err(error) => return self.command_failure(CommandStage::PollInterrupts, error),
+                Err(error) => {
+                    return self.command_failure(CommandStage::PollInterrupts, error, trace)
+                }
             };
+            trace.record_interrupt(interrupts);
             if interrupts & INT_COMMAND_TIMEOUT != 0 {
                 return self.command_failure(CommandStage::CommandTimeout,
-                                            MmcError::ResponseTimeout);
+                                            MmcError::ResponseTimeout,
+                                            trace);
             }
             if interrupts & INT_RESPONSE_CRC != 0 {
-                return self.command_failure(CommandStage::ResponseCrc, MmcError::ResponseCrc);
+                return self.command_failure(CommandStage::ResponseCrc,
+                                            MmcError::ResponseCrc,
+                                            trace);
             }
             if interrupts & INT_COMMAND_SENT != 0 {
                 if let Err(error) = self.registers
                                         .write32(REG_INT, interrupts & INT_CLEAR)
                 {
-                    return self.command_failure(CommandStage::AcknowledgeCompletion, error);
+                    return self.command_failure(CommandStage::AcknowledgeCompletion, error, trace);
                 }
                 let response = match command.response {
                     ResponseType::None => CommandResponse::None,
@@ -1018,7 +1085,9 @@ impl<R : RegisterIo> Host<R, CommandReady> {
                         {
                             Ok(value) => CommandResponse::Short(value),
                             Err(error) => {
-                                return self.command_failure(CommandStage::ReadResponse0, error)
+                                return self.command_failure(CommandStage::ReadResponse0,
+                                                            error,
+                                                            trace)
                             }
                         }
                     }
@@ -1035,30 +1104,43 @@ impl<R : RegisterIo> Host<R, CommandReady> {
                                               .read32(offset)
                             {
                                 Ok(value) => value,
-                                Err(error) => return self.command_failure(stage, error),
+                                Err(error) => return self.command_failure(stage, error, trace),
                             };
+                            trace.response_read_mask |= 1 << (offset - REG_RSP0) / 4;
                         }
                         CommandResponse::Long(response)
                     }
                 };
+                if matches!(command.response, ResponseType::Short) {
+                    trace.response_read_mask |= 1;
+                }
                 if let Err(error) = self.registers
                                         .write32(REG_CARG, 0)
                 {
-                    return self.command_failure(CommandStage::CleanupArgument, error);
+                    return self.command_failure(CommandStage::CleanupArgument, error, trace);
                 }
+                trace.cleanup_argument_written = true;
                 if let Err(error) = self.registers
                                         .write32(REG_CCTL, 0)
                 {
-                    return self.command_failure(CommandStage::CleanupControl, error);
+                    return self.command_failure(CommandStage::CleanupControl, error, trace);
                 }
+                trace.cleanup_control_written = true;
+                trace.outcome = CommandTraceOutcome::Completed;
                 return CommandOutcome::Completed { host : self,
-                                                   response };
+                                                   response,
+                                                   trace };
             }
         }
-        self.command_failure(CommandStage::PollTimeout, MmcError::Timeout)
+        self.command_failure(CommandStage::PollTimeout, MmcError::Timeout, trace)
     }
 
-    fn command_failure(self, stage : CommandStage, error : MmcError) -> CommandOutcome<R> {
+    fn command_failure(self,
+                       stage : CommandStage,
+                       error : MmcError,
+                       mut trace : CommandTrace)
+                       -> CommandOutcome<R> {
+        trace.outcome = CommandTraceOutcome::Failed(stage);
         CommandOutcome::RecoveryRequired(CommandRecovery { stage,
                                                            error,
                                                            origin_stage : stage,
@@ -1068,6 +1150,7 @@ impl<R : RegisterIo> Host<R, CommandReady> {
                                                            observed_interrupts : None,
                                                            observed_argument : None,
                                                            observed_control : None,
+                                                           trace,
                                                            host : self.change_state() })
     }
 }
@@ -1076,6 +1159,7 @@ pub enum CommandOutcome<R> {
     Completed {
         host : Host<R, CommandReady>,
         response : CommandResponse,
+        trace : CommandTrace,
     },
     RecoveryRequired(CommandRecovery<R>),
 }
@@ -1124,6 +1208,7 @@ pub struct CommandRecovery<R> {
     pub observed_interrupts : Option<u32>,
     pub observed_argument : Option<u32>,
     pub observed_control : Option<u32>,
+    pub trace : CommandTrace,
     host : Host<R, CommandRecoveryRequired>,
 }
 
@@ -1144,6 +1229,7 @@ impl<R> core::fmt::Debug for CommandRecovery<R> {
                         &self.observed_argument)
                  .field("observed_control",
                         &self.observed_control)
+                 .field("trace", &self.trace)
                  .finish_non_exhaustive()
     }
 }
@@ -1245,6 +1331,148 @@ impl<R : RegisterIo> CommandRecovery<R> {
         self.error = error;
         self
     }
+}
+
+/// Register at which a read-only post-command observation failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandPostObservationStage {
+    ReadArgument,
+    ReadControl,
+    ReadCommandStatus,
+    ReadDataStatus,
+    ReadInterrupts,
+}
+
+/// Fixed-order register snapshot sampled after a command attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandPostSnapshot {
+    pub argument : u32,
+    pub control : u32,
+    pub command_status : u32,
+    pub data_status : u32,
+    pub interrupts : u32,
+}
+
+/// Partial evidence retained when a post-command snapshot cannot complete.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandPostObservationFailure {
+    pub stage : CommandPostObservationStage,
+    pub error : MmcError,
+    pub argument : Option<u32>,
+    pub control : Option<u32>,
+    pub command_status : Option<u32>,
+    pub data_status : Option<u32>,
+}
+
+/// Read a fixed post-command register sequence without changing controller
+/// state. Results remain UNVERIFIED_ON_HARDWARE diagnostic evidence.
+pub fn observe_command_post_state<R : RegisterIo>(
+    registers : &mut R)
+    -> Result<CommandPostSnapshot, CommandPostObservationFailure> {
+    let argument = registers.read32(REG_CARG)
+                            .map_err(|error| CommandPostObservationFailure {
+                                stage : CommandPostObservationStage::ReadArgument,
+                                error,
+                                argument : None,
+                                control : None,
+                                command_status : None,
+                                data_status : None,
+                            })?;
+    let control = registers.read32(REG_CCTL)
+                          .map_err(|error| CommandPostObservationFailure {
+                              stage : CommandPostObservationStage::ReadControl,
+                              error,
+                              argument : Some(argument),
+                              control : None,
+                              command_status : None,
+                              data_status : None,
+                          })?;
+    let command_status = registers.read32(REG_CSTS)
+                                 .map_err(|error| CommandPostObservationFailure {
+                                     stage : CommandPostObservationStage::ReadCommandStatus,
+                                     error,
+                                     argument : Some(argument),
+                                     control : Some(control),
+                                     command_status : None,
+                                     data_status : None,
+                                 })?;
+    let data_status = registers.read32(REG_DSTS)
+                              .map_err(|error| CommandPostObservationFailure {
+                                  stage : CommandPostObservationStage::ReadDataStatus,
+                                  error,
+                                  argument : Some(argument),
+                                  control : Some(control),
+                                  command_status : Some(command_status),
+                                  data_status : None,
+                              })?;
+    let interrupts = registers.read32(REG_INT)
+                              .map_err(|error| CommandPostObservationFailure {
+                                  stage : CommandPostObservationStage::ReadInterrupts,
+                                  error,
+                                  argument : Some(argument),
+                                  control : Some(control),
+                                  command_status : Some(command_status),
+                                  data_status : Some(data_status),
+                              })?;
+    Ok(CommandPostSnapshot { argument,
+                             control,
+                             command_status,
+                             data_status,
+                             interrupts })
+}
+
+/// Conservative classification of command-validation evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandEvidenceDisposition {
+    /// Complete and internally clean observation; never an authorization token.
+    ObservedOnly,
+    IncompleteTrace,
+    UnsafeState,
+}
+
+/// Derived diagnostic facts; this type cannot authorize a response policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandValidationAssessment {
+    pub disposition : CommandEvidenceDisposition,
+    pub command_completed : bool,
+    pub trace_complete : bool,
+    pub controller_idle : bool,
+    pub command_registers_clean : bool,
+    pub known_interrupts : u32,
+    pub unknown_interrupts : u32,
+}
+
+/// Classify software and register evidence without enabling any response
+/// policy or constructing a hardware-ready token.
+pub fn assess_command_validation(trace : CommandTrace,
+                                 post : CommandPostSnapshot)
+                                 -> CommandValidationAssessment {
+    let command_completed = trace.outcome == CommandTraceOutcome::Completed;
+    let trace_complete = trace.dropped_interrupt_samples == 0;
+    let controller_idle = post.command_status & CSTS_ON == 0 &&
+                          post.data_status & DSTS_ACTIVE == 0;
+    let command_registers_clean = post.argument == 0 && post.control == 0;
+    let known_interrupts = post.interrupts & INT_CLEAR;
+    let unknown_interrupts = post.interrupts & !INT_CLEAR;
+    let disposition = if !trace_complete {
+        CommandEvidenceDisposition::IncompleteTrace
+    } else if !command_completed ||
+              !controller_idle ||
+              !command_registers_clean ||
+              known_interrupts != 0 ||
+              unknown_interrupts != 0
+    {
+        CommandEvidenceDisposition::UnsafeState
+    } else {
+        CommandEvidenceDisposition::ObservedOnly
+    };
+    CommandValidationAssessment { disposition,
+                                  command_completed,
+                                  trace_complete,
+                                  controller_idle,
+                                  command_registers_clean,
+                                  known_interrupts,
+                                  unknown_interrupts }
 }
 
 #[cfg(test)]
@@ -1457,6 +1685,32 @@ mod tests {
         fail_write : Option<usize>,
         ignore_argument_zero : bool,
         ignore_control_zero : bool,
+    }
+
+    struct ObservationRegisters {
+        values : [u32; 26],
+        reads : usize,
+        fail_read : Option<usize>,
+        events : alloc::vec::Vec<usize>,
+    }
+
+    impl RegisterIo for ObservationRegisters {
+        fn read32(&mut self, offset : usize) -> Result<u32, MmcError> {
+            self.events
+                .push(offset);
+            self.reads += 1;
+            if self.fail_read == Some(self.reads) {
+                return Err(MmcError::RegisterOutOfRange);
+            }
+            self.values
+                .get(offset / 4)
+                .copied()
+                .ok_or(MmcError::RegisterOutOfRange)
+        }
+
+        fn write32(&mut self, _offset : usize, _value : u32) -> Result<(), MmcError> {
+            panic!("post-command observer must remain read-only")
+        }
     }
 
     impl RegisterIo for CommandRegisters {
@@ -1825,7 +2079,7 @@ mod tests {
                                                                          0x1AA,
                                                                          ResponseType::Short));
         let (host, response) = match outcome {
-            CommandOutcome::Completed { host, response } => (host, response),
+            CommandOutcome::Completed { host, response, .. } => (host, response),
             _ => panic!("command did not complete"),
         };
         assert_eq!(response, CommandResponse::Short(0x1234));
@@ -2091,9 +2345,12 @@ mod tests {
         registers.values[REG_RSP2 / 4] = 3;
         registers.values[REG_RSP3 / 4] = 4;
         match command_fixture(registers).execute_command(descriptor(2, 0, ResponseType::Long)) {
-            CommandOutcome::Completed { host, response } => {
+            CommandOutcome::Completed { host, response, trace } => {
                 assert_eq!(response,
                            CommandResponse::Long([1, 2, 3, 4]));
+                assert_eq!(trace.response_read_mask, 0b1111);
+                assert_eq!(trace.outcome,
+                           CommandTraceOutcome::Completed);
                 let registers = host.into_inner();
                 assert_eq!(registers.interrupts, 0);
                 assert_eq!(registers.response_reads,
@@ -2156,8 +2413,9 @@ mod tests {
         let outcome = command_fixture(command_registers(INT_COMMAND_SENT)).execute_command(
             descriptor(0, 0, ResponseType::None));
         match outcome {
-            CommandOutcome::Completed { host, response } => {
+            CommandOutcome::Completed { host, response, trace } => {
                 assert_eq!(response, CommandResponse::None);
+                assert_eq!(trace.response_read_mask, 0);
                 let registers = host.into_inner();
                 assert!(registers.response_reads.is_empty());
                 assert_eq!(registers.started_control,
@@ -2173,9 +2431,10 @@ mod tests {
                                                                             0,
                                                                             ResponseType::Short));
         match outcome {
-            CommandOutcome::Completed { host, response } => {
+            CommandOutcome::Completed { host, response, trace } => {
                 assert_eq!(response,
                            CommandResponse::Short(0xCAFE));
+                assert_eq!(trace.response_read_mask, 1);
                 let registers = host.into_inner();
                 assert_eq!(registers.response_reads, [REG_RSP0]);
                 assert_eq!(registers.started_control,
@@ -2217,6 +2476,93 @@ mod tests {
                 assert_eq!(recovery.stage, CommandStage::PollTimeout);
             }
             _ => panic!("BUSYEND alone was incorrectly accepted as command completion"),
+        }
+    }
+
+    #[test]
+    fn command_trace_is_bounded_and_healthy_evidence_stays_observed_only() {
+        let mut host = Host { registers : command_registers(INT_COMMAND_SENT),
+                              poll_limit : 10,
+                              _state : PhantomData::<CommandReady> };
+        host.registers.next_interrupts = 0;
+        let recovery = match host.execute_command(descriptor(0, 0, ResponseType::None)) {
+            CommandOutcome::RecoveryRequired(recovery) => recovery,
+            _ => panic!("ten empty polls did not time out"),
+        };
+        assert_eq!(recovery.trace.interrupt_sample_count, 8);
+        assert_eq!(recovery.trace.dropped_interrupt_samples, 2);
+        assert_eq!(recovery.trace.interrupt_union, 0);
+        assert_eq!(recovery.trace.outcome,
+                   CommandTraceOutcome::Failed(CommandStage::PollTimeout));
+
+        let outcome = command_fixture(command_registers(INT_COMMAND_SENT)).execute_command(
+            descriptor(0, 0, ResponseType::None));
+        let (mut host, trace) = match outcome {
+            CommandOutcome::Completed { host, trace, .. } => (host, trace),
+            _ => panic!("healthy fixture did not complete"),
+        };
+        let post = observe_command_post_state(&mut host.registers).unwrap();
+        let assessment = assess_command_validation(trace, post);
+        assert_eq!(assessment.disposition,
+                   CommandEvidenceDisposition::ObservedOnly);
+        assert!(assessment.command_completed);
+        assert!(assessment.trace_complete);
+        assert!(assessment.controller_idle);
+        assert!(assessment.command_registers_clean);
+
+        let incomplete = assess_command_validation(recovery.trace, post);
+        assert_eq!(incomplete.disposition,
+                   CommandEvidenceDisposition::IncompleteTrace);
+        let unsafe_post = CommandPostSnapshot { control : CCTL_START,
+                                                ..post };
+        assert_eq!(assess_command_validation(trace, unsafe_post).disposition,
+                   CommandEvidenceDisposition::UnsafeState);
+    }
+
+    #[test]
+    fn command_post_observation_has_fixed_order_and_partial_fault_evidence() {
+        let mut registers = ObservationRegisters { values : [0; 26],
+                                                   reads : 0,
+                                                   fail_read : None,
+                                                   events : alloc::vec::Vec::new() };
+        registers.values[REG_CARG / 4] = 1;
+        registers.values[REG_CCTL / 4] = 2;
+        registers.values[REG_CSTS / 4] = 3;
+        registers.values[REG_DSTS / 4] = 4;
+        registers.values[REG_INT / 4] = 5;
+        assert_eq!(observe_command_post_state(&mut registers).unwrap(),
+                   CommandPostSnapshot { argument : 1,
+                                         control : 2,
+                                         command_status : 3,
+                                         data_status : 4,
+                                         interrupts : 5 });
+        assert_eq!(registers.events,
+                   [REG_CARG, REG_CCTL, REG_CSTS, REG_DSTS, REG_INT]);
+
+        for (failed_read, stage, partial_count) in
+            [(1, CommandPostObservationStage::ReadArgument, 0),
+             (2, CommandPostObservationStage::ReadControl, 1),
+             (3, CommandPostObservationStage::ReadCommandStatus, 2),
+             (4, CommandPostObservationStage::ReadDataStatus, 3),
+             (5, CommandPostObservationStage::ReadInterrupts, 4)]
+        {
+            let mut registers = ObservationRegisters { values : [7; 26],
+                                                       reads : 0,
+                                                       fail_read : Some(failed_read),
+                                                       events : alloc::vec::Vec::new() };
+            let failure = observe_command_post_state(&mut registers).unwrap_err();
+            assert_eq!(failure.stage, stage);
+            assert_eq!(failure.error,
+                       MmcError::RegisterOutOfRange);
+            let partial = [failure.argument,
+                           failure.control,
+                           failure.command_status,
+                           failure.data_status];
+            assert_eq!(partial.iter()
+                              .filter(|value| value.is_some())
+                              .count(),
+                       partial_count);
+            assert_eq!(registers.events.len(), failed_read);
         }
     }
 
