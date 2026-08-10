@@ -85,8 +85,12 @@ class RootImageQemuSmokeTests(unittest.TestCase):
         self.assertEqual(failure.state, "failure")
         self.assertEqual(parse_root_mount_evidence("booting kernel").state, "absent")
         self.assertEqual(parse_input_node_evidence(
-            "[driver][test] devfs-node#7 path=/dev/input/event0 type=Character"
+            "[driver] input devfs node path=/dev/input/event0\n"
+            "[driver] input devfs info index=0 name=\"QEMU Virtio Tablet\" kind=Pointer"
         ).state, "success")
+        self.assertEqual(parse_input_node_evidence(
+            "[driver] input devfs node path=/dev/input/event0"
+        ).state, "absent")
         self.assertEqual(parse_input_node_evidence("booting kernel").state, "absent")
         self.assertEqual(parse_aux_mount_evidence(
             "[bringup][stage-00-bus] aux ext4 mounted block=/dev/vda2 at /data ro=true"
@@ -123,7 +127,8 @@ class RootImageQemuSmokeTests(unittest.TestCase):
     def test_input_node_evidence_is_strict_when_requested(self, run) -> None:
         run.return_value = type(
             "Completed", (), {"returncode": 0,
-                               "stdout": "[driver][test] devfs-node#7 path=/dev/input/event0 type=Character\n"}
+                               "stdout": "[driver] input devfs node path=/dev/input/event0\n"
+                                         "[driver] input devfs info index=0 name=\"QEMU Virtio Tablet\" kind=Pointer\n"}
         )()
         self.assertEqual(
             run_smoke(["qemu-system-riscv64"], root=Path("."), timeout=1,

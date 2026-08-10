@@ -6940,3 +6940,29 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[feat] support evdev absolute axis queries`
+
+## 2026-08-10：批次 168——QEMU 输入设备 metadata 与绝对轴证据
+
+### 本批任务与设计
+
+1. 复查输入 smoke：此前只要求 `/dev/input/eventN` 节点，无法证明 VirtIO 探测得到的名称、kind、绝对轴和事件能力已进入 devfs 同步阶段。
+2. 在 QEMU RISC-V devfs refresh 后输出有界 `input devfs info` marker；内容只来自 `InputDeviceInfo`，不推断物理 USB/HID 能力。
+3. 将 `--require-input-node` 的严格判定收紧为同时观察节点和 metadata marker，并补充 host parser/失败路径测试。
+
+### 已完成
+
+- [x] devfs 日志输出 input index、name、kind、absolute axis 摘要和 event type bitmap。
+- [x] `qemu_smoke.py` 严格解析 input node + metadata evidence，默认非严格 smoke 行为保持兼容。
+- [x] 更新 9 项 root-image QEMU smoke host 测试。
+- [x] 使用 16 MiB MBR 镜像和 headless RISC-V QEMU 实际收集 input metadata evidence，timeout 判定通过。
+
+### 验证证据与限制
+
+- `python3 -m unittest discover -s os/scripts/tests -p 'test_root_image_qemu_smoke.py'`：9 项通过。
+- `make kernel-rv-pre EXTRA_FEATURES='gui,operator-shell'`：通过。
+- `qemu_smoke.py --arch rv --profile pre --require-input-node --execute`：16 MiB 镜像实际通过，QEMU 启用了 virtio keyboard/tablet 并收集 metadata marker。
+- `UNVERIFIED_ON_HARDWARE`：真实 USB/HID descriptor、非 boot protocol、IRQ/DMA/cache、热插拔和绝对轴校准仍待目标板；metadata marker 不等价于用户态 ioctl 已验证。
+
+### 提交
+
+- 待提交：`[test] verify qemu input metadata evidence`

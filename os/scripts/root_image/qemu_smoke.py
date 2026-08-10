@@ -42,6 +42,7 @@ _ROOT_MOUNT_FAILURE_MARKERS = (
 _AUX_MOUNT_SUCCESS_MARKER = "[bringup][stage-00-bus] aux ext4 mounted"
 _AUX_MOUNT_FAILURE_MARKER = "[bringup][stage-00-bus] aux mount failed"
 _INPUT_NODE_MARKER = "path=/dev/input/event"
+_INPUT_INFO_MARKER = "input devfs info index="
 
 
 def parse_root_mount_evidence(output: str) -> RootMountEvidence:
@@ -72,9 +73,12 @@ def parse_aux_mount_evidence(output: str) -> RootMountEvidence:
 
 
 def parse_input_node_evidence(output: str) -> RootMountEvidence:
-    """Classify devfs evidence for a registered evdev input node."""
+    """Classify devfs evidence for a registered evdev node and metadata."""
+    node_line: str | None = None
     for line in output.splitlines():
         if _INPUT_NODE_MARKER in line:
+            node_line = line
+        if node_line is not None and _INPUT_INFO_MARKER in line:
             return RootMountEvidence("success", line)
     return RootMountEvidence("absent")
 

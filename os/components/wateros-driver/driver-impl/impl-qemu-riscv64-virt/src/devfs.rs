@@ -17,6 +17,12 @@ pub(crate) fn sync(unsupported_paths: Vec<String>) {
     {
         log::info!("[driver] input devfs node path={}", node.path);
     }
+    #[cfg(feature = "input")]
+    for (index, device) in input::input_devices_snapshot() {
+        let info = device.lock().info().clone();
+        log::info!("[driver] input devfs info index={} name={:?} kind={:?} abs_x={:?} abs_y={:?} event_types={:#x}",
+                   index, info.name, info.kind, info.absolute_x, info.absolute_y, info.event_types);
+    }
 }
 
 /// 自检日志：依赖 `logging` 级别；不改变驱动状态。
