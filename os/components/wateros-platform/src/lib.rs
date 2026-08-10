@@ -42,7 +42,12 @@ pub fn init_when_boot(dtb_pa: usize) {
     #[cfg(feature = "impl-jh7110-visionfive2")]
     impl_jh7110_visionfive2::dtb::store(dtb_pa);
     #[cfg(feature = "impl-loongson2k1000la")]
-    impl_loongson2k1000la::dtb::store(dtb_pa);
+    {
+        impl_loongson2k1000la::dtb::store(dtb_pa);
+        // Discovery is deliberately fail-closed: a missing or unexpected PM
+        // node leaves reset() unsupported instead of probing a fixed address.
+        let _ = impl_loongson2k1000la::reset::discover_from_dtb(dtb_pa);
+    }
     #[cfg(not(any(feature = "impl-qemu-riscv64-opensbi",
                   feature = "impl-qemu-loongarch64-virt",
                   feature = "impl-jh7110-visionfive2",

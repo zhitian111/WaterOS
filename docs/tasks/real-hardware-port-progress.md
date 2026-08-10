@@ -7065,3 +7065,30 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[fix] refuse mounted disk flashing`
+
+## 2026-08-10：批次 173——接入 2K1000LA DTB 复位/关机后端
+
+### 本批任务与设计
+
+1. 根据公开 BSP/Linux 资料确认 2K1000 PM 控制器寄存器契约，避免凭经验填写固定地址。
+2. 从启动 DTB 查找 `loongson,ls2k1000-pmc`/`loongson,ls2k0500-pmc` 节点并解析 `reg`，窗口不足时拒绝启用。
+3. 仅在发现有效控制器后执行复位；未发现时保持 `Unsupported`，并为纯逻辑寄存器序列补测试。
+
+### 已完成
+
+- [x] `reset.rs` 新增 DTB 控制器发现、基址原子保存及 fail-closed 错误类型。
+- [x] 冷/热重启写入 `RST_CNT + 0x30 = 1`；关机先读写 `PM1_STS + 0x0c`，再写 `PM1_CNT + 0x14 = 0x3c00`。
+- [x] 平台聚合的 `init_when_boot` 接入发现流程；不再依赖硬编码 MMIO 基址。
+- [x] 增加“无 DTB 仍 Unsupported”和寄存器计划单元测试。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path components/wateros-platform/platform-impl/impl-loongson2k1000la/Cargo.toml --lib`：9 项通过。
+- `cargo check --manifest-path components/wateros-platform/platform-impl/impl-loongson2k1000la/Cargo.toml --target loongarch64-unknown-none`：通过。
+- `cargo fmt --all -- --check`：仓库既有大量格式差异，未作为本批通过条件；新增文件已保持项目风格。
+- 寄存器偏移和值依据 [Linux LS2K reset driver](https://codebrowser.dev/linux/linux/drivers/platform/mips/ls2k-reset.c.html) 与 [Loongson 2K1000 upstream DTS](https://gbmc.googlesource.com/linux/%2B/b7191581a973ab2fca45d2ca64416065f1660ae0/arch/loongarch/boot/dts/loongson-2k1000.dtsi)。
+- `UNVERIFIED_ON_HARDWARE`：尚未在真实 2K1000LA 板上验证 DTB 交付、PM 控制器映射、复位和掉电结果；执行流继续返回 `Failed` 以暴露未验证状态。
+
+### 提交
+
+- 待提交：`[feat] add loongson2k1000la dtb reset backend`
