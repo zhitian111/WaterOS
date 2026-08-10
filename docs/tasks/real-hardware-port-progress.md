@@ -6421,3 +6421,27 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[fix] isolate root image staging`
+
+## 2026-08-10：批次 147——保护动态设备快照的一致性
+
+### 本批任务与设计
+
+1. 审计 `/dev` 动态刷新：block、character、input registry 分别取快照，期间可能发生设备注册/注销。
+2. 在 devfs reconciler 中重新读取统一 topology generation；若快照期间代际变化，则不把混合快照标记为已同步，下次访问自动重试。
+3. 保持现有路径分配和注销语义，不引入未经硬件验证的热插拔动作。
+
+### 已完成
+
+- [x] `refresh()` 增加 generation recheck，竞态时写入 invalidation 标记 `0`。
+- [x] 增加纯逻辑测试，覆盖 generation 相等和变化两条路径。
+- [x] devfs kernel host 测试 2 项通过。
+- [x] LoongArch64 devfs target `cargo check` 通过；remote-debug client 测试 6 项通过。
+
+### 验证证据与限制
+
+- 该修复保证软件快照不会错误宣称一致，但不能阻止真实驱动在硬件中断/注销顺序错误；驱动仍需先停 IRQ/DMA 再注销。
+- `UNVERIFIED_ON_HARDWARE`：真实 USB/PS2/板载输入热插拔和设备节点权限仍需目标板或 QEMU guest 事件注入验证。
+
+### 提交
+
+- 本批计划提交：`[fix] recheck devfs topology generation`

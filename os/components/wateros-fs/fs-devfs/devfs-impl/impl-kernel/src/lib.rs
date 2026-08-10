@@ -59,6 +59,12 @@ fn ensure_fresh() {
     manager.refresh();
 }
 
+/// Mark a snapshot usable only when no registry mutation occurred while it
+/// was being assembled. A zero result forces the next consumer to retry.
+fn reconciled_generation(observed : u64, current : u64) -> u64 {
+    if observed == current { observed } else { 0 }
+}
+
 // Linux 风格磁盘名：索引 0 → `/dev/vda`，超过 26 个盘符时截断到 `z`。
 // 本方法代码由AI完成
 fn linux_vd_disk_path(idx: usize) -> String {
@@ -190,7 +196,8 @@ impl DevFsManager for KernelDevFsManager {
                 mode: 0o444,
             });
         }
-        inner.synced_generation = observed_generation;
+        let current_generation = device_topology_generation();
+        inner.synced_generation = reconciled_generation(observed_generation, current_generation);
         inner.view_generation = inner.view_generation.wrapping_add(1);
         logging::info!(
             "[fs::devfs] refresh done, total_nodes={}, block={}, character={}, input={}, unsupported={}",
@@ -349,6 +356,12 @@ mod tests {
         assert!(removed_generation > registered_generation);
         assert!(!removed_nodes.iter().any(|node| node.path == path));
         assert!(manager.lookup_character_device(&path).is_err());
+    }
+
+    #[test]
+    fn snapshot_generation_is_invalidated_when_registry_changes_mid_refresh() {
+        assert_eq!(reconciled_generation(7, 7), 7);
+        assert_eq!(reconciled_generation(7, 8), 0);
     }
 }
 
