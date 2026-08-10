@@ -7374,6 +7374,12 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 - Loongson 平台 crate 完整 lib 单测：206 项通过。
 - `UNVERIFIED_ON_HARDWARE`：真实 GMAC PCI/ECAM、MAC/PHY 寄存器、DMA/cache、IRQ route、PHY link 和网络收发仍需实体板验证。
 
+## 2026-08-10：批次 89——Loongson 2K1000 最终报告与暂停
+
+- [x] 已写入 `docs/tasks/real-hardware-port-final-status.md`，汇总 AHCI、GMAC、DMA 和硬件证据契约。
+- [x] 已记录板子到位后的串口/DTB→PCI/AHCI→SATA→GMAC/PHY→DMA/cache 验证顺序。
+- [x] 本工作树暂停；真实 BAR、IRQ、SATA、PHY、DMA ownership 和 cache 行为继续标记 `UNVERIFIED_ON_HARDWARE`。
+
 ## 2026-08-10：批次 84——Loongson DMA buffer 显式虚拟映射入口
 
 ### 任务与设计
