@@ -2145,3 +2145,24 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[fix] expose virtio block capacity`
+
+## 2026-08-10：批次 79——块设备分区边界回归审计
+
+### 任务与设计
+
+1. 审计共有 block registry 的整盘/分区角色生成、GPT/MBR 扫描和父盘注销级联路径。
+2. 复核小镜像边界下 GPT 主/备 header、分区范围、重叠分区和异常 sector size 是否 fail-closed。
+3. 复用内存块设备测试覆盖 GPT 主 header 损坏后的备 header 恢复，以及越界/重叠分区拒绝；不改变实际读写路径。
+
+### 完成内容
+
+- [x] `register_block_device` 保持整盘先注册、校验通过的分区随后注册；父盘注销会级联清理 partition slots，slot 不复用。
+- [x] MBR 对无效签名、扩展分区、零字段、越界和重叠条目 fail-closed。
+- [x] GPT 对主/备 header LBA、usable range、entry array 溢出/越界、CRC、空/重叠/越界条目 fail-closed；主 header 损坏时只回退一次到末尾备 header。
+- [x] 现有内存盘回归已覆盖：主 header 损坏备份恢复、主备同时损坏、GPT 重叠和越界条目、MBR 越界和重叠条目、分区读写边界。
+
+### 验证证据与限制
+
+- `cargo check -p wateros-driver-block-api-v0 --target riscv64gc-unknown-none-elf` 通过。
+- host `cargo test -p wateros-driver-block-api-v0` 未执行成功：该 no-std workspace 的默认依赖含 RISC-V SBI 内联寄存器，host 编译器拒绝 `a0`–`a7`；不是本批分区逻辑失败。
+- `UNVERIFIED_ON_HARDWARE`：真实 SD/eMMC 控制器返回的容量、坏块/读错误、掉电恢复和实体板热插拔时序仍待 VisionFive 2/Loongson 2K1000 实板验证。
