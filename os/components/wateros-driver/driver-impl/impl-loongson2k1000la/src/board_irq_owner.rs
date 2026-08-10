@@ -6,7 +6,8 @@
 
 use crate::{irq_domain::{AcknowledgedIrq, GlobalIrq, IrqDisposition},
             irq_owner::IrqOwner,
-            mmc::{MmcIrqAckError, RegisterIo, acknowledge_interrupt_observed}};
+            mmc::{MmcIrqAckError, RegisterIo, acknowledge_interrupt_observed,
+                  clear_masked_interrupt_snapshot, read_interrupt_snapshot_terminal}};
 use api_v0::{DriverError, dma::DmaCoherency};
 use core::num::NonZeroU64;
 
@@ -65,6 +66,12 @@ pub enum ReadIrqOwnerError {
     NotArmed,
     PendingNotConsumed,
     WrongTransaction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MmcReadRecheckError {
+    Owner(ReadIrqOwnerError),
+    Ack(MmcIrqAckError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,6 +182,29 @@ pub(crate) struct PairedAcknowledgedReadDmaSession<'a, D, P> {
     pub mmc : MmcReadIrqReceipt,
     pub tracker : crate::mmc::ReadCompletionTracker<
         crate::mmc::AcknowledgedReadDmaSession<'a, D, P>>,
+}
+
+#[cfg(test)]
+pub(crate) struct PairedQuiescedReadDmaSession<'a, D, P> {
+    mmc : MmcReadIrqReceipt,
+    tracker : crate::mmc::ReadCompletionTracker<
+        crate::mmc::QuiescedReadDmaSession<'a, D, P>>,
+}
+
+#[cfg(test)]
+pub(crate) struct PairedDmaInspectionFailure<'a, D, P> {
+    pub error : crate::apbdma::DescriptorStatusError,
+    pub session : PairedAcknowledgedReadDmaSession<'a, D, P>,
+}
+
+#[cfg(test)]
+pub(crate) enum PairedDmaStatusProgress<'a, D, P> {
+    Pending(PairedQuiescedReadDmaSession<'a, D, P>),
+    RecoveryRequired {
+        mmc : MmcReadIrqReceipt,
+        recovery : crate::mmc::ReadCompletionRecovery<
+            crate::mmc::QuiescedReadDmaSession<'a, D, P>>,
+    },
 }
 
 #[cfg(test)]
@@ -290,6 +320,44 @@ impl<'a, 'e, R : crate::apbdma::OrderIo, D, P>
                 session : Self { armed : self.armed, session : failure.session },
             }),
         }
+    }
+}
+
+#[cfg(test)]
+impl<'a, D : DmaCoherency, P> PairedAcknowledgedReadDmaSession<'a, D, P> {
+    pub(crate) fn inspect_dma_status<R : crate::apbdma::DescriptorStatusReader,
+                                    C : crate::apbdma::DescriptorStatusDecoder>(
+        self,
+        reader : &mut R,
+        decoder : &C)
+        -> Result<PairedDmaStatusProgress<'a, D, P>,
+                  PairedDmaInspectionFailure<'a, D, P>> {
+        let Self { mmc, tracker } = self;
+        match tracker.inspect_dma_status(reader, decoder) {
+            Ok(crate::mmc::ReadCompletionProgress::Pending(tracker)) =>
+                Ok(PairedDmaStatusProgress::Pending(
+                    PairedQuiescedReadDmaSession { mmc, tracker })),
+            // The paired tracker is freshly constructed immediately before
+            // DMA acknowledgement, so it cannot already contain MMC evidence.
+            Ok(crate::mmc::ReadCompletionProgress::Completed(_)) =>
+                unreachable!("fresh paired tracker completed before MMC receipt"),
+            Ok(crate::mmc::ReadCompletionProgress::RecoveryRequired(recovery)) =>
+                Ok(PairedDmaStatusProgress::RecoveryRequired { mmc, recovery }),
+            Err(failure) => Err(PairedDmaInspectionFailure {
+                error : failure.error,
+                session : Self { mmc, tracker : failure.tracker },
+            }),
+        }
+    }
+}
+
+#[cfg(test)]
+impl<'a, D, P> PairedQuiescedReadDmaSession<'a, D, P> {
+    /// Consume the terminal MMC snapshot exactly once after DMA is quiesced.
+    pub(crate) fn apply_mmc_receipt(
+        self)
+        -> crate::mmc::ReadCompletionProgress<crate::mmc::QuiescedReadDmaSession<'a, D, P>> {
+        self.tracker.terminal_irq_observed(self.mmc.interrupts)
     }
 }
 
@@ -436,6 +504,7 @@ impl<R> Drop for ReadIrqArmGuard<'_, R> {
            self.dma.read_binding() == Some(ReadIrqOwnerBinding::Armed(self.transaction))
         {
             self.mmc.read_armed = None;
+            self.mmc.read_interrupts = 0;
             self.dma.armed = None;
         }
     }
@@ -598,6 +667,7 @@ where I : crate::liointc::RegisterIo
     let mmc_receipt = mmc.read_pending.take().unwrap();
     let dma_receipt = dma.pending.take().unwrap();
     mmc.read_armed = None;
+    mmc.read_interrupts = 0;
     dma.armed = None;
     Ok(ReadyReadIrqPair { mmc : mmc_receipt, dma : dma_receipt })
 }
@@ -612,6 +682,7 @@ pub fn arm_read_owners<R>(mmc : &mut MmcCommandOwner<R>,
        .map_err(|error| ReadPairOwnerFailure { owner : ReadPairOwner::Mmc, error })?;
     if let Err(error) = dma.arm_read(transaction) {
         mmc.read_armed = None;
+        mmc.read_interrupts = 0;
         return Err(ReadPairOwnerFailure { owner : ReadPairOwner::Dma, error });
     }
     Ok(())
@@ -628,6 +699,7 @@ pub fn drain_read_owners<R>(mmc : &mut MmcCommandOwner<R>,
     validate_binding(dma.read_binding(), transaction)
         .map_err(|error| ReadPairOwnerFailure { owner : ReadPairOwner::Dma, error })?;
     mmc.read_armed = None;
+    mmc.read_interrupts = 0;
     dma.armed = None;
     Ok(DrainedReadIrqs { mmc : mmc.read_pending.take(),
                          dma : dma.pending.take() })
@@ -702,6 +774,7 @@ pub struct MmcCommandOwner<R> {
     handled : u64,
     last_error : Option<MmcIrqAckError>,
     read_armed : Option<ReadTransactionId>,
+    read_interrupts : u32,
     read_pending : Option<MmcReadIrqReceipt>,
     last_read_error : Option<ReadIrqOwnerError>,
 }
@@ -713,6 +786,7 @@ impl<R> MmcCommandOwner<R> {
                handled : 0,
                last_error : None,
                read_armed : None,
+               read_interrupts : 0,
                read_pending : None,
                last_read_error : None }
     }
@@ -732,6 +806,7 @@ impl<R> MmcCommandOwner<R> {
         if self.read_pending.is_some() { return Err(ReadIrqOwnerError::PendingNotConsumed); }
         if self.read_armed.is_some() { return Err(ReadIrqOwnerError::AlreadyArmed); }
         self.read_armed = Some(transaction);
+        self.read_interrupts = 0;
         self.last_read_error = None;
         Ok(())
     }
@@ -744,6 +819,7 @@ impl<R> MmcCommandOwner<R> {
             binding => {
                 validate_binding(binding, transaction)?;
                 self.read_armed = None;
+                self.read_interrupts = 0;
                 Ok(())
             },
         }
@@ -751,9 +827,45 @@ impl<R> MmcCommandOwner<R> {
     pub fn take_read_receipt(&mut self) -> Option<MmcReadIrqReceipt> {
         self.read_pending.take()
     }
+
+    fn record_read_interrupts(&mut self,
+                              transaction : ReadTransactionId,
+                              interrupts : u32) -> bool {
+        self.read_interrupts |= interrupts;
+        if !read_interrupt_snapshot_terminal(self.read_interrupts) { return false; }
+        self.read_pending = Some(MmcReadIrqReceipt {
+            transaction,
+            interrupts : self.read_interrupts,
+        });
+        self.read_armed = None;
+        self.read_interrupts = 0;
+        true
+    }
     pub fn registers(&self) -> &R { &self.registers }
     pub fn registers_mut(&mut self) -> &mut R { &mut self.registers }
     pub fn into_registers(self) -> R { self.registers }
+}
+
+impl<R : RegisterIo> MmcCommandOwner<R> {
+    /// Poll and clear another MMC snapshot while the source remains masked.
+    /// No LIOINTC acknowledgement or rearm evidence is created.
+    pub fn recheck_masked_read(&mut self) -> Result<bool, MmcReadRecheckError> {
+        if self.read_pending.is_some() {
+            return Err(MmcReadRecheckError::Owner(ReadIrqOwnerError::PendingNotConsumed));
+        }
+        let transaction = self.read_armed.ok_or(
+            MmcReadRecheckError::Owner(ReadIrqOwnerError::NotArmed))?;
+        let interrupts = match clear_masked_interrupt_snapshot(&mut self.registers) {
+            Ok(interrupts) => interrupts,
+            Err(error) => {
+                self.last_error = Some(error);
+                return Err(MmcReadRecheckError::Ack(error));
+            },
+        };
+        self.last_error = None;
+        self.last_read_error = None;
+        Ok(self.record_read_interrupts(transaction, interrupts))
+    }
 }
 
 impl<R : RegisterIo> IrqOwner for MmcCommandOwner<R> {
@@ -767,11 +879,8 @@ impl<R : RegisterIo> IrqOwner for MmcCommandOwner<R> {
                 if self.read_pending.is_some() {
                     self.last_read_error = Some(ReadIrqOwnerError::PendingNotConsumed);
                     IrqDisposition::KeepMasked
-                } else if let Some(transaction) = self.read_armed.take() {
-                    self.read_pending = Some(MmcReadIrqReceipt {
-                        transaction,
-                        interrupts : receipt.interrupts,
-                    });
+                } else if let Some(transaction) = self.read_armed {
+                    self.record_read_interrupts(transaction, receipt.interrupts);
                     self.last_read_error = None;
                     IrqDisposition::KeepMasked
                 } else {
@@ -1068,7 +1177,7 @@ mod tests {
         let dma_irq = GlobalIrq::from_bank_local(1, 13).unwrap();
         let mut mmc = MmcCommandOwner::new(
             mmc_irq,
-            MockRegisters { status : COMMAND_SENT, writes : Vec::new() });
+            MockRegisters { status : COMMAND_SENT | 1, writes : Vec::new() });
         assert_eq!(mmc.arm_read(first), Ok(()));
         assert_eq!(mmc.arm_read(second), Err(ReadIrqOwnerError::AlreadyArmed));
         assert_eq!(mmc.handle(acknowledged(mmc_irq)), IrqDisposition::KeepMasked);
@@ -1087,6 +1196,44 @@ mod tests {
         assert_eq!(dma.arm_read(second), Err(ReadIrqOwnerError::PendingNotConsumed));
         assert_eq!(dma.take_read_receipt().unwrap().transaction, first);
         assert_eq!(dma.arm_read(second), Ok(()));
+    }
+
+    #[test]
+    fn mmc_read_owner_rechecks_masked_split_completion_before_receipt() {
+        let current = transaction(43);
+        let mmc_irq = GlobalIrq::from_bank_local(0, 31).unwrap();
+        let mut mmc = MmcCommandOwner::new(
+            mmc_irq,
+            MockRegisters { status : COMMAND_SENT, writes : Vec::new() });
+        mmc.arm_read(current).unwrap();
+        assert_eq!(mmc.handle(acknowledged(mmc_irq)), IrqDisposition::KeepMasked);
+        assert_eq!(mmc.read_binding(), Some(ReadIrqOwnerBinding::Armed(current)));
+        assert_eq!(mmc.take_read_receipt(), None);
+        assert_eq!(mmc.registers().writes, [(REG_INT, COMMAND_SENT)]);
+
+        mmc.registers_mut().status = 1;
+        assert_eq!(mmc.recheck_masked_read(), Ok(true));
+        assert_eq!(mmc.read_binding(), Some(ReadIrqOwnerBinding::Pending(current)));
+        let receipt = mmc.take_read_receipt().unwrap();
+        assert_eq!(receipt.transaction, current);
+        assert_eq!(receipt.interrupts, COMMAND_SENT | 1);
+        assert_eq!(mmc.registers().writes,
+                   [(REG_INT, COMMAND_SENT), (REG_INT, 1)]);
+        assert_eq!(mmc.recheck_masked_read(),
+                   Err(MmcReadRecheckError::Owner(ReadIrqOwnerError::NotArmed)));
+
+        let aborted = transaction(44);
+        let replacement = transaction(45);
+        mmc.registers_mut().status = COMMAND_SENT;
+        mmc.arm_read(aborted).unwrap();
+        assert_eq!(mmc.handle(acknowledged(mmc_irq)), IrqDisposition::KeepMasked);
+        mmc.disarm_read(aborted).unwrap();
+        mmc.registers_mut().status = 1;
+        mmc.arm_read(replacement).unwrap();
+        assert_eq!(mmc.handle(acknowledged(mmc_irq)), IrqDisposition::KeepMasked);
+        assert_eq!(mmc.read_binding(), Some(ReadIrqOwnerBinding::Armed(replacement)));
+        assert_eq!(mmc.take_read_receipt(), None);
+        mmc.disarm_read(replacement).unwrap();
     }
 
     #[test]

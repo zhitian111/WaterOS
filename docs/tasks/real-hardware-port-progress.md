@@ -4814,3 +4814,54 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] pair LS2K1000 runtime read IRQ receipts`
+
+## 2026-08-10：批次 99——聚合 MMC 分段完成并线性应用 paired status
+
+### 本批任务与设计
+
+1. 修复 read owner 在首个 `CSENT-only` snapshot 就生成唯一 receipt、导致后续 `DFIN` 永久丢失的问题。
+2. 同 generation 累积已 W1C 的 MMC known bits；只有 `CSENT+DFIN` 或任一 command/data error 才形成 terminal receipt。
+3. source 保持 masked 时提供显式 serialized recheck，只采样/W1C MMC 状态，不伪造 LIOINTC acknowledgement 或 rearm evidence。
+4. MMC receipt 必须线性穿过 APBDMA descriptor status inspection；inspection failure 保留 paired acknowledged session 供重试。
+5. DMA status 成功后才一次性应用 terminal MMC snapshot；descriptor hardware error 与 MMC command/data error进入 quiesced recovery。
+
+### 已完成
+
+- [x] 抽出 `clear_masked_interrupt_snapshot`，复用原 read→known W1C→unknown reject 顺序，同时明确不生成 controller ack/rearm token。
+- [x] 新增 `read_interrupt_snapshot_terminal`；正常读取要求同时观察 `CSENT|DFIN`，command timeout、response CRC 与四类 data error 可立即终止等待。
+- [x] `MmcCommandOwner` 新增 generation-local `read_interrupts` union；非终止 snapshot 保持 Armed，不产生 receipt。
+- [x] 新增 `recheck_masked_read` 与 `MmcReadRecheckError`；recheck 失败保留已累积 snapshot，并记录精确 MMC ack error。
+- [x] arm、disarm、guard rollback、pair-arm rollback、abort drain 与成功 pair take 均清除 accumulator，旧代 snapshot 不会泄漏到新 generation。
+- [x] 新增 `PairedDmaInspectionFailure`，descriptor cache/read/decode 失败返回原 MMC receipt 与 acknowledged DMA tracker，可原状态重试。
+- [x] 新增 `PairedDmaStatusProgress`；DMA Complete 进入携带 MMC receipt 的 quiesced pending 状态，HardwareError 保留 receipt 并进入 quiesced recovery。
+- [x] `PairedQuiescedReadDmaSession::apply_mmc_receipt` 一次性消费 terminal snapshot，不能在 DMA quiesced 前提前应用。
+- [x] 新增 `ReadCompletionTracker::terminal_irq_observed`，command timeout/response CRC 优先于把 CSENT 解释为 validated response。
+- [x] production status decoder、MMC publish permit、真实 APBDMA activation 与两路 IRQ rearm 均保持关闭。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 164 项全部通过；新增 split MMC recheck 与 paired status/error recovery 2 项，并升级 paired 端到端测试。
+- 首次 `CSENT-only` 后 owner 保持 Armed、receipt 为 None、source KeepMasked；显式 recheck `DFIN` 后 receipt 精确合并为 `CSENT|DFIN`。
+- partial snapshot 后 disarm，再以新 generation 观察 `DFIN-only` 仍保持 Armed，证明旧 `CSENT` 未跨代泄漏。
+- paired status 首次使用 production `UnverifiedStatusDecoder` 返回 StatusUnverified，并保留同一 MMC generation；fixture decoder 重试成功。
+- 正常链路在 DMA status Complete 后应用 MMC `CSENT|DFIN`，completion evidence 三项全 true，finish 后 mappings 才 CPU-owned。
+- descriptor `0x8000_0042` 被 fixture decoder 分类为 HardwareError，MMC receipt 保留在 paired recovery，failure 精确携带硬件 status。
+- terminal MMC command-timeout receipt 在 DMA quiesced 后进入 `Command(Timeout)` recovery，不会被误判为 validated response。
+- production 组件 check、RISC-V `make check` 与 LoongArch64 `make kernel-la` 全部通过；仅有仓库既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过；dtc warning 来自预期畸形输入。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：masked recheck 的寄存器 read/W1C 顺序来自现有 Linux-derived status 语义，尚未在 2K1000LA 实机确认。
+- [ ] `UNVERIFIED_ON_HARDWARE`：`CSENT` 与 `DFIN` 的实际分离时延、是否在 source masked 时仍锁存以及 W1C 后新事件的可见性未知。
+- [ ] `recheck_masked_read` 目前是单次显式调用；production 尚无带 deadline/poll budget 的 worker coordinator，不能无限轮询。
+- [ ] paired status/application wrapper 仍为 `#[cfg(test)]`，因为 production publish permit 与 APBDMA success decoder都未开放。
+- [ ] descriptor HardwareError recovery 中保留 MMC receipt 仅用于诊断；当前没有统一错误报告对象把两侧 raw snapshot 一并上报块层。
+- [ ] terminal data error可在没有 CSENT 时形成 receipt，并由 `command_observed` 的 data-error priority 正确进入 recovery；尚缺 paired 每一 error bit 的完整 fault matrix。
+- [ ] pair take 后 owner 已退役且 source 继续 masked；status/MMC apply 后没有任何 rearm transition。
+- [ ] production diagnostic runtime 仍不构造 APBDMA owner，也没有跨 trap/worker 保存 coordinator 状态。
+- [ ] 下一批应实现有界的 masked MMC recheck coordinator：明确 Pending/Terminal/Timeout/IO fault 状态，保留 generation 与 Running DMA，并在 timeout 时走 stop→quiesced recovery；继续不启用 rearm。
+
+### 提交
+
+- 本批计划提交：`[feat] carry LS2K1000 paired read completion`

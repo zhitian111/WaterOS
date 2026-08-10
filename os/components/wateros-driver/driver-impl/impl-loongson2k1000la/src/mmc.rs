@@ -288,31 +288,47 @@ pub fn acknowledge_interrupt_observed<R : RegisterIo>(
         return Err(MmcIrqAckFailure { error : MmcIrqAckError::UnexpectedSource,
                                       acknowledged });
     }
-    let status = match registers.read32(REG_INT) {
-        Ok(status) => status,
-        Err(error) => {
-            return Err(MmcIrqAckFailure { error : MmcIrqAckError::Io(error),
-                                          acknowledged })
-        }
+    let known = match clear_masked_interrupt_snapshot(registers) {
+        Ok(known) => known,
+        Err(error) => return Err(MmcIrqAckFailure { error, acknowledged }),
     };
-    let known = status & INT_CLEAR;
-    if known == 0 {
-        return Err(MmcIrqAckFailure { error : MmcIrqAckError::NoKnownPending,
-                                      acknowledged });
-    }
-    if let Err(error) = registers.write32(REG_INT, known) {
-        return Err(MmcIrqAckFailure { error : MmcIrqAckError::Io(error),
-                                      acknowledged });
-    }
-    let unknown = status & !INT_CLEAR;
-    if unknown != 0 {
-        return Err(MmcIrqAckFailure { error : MmcIrqAckError::UnknownPending(unknown),
-                                      acknowledged });
-    }
     Ok(MmcIrqAckReceipt {
         interrupts : known,
         disposition : IrqDisposition::Rearm(DeviceAckedIrq::after_device_clear(expected)),
     })
+}
+
+/// Sample and W1C one MMC status snapshot while its interrupt source remains
+/// masked. This produces no interrupt-controller acknowledgement or rearm
+/// evidence and is intended for a serialized owner-side recheck.
+pub fn clear_masked_interrupt_snapshot<R : RegisterIo>(
+    registers : &mut R) -> Result<u32, MmcIrqAckError> {
+    let status = match registers.read32(REG_INT) {
+        Ok(status) => status,
+        Err(error) => return Err(MmcIrqAckError::Io(error)),
+    };
+    let known = status & INT_CLEAR;
+    if known == 0 {
+        return Err(MmcIrqAckError::NoKnownPending);
+    }
+    if let Err(error) = registers.write32(REG_INT, known) {
+        return Err(MmcIrqAckError::Io(error));
+    }
+    let unknown = status & !INT_CLEAR;
+    if unknown != 0 {
+        return Err(MmcIrqAckError::UnknownPending(unknown));
+    }
+    Ok(known)
+}
+
+/// A read receipt is terminal only after command and data completion have both
+/// been observed, or after any command/data error makes further waiting unsafe.
+pub const fn read_interrupt_snapshot_terminal(interrupts : u32) -> bool {
+    let errors = INT_DATA_TIMEOUT | INT_RECEIVE_CRC | INT_TRANSMIT_CRC |
+                 INT_PROGRAM_ERROR | INT_COMMAND_TIMEOUT | INT_RESPONSE_CRC;
+    interrupts & errors != 0 ||
+    interrupts & (INT_COMMAND_SENT | INT_DATA_FINISHED) ==
+        (INT_COMMAND_SENT | INT_DATA_FINISHED)
 }
 
 pub struct Uninitialized;
@@ -2121,6 +2137,18 @@ impl<B> ReadCompletionTracker<B> {
         self.evidence.command_response_validated = true;
         self.evidence.data_finished |= interrupts & INT_DATA_FINISHED != 0;
         self.finish()
+    }
+
+    /// Apply one terminal owner receipt, preserving command-error priority
+    /// before treating CSENT as a validated response.
+    pub fn terminal_irq_observed(self, interrupts : u32) -> ReadCompletionProgress<B> {
+        if interrupts & INT_COMMAND_TIMEOUT != 0 {
+            return self.command_failed(ReadCommandFailure::Timeout);
+        }
+        if interrupts & INT_RESPONSE_CRC != 0 {
+            return self.command_failed(ReadCommandFailure::ResponseCrc);
+        }
+        self.command_observed(interrupts)
     }
 
     pub fn command_failed(self, failure : ReadCommandFailure) -> ReadCompletionProgress<B> {
