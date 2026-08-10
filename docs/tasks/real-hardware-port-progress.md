@@ -7283,3 +7283,27 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - `[feat] add loongson ahci capability contract`
+
+## 2026-08-10：批次 53——PCI snapshot 到 AHCI 证据连接
+
+### 任务与设计
+
+1. 审计发现 AHCI 契约与 PCI function snapshot 相互独立，调用方可能把任意 memory BAR 误传为 ABAR。
+2. 新增严格转换：只接受 PCI class `01/06/01`（mass-storage/SATA/AHCI），并从已解析的 32/64-bit memory BAR 提取最小诊断窗口；I/O BAR、缺失 BAR 和地址不可表示均拒绝。
+3. 不执行 BAR size probing 或配置空间写入；最小窗口仅用于静态诊断，实际 ABAR 范围仍由 `HardwareEvidence` 阻塞。
+
+### 已完成
+
+- [x] 新增 `snapshot_from_pci` 和 `AhciPciError`。
+- [x] 连接已有 `PciConfigSnapshot` 的 class/BAR 语义，覆盖 32-bit 与 64-bit memory BAR。
+- [x] 增加 class mismatch、BAR 缺失和 64-bit BAR 单测。
+
+### 验证证据与限制
+
+- Loongson 平台完整 lib 单测：204 项通过。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 PCI config/ECAM、BAR size、AHCI ABAR、端口 link、DMA/cache、IRQ 和 SATA block registration 仍需物理板；转换函数不会自动激活控制器。
+
+### 提交
+
+- `[feat] connect pci snapshot to ahci contract`

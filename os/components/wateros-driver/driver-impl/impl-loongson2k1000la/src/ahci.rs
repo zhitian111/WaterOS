@@ -5,6 +5,14 @@
 //! blockers that can be tested without a board.
 
 use api_v0::MmioRegion;
+use crate::pci::{PciBar, PciConfigSnapshot};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AhciPciError {
+    ClassMismatch,
+    MissingMemoryBar,
+    AddressUnrepresentable,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AhciSnapshot {
@@ -12,6 +20,31 @@ pub struct AhciSnapshot {
     pub version : u32,
     pub ports_implemented : u32,
     pub irq : u32,
+}
+
+/// Convert a read-only PCI function snapshot into the minimum AHCI ABAR
+/// window.  BAR size probing is deliberately not attempted; callers must
+/// retain the `HardwareEvidence` blocker until a board-specific resource
+/// window has been verified.
+pub fn snapshot_from_pci(snapshot : &PciConfigSnapshot,
+                          version : u32,
+                          ports_implemented : u32,
+                          irq : u32)
+                          -> Result<AhciSnapshot, AhciPciError> {
+    let identity = snapshot.identity;
+    if identity.class_code != 0x01 || identity.subclass != 0x06 || identity.prog_if != 0x01 {
+        return Err(AhciPciError::ClassMismatch);
+    }
+    let base = snapshot.bars.iter().flatten().find_map(|bar| {
+        match bar {
+            PciBar::Memory32 { base, .. } => Some(u64::from(*base)),
+            PciBar::Memory64 { base, .. } => Some(*base),
+            PciBar::Io { .. } => None,
+        }
+    }).ok_or(AhciPciError::MissingMemoryBar)?;
+    let base = usize::try_from(base).map_err(|_| AhciPciError::AddressUnrepresentable)?;
+    Ok(AhciSnapshot { abar : MmioRegion { base, size : 0x100 },
+                      version, ports_implemented, irq })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,12 +106,44 @@ pub fn diagnose(snapshot : AhciSnapshot) -> AhciActivationPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pci::{PciBar, PciConfigSnapshot, PciIdentity, PciLocation};
 
     fn snapshot() -> AhciSnapshot {
         AhciSnapshot { abar : MmioRegion { base : 0x1fe8_0000, size : 0x1000 },
                         version : 0x0001_0300,
                         ports_implemented : 1,
                         irq : 42 }
+    }
+
+    fn pci_snapshot(class_code : u8, bar : Option<PciBar>) -> PciConfigSnapshot {
+        let mut bars = [None; 6];
+        bars[0] = bar;
+        PciConfigSnapshot { identity : PciIdentity { location : PciLocation { bus : 0, device : 3, function : 0 },
+                                                     vendor_id : 0x0014, device_id : 0x1000,
+                                                     class_code, subclass : 0x06, prog_if : 0x01 },
+                            bars, bar_error : None }
+    }
+
+    #[test]
+    fn pci_snapshot_requires_ahci_class_and_memory_bar() {
+        let snapshot = pci_snapshot(0x01, Some(PciBar::Memory32 { index : 0,
+                                                                    base : 0x1fe8_0000,
+                                                                    prefetchable : false }));
+        let ahci = snapshot_from_pci(&snapshot, 0x0001_0300, 1, 42).unwrap();
+        assert_eq!(ahci.abar, MmioRegion { base : 0x1fe8_0000, size : 0x100 });
+        assert_eq!(snapshot_from_pci(&pci_snapshot(0x02, snapshot.bars[0]), 1, 1, 42),
+                   Err(AhciPciError::ClassMismatch));
+        assert_eq!(snapshot_from_pci(&pci_snapshot(0x01, None), 1, 1, 42),
+                   Err(AhciPciError::MissingMemoryBar));
+    }
+
+    #[test]
+    fn pci_snapshot_accepts_64_bit_memory_bar() {
+        let snapshot = pci_snapshot(0x01, Some(PciBar::Memory64 { index : 0,
+                                                                    base : 0x0000_0001_1fe8_0000,
+                                                                    prefetchable : true }));
+        let ahci = snapshot_from_pci(&snapshot, 1, 1, 42).unwrap();
+        assert_eq!(ahci.abar.base, 0x0000_0001_1fe8_0000usize);
     }
 
     #[test]
