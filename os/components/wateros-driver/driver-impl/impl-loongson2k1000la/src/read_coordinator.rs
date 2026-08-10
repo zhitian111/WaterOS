@@ -401,6 +401,10 @@ impl<D : DmaCoherency, P : DmaCoherency> ReadRequestDmaLease<D, P> {
 
     pub const fn plan(&self) -> TransferPlan { self.plan }
 
+    pub const fn is_cpu_owned(&self) -> bool {
+        self.descriptor.is_cpu_owned() && self.payload.is_cpu_owned()
+    }
+
     pub fn prepare_session(&mut self)
                            -> Result<PreparedSession<'_, D, P>, ReadRequestDmaLeaseError> {
         apbdma::prepare_session(self.plan, &mut self.descriptor, &mut self.payload)
@@ -983,6 +987,8 @@ impl ReadRequestHandle<'_> {
 
     pub const fn block(&self) -> ReadBlockRequest { self.request.block() }
 
+    pub const fn request(&self) -> ReadRequest { self.request }
+
     pub fn snapshot(&self) -> Result<ReadCoordinatorSnapshot, ReadCoordinatorError> {
         self.slot.snapshot()
     }
@@ -993,6 +999,112 @@ impl ReadRequestHandle<'_> {
 
     pub fn release(self) -> Result<(), ReadCoordinatorError> {
         self.slot.release(self.transaction())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadRequestExecutorError {
+    RequestMismatch {
+        expected : ReadTransactionId,
+        actual : ReadTransactionId,
+    },
+    DmaStillDeviceOwned,
+    Coordinator(ReadCoordinatorError),
+}
+
+#[must_use = "recover the request handle and DMA lease before retrying bind"]
+pub struct ReadRequestExecutorBindFailure<'a, D, P> {
+    pub error : ReadRequestExecutorError,
+    handle : ReadRequestHandle<'a>,
+    lease : ReadRequestDmaLease<D, P>,
+}
+
+impl<D, P> core::fmt::Debug for ReadRequestExecutorBindFailure<'_, D, P> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("ReadRequestExecutorBindFailure")
+                 .field("error", &self.error)
+                 .finish_non_exhaustive()
+    }
+}
+
+impl<'a, D, P> ReadRequestExecutorBindFailure<'a, D, P> {
+    pub fn into_parts(self) -> (ReadRequestHandle<'a>, ReadRequestDmaLease<D, P>) {
+        (self.handle, self.lease)
+    }
+}
+
+#[must_use = "finish or recover the request executor"]
+pub struct ReadRequestExecutorReleaseFailure<'a, D, P> {
+    pub error : ReadRequestExecutorError,
+    executor : ReadRequestExecutor<'a, D, P>,
+}
+
+impl<D, P> core::fmt::Debug for ReadRequestExecutorReleaseFailure<'_, D, P> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("ReadRequestExecutorReleaseFailure")
+                 .field("error", &self.error)
+                 .finish_non_exhaustive()
+    }
+}
+
+impl<'a, D, P> ReadRequestExecutorReleaseFailure<'a, D, P> {
+    pub fn into_executor(self) -> ReadRequestExecutor<'a, D, P> { self.executor }
+}
+
+/// Production facade combining coordinator ownership with the paired DMA
+/// lease. It deliberately stops before MMIO command publication.
+pub struct ReadRequestExecutor<'a, D, P> {
+    handle : ReadRequestHandle<'a>,
+    lease : ReadRequestDmaLease<D, P>,
+}
+
+impl<'a, D : DmaCoherency, P : DmaCoherency> ReadRequestExecutor<'a, D, P> {
+    pub fn bind(handle : ReadRequestHandle<'a>,
+               lease : ReadRequestDmaLease<D, P>)
+               -> Result<Self, ReadRequestExecutorBindFailure<'a, D, P>> {
+        if handle.request() != lease.request() {
+            return Err(ReadRequestExecutorBindFailure {
+                error : ReadRequestExecutorError::RequestMismatch {
+                    expected : handle.transaction(), actual : lease.request().transaction(),
+                },
+                handle, lease,
+            });
+        }
+        Ok(Self { handle, lease })
+    }
+
+    pub const fn transaction(&self) -> ReadTransactionId { self.handle.transaction() }
+
+    pub const fn request(&self) -> ReadRequest { self.handle.request() }
+
+    pub fn snapshot(&self) -> Result<ReadCoordinatorSnapshot, ReadCoordinatorError> {
+        self.handle.snapshot()
+    }
+
+    pub fn mark_published(&self, poll_budget : u16) -> Result<(), ReadCoordinatorError> {
+        self.handle.mark_published(poll_budget)
+    }
+
+    pub fn prepare_dma_session(&mut self)
+                              -> Result<PreparedSession<'_, D, P>, ReadRequestDmaLeaseError> {
+        self.lease.prepare_session()
+    }
+
+    pub fn release(self) -> Result<(), ReadRequestExecutorReleaseFailure<'a, D, P>> {
+        if !self.lease.is_cpu_owned() {
+            return Err(ReadRequestExecutorReleaseFailure {
+                error : ReadRequestExecutorError::DmaStillDeviceOwned,
+                executor : self,
+            });
+        }
+        let transaction = self.transaction();
+        match self.handle.slot.release(transaction) {
+            Ok(()) => Ok(()),
+            Err(error) => Err(ReadRequestExecutorReleaseFailure {
+                error : ReadRequestExecutorError::Coordinator(error),
+                executor : self,
+            }),
+        }
     }
 }
 
@@ -1186,6 +1298,48 @@ mod tests {
         assert_eq!(lease.request(), request);
         let prepared = lease.prepare_session().unwrap();
         prepared.cancel().unwrap();
+    }
+
+    #[test]
+    fn production_request_executor_combines_phase_and_dma_lifetimes() {
+        let slot = ReadCoordinatorSlot::new();
+        let request = ReadRequest::new(
+            transaction(6),
+            ReadBlockRequest::new(4, 2, 512, crate::mmc::ReadAddressing::Block).unwrap());
+        let handle = request.reserve(&slot).unwrap().commit();
+        let (plan, descriptor, payload) = dma_plan_fixture(request);
+        let lease = ReadRequestDmaLease::bind(request, plan, descriptor, payload).unwrap();
+        let mut executor = ReadRequestExecutor::bind(handle, lease).unwrap();
+        executor.mark_published(2).unwrap();
+        assert_eq!(executor.snapshot().unwrap().phase, ReadCoordinatorPhase::Published);
+        executor.prepare_dma_session().unwrap().cancel().unwrap();
+        executor.release().unwrap();
+        assert_eq!(slot.state(), DiagnosticSlotState::Empty);
+    }
+
+    #[test]
+    fn production_request_executor_returns_both_parts_on_generation_mismatch() {
+        let slot = ReadCoordinatorSlot::new();
+        let first = ReadRequest::new(
+            transaction(7),
+            ReadBlockRequest::new(0, 2, 512, crate::mmc::ReadAddressing::Block).unwrap());
+        let second = ReadRequest::new(
+            transaction(8),
+            ReadBlockRequest::new(0, 2, 512, crate::mmc::ReadAddressing::Block).unwrap());
+        let handle = second.reserve(&slot).unwrap().commit();
+        let (plan, descriptor, payload) = dma_plan_fixture(first);
+        let lease = ReadRequestDmaLease::bind(first, plan, descriptor, payload).unwrap();
+        let failure = match ReadRequestExecutor::bind(handle, lease) {
+            Ok(_) => panic!("mismatched request unexpectedly bound"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error,
+                   ReadRequestExecutorError::RequestMismatch {
+                       expected : transaction(8), actual : transaction(7),
+                   });
+        let (handle, lease) = failure.into_parts();
+        assert_eq!(handle.release(), Ok(()));
+        assert!(lease.is_cpu_owned());
     }
 
     #[test]

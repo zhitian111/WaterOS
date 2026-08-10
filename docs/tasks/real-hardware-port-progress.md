@@ -5395,3 +5395,35 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] bind LS2K1000 read dma lease`
+
+## 2026-08-10：批次 112——组合 ReadRequest production executor facade
+
+### 本批任务与设计
+
+1. 审计调用方仍需手工维护的 request handle、coordinator phase 和 DMA lease。
+2. 新增 `ReadRequestExecutor`，绑定同一请求 identity 的 coordinator handle 与 descriptor/payload lease。
+3. facade 仅编排已有状态机：publish、snapshot、prepare/cancel 和 release；不新增任何硬件写入旁路。
+4. generation 错配和 release 时的 device-owned mapping 必须保留可恢复对象，避免静默丢失资源。
+
+### 已完成
+
+- [x] `ReadRequestExecutor::bind` 校验 handle 与 lease 的完整 request identity，错代返回两者原对象。
+- [x] facade 提供统一 transaction/request/snapshot、publish、prepare DMA session 和 release 入口。
+- [x] release 前检查 descriptor/payload 是否都已恢复 CPU ownership；失败返回可恢复 executor。
+- [x] 新增 host 测试覆盖组合生命周期与错代返还，现有 APBDMA/MMC typestate 未被绕过。
+
+### 验证证据
+
+- focused coordinator 测试 14 项通过，覆盖 facade reserve→publish→prepare→cancel→release。
+- facade 的合法路径实际调用 APBDMA `prepare_transfer`，错代路径验证 handle/lease 均可取回。
+- `UNVERIFIED_ON_HARDWARE`：facade 仍未执行真实 MMC command publish、DMA order MMIO、cache/barrier、IRQ/rearm。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 下一步需把 facade 接到真实 worker/scheduler 与 block callback，并在 coordinator 中表达 MMC publish permit。
+- [ ] facade 尚未提供完成/恢复 evidence 的统一方法；当前必须继续使用既有低层 completion/recovery services。
+- [ ] 物理 2K1000LA 的 cache、APB route、DMA stop 和 SD/eMMC 电气行为仍待实机验证。
+
+### 提交
+
+- 本批计划提交：`[feat] add LS2K1000 read executor facade`
