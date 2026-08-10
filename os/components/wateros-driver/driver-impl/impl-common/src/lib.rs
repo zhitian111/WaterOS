@@ -8,3 +8,4 @@
 extern crate alloc;
 
 pub mod dtb;
+pub mod virtio_dma;

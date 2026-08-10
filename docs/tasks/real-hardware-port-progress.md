@@ -2188,3 +2188,26 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - `cargo test --manifest-path components/wateros-mm/mm-frame-alloctor/frame-alloctor-impl/impl-stack/Cargo.toml --no-default-features --features api-v0`：3 项通过。
 - frame allocator 聚合 crate 的独立 host/LoongArch 测试仍被仓库既有 `platform-arch` feature 配置阻断（缺少 `ArchTimeImpl`/`ArchInterruptImpl`/`ArchPagingImpl`），不是本适配逻辑的编译错误。
 - `UNVERIFIED_ON_HARDWARE`：虚拟地址映射是否可被设备访问、cache line/fence/coherency、IOMMU 和真实 DMA 停止时序仍需各平台实现并上板验证；当前 API 不允许默认后端静默放行。
+
+## 2026-08-10：批次 81——VirtIO block HAL 接入连续 DMA 边界
+
+### 任务与设计
+
+1. 审计 VirtIO-MMIO/PCI block HAL，确认旧实现逐页分配后依赖 stack allocator 的“连续且递减 PPN”偶然性质，并在释放时逐页忽略错误。
+2. 将两条 block HAL 共用逻辑收敛到 `driver-impl-common::virtio_dma`：使用原子连续帧分配、checked 页数/字节数、恒等映射指针校验和连续区间释放。
+3. 保持 `virtio-drivers` vendor 代码不变；`share` 仍是显式 identity bring-up 适配，cache coherency 不在 helper 中伪造。
+
+### 完成内容
+
+- [x] VirtIO block MMIO 和 PCI HAL 改用 `frame_alloc_contiguous`/`frame_dealloc_contiguous`，消除逐页分配和非连续回滚分支。
+- [x] 新增公共 `virtio_dma` helper：页数乘法溢出、零地址、非页对齐、VA/PA 不一致和错误 span 均 fail-closed。
+- [x] 释放路径现在检查连续区间回收结果并返回错误码，不再静默吞掉释放失败。
+- [x] 队列/缓冲清零仍由统一 helper 执行，后续网络、输入、GPU VirtIO HAL 可复用同一边界；本批暂未修改它们的 transport 实例。
+
+### 验证证据与限制
+
+- `make check`（RISC-V64/pre）通过。
+- `make check ARCH=la PROFILE=pre`（LoongArch64/pre，包含 VirtIO PCI block）通过。
+- `git diff --check` 通过；未生成大磁盘镜像。
+- helper 的纯边界测试已写入模块，但该共用 crate 的独立 host 测试受其生产版 frame allocator/platform feature 组合限制；双架构编译路径已实际覆盖 helper 和两个 HAL。
+- `UNVERIFIED_ON_HARDWARE`：identity mapping、设备可见性、cache flush/invalidate、VirtIO `share/unshare` 的方向语义、IOMMU 和真实设备停止后释放仍需两平台实机验证；当前 helper 不声称已完成 coherency。
