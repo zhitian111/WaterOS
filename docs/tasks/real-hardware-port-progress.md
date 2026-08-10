@@ -1785,3 +1785,27 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[test] run shared hardware port regression`
+
+## 2026-08-10：批次 55——operator-shell QEMU 前置诊断
+
+### 任务与设计
+
+1. 审计确认 `operator-shell` 已提供 feature-gated 的 BusyBox/bash 交互 shell，`operator_smoke.py` 已覆盖 TTY、Ctrl-C、raw mode 和 rescue shell；它缺少启动前的 kernel/QEMU 诊断。
+2. 增加纯函数 preflight：架构对应 QEMU binary、`--no-build` 时 kernel 非空；缺失时返回明确 skip（77），避免构建/启动阶段给出模糊错误。
+3. 不改变 operator 权限和安全边界：该 shell 仍是 root、无认证、无加密的现场 bring-up 工具，不宣称 SSH 等级安全。
+
+### 完成内容
+
+- [x] `operator_smoke.py` 增加 RISC-V/LoongArch QEMU binary 和 kernel 前置诊断。
+- [x] 新增 3 项 host 单测，覆盖空 kernel、有效 fixture 和缺少 QEMU。
+- [x] 缺少 kernel 时实际运行返回明确 `SKIP`。
+
+### 验证证据与限制
+
+- operator preflight 单测：3 项通过。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：完整 operator shell 仍需构建 kernel/root image 后在 QEMU guest 验证；真实串口/TTY、用户权限、网络登录和两平台硬件仍未验证。
+
+### 提交
+
+- `[test] add operator shell preflight`

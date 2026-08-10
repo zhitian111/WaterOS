@@ -9,12 +9,27 @@ import pty
 import re
 import select
 import signal
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 ANSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
+QEMU_BINARIES = {"rv": "qemu-system-riscv64", "la": "qemu-system-loongarch64"}
+
+
+def diagnose_operator_inputs(arch : str, kernel : Path, no_build : bool) -> list[str]:
+    """Return preflight errors before building or launching an operator shell."""
+    errors : list[str] = []
+    if arch not in QEMU_BINARIES:
+        errors.append(f"unsupported architecture: {arch}")
+    if no_build and (not kernel.is_file() or kernel.stat().st_size == 0):
+        errors.append(f"kernel missing or empty with --no-build: {kernel}")
+    qemu = QEMU_BINARIES.get(arch)
+    if qemu is not None and shutil.which(qemu) is None:
+        errors.append(f"QEMU binary not found: {qemu}")
+    return errors
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,6 +99,12 @@ def main() -> int:
     root = Path(__file__).resolve().parent.parent
     stem = f"{args.arch}-{args.profile}"
     kernel = root / f"kernel-{stem}"
+    errors = diagnose_operator_inputs(args.arch, kernel, args.no_build)
+    if errors:
+        print("SKIP: operator shell preflight failed:", file=sys.stderr)
+        for error in errors:
+            print(f"  - {error}", file=sys.stderr)
+        return 77
     build_target = f"kernel-{stem}"
     run_script = root / "scripts" / f"{args.arch}_{args.profile}_run.sh"
     build_command = ["make", build_target, f"MODE={args.mode}"]
