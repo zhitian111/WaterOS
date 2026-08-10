@@ -1710,3 +1710,29 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[test] add qemu smoke preflight`
+
+## 2026-08-10：批次 47——16MiB 根盘 QEMU image smoke
+
+### 任务与设计
+
+1. 审计确认 root image builder/verifier 已支持 MBR/GPT、无 journal ext4 和 16MiB 最小镜像，但没有一个独立入口把构建结果交给 QEMU image 工具检查。
+2. 新增低磁盘占用 smoke：临时构建 16MiB MBR/GPT 镜像，调用现有 verifier，再执行 `qemu-img info --output=json` 校验 raw 格式和虚拟容量。
+3. 不强行执行 `qemu-nbd`/mount：这些操作依赖 root 权限和宿主机 `/dev/nbd`，当前环境不足时不把“结构可读”误报成 guest 挂载成功。
+
+### 完成内容
+
+- [x] 新增 `os/scripts/root_image_qemu_smoke.py`，默认使用 16MiB 临时镜像，支持 MBR/GPT。
+- [x] 缺少 `qemu-img` 时返回明确 skip（77），不留下输出文件。
+- [x] 新增单测覆盖 QEMU JSON 格式校验和非 raw 拒绝。
+
+### 验证证据与限制
+
+- MBR 16MiB QEMU image smoke：通过。
+- GPT 16MiB QEMU image smoke：通过。
+- root image 回归测试：5 项通过。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：qemu-nbd 实际分区映射、WaterOS guest 挂载、SD/eMMC 控制器 flush/cache/掉电恢复和两块板卡写入仍需后续验证。
+
+### 提交
+
+- `[test] add root image qemu smoke`
