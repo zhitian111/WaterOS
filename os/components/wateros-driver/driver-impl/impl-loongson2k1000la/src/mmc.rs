@@ -1352,8 +1352,87 @@ impl<'a, D : DmaCoherency, P : DmaCoherency> PreparedReadDmaSession<'a, D, P> {
     }
 }
 
+/// Production publisher contract returning the exact software receipt for
+/// the six MMC data-command writes. Implementations must not claim hardware
+/// completion; the receipt only records the writes observed by the backend.
+pub trait ReadDataPublisher {
+    type Error;
+
+    fn publish(&mut self,
+               read : &DeferredReadPlan)
+               -> Result<ReadDataPublishReceipt, Self::Error>;
+}
+
+pub struct ReadDataPublishReceiptFailure<E, S> {
+    pub error : E,
+    pub session : S,
+}
+
+impl<E : core::fmt::Debug, S> core::fmt::Debug for ReadDataPublishReceiptFailure<E, S> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("ReadDataPublishReceiptFailure")
+                 .field("error", &self.error)
+                 .finish_non_exhaustive()
+    }
+}
+
+/// Running APBDMA session paired with the exact MMC publisher receipt for the
+/// same deferred read. This token says neither side has completed yet.
+#[must_use = "retain the running session until completion or stop recovery"]
+pub struct PublishedReadDmaReceiptSession<'a, 'e, R, D, P> {
+    read : DeferredReadPlan,
+    receipt : ReadDataPublishReceipt,
+    dma : apbdma::RunningSession<'a, 'e, R, D, P>,
+}
+
+impl<'a, 'e, R, D, P> PublishedReadDmaReceiptSession<'a, 'e, R, D, P> {
+    pub const fn plan(&self) -> &DeferredReadPlan { &self.read }
+
+    pub const fn receipt(&self) -> ReadDataPublishReceipt { self.receipt }
+
+    pub fn into_parts(self)
+                     -> (DeferredReadPlan,
+                         ReadDataPublishReceipt,
+                         apbdma::RunningSession<'a, 'e, R, D, P>) {
+        (self.read, self.receipt, self.dma)
+    }
+
+    pub fn stop(self)
+                -> Result<(ReadDataPublishReceipt, apbdma::QuiescedSession<'a, D, P>),
+                          apbdma::SessionFailure<apbdma::ExecutorError, Self>>
+    where R : apbdma::OrderIo {
+        let receipt = self.receipt;
+        match self.dma.stop() {
+            Ok(session) => Ok((receipt, session)),
+            Err(failure) => Err(apbdma::SessionFailure {
+                error : failure.error,
+                session : Self { read : self.read,
+                                 receipt,
+                                 dma : failure.session },
+            }),
+        }
+    }
+}
+
 impl<'a, 'e, R : apbdma::OrderIo, D, P> RunningReadDmaSession<'a, 'e, R, D, P> {
     pub const fn plan(&self) -> &DeferredReadPlan { &self.read }
+
+    /// Publish the MMC command through a caller-owned backend and retain the
+    /// running DMA session together with the resulting receipt. A publisher
+    /// error returns the original session unchanged.
+    pub fn publish_with_receipt<C : ReadDataPublisher>(
+        self,
+        publisher : &mut C)
+        -> Result<PublishedReadDmaReceiptSession<'a, 'e, R, D, P>,
+                  ReadDataPublishReceiptFailure<C::Error, Self>> {
+        let receipt = match publisher.publish(&self.read) {
+            Ok(receipt) => receipt,
+            Err(error) => return Err(ReadDataPublishReceiptFailure { error, session : self }),
+        };
+        Ok(PublishedReadDmaReceiptSession { read : self.read,
+                                            receipt,
+                                            dma : self.dma })
+    }
 
     pub fn stop(self)
                 -> Result<apbdma::QuiescedSession<'a, D, P>,
@@ -1478,6 +1557,14 @@ impl<R : RegisterIo> ReadDataCommandPublisher<R> {
                                     command_control,
                                     writes_completed })
     }
+}
+
+impl<R : RegisterIo> ReadDataPublisher for ReadDataCommandPublisher<R> {
+    type Error = ReadDataPublishFailure;
+
+    fn publish(&mut self,
+               read : &DeferredReadPlan)
+               -> Result<ReadDataPublishReceipt, Self::Error> { self.publish_once(read) }
 }
 
 /// Capability for the isolated read-command completion observer. No production

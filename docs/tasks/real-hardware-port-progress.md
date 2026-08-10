@@ -5459,3 +5459,36 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] add LS2K1000 mmc publish permit`
+
+## 2026-08-10：批次 114——绑定 MMC receipt 与 running DMA session
+
+### 本批任务与设计
+
+1. 审计 `RunningReadDmaSession` 及 IRQ-owned wrapper 中仍为 `cfg(test)` 的 publish 边界。
+2. 增加生产态 `ReadDataPublisher` trait 和 `PublishedReadDmaReceiptSession`，保存同一 deferred read 的 publisher receipt 与 APBDMA running session。
+3. 在 `IrqArmedReadDmaSession` 上提供 receipt publish/stop wrapper，错误时返还原 IRQ generation 与 running session。
+4. 用现有 host MMIO model 验证成功写序列和 receipt 字段；不把 model 写成功视为物理硬件证据。
+
+### 已完成
+
+- [x] `ReadDataPublisher` 返回完整 `ReadDataPublishReceipt`，`ReadDataCommandPublisher` 已实现该生产 trait。
+- [x] `RunningReadDmaSession::publish_with_receipt` 将 publisher receipt 与 running DMA session 绑定；失败保留原 session。
+- [x] 新增 `PublishedReadDmaReceiptSession` 的 receipt 查询、into_parts 和 stop→quiesced 路径。
+- [x] IRQ-owned wrapper 同步暴露 publish_with_receipt、receipt、plan 和 stop，保留 generation token。
+- [x] 既有 APBDMA/MMC 顺序测试改走新 receipt 路径，确认六次写入顺序与 command index。
+
+### 验证证据
+
+- 驱动完整 host 测试 182 项通过；`mmc_read_start_typestate_orders_dma_before_command_publish` 实际使用新 receipt wrapper。
+- 驱动 check、RISC-V `make check`、LoongArch64 `make kernel-la`、Python 53 项测试均通过。
+- `UNVERIFIED_ON_HARDWARE`：volatile write 成功、APB route、DMA channel start、cache/barrier、IRQ 迟到与 SD/eMMC 电气行为仍无物理证据。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 下一步要把该 production published token 接入 coordinator completion/recovery，替换目前 success/failure tracker 的 `cfg(test)` 外壳。
+- [ ] publisher 失败后的 receipt 不产生，但可能已写入的 MMIO 状态仍需真实 controller readback/clear 证据；当前只保留 session。
+- [ ] 目标架构真实 allocator、DMA mapping 和 cache backend 尚未在板上运行。
+
+### 提交
+
+- 本批计划提交：`[feat] bind LS2K1000 mmc receipt to dma session`

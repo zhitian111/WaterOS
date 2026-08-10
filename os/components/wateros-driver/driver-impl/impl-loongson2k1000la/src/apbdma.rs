@@ -1360,13 +1360,16 @@ mod tests {
         let mut publisher = crate::mmc::ReadDataCommandPublisher::new(
             MockMmcRegisters::default(),
             crate::mmc::ReadDataPublishPermit::fixture());
-        let published = running.publish(&mut publisher).unwrap();
+        let published = running.publish_with_receipt(&mut publisher).unwrap();
         assert_eq!(published.plan(), &read);
+        assert_eq!(published.receipt().writes_completed, 6);
         assert_eq!(publisher.into_inner().writes.iter()
                                            .map(|(offset, _)| *offset)
                                            .collect::<Vec<_>>(),
                    [0x2C, 0x28, 0x24, 0x3C, 0x08, 0x0C]);
-        let armed = published.stop().unwrap().finish().unwrap();
+        let (receipt, quiesced) = published.stop().unwrap();
+        assert_eq!(receipt.command_index, read.request.command_index);
+        let armed = quiesced.finish().unwrap();
         assert_eq!(armed.transaction().raw(), 101);
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());

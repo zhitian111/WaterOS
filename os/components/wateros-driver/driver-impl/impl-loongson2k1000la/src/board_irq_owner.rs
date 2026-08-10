@@ -399,6 +399,19 @@ pub struct IrqArmedReadDmaSession<S> {
     session : S,
 }
 
+pub struct IrqArmedReadDataPublishFailure<E, S> {
+    pub error : E,
+    pub session : S,
+}
+
+impl<E : core::fmt::Debug, S> core::fmt::Debug for IrqArmedReadDataPublishFailure<E, S> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("IrqArmedReadDataPublishFailure")
+                 .field("error", &self.error)
+                 .finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 pub(crate) struct IrqPairedReadDmaSession<S> {
     pair : ReadyReadIrqPair,
@@ -757,6 +770,21 @@ impl<'a, 'e, R : crate::apbdma::OrderIo, D, P>
         }
     }
 
+    pub fn publish_with_receipt<C : crate::mmc::ReadDataPublisher>(
+        self,
+        publisher : &mut C)
+        -> Result<IrqArmedReadDmaSession<
+                      crate::mmc::PublishedReadDmaReceiptSession<'a, 'e, R, D, P>>,
+                  IrqArmedReadDataPublishFailure<C::Error, Self>> {
+        match self.session.publish_with_receipt(publisher) {
+            Ok(session) => Ok(IrqArmedReadDmaSession { armed : self.armed, session }),
+            Err(failure) => Err(IrqArmedReadDataPublishFailure {
+                error : failure.error,
+                session : Self { armed : self.armed, session : failure.session },
+            }),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn publish<C : crate::mmc::ReadCommandPublisher>(
         self,
@@ -766,6 +794,30 @@ impl<'a, 'e, R : crate::apbdma::OrderIo, D, P>
         match self.session.publish(publisher) {
             Ok(session) => Ok(IrqArmedReadDmaSession { armed : self.armed, session }),
             Err(failure) => Err(crate::mmc::ReadPublishFailure {
+                error : failure.error,
+                session : Self { armed : self.armed, session : failure.session },
+            }),
+        }
+    }
+}
+
+impl<'a, 'e, R : crate::apbdma::OrderIo, D, P>
+    IrqArmedReadDmaSession<crate::mmc::PublishedReadDmaReceiptSession<'a, 'e, R, D, P>>
+{
+    pub const fn plan(&self) -> &crate::mmc::DeferredReadPlan { self.session.plan() }
+
+    pub const fn receipt(&self) -> crate::mmc::ReadDataPublishReceipt {
+        self.session.receipt()
+    }
+
+    pub fn stop(self)
+        -> Result<(crate::mmc::ReadDataPublishReceipt,
+                   IrqArmedReadDmaSession<crate::apbdma::QuiescedSession<'a, D, P>>),
+                  crate::apbdma::SessionFailure<crate::apbdma::ExecutorError, Self>> {
+        match self.session.stop() {
+            Ok((receipt, session)) =>
+                Ok((receipt, IrqArmedReadDmaSession { armed : self.armed, session })),
+            Err(failure) => Err(crate::apbdma::SessionFailure {
                 error : failure.error,
                 session : Self { armed : self.armed, session : failure.session },
             }),
