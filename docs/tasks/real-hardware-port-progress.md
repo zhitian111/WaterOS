@@ -6029,3 +6029,31 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] provide atomic devfs node snapshots`
+
+## 2026-08-10：批次 132——为根盘 QEMU smoke 增加挂载证据判定
+
+### 本批任务与设计
+
+1. 审计 root-image smoke 的 QEMU 启动参数和当前内核根挂载日志格式。
+2. 将串口输出解析为 `success`、`failure` 或 `absent`，避免仅凭 QEMU 进程退出码误判根盘可用。
+3. 增加可选的 `--require-root-mount` 严格模式及 host 单测；默认 dry-run/execute 行为保持兼容。
+4. 构建双架构内核并实际运行一次 16 MiB RISC-V snapshot smoke，清理生成物。
+
+### 已完成
+
+- [x] `qemu_smoke.py` 识别 ext4 根挂载成功、失败和缺失日志，并在严格模式输出匹配行。
+- [x] `--require-root-mount` 仅允许与 `--execute` 一起使用；非零退出、超时、缺少证据均失败。
+- [x] 新增 parser/strict-run host 测试，4 项 root-image QEMU smoke 测试通过。
+- [x] RISC-V 16 MiB MBR+ext4 镜像在 QEMU `-snapshot` 下实际启动，观测到：
+  `[fs::rootfs] mount root RW from /dev/vda1`。
+- [x] `make check EXTRA_FEATURES=remote-debug-monitor`、`make kernel-rv` 与 `make kernel-la` 通过；构建内核二进制已清理。
+
+### 验证证据与限制
+
+- 本批证明了 QEMU virtio-blk 根盘路径及日志判定链路；未证明 2K1000LA/目标 RISC-V 板的 SD/eMMC 控制器、电源、DMA/cache、IRQ 或真实介质行为。
+- `UNVERIFIED_ON_HARDWARE`：两个目标平台仍需板上启动、串口采集、根盘写入/掉电和长期压力测试。
+- 现有 parser 绑定稳定日志前缀；若后续启动日志改名，应同步更新 marker 与回归测试。
+
+### 提交
+
+- 本批计划提交：`[feat] require root mount evidence in qemu smoke`

@@ -7,6 +7,7 @@ import argparse
 import shlex
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -18,6 +19,40 @@ from root_image import ImageError, manifest_file_contents, manifest_paths, verif
 
 class SmokeError(RuntimeError):
     """The image or launch contract cannot be executed."""
+
+
+@dataclass(frozen=True)
+class RootMountEvidence:
+    """The strongest root-mount signal found in a kernel log."""
+
+    state: str
+    line: str | None = None
+
+
+_ROOT_MOUNT_SUCCESS_MARKERS = (
+    "[bringup][stage-00-bus] ext4 root mounted (RW)",
+    "[fs::rootfs] mount root RW from /dev/vda1",
+    "[fs::rootfs] mount default root RO from /dev/vda1",
+)
+_ROOT_MOUNT_FAILURE_MARKERS = (
+    "[bringup][stage-00-bus] root mount failed",
+    "[fs] init: no root block device available",
+    "[fs] init: lookup block device",
+)
+
+
+def parse_root_mount_evidence(output: str) -> RootMountEvidence:
+    """Classify root-mount evidence, preferring a later successful mount."""
+
+    failure: str | None = None
+    for line in output.splitlines():
+        if any(marker in line for marker in _ROOT_MOUNT_SUCCESS_MARKERS):
+            return RootMountEvidence("success", line)
+        if failure is None and any(marker in line for marker in _ROOT_MOUNT_FAILURE_MARKERS):
+            failure = line
+    if failure is not None:
+        return RootMountEvidence("failure", failure)
+    return RootMountEvidence("absent")
 
 
 def build_smoke_command(
@@ -50,14 +85,35 @@ def build_smoke_command(
     return launch.argv
 
 
-def run_smoke(command: list[str], *, root: Path, timeout: float) -> int:
+def run_smoke(
+    command: list[str], *, root: Path, timeout: float, require_root_mount: bool = False
+) -> int:
     try:
-        completed = subprocess.run(command, cwd=root, timeout=timeout, check=False)
+        completed = subprocess.run(
+            command,
+            cwd=root,
+            timeout=timeout,
+            check=False,
+            stdout=subprocess.PIPE if require_root_mount else None,
+            stderr=subprocess.STDOUT if require_root_mount else None,
+            text=require_root_mount,
+        )
     except FileNotFoundError as error:
         raise SmokeError(f"QEMU binary not found: {command[0]}") from error
     except subprocess.TimeoutExpired as error:
         raise SmokeError(f"QEMU smoke timed out after {timeout:g}s") from error
-    return completed.returncode
+    if completed.returncode != 0:
+        return completed.returncode
+    if require_root_mount:
+        evidence = parse_root_mount_evidence(completed.stdout or "")
+        if evidence.state != "success":
+            raise SmokeError(
+                "root mount evidence missing (state: "
+                f"{evidence.state}; expected ext4 root mount)"
+            )
+        if evidence.line:
+            print("root-image-qemu-smoke: root mount evidence:", evidence.line)
+    return 0
 
 
 def parser() -> argparse.ArgumentParser:
@@ -68,6 +124,11 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--manifest", type=Path, required=True)
     result.add_argument("--kernel", type=Path, required=True)
     result.add_argument("--execute", action="store_true")
+    result.add_argument(
+        "--require-root-mount",
+        action="store_true",
+        help="require a successful root-mount log line after QEMU exits",
+    )
     result.add_argument("--timeout", type=float, default=30.0)
     return result
 
@@ -82,8 +143,15 @@ def main(argv: list[str] | None = None) -> int:
         verify_image(image, manifest_paths(manifest), manifest_file_contents(manifest))
         command = build_smoke_command(args.arch, args.profile, image, kernel, root=root)
         print("root-image-qemu-smoke:", shlex.join(command))
+        if args.require_root_mount and not args.execute:
+            raise SmokeError("--require-root-mount requires --execute")
         if args.execute:
-            return run_smoke(command, root=root, timeout=args.timeout)
+            return run_smoke(
+                command,
+                root=root,
+                timeout=args.timeout,
+                require_root_mount=args.require_root_mount,
+            )
     except (ImageError, SmokeError) as error:
         print(f"root-image-qemu-smoke: error: {error}", file=sys.stderr)
         return 2

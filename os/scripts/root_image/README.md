@@ -64,5 +64,7 @@ python3 ./scripts/root_image/qemu_smoke.py \
 ```
 
 Add `--execute` to run QEMU with `-snapshot`; a timeout or missing kernel/QEMU
-is reported as a smoke failure. The guest's physical SD/eMMC behavior remains
+is reported as a smoke failure. Add `--require-root-mount` when the run must
+also emit a recognized ext4 root-mount line; absent and failed mount evidence
+are rejected. The guest's physical SD/eMMC behavior remains
 `UNVERIFIED_ON_HARDWARE`.
