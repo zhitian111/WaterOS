@@ -5299,3 +5299,35 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] finalize LS2K1000 claimed read success`
+
+## 2026-08-10：批次 109——建立生产态 ReadRequest 拥有边界
+
+### 本批任务与设计
+
+1. 复核根镜像、MBR 分区解析和远程调试基础设施，确认这些能力已在仓库中，避免重复实现。
+2. 为 deferred read 增加不依赖 `cfg(test)` 的请求对象，持有稳定 transaction 与已验证的块请求几何。
+3. 让请求 reservation commit 后返回 worker-facing handle，由 handle 驱动现有 coordinator 的 publish、snapshot 和 release 生命周期。
+4. 保持硬件执行层未接通；不从请求对象推导 DMA mapping、MMC MMIO 或 rearm 权限。
+
+### 已完成
+
+- [x] 新增生产态 `ReadRequest`，绑定 `ReadTransactionId` 与 `ReadBlockRequest`，可跨 worker 保留并提供只读几何访问。
+- [x] 新增 `ReadRequestReservation` 与 `ReadRequestHandle`；commit 后 handle 只能通过绑定 slot 的 transaction 调用状态机。
+- [x] handle 已覆盖 reserve→publish→snapshot→release 的最小路径，错代 transaction 仍由 coordinator 统一拒绝。
+- [x] 未复制或伪造 MMC/DMA receipt；`ClaimedReadCompletion`、recovery session 和硬件执行器仍按既有边界保留。
+
+### 验证证据
+
+- `read_coordinator::tests` 10 项通过，新增测试验证 request geometry、transaction 和 slot 生命周期绑定。
+- `git diff --check` 通过；后续完整组件测试、两架构构建和 Python/topology/DTB 回归在提交前执行。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：真实 DMA mapping/channel、MMC command publish、cache/barrier、迟到 IRQ 与 rearm 时序仍待 2K1000LA 实机验证。
+- [ ] `ReadRequestHandle` 当前是生命周期拥有边界，不持有实际 DMA buffer；下一批应把 buffer/mapping lease 接入同一对象并继续消除 paired session 的 `cfg(test)` 边界。
+- [ ] handle 尚未接 scheduler wake/deadline、block callback、动态设备注册和真实 status decoder；这些仍需生产 runtime 接线。
+- [ ] 根镜像/MBR 分区 builder、分区 block-device 拓扑和 remote-debug monitor 已存在；物理 SD/eMMC 启动及未认证远程 shell 仍不应宣称完成。
+
+### 提交
+
+- 本批计划提交：`[feat] add LS2K1000 owned read request lifecycle`

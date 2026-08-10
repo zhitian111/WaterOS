@@ -20,7 +20,7 @@ use crate::{board_irq_owner::{BoardIrqOwner, BoundedMmcReadRecheck,
             diagnostic_slot::{DiagnosticRuntimeSlot, DiagnosticSlotState,
                               DrainError, RuntimeReservation, RuntimeService, SlotError},
             irq_domain::GlobalIrq,
-            mmc::RegisterIo};
+            mmc::{ReadBlockRequest, RegisterIo}};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadCoordinatorPhase {
@@ -253,6 +253,37 @@ impl ReadCoordinatorState {
 
 pub struct ReadCoordinatorSlot {
     inner : DiagnosticRuntimeSlot<ReadCoordinatorState>,
+}
+
+/// Production-owned identity and geometry for one deferred read.
+///
+/// The request is intentionally separate from the hardware session: callers
+/// may retain it while a worker waits for MMC/DMA progress, while the slot
+/// remains the sole owner of lifecycle transitions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadRequest {
+    transaction : ReadTransactionId,
+    block : ReadBlockRequest,
+}
+
+impl ReadRequest {
+    pub const fn new(transaction : ReadTransactionId,
+                     block : ReadBlockRequest)
+                     -> Self { Self { transaction, block } }
+
+    pub const fn transaction(&self) -> ReadTransactionId { self.transaction }
+
+    pub const fn block(&self) -> ReadBlockRequest { self.block }
+
+    pub fn reserve<'a>(&self,
+                       slot : &'a ReadCoordinatorSlot)
+                       -> Result<ReadRequestReservation<'a>, ReadCoordinatorError> {
+        slot.reserve(self.transaction).map(|reservation| ReadRequestReservation {
+            reservation,
+            slot,
+            request : *self,
+        })
+    }
 }
 
 impl ReadCoordinatorSlot {
@@ -803,6 +834,46 @@ impl ReadCoordinatorReservation<'_> {
     }
 }
 
+/// Reservation carrying the production request metadata through commit.
+#[must_use = "commit the request or drop it to restore the slot"]
+pub struct ReadRequestReservation<'a> {
+    reservation : ReadCoordinatorReservation<'a>,
+    slot : &'a ReadCoordinatorSlot,
+    request : ReadRequest,
+}
+
+impl<'a> ReadRequestReservation<'a> {
+    pub fn commit(self) -> ReadRequestHandle<'a> {
+        let Self { reservation, slot, request } = self;
+        reservation.commit();
+        ReadRequestHandle { slot, request }
+    }
+}
+
+/// Stable worker-facing handle for a request already reserved in the slot.
+pub struct ReadRequestHandle<'a> {
+    slot : &'a ReadCoordinatorSlot,
+    request : ReadRequest,
+}
+
+impl ReadRequestHandle<'_> {
+    pub const fn transaction(&self) -> ReadTransactionId { self.request.transaction() }
+
+    pub const fn block(&self) -> ReadBlockRequest { self.request.block() }
+
+    pub fn snapshot(&self) -> Result<ReadCoordinatorSnapshot, ReadCoordinatorError> {
+        self.slot.snapshot()
+    }
+
+    pub fn mark_published(&self, poll_budget : u16) -> Result<(), ReadCoordinatorError> {
+        self.slot.mark_published(self.transaction(), poll_budget)
+    }
+
+    pub fn release(self) -> Result<(), ReadCoordinatorError> {
+        self.slot.release(self.transaction())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -887,6 +958,22 @@ mod tests {
         assert_eq!(slot.snapshot().unwrap().phase, ReadCoordinatorPhase::Reserved);
         assert_eq!(slot.reserve(transaction(2)).err(),
                    Some(ReadCoordinatorError::Slot(SlotError::AlreadyLive)));
+    }
+
+    #[test]
+    fn production_request_handle_keeps_geometry_and_transaction_bound() {
+        let slot = ReadCoordinatorSlot::new();
+        let transaction = transaction(2);
+        let block = ReadBlockRequest::new(8, 2, 512, crate::mmc::ReadAddressing::Block).unwrap();
+        let request = ReadRequest::new(transaction, block);
+        let handle = request.reserve(&slot).unwrap().commit();
+        assert_eq!(handle.transaction(), transaction);
+        assert_eq!(handle.block(), block);
+        assert_eq!(handle.snapshot().unwrap().phase, ReadCoordinatorPhase::Reserved);
+        handle.mark_published(3).unwrap();
+        assert_eq!(slot.snapshot().unwrap().phase, ReadCoordinatorPhase::Published);
+        handle.release().unwrap();
+        assert_eq!(slot.state(), DiagnosticSlotState::Empty);
     }
 
     #[test]
