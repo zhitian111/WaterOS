@@ -144,6 +144,21 @@ class RootImageTests(unittest.TestCase):
                                                                     "stat /__wateros_data__/state/marker"))
                     self.assertIn("File not found", debugfs_command(data_fs, "stat /etc/root"))
 
+    def test_builds_single_ext4_partition_without_data_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "root.json"
+            manifest.write_text(json.dumps({"directories": [], "files": [
+                {"path": "/etc/root", "mode": "0644", "content": "root\n"},
+            ]}), encoding="utf-8")
+            image = root / "single.img"
+            args = argparse.Namespace(output=image, manifest=manifest,
+                                      size_mib=16, start_sector=2048,
+                                      partition_table="mbr", uuid="574f5300-0000-4000-8000-000000000001",
+                                      label="WATEROS_ROOT", force=False)
+            build_image(args)
+            self.assertEqual(len(read_partitions(image)), 1)
+
     def test_manifest_populates_modes_and_rejects_escape(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

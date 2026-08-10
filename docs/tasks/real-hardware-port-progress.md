@@ -6613,3 +6613,26 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[test] audit loongarch aux boot path`
+
+## 2026-08-10：批次 155——修复单分区镜像回归并重现 LA 启动差异
+
+### 本批任务与设计
+
+1. 调查 LA QEMU smoke 无挂载日志，先用最小无 aux 镜像做差分，避免把镜像工具错误误判成平台启动问题。
+2. 修复 `build_image` 在没有 data manifest 时传入空 `data_required_paths`，导致 `verify_image` 错误要求两分区的回归。
+3. 增加单分区构建回归测试，再重新尝试 LA QEMU 启动。
+
+### 已完成
+
+- [x] 单分区 root-image 构建恢复正常；新增 16 MiB 单分区测试，root-image host 测试 9 项通过。
+- [x] 用修复后的单分区镜像启动 LA QEMU，确认 1 GiB 内存配置下 guest 能输出 WaterOS 日志；此前 256 MiB/配置不匹配会造成误判。
+- [x] 记录当前 LA pre/final 配置在最小 manifest 下只进入 busybox runner、未出现 stage-00 root mount 行，不能据此宣称 aux mount 已端到端通过。
+
+### 验证证据与限制
+
+- `UNVERIFIED_ON_HARDWARE`：LoongArch 真实 rootfs 启动配置、完整 manifest、串口阶段顺序和 aux mount 仍需使用正式 LA 镜像/固件再验证。
+- 临时 LA kernel、单分区镜像和辅助 manifest 已清理。
+
+### 提交
+
+- 本批计划提交：`[fix] preserve single root image builds`

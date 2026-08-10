@@ -352,7 +352,7 @@ def build_image(args: argparse.Namespace) -> list[str]:
             data_size_mib = getattr(args, "data_size_mib", 0)
             if data_manifest_value is None and data_size_mib:
                 raise ImageError("data partition requires --data-manifest")
-            data_required_paths: list[str] = []
+            data_required_paths: list[str] | None = None
             if data_manifest_value is not None:
                 if not data_size_mib:
                     raise ImageError("--data-manifest requires --data-size-mib")
