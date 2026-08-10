@@ -4350,3 +4350,48 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] order LS2K1000 MMC read startup`
+## 2026-08-10：批次 89——隔离 MMC 数据命令发布事务
+
+### 本批任务与设计
+
+1. 审计数据命令寄存器、non-data command transaction 与上游 CRC/CHECK 行为。
+2. 实现 one-shot publisher，固定 DCTL→BSIZE→TIMER→INT→CARG→CCTL 写序。
+3. publisher 代码参与 production target 编译，但 permit 没有 production constructor，默认路径保持关闭。
+4. 每次 write failure 都按“可能已到达硬件”处理，返回精确 stage 和此前成功写数。
+5. 与上一批 running-DMA typestate 集成，publisher 失败不得释放 DMA mapping。
+
+### 已完成
+
+- [x] 新增 `ReadDataPublishPermit`；仅 test 配置能构造 activation capability。
+- [x] 新增 `ReadDataCommandPublisher<R>`、六阶段 `ReadDataPublishStage`、稳定 failure 与 success receipt。
+- [x] 非法 read plan 在任何 MMIO 前拒绝，且修正后仍可首次发布。
+- [x] 一旦尝试任意物理 write，无论成功或失败均拒绝第二次发布。
+- [x] CMD17/CMD18 均固定写 DCTL、BSIZE、TIMER、INT W1C、CARG、CCTL。
+- [x] CCTL 仅设置 command index、HOST、START、WAIT_RESPONSE；LONG_RESPONSE 和未验证的 CHECK(bit13) 均保持零。
+- [x] fault matrix 覆盖 DataControl、BlockSize、Timer、ClearInterrupts、CommandArgument、CommandControl 六个阶段。
+- [x] running-DMA 集成测试改用真实 publisher；CARG fault 后返回原 running session并显式 stop/finish。
+- [x] 没有轮询命令/数据完成，没有创建 production permit，没有接入 machine init 或 block device。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 138 项全部通过；新增 3 项 publisher 顺序/fault/invalid-plan 测试。
+- CMD17 fixture 精确写 offset `[2c,28,24,3c,08,0c]`，argument=7；CMD18 byte-address fixture argument=1024。
+- 两种命令均返回 `writes_completed=6`，重复调用返回 AlreadyAttempted 且没有第七次 write。
+- 六阶段故障分别保留 0～5 个已确认 write，并记录本次失败 write 的 uncertain stage。
+- 非法 byte_length fixture 零 write；同一 publisher 随后接受修正后的合法 plan。
+- APBDMA→MMC 集成中，真实六次 MMC write 发生在 DMA start 后；第五次 write fault 后 mapping 仍为 device-owned，stop 后才归还。
+- production 组件 check、LoongArch64 精确 feature target check 与 `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 通过；仅有既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：APBDMA start 与 DCTL/CCTL publish 的真实先后要求、posted write 可见性仍需两板 trace。
+- [ ] `UNVERIFIED_ON_HARDWARE`：上游没有编程 CCTL.CHECK；本批刻意保持 bit13=0，不能宣称响应 CRC 已由硬件验证。
+- [ ] `RegisterIo::write32` 无 WriteEffect，失败阶段只能保守视为可能写入，不能安全重试 publisher。
+- [ ] publisher 只负责启动写序；尚未绑定 command response、DFIN、APBDMA IRQ 三类 completion evidence。
+- [ ] CMD18 仍缺 CMD12/卡状态/partial block count；不能作为 production multi-block read 使用。
+- [ ] 下一批应让 published session 持有 completion tracker，接收 command/data/DMA evidence，并保证任何 error 都携带 published running ownership 进入 stop/recovery。
+
+### 提交
+
+- 本批计划提交：`[feat] stage LS2K1000 MMC read commands`

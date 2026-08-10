@@ -876,20 +876,24 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MockReadPublisher {
-        calls : usize,
-        fail : bool,
-        command_index : Option<u8>,
+    struct MockMmcRegisters {
+        writes : Vec<(usize, u32)>,
+        fail_write : Option<usize>,
     }
 
-    impl crate::mmc::ReadCommandPublisher for MockReadPublisher {
-        type Error = DriverError;
+    impl crate::mmc::RegisterIo for MockMmcRegisters {
+        fn read32(&mut self, _offset : usize) -> Result<u32, dw_mmc::mmc::MmcError> {
+            panic!("read publisher must remain write-only")
+        }
 
-        fn publish(&mut self, read : &crate::mmc::DeferredReadPlan)
-                   -> Result<(), Self::Error> {
-            self.calls += 1;
-            self.command_index = Some(read.request.command_index);
-            if self.fail { Err(DriverError::IoError) } else { Ok(()) }
+        fn write32(&mut self, offset : usize, value : u32)
+                   -> Result<(), dw_mmc::mmc::MmcError> {
+            self.writes.push((offset, value));
+            if self.fail_write == Some(self.writes.len()) {
+                Err(dw_mmc::mmc::MmcError::RegisterOutOfRange)
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -1256,11 +1260,15 @@ mod tests {
         let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
         let running = prepared.start(&mut executor).unwrap();
         assert_eq!(running.plan(), &read);
-        let mut publisher = MockReadPublisher::default();
+        let mut publisher = crate::mmc::ReadDataCommandPublisher::new(
+            MockMmcRegisters::default(),
+            crate::mmc::ReadDataPublishPermit::fixture());
         let published = running.publish(&mut publisher).unwrap();
         assert_eq!(published.plan(), &read);
-        assert_eq!(publisher.calls, 1);
-        assert_eq!(publisher.command_index, Some(17));
+        assert_eq!(publisher.into_inner().writes.iter()
+                                           .map(|(offset, _)| *offset)
+                                           .collect::<Vec<_>>(),
+                   [0x2C, 0x28, 0x24, 0x3C, 0x08, 0x0C]);
         published.stop().unwrap().finish().unwrap();
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
@@ -1349,13 +1357,21 @@ mod tests {
                                                     .prepare(&mut descriptor, &mut payload).unwrap();
         let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
         let running = prepared.start(&mut executor).unwrap();
-        let mut publisher = MockReadPublisher { fail : true, ..MockReadPublisher::default() };
+        let mut publisher = crate::mmc::ReadDataCommandPublisher::new(
+            MockMmcRegisters { fail_write : Some(5), ..MockMmcRegisters::default() },
+            crate::mmc::ReadDataPublishPermit::fixture());
         let failure = match running.publish(&mut publisher) {
             Ok(_) => panic!("fault-injected MMC publish succeeded"),
             Err(failure) => failure,
         };
-        assert_eq!(failure.error, DriverError::IoError);
-        assert_eq!(publisher.calls, 1);
+        assert_eq!(failure.error,
+                   crate::mmc::ReadDataPublishFailure {
+                       error : crate::mmc::ReadDataPublishError::Io(
+                           dw_mmc::mmc::MmcError::RegisterOutOfRange),
+                       stage : Some(crate::mmc::ReadDataPublishStage::CommandArgument),
+                       writes_completed : 4,
+                   });
+        assert_eq!(publisher.into_inner().writes.len(), 5);
         failure.session.stop().unwrap().finish().unwrap();
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());

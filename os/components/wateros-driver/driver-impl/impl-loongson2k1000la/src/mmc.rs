@@ -172,6 +172,7 @@ const CCTL_HOST : u32 = 1 << 6;
 const CCTL_START : u32 = 1 << 8;
 const CCTL_WAIT_RESPONSE : u32 = 1 << 9;
 const CCTL_LONG_RESPONSE : u32 = 1 << 10;
+const CCTL_CHECK_RESPONSE : u32 = 1 << 13;
 const INT_COMMAND_SENT : u32 = 1 << 6;
 const INT_DATA_FINISHED : u32 = 1 << 0;
 const INT_DATA_TIMEOUT : u32 = 1 << 1;
@@ -1323,11 +1324,132 @@ impl<'a, 'e, R : apbdma::OrderIo, D, P> RunningReadDmaSession<'a, 'e, R, D, P> {
     }
 }
 
+/// Capability required to execute the isolated data-command publisher.
+/// No production constructor exists while physical ordering is unverified.
+pub struct ReadDataPublishPermit {
+    _private : (),
+}
+
+#[cfg(test)]
+impl ReadDataPublishPermit {
+    pub(crate) const fn fixture() -> Self { Self { _private : () } }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadDataPublishStage {
+    DataControl,
+    BlockSize,
+    Timer,
+    ClearInterrupts,
+    CommandArgument,
+    CommandControl,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadDataPublishError {
+    InvalidPlan,
+    AlreadyAttempted,
+    Io(MmcError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadDataPublishFailure {
+    pub error : ReadDataPublishError,
+    pub stage : Option<ReadDataPublishStage>,
+    /// Writes known to have returned success before the failing attempt.
+    pub writes_completed : u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadDataPublishReceipt {
+    pub command_index : u8,
+    pub command_argument : u32,
+    pub command_control : u32,
+    pub writes_completed : u8,
+}
+
+/// One-shot publisher for the six Linux-derived MMC data/command writes.
+///
+/// `UNVERIFIED_ON_HARDWARE`: a failed volatile write is conservatively treated
+/// as possibly visible, and the permit remains unavailable in production.
+pub struct ReadDataCommandPublisher<R> {
+    registers : R,
+    _permit : ReadDataPublishPermit,
+    attempted : bool,
+}
+
+impl<R : RegisterIo> ReadDataCommandPublisher<R> {
+    pub fn new(registers : R, permit : ReadDataPublishPermit) -> Self {
+        Self { registers, _permit : permit, attempted : false }
+    }
+
+    pub fn into_inner(self) -> R { self.registers }
+
+    pub fn publish_once(
+        &mut self,
+        read : &DeferredReadPlan)
+        -> Result<ReadDataPublishReceipt, ReadDataPublishFailure> {
+        if self.attempted {
+            return Err(ReadDataPublishFailure { error : ReadDataPublishError::AlreadyAttempted,
+                                                stage : None,
+                                                writes_completed : 0 });
+        }
+        if !read.identity_consistent() {
+            return Err(ReadDataPublishFailure { error : ReadDataPublishError::InvalidPlan,
+                                                stage : None,
+                                                writes_completed : 0 });
+        }
+        self.attempted = true;
+        let request = read.request;
+        let command_control = u32::from(request.command_index) |
+                              CCTL_HOST | CCTL_START | CCTL_WAIT_RESPONSE;
+        debug_assert_eq!(command_control & CCTL_CHECK_RESPONSE, 0);
+        let writes = [(ReadDataPublishStage::DataControl,
+                       read.setup_writes[0]),
+                      (ReadDataPublishStage::BlockSize,
+                       read.setup_writes[1]),
+                      (ReadDataPublishStage::Timer,
+                       read.setup_writes[2]),
+                      (ReadDataPublishStage::ClearInterrupts,
+                       PlannedDataWrite { offset : REG_INT, value : INT_CLEAR }),
+                      (ReadDataPublishStage::CommandArgument,
+                       PlannedDataWrite { offset : REG_CARG,
+                                          value : request.command_argument }),
+                      (ReadDataPublishStage::CommandControl,
+                       PlannedDataWrite { offset : REG_CCTL,
+                                          value : command_control })];
+        let mut writes_completed = 0u8;
+        for (stage, write) in writes {
+            if let Err(error) = self.registers.write32(write.offset, write.value) {
+                return Err(ReadDataPublishFailure {
+                    error : ReadDataPublishError::Io(error),
+                    stage : Some(stage),
+                    writes_completed,
+                });
+            }
+            writes_completed += 1;
+        }
+        Ok(ReadDataPublishReceipt { command_index : request.command_index,
+                                    command_argument : request.command_argument,
+                                    command_control,
+                                    writes_completed })
+    }
+}
+
 #[cfg(test)]
 pub(crate) trait ReadCommandPublisher {
     type Error;
 
     fn publish(&mut self, read : &DeferredReadPlan) -> Result<(), Self::Error>;
+}
+
+#[cfg(test)]
+impl<R : RegisterIo> ReadCommandPublisher for ReadDataCommandPublisher<R> {
+    type Error = ReadDataPublishFailure;
+
+    fn publish(&mut self, read : &DeferredReadPlan) -> Result<(), Self::Error> {
+        self.publish_once(read).map(|_| ())
+    }
 }
 
 #[cfg(test)]
@@ -2490,6 +2612,103 @@ mod tests {
                          Err(ReadRequestError::AddressOverflow)));
     }
 
+    fn data_publish_plan(request : ReadBlockRequest) -> DeferredReadPlan {
+        let mut buffer = alloc::vec![0; request.byte_length];
+        let deferred = prepare_deferred_read(plan(&description()).unwrap(),
+                                             request,
+                                             ReadTransport::ExternalDma,
+                                             ReadPathEvidence::default(),
+                                             &mut buffer).unwrap();
+        let read = *deferred.plan();
+        let _ = deferred.cancel();
+        read
+    }
+
+    #[test]
+    fn data_publisher_writes_cmd17_and_cmd18_in_fixed_order_once() {
+        for (request, expected_index, expected_argument, blocks) in
+            [(ReadBlockRequest::new(7, 1, 512, ReadAddressing::Block).unwrap(), 17, 7, 1),
+             (ReadBlockRequest::new(2, 2, 512, ReadAddressing::Byte).unwrap(), 18, 1024, 2)]
+        {
+            let read = data_publish_plan(request);
+            let mut publisher = ReadDataCommandPublisher::new(
+                DataPublisherRegisters::default(),
+                ReadDataPublishPermit::fixture());
+            let receipt = publisher.publish_once(&read).unwrap();
+            let expected_control = u32::from(expected_index) |
+                                   CCTL_HOST | CCTL_START | CCTL_WAIT_RESPONSE;
+            assert_eq!(receipt,
+                       ReadDataPublishReceipt { command_index : expected_index,
+                                                command_argument : expected_argument,
+                                                command_control : expected_control,
+                                                writes_completed : 6 });
+            assert_eq!(expected_control & (CCTL_LONG_RESPONSE | CCTL_CHECK_RESPONSE), 0);
+            assert_eq!(publisher.registers.attempts,
+                       [(REG_DCTL,
+                         blocks | DCTL_START | DCTL_EXTERNAL_DMA | DCTL_WIDE_BUS),
+                        (REG_BSIZE, 512),
+                        (REG_TIMER, u32::MAX),
+                        (REG_INT, INT_CLEAR),
+                        (REG_CARG, expected_argument),
+                        (REG_CCTL, expected_control)]);
+            assert_eq!(publisher.publish_once(&read),
+                       Err(ReadDataPublishFailure {
+                           error : ReadDataPublishError::AlreadyAttempted,
+                           stage : None,
+                           writes_completed : 0,
+                       }));
+            assert_eq!(publisher.into_inner().attempts.len(), 6);
+        }
+    }
+
+    #[test]
+    fn data_publisher_fault_matrix_retains_exact_uncertain_stage() {
+        let read = data_publish_plan(
+            ReadBlockRequest::new(7, 1, 512, ReadAddressing::Block).unwrap());
+        let stages = [ReadDataPublishStage::DataControl,
+                      ReadDataPublishStage::BlockSize,
+                      ReadDataPublishStage::Timer,
+                      ReadDataPublishStage::ClearInterrupts,
+                      ReadDataPublishStage::CommandArgument,
+                      ReadDataPublishStage::CommandControl];
+        for (index, stage) in stages.into_iter().enumerate() {
+            let mut publisher = ReadDataCommandPublisher::new(
+                DataPublisherRegisters { fail_write : Some(index + 1),
+                                         ..DataPublisherRegisters::default() },
+                ReadDataPublishPermit::fixture());
+            assert_eq!(publisher.publish_once(&read),
+                       Err(ReadDataPublishFailure {
+                           error : ReadDataPublishError::Io(MmcError::RegisterOutOfRange),
+                           stage : Some(stage),
+                           writes_completed : index as u8,
+                       }));
+            assert_eq!(publisher.registers.attempts.len(), index + 1);
+            assert_eq!(publisher.publish_once(&read),
+                       Err(ReadDataPublishFailure {
+                           error : ReadDataPublishError::AlreadyAttempted,
+                           stage : None,
+                           writes_completed : 0,
+                       }));
+        }
+    }
+
+    #[test]
+    fn data_publisher_rejects_invalid_plan_without_mmio_or_consuming_permit() {
+        let read = data_publish_plan(
+            ReadBlockRequest::new(7, 1, 512, ReadAddressing::Block).unwrap());
+        let mut invalid = read;
+        invalid.request.byte_length += 4;
+        let mut publisher = ReadDataCommandPublisher::new(
+            DataPublisherRegisters::default(),
+            ReadDataPublishPermit::fixture());
+        assert_eq!(publisher.publish_once(&invalid),
+                   Err(ReadDataPublishFailure { error : ReadDataPublishError::InvalidPlan,
+                                                stage : None,
+                                                writes_completed : 0 }));
+        assert!(publisher.registers.attempts.is_empty());
+        assert!(publisher.publish_once(&read).is_ok());
+    }
+
     fn completion_tracker<B>(buffer : B) -> ReadCompletionTracker<B> {
         let request = ReadBlockRequest::new(0, 1, 512, ReadAddressing::Block).unwrap();
         let mut scratch = [0; 512];
@@ -2902,6 +3121,27 @@ mod tests {
         reads : usize,
         fail_read : Option<usize>,
         events : alloc::vec::Vec<usize>,
+    }
+
+    #[derive(Default)]
+    struct DataPublisherRegisters {
+        attempts : alloc::vec::Vec<(usize, u32)>,
+        fail_write : Option<usize>,
+    }
+
+    impl RegisterIo for DataPublisherRegisters {
+        fn read32(&mut self, _offset : usize) -> Result<u32, MmcError> {
+            panic!("data publisher must remain write-only")
+        }
+
+        fn write32(&mut self, offset : usize, value : u32) -> Result<(), MmcError> {
+            self.attempts.push((offset, value));
+            if self.fail_write == Some(self.attempts.len()) {
+                Err(MmcError::RegisterOutOfRange)
+            } else {
+                Ok(())
+            }
+        }
     }
 
     impl RegisterIo for ObservationRegisters {
