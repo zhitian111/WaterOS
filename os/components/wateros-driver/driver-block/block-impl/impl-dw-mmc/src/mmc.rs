@@ -135,6 +135,16 @@ pub fn clock_divider(input_hz : u32, target_hz : u32) -> Result<(u8, u32), MmcEr
     Ok((divider as u8, actual))
 }
 
+/// Encode the DesignWare CTYPE bus-width field without touching registers.
+pub const fn bus_width_value(bus_width : u8) -> Result<u32, MmcError> {
+    match bus_width {
+        1 => Ok(0),
+        4 => Ok(1),
+        8 => Ok(1 << 16),
+        _ => Err(MmcError::InvalidParameter),
+    }
+}
+
 impl<R : RegisterIo> DwMmc<R> {
     pub fn probe(mut registers : R, poll_limit : usize) -> Result<Self, MmcError> {
         let version = registers.read32(VERID)? & 0xFFFF;
@@ -212,16 +222,27 @@ impl<R : RegisterIo> DwMmc<R> {
                               target_hz : u32,
                               fifo_depth : u32)
                               -> Result<u32, MmcError> {
+        self.initialize_polling_with_bus_width(input_hz, target_hz, fifo_depth, 1)
+    }
+
+    /// Conservative polling/PIO setup with an explicit SD bus width.
+    pub fn initialize_polling_with_bus_width(&mut self,
+                                             input_hz : u32,
+                                             target_hz : u32,
+                                             fifo_depth : u32,
+                                             bus_width : u8)
+                                             -> Result<u32, MmcError> {
         if !(2..=4096).contains(&fifo_depth) {
             return Err(MmcError::InvalidParameter);
         }
+        let ctype = bus_width_value(bus_width)?;
         self.reset()?;
         self.registers
             .write32(PWREN, 1)?;
         self.registers
             .write32(TMOUT, u32::MAX)?;
         self.registers
-            .write32(CTYPE, 0)?;
+            .write32(CTYPE, ctype)?;
         self.registers
             .write32(INTMASK, 0)?;
         self.registers
@@ -494,6 +515,10 @@ mod tests {
 
     #[test]
     fn configures_bounded_identification_clock_and_fifo() {
+        assert_eq!(bus_width_value(1), Ok(0));
+        assert_eq!(bus_width_value(4), Ok(1));
+        assert_eq!(bus_width_value(8), Ok(1 << 16));
+        assert_eq!(bus_width_value(2), Err(MmcError::InvalidParameter));
         assert_eq!(clock_divider(50_000_000, 400_000),
                    Ok((63, 396_825)));
         assert_eq!(clock_divider(25_000_000, 50_000_000),
@@ -514,6 +539,14 @@ mod tests {
         assert_eq!(registers.values[INTMASK / 4], 0);
         assert_eq!(registers.values[FIFOTH / 4],
                    (15 << 16) | 16);
+
+        let mut wide = DwMmc::probe(MockRegisters::successful(), 4).unwrap();
+        assert_eq!(wide.initialize_polling_with_bus_width(50_000_000,
+                                                          400_000,
+                                                          32,
+                                                          4),
+                   Ok(396_825));
+        assert_eq!(wide.into_inner().values[CTYPE / 4], 1);
     }
 
     #[test]

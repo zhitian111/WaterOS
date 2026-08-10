@@ -1179,3 +1179,28 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] gate visionfive2 mmc on hardware evidence`
+
+## 2026-08-10：批次 28——共享 DesignWare MMC 支持显式 bus width
+
+### 任务与设计
+
+1. 审计发现 VisionFive 2 平台已生成 `bus_width` 配置候选，但共享 `DwMmc::initialize_polling` 固定写 CTYPE=1-bit，平台参数尚未真正可消费。
+2. 在共享核心增加 `bus_width_value` 纯编码函数和 `initialize_polling_with_bus_width`；保留旧入口作为 1-bit 兼容包装。
+3. 只在 fake-register 中验证 1/4/8-bit CTYPE 编码和非法宽度拒绝，不改变平台自动激活策略。
+
+### 完成内容
+
+- [x] DesignWare CTYPE 支持 1-bit (`0`)、4-bit (`1`) 和 8-bit (`1<<16`) 编码。
+- [x] VisionFive 2 的 `MmcControllerConfig.bus_width` 现在具备直接消费路径。
+- [x] 旧共享测试全部保留并扩展宽总线测试。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path components/wateros-driver/driver-block/block-impl/impl-dw-mmc/Cargo.toml --lib`：12 项通过。
+- VisionFive 2 MMC host 测试：2 项通过。
+- `cargo check --manifest-path components/wateros-driver/driver-impl/impl-jh7110-visionfive2/Cargo.toml --target riscv64gc-unknown-none-elf`：通过。
+- `UNVERIFIED_ON_HARDWARE`：JH7110 CTYPE 实际语义、卡供电/时钟稳定性和宽总线信号完整性仍需实机；本批没有注册块设备。
+
+### 提交
+
+- `[feat] support dw mmc bus widths`
