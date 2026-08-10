@@ -26,6 +26,7 @@ pub mod mmc_diagnostic;
 pub mod mmc_prerequisite;
 pub mod pinctrl;
 pub mod apbdma;
+pub mod ahci;
 pub mod apbdma_mmio;
 pub mod dma_memory;
 pub mod gpio;

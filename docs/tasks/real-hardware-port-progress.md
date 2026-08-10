@@ -7260,3 +7260,26 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[feat] expose explicit pci snapshot probe`
+
+## 2026-08-10：批次 181——Loongson AHCI 静态能力诊断契约
+
+### 任务与设计
+
+1. 审计当前 Loongson 分支发现 PCI snapshot 已能提供只读身份/BAR 证据，但尚无 AHCI/SATA 控制器能力的静态诊断对象；不能直接假定 SATA BAR、版本或端口有效。
+2. 新增纯逻辑 AHCI snapshot/activation contract：校验 ABAR 对齐与窗口、AHCI 版本、实现端口和 IRQ；DMA、IRQ、link 以及硬件证据保持独立 blocker。
+3. 不新增 PCI 配置写入、BAR size probing、AHCI reset、DMA descriptor 或端口启动；该模块只为未来接入真实 DTB/PCI 快照提供 fail-closed 边界。
+
+### 已完成
+
+- [x] 新增 `ahci.rs`、`AhciSnapshot`、`AhciActivationPlan`、静态 blockers 和硬件证据结构。
+- [x] 将模块导出到 Loongson 平台 crate，但不在 `init_after_boot` 自动激活。
+- [x] 增加合法/非法 snapshot 单测，验证无硬件证据时始终 deferred。
+
+### 验证证据与限制
+
+- Loongson 平台 crate 全部 lib 单测：202 项通过。
+- `UNVERIFIED_ON_HARDWARE`：2K1000LA SATA/PCIe BAR、AHCI ABAR、端口 link、DMA/cache、IRQ 和真实块设备注册仍需实板验证；本契约不代表 AHCI 驱动已经可用。
+
+### 提交
+
+- `[feat] add loongson ahci capability contract`
