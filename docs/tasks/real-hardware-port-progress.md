@@ -6660,3 +6660,29 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[fix] use arch specific qemu smoke memory`
+
+## 2026-08-10：批次 157——校验 GPT 主备元数据一致性
+
+### 本批任务与设计
+
+1. 复核块设备分区扫描调用链，确认 GPT 扫描此前只校验主 header/entry array。
+2. 对能报告容量的设备增加 GPT backup header、backup entry array 的边界、CRC、互指字段和内容一致性校验。
+3. 对容量未知的设备保留主表扫描兼容行为，并在代码注释中明确该路径尚不能证明备份恢复能力。
+4. 使用小型内存盘 fixture 覆盖有效 GPT、备份 header 损坏、备份 entry CRC 损坏和主备不一致。
+
+### 已完成
+
+- [x] `scan_gpt` 校验 backup LBA 必须是介质尾部，并检查主备 header 的 current/backup LBA、可用范围、entry 数量和 entry 大小。
+- [x] 校验 GPT backup header CRC、backup entry array CRC，并拒绝主备 entry array 内容不一致。
+- [x] 更新分区注册表 GPT fixture，使自动注册分区路径也经过真实形状的主备 GPT 元数据。
+- [x] 新增损坏 backup header/entry 的回归测试。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path os/components/wateros-driver/driver-block/block-api/api-v0/Cargo.toml`：9 项通过。
+- `python3 -m unittest discover -s os/scripts/tests -p 'test_root_image*.py'`：16 项通过，覆盖 MBR/GPT 小镜像构建与备份元数据校验。
+- `UNVERIFIED_ON_HARDWARE`：真实 SD/eMMC 控制器在掉电、部分写入或容量探测失败时的恢复策略仍待实机验证；容量未知设备目前只做 GPT 主表校验。
+
+### 提交
+
+- `[fix] validate gpt backup metadata`

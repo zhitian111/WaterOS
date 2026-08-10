@@ -40,6 +40,10 @@ pub enum PartitionScanError {
     InvalidGptEntrySize,
     InvalidGptHeaderCrc,
     InvalidGptEntryCrc,
+    InvalidGptBackup,
+    InvalidGptBackupCrc,
+    InvalidGptBackupEntryCrc,
+    MismatchedGptEntries,
     UnsupportedExtended,
     InvalidEntry,
     OverlappingEntries,
@@ -179,6 +183,57 @@ pub fn scan_gpt(device : &SharedBlockDevice) -> Result<Vec<GptPartition>, Partit
           .map_err(PartitionScanError::Io)?;
     if crc32(&entries) != read_u32_le(&header[88..92]) {
         return Err(PartitionScanError::InvalidGptEntryCrc);
+    }
+
+    // A removable disk can lose the tail of a write while the primary table
+    // still looks valid.  When capacity is known, require the GPT backup
+    // header and entry array to agree with the primary metadata before
+    // exposing partitions.  Some synthetic/legacy devices do not report a
+    // capacity; those retain primary-only validation and remain
+    // `UNVERIFIED_ON_HARDWARE` for backup recovery.
+    if let Some(total) = total_blocks {
+        let backup_lba = read_u64_le(&header[32..40]);
+        if backup_lba != total.saturating_sub(1) || backup_lba <= GPT_HEADER_LBA {
+            return Err(PartitionScanError::InvalidGptBackup);
+        }
+        let mut backup = [0u8; BLOCK_SIZE];
+        device.lock()
+              .read_blocks(Lba(backup_lba), &mut backup)
+              .map_err(PartitionScanError::Io)?;
+        if &backup[0..8] != b"EFI PART"
+            || read_u32_le(&backup[12..16]) != header_size
+            || read_u64_le(&backup[24..32]) != backup_lba
+            || read_u64_le(&backup[32..40]) != GPT_HEADER_LBA
+            || read_u64_le(&backup[40..48]) != first_usable
+            || read_u64_le(&backup[48..56]) != last_usable
+            || read_u32_le(&backup[80..84]) != entry_count
+            || read_u32_le(&backup[84..88]) != entry_size
+        {
+            return Err(PartitionScanError::InvalidGptBackup);
+        }
+        let backup_header_crc = read_u32_le(&backup[16..20]);
+        backup[16..20].fill(0);
+        if crc32(&backup[..header_size as usize]) != backup_header_crc {
+            return Err(PartitionScanError::InvalidGptBackupCrc);
+        }
+        let backup_entries_lba = read_u64_le(&backup[72..80]);
+        if backup_entries_lba == 0
+            || backup_entries_lba.checked_add(entries_blocks)
+                .filter(|end| *end <= backup_lba)
+                .is_none()
+        {
+            return Err(PartitionScanError::InvalidGptBackup);
+        }
+        let mut backup_entries = vec![0u8; entries_len];
+        device.lock()
+              .read_bytes(backup_entries_lba * BLOCK_SIZE as u64, &mut backup_entries)
+              .map_err(PartitionScanError::Io)?;
+        if crc32(&backup_entries) != read_u32_le(&backup[88..92]) {
+            return Err(PartitionScanError::InvalidGptBackupEntryCrc);
+        }
+        if backup_entries != entries {
+            return Err(PartitionScanError::MismatchedGptEntries);
+        }
     }
 
     let mut partitions = Vec::new();
@@ -365,6 +420,7 @@ mod tests {
         header[8..12].copy_from_slice(&0x0001_0000u32.to_le_bytes());
         header[12..16].copy_from_slice(&92u32.to_le_bytes());
         header[24..32].copy_from_slice(&1u64.to_le_bytes());
+        header[32..40].copy_from_slice(&63u64.to_le_bytes());
         header[40..48].copy_from_slice(&4u64.to_le_bytes());
         header[48..56].copy_from_slice(&60u64.to_le_bytes());
         header[72..80].copy_from_slice(&2u64.to_le_bytes());
@@ -380,13 +436,38 @@ mod tests {
     }
 
     fn refresh_gpt_crcs(bytes : &mut [u8]) {
-        let entry_crc = crc32(&bytes[BLOCK_SIZE * 2..BLOCK_SIZE * 2 + 4 * 128]);
+        let primary_entries = bytes[BLOCK_SIZE * 2..BLOCK_SIZE * 2 + 4 * 128].to_vec();
+        let entry_crc = crc32(&primary_entries);
         bytes[BLOCK_SIZE + 88..BLOCK_SIZE + 92].copy_from_slice(&entry_crc.to_le_bytes());
         let mut header = [0u8; BLOCK_SIZE];
         header.copy_from_slice(&bytes[BLOCK_SIZE..BLOCK_SIZE * 2]);
         header[16..20].fill(0);
         let header_crc = crc32(&header[..92]);
         bytes[BLOCK_SIZE + 16..BLOCK_SIZE + 20].copy_from_slice(&header_crc.to_le_bytes());
+
+        // Keep a standards-shaped backup header/entry array at the end of the
+        // tiny fixture so scanner tests exercise the same metadata contract as
+        // the physical-image builder.
+        bytes[BLOCK_SIZE * 61..BLOCK_SIZE * 61 + primary_entries.len()]
+            .copy_from_slice(&primary_entries);
+        let backup = &mut bytes[BLOCK_SIZE * 63..BLOCK_SIZE * 64];
+        backup.fill(0);
+        backup[0..8].copy_from_slice(b"EFI PART");
+        backup[8..12].copy_from_slice(&0x0001_0000u32.to_le_bytes());
+        backup[12..16].copy_from_slice(&92u32.to_le_bytes());
+        backup[24..32].copy_from_slice(&63u64.to_le_bytes());
+        backup[32..40].copy_from_slice(&1u64.to_le_bytes());
+        backup[40..48].copy_from_slice(&4u64.to_le_bytes());
+        backup[48..56].copy_from_slice(&60u64.to_le_bytes());
+        backup[72..80].copy_from_slice(&61u64.to_le_bytes());
+        backup[80..84].copy_from_slice(&4u32.to_le_bytes());
+        backup[84..88].copy_from_slice(&128u32.to_le_bytes());
+        backup[88..92].copy_from_slice(&entry_crc.to_le_bytes());
+        let mut backup_for_crc = [0u8; BLOCK_SIZE];
+        backup_for_crc.copy_from_slice(backup);
+        backup_for_crc[16..20].fill(0);
+        let backup_crc = crc32(&backup_for_crc[..92]);
+        backup[16..20].copy_from_slice(&backup_crc.to_le_bytes());
     }
 
     #[test]
@@ -429,7 +510,7 @@ mod tests {
         let header_crc = crc32(&header[..92]);
         header[16..20].copy_from_slice(&header_crc.to_le_bytes());
         disk.lock().write_blocks(Lba(1), &header).unwrap();
-        assert_eq!(scan_gpt(&disk), Err(PartitionScanError::InvalidEntry));
+        assert_eq!(scan_gpt(&disk), Err(PartitionScanError::MismatchedGptEntries));
     }
 
     #[test]
@@ -447,6 +528,21 @@ mod tests {
         block[0] = 2;
         entry_corrupt.lock().write_blocks(Lba(2), &block).unwrap();
         assert_eq!(scan_gpt(&entry_corrupt), Err(PartitionScanError::InvalidGptEntryCrc));
+    }
+
+    #[test]
+    fn rejects_corrupt_gpt_backup_metadata() {
+        let backup_header = disk_with_gpt_partition();
+        backup_header.lock().write_blocks(Lba(63), &[0u8; BLOCK_SIZE]).unwrap();
+        assert_eq!(scan_gpt(&backup_header), Err(PartitionScanError::InvalidGptBackup));
+
+        let backup_entries = disk_with_gpt_partition();
+        let mut block = [0u8; BLOCK_SIZE];
+        backup_entries.lock().read_blocks(Lba(61), &mut block).unwrap();
+        block[0] ^= 1;
+        backup_entries.lock().write_blocks(Lba(61), &block).unwrap();
+        assert_eq!(scan_gpt(&backup_entries),
+                   Err(PartitionScanError::InvalidGptBackupEntryCrc));
     }
 
     #[test]

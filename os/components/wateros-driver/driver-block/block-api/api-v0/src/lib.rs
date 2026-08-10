@@ -312,6 +312,7 @@ mod registry_tests {
             header[0..8].copy_from_slice(b"EFI PART");
             header[12..16].copy_from_slice(&92u32.to_le_bytes());
             header[24..32].copy_from_slice(&1u64.to_le_bytes());
+            header[32..40].copy_from_slice(&31u64.to_le_bytes());
             header[40..48].copy_from_slice(&4u64.to_le_bytes());
             header[48..56].copy_from_slice(&28u64.to_le_bytes());
             header[72..80].copy_from_slice(&2u64.to_le_bytes());
@@ -328,6 +329,25 @@ mod registry_tests {
             header_copy[16..20].fill(0);
             let header_crc = partition::crc32(&header_copy[..92]);
             bytes[BLOCK_SIZE + 16..BLOCK_SIZE + 20].copy_from_slice(&header_crc.to_le_bytes());
+            let primary_entries = bytes[BLOCK_SIZE * 2..BLOCK_SIZE * 2 + 2 * 128].to_vec();
+            bytes[BLOCK_SIZE * 29..BLOCK_SIZE * 29 + primary_entries.len()]
+                .copy_from_slice(&primary_entries);
+            let backup = &mut bytes[BLOCK_SIZE * 31..BLOCK_SIZE * 32];
+            backup[0..8].copy_from_slice(b"EFI PART");
+            backup[12..16].copy_from_slice(&92u32.to_le_bytes());
+            backup[24..32].copy_from_slice(&31u64.to_le_bytes());
+            backup[32..40].copy_from_slice(&1u64.to_le_bytes());
+            backup[40..48].copy_from_slice(&4u64.to_le_bytes());
+            backup[48..56].copy_from_slice(&28u64.to_le_bytes());
+            backup[72..80].copy_from_slice(&29u64.to_le_bytes());
+            backup[80..84].copy_from_slice(&2u32.to_le_bytes());
+            backup[84..88].copy_from_slice(&128u32.to_le_bytes());
+            backup[88..92].copy_from_slice(&entry_crc.to_le_bytes());
+            let mut backup_copy = [0u8; BLOCK_SIZE];
+            backup_copy.copy_from_slice(backup);
+            backup_copy[16..20].fill(0);
+            let backup_crc = partition::crc32(&backup_copy[..92]);
+            backup[16..20].copy_from_slice(&backup_crc.to_le_bytes());
             Arc::new(Mutex::new(Box::new(Self { bytes })))
         }
     }
