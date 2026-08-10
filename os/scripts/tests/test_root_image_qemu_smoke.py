@@ -14,6 +14,7 @@ from qemu_smoke import (  # noqa: E402
     SmokeError,
     build_smoke_command,
     parse_aux_mount_evidence,
+    parse_input_node_evidence,
     parse_root_mount_evidence,
     run_smoke,
 )
@@ -36,6 +37,22 @@ class RootImageQemuSmokeTests(unittest.TestCase):
             self.assertIn(f"file={image}", command)
             environment = build.call_args.args[2]
             self.assertEqual(environment["WOS_QEMU_MEM"], "256M")
+
+    def test_input_evidence_enables_graphics_devices(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "root.img"
+            kernel = root / "kernel-rv"
+            image.write_bytes(b"image")
+            kernel.write_bytes(b"kernel")
+            with patch("qemu_smoke.build_qemu_launch") as build:
+                build.return_value.argv = [
+                    "qemu-system-riscv64", f"file={image}", "-snapshot", "-device",
+                    "virtio-keyboard-device"
+                ]
+                build_smoke_command("rv", "pre", image, kernel, root=root,
+                                    require_input_node=True)
+            self.assertEqual(build.call_args.args[2]["WOS_GRAPHICS"], "1")
 
     def test_loongarch_smoke_uses_one_gibibyte_default(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -67,6 +84,10 @@ class RootImageQemuSmokeTests(unittest.TestCase):
         failure = parse_root_mount_evidence("[bringup][stage-00-bus] root mount failed: no device")
         self.assertEqual(failure.state, "failure")
         self.assertEqual(parse_root_mount_evidence("booting kernel").state, "absent")
+        self.assertEqual(parse_input_node_evidence(
+            "[driver][test] devfs-node#7 path=/dev/input/event0 type=Character"
+        ).state, "success")
+        self.assertEqual(parse_input_node_evidence("booting kernel").state, "absent")
         self.assertEqual(parse_aux_mount_evidence(
             "[bringup][stage-00-bus] aux ext4 mounted block=/dev/vda2 at /data ro=true"
         ).state, "success")
@@ -97,6 +118,21 @@ class RootImageQemuSmokeTests(unittest.TestCase):
             run_smoke(["qemu-system-riscv64"], root=Path("."), timeout=1,
                       require_aux_mount=True), 0
         )
+
+    @patch("qemu_smoke.subprocess.run")
+    def test_input_node_evidence_is_strict_when_requested(self, run) -> None:
+        run.return_value = type(
+            "Completed", (), {"returncode": 0,
+                               "stdout": "[driver][test] devfs-node#7 path=/dev/input/event0 type=Character\n"}
+        )()
+        self.assertEqual(
+            run_smoke(["qemu-system-riscv64"], root=Path("."), timeout=1,
+                      require_input_node=True), 0
+        )
+        run.return_value.stdout = "booting kernel\n"
+        with self.assertRaisesRegex(SmokeError, "input node evidence missing"):
+            run_smoke(["qemu-system-riscv64"], root=Path("."), timeout=1,
+                      require_input_node=True)
 
     @patch("qemu_smoke.subprocess.run")
     def test_long_running_kernel_can_succeed_after_collecting_mount_evidence(self, run) -> None:

@@ -41,6 +41,7 @@ _ROOT_MOUNT_FAILURE_MARKERS = (
 )
 _AUX_MOUNT_SUCCESS_MARKER = "[bringup][stage-00-bus] aux ext4 mounted"
 _AUX_MOUNT_FAILURE_MARKER = "[bringup][stage-00-bus] aux mount failed"
+_INPUT_NODE_MARKER = "path=/dev/input/event"
 
 
 def parse_root_mount_evidence(output: str) -> RootMountEvidence:
@@ -70,8 +71,17 @@ def parse_aux_mount_evidence(output: str) -> RootMountEvidence:
     return RootMountEvidence("absent")
 
 
+def parse_input_node_evidence(output: str) -> RootMountEvidence:
+    """Classify devfs evidence for a registered evdev input node."""
+    for line in output.splitlines():
+        if _INPUT_NODE_MARKER in line:
+            return RootMountEvidence("success", line)
+    return RootMountEvidence("absent")
+
+
 def build_smoke_command(
-    arch: str, profile: str, image: Path, kernel: Path, *, root: Path
+    arch: str, profile: str, image: Path, kernel: Path, *, root: Path,
+    require_input_node: bool = False,
 ) -> list[str]:
     if not image.is_file():
         raise SmokeError(f"root image does not exist: {image}")
@@ -89,7 +99,11 @@ def build_smoke_command(
                 # The LA virt bring-up needs the same 1 GiB floor used by the
                 # maintained LA launcher; keep RV smoke small for disk tests.
                 "WOS_QEMU_MEM": "1G" if arch == "la" else "256M",
-                "WOS_GRAPHICS": "0",
+                "WOS_GRAPHICS": "1" if require_input_node else "0",
+                # Keep input-device smoke headless; the virtio keyboard/tablet
+                # devices are still instantiated when the display backend is
+                # `none`.
+                "WOS_QEMU_DISPLAY": "none" if require_input_node else "auto",
             },
             root=root,
         )
@@ -104,7 +118,7 @@ def build_smoke_command(
 
 def run_smoke(
     command: list[str], *, root: Path, timeout: float, require_root_mount: bool = False,
-    require_aux_mount: bool = False,
+    require_aux_mount: bool = False, require_input_node: bool = False,
 ) -> int:
     try:
         completed = subprocess.run(
@@ -112,9 +126,9 @@ def run_smoke(
             cwd=root,
             timeout=timeout,
             check=False,
-            stdout=subprocess.PIPE if (require_root_mount or require_aux_mount) else None,
-            stderr=subprocess.STDOUT if (require_root_mount or require_aux_mount) else None,
-            text=require_root_mount or require_aux_mount,
+            stdout=subprocess.PIPE if (require_root_mount or require_aux_mount or require_input_node) else None,
+            stderr=subprocess.STDOUT if (require_root_mount or require_aux_mount or require_input_node) else None,
+            text=require_root_mount or require_aux_mount or require_input_node,
         )
     except FileNotFoundError as error:
         raise SmokeError(f"QEMU binary not found: {command[0]}") from error
@@ -129,7 +143,9 @@ def run_smoke(
                    parse_root_mount_evidence(partial).state == "success")
         aux_ok = (not require_aux_mount or
                   parse_aux_mount_evidence(partial).state == "success")
-        if root_ok and aux_ok:
+        input_ok = (not require_input_node or
+                    parse_input_node_evidence(partial).state == "success")
+        if root_ok and aux_ok and input_ok:
             print("root-image-qemu-smoke: evidence collected before timeout")
             return 0
         raise SmokeError(f"QEMU smoke timed out after {timeout:g}s") from error
@@ -153,6 +169,15 @@ def run_smoke(
             )
         if evidence.line:
             print("root-image-qemu-smoke: aux mount evidence:", evidence.line)
+    if require_input_node:
+        evidence = parse_input_node_evidence(completed.stdout or "")
+        if evidence.state != "success":
+            raise SmokeError(
+                "input node evidence missing (state: "
+                f"{evidence.state}; expected /dev/input/eventN node)"
+            )
+        if evidence.line:
+            print("root-image-qemu-smoke: input node evidence:", evidence.line)
     return 0
 
 
@@ -175,6 +200,11 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="require a successful configured aux-mount log line after QEMU exits",
     )
+    result.add_argument(
+        "--require-input-node",
+        action="store_true",
+        help="require a registered /dev/input/eventN node (enables QEMU graphics/input devices)",
+    )
     result.add_argument("--timeout", type=float, default=30.0)
     return result
 
@@ -194,9 +224,10 @@ def main(argv: list[str] | None = None) -> int:
             manifest_paths(data_manifest) if data_manifest else None,
             manifest_file_contents(data_manifest) if data_manifest else None,
         )
-        command = build_smoke_command(args.arch, args.profile, image, kernel, root=root)
+        command = build_smoke_command(args.arch, args.profile, image, kernel, root=root,
+                                      require_input_node=args.require_input_node)
         print("root-image-qemu-smoke:", shlex.join(command))
-        if (args.require_root_mount or args.require_aux_mount) and not args.execute:
+        if (args.require_root_mount or args.require_aux_mount or args.require_input_node) and not args.execute:
             raise SmokeError("mount evidence options require --execute")
         if args.execute:
             return run_smoke(
@@ -205,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
                 timeout=args.timeout,
                 require_root_mount=args.require_root_mount,
                 require_aux_mount=args.require_aux_mount,
+                require_input_node=args.require_input_node,
             )
     except (ImageError, SmokeError) as error:
         print(f"root-image-qemu-smoke: error: {error}", file=sys.stderr)

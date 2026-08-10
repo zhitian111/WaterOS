@@ -6737,3 +6737,30 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - `[feat] support bounded mbr extended partitions`
+
+## 2026-08-10：批次 160——QEMU 端到端验证 virtio input 与 devfs 节点
+
+### 本批任务与设计
+
+1. 审计 QEMU launcher：图形配置为 1 时才会实例化 virtio keyboard/tablet；默认 smoke 保持无图形、无输入设备。
+2. 新增可选 `--require-input-node`，启用输入设备但强制使用 headless `-display none`，避免 CI/无桌面环境阻塞。
+3. 严格 smoke 要求 guest 输出 `/dev/input/eventN` 节点 marker；timeout 只有在 marker 已收集时成功。
+4. 在 RISC-V QEMU 使用 16 MiB 小 root image、`gui` kernel 和 virtio keyboard/tablet 做真实 guest 验证；不把 LoongArch 当前固件差异伪报为通过。
+
+### 已完成
+
+- [x] `qemu_smoke.py` 增加 input-node evidence parser、CLI 选项和 timeout 判定。
+- [x] QEMU RISC-V devfs sync 输出明确的 `input devfs node path=/dev/input/eventN` marker。
+- [x] 增加命令构建、证据存在/缺失和严格 smoke host 测试。
+- [x] 真实 QEMU 启动日志确认两个 virtio input 已注册：`QEMU Virtio Keyboard` 与 `QEMU Virtio Tablet`；并确认 devfs 发布 `/dev/input/event0` 等节点。
+
+### 验证证据与限制
+
+- `python3 -m unittest discover -s os/scripts/tests -p 'test_root_image*.py'`：18 项通过。
+- `make kernel-rv-pre EXTRA_FEATURES='gui,operator-shell'`：通过。
+- `qemu_smoke.py --arch rv --profile pre --require-input-node --execute`：16 MiB root image、256 MiB RAM、headless QEMU 在 timeout 前收集 input devfs evidence，返回成功。
+- `UNVERIFIED_ON_HARDWARE`：这只验证 QEMU virtio input 到 devfs 的链路；真实 USB host/HID descriptor、IRQ/DMA/cache、热插拔和两块目标板输入电气行为仍待实机。
+
+### 提交
+
+- `[test] verify qemu input devfs nodes`

@@ -11,6 +11,12 @@ pub(crate) fn sync(unsupported_paths: Vec<String>) {
     devfs_impl::set_dt_unsupported_paths(unsupported_paths);
     let node_count = devfs_impl::refresh();
     log::info!("[driver] devfs refreshed, nodes={}", node_count);
+    for node in devfs_impl::list_nodes()
+        .into_iter()
+        .filter(|node| node.path.starts_with("/dev/input/event"))
+    {
+        log::info!("[driver] input devfs node path={}", node.path);
+    }
 }
 
 /// 自检日志：依赖 `logging` 级别；不改变驱动状态。

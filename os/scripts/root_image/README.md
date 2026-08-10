@@ -100,3 +100,8 @@ is reported as a smoke failure. Add `--require-root-mount` when the run must
 also emit a recognized ext4 root-mount line; absent and failed mount evidence
 are rejected. The guest's physical SD/eMMC behavior remains
 `UNVERIFIED_ON_HARDWARE`.
+
+For QEMU input bring-up, add `--require-input-node`. This enables the virtio
+keyboard/tablet devices with a headless display backend and requires a
+`/dev/input/eventN` devfs marker; it does not claim USB host or physical HID
+support on either target board.
