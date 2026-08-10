@@ -25,6 +25,11 @@ def main() -> int:
     parser.add_argument("--sdcard", type=Path, required=True)
     parser.add_argument("--port", type=int, default=22323)
     parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument(
+        "--input",
+        action="store_true",
+        help="enable QEMU keyboard/tablet devices and require /dev/input/event*",
+    )
     args = parser.parse_args()
     if not args.kernel.is_file():
         parser.error(f"kernel not found: {args.kernel}")
@@ -39,6 +44,8 @@ def main() -> int:
         "WOS_QEMU_SNAPSHOT": "1",
         "WOS_REMOTE_DEBUG_PORT": str(args.port),
     })
+    if args.input:
+        environment.update({"WOS_GRAPHICS": "1", "WOS_QEMU_DISPLAY": "none"})
     launch = build_qemu_launch(args.arch, args.profile, environment)
     with tempfile.TemporaryFile() as serial_log:
         process = subprocess.Popen(
@@ -51,7 +58,7 @@ def main() -> int:
         try:
             client = connect_with_retry("127.0.0.1", args.port, args.timeout)
             try:
-                results = run_smoke(client)
+                results = run_smoke(client, expect_input=args.input)
             finally:
                 client.close()
         except BaseException:

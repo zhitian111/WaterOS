@@ -6269,3 +6269,31 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[test] cover loongarch remote debug smoke`
+
+## 2026-08-10：批次 141——用双架构 QEMU 验证 virtio-input 与动态 `/dev`
+
+### 本批任务与设计
+
+1. 审计 virtio-input MMIO/PCI、输入注册表、evdev 字符设备和 kernel devfs refresh，确认代码已有动态 generation，但缺少 QEMU 运行时输入设备证据。
+2. 在 host 客户端 smoke 增加可选 `--input` 模式；该模式让 QEMU 使用 `-display none` 加入 keyboard/tablet 设备，并要求 `devfs` 响应包含 `/dev/input/event*`。
+3. 保持默认 smoke 不依赖 GUI；输入模式只验证设备枚举和 `/dev` 发布，不宣称真实 HID 事件、IRQ、DMA 或热插拔已完成。
+4. 用 16 MiB 临时 GPT 根镜像分别启动 RISC-V virtio-MMIO 与 LoongArch virtio-PCI，测试结束后清理所有产物。
+
+### 已完成
+
+- [x] `run_smoke(..., expect_input=True)` 对输入节点缺失返回协议错误；默认模式行为保持兼容。
+- [x] `remote_debug_qemu_smoke.py --input` 自动设置无显示图形后端，并复用同一远程监控验证序列。
+- [x] fake-server 单测覆盖 `/dev/input/event0` 的 devfs 响应和输入模式断言。
+- [x] RISC-V QEMU（`remote-debug-monitor,operator-shell,gui`）通过，发现 `/dev/input/event0`、`event1`。
+- [x] LoongArch QEMU（同特性）通过，发现 `/dev/input/event0`、`event1`。
+- [x] 输入 API 2 项 host 单测、kernel devfs 动态输入节点测试 1 项通过；双架构 GUI/input 内核构建通过。
+
+### 验证证据与限制
+
+- RISC-V 输出包含 18 个 devfs 节点，LoongArch 输出包含 15 个节点；两者都包含两个 virtio-input event 节点，说明 MMIO/PCI 枚举和 devfs 发布路径在 QEMU 中闭环。
+- `InputDevice` 的注销注释仍要求真实驱动先屏蔽 IRQ、停止 DMA；当前测试只覆盖软件 registry、订阅队列和 evdev rollback。
+- `UNVERIFIED_ON_HARDWARE`：真实键盘/鼠标电气信号、USB HID、IRQ affinity、DMA/cache 一致性、热插拔和事件时间戳仍需 VisionFive 2/2K1000LA 实机；时间戳当前按 API 约定置零。
+
+### 提交
+
+- 本批计划提交：`[test] verify virtio input devfs on qemu`

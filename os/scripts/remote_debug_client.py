@@ -114,7 +114,7 @@ def connect_with_retry(host: str, port: int, timeout: float) -> MonitorClient:
     raise TimeoutError(f"monitor {host}:{port} did not become ready: {last_error}")
 
 
-def run_smoke(client: MonitorClient) -> list[CommandResult]:
+def run_smoke(client: MonitorClient, *, expect_input: bool = False) -> list[CommandResult]:
     client.receive_banner()
     results = [
         client.command("ping"),
@@ -134,6 +134,10 @@ def run_smoke(client: MonitorClient) -> list[CommandResult]:
         raise MonitorProtocolError(f"version failed: {results[2].response!r}")
     if not results[3].response.startswith("devfs generation="):
         raise MonitorProtocolError(f"invalid devfs response: {results[3].response!r}")
+    if expect_input and "/dev/input/event" not in results[3].response:
+        raise MonitorProtocolError(
+            f"input devfs node missing: {results[3].response!r}"
+        )
     capabilities_prefixes = (
         "capabilities ",
         "ERR capabilities ",

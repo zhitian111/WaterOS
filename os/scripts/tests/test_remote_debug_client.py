@@ -46,7 +46,7 @@ class RemoteDebugClientTests(unittest.TestCase):
                         b"heap_capacity=17\r\nwos> "
                     ),
                     b"version\n": b"WaterOS 0.1.0\r\nwos> ",
-                    b"devfs\n": b"devfs generation=2 nodes=1 truncated=false paths=/dev/console\r\nwos> ",
+                    b"devfs\n": b"devfs generation=2 nodes=2 truncated=false paths=/dev/console,/dev/input/event0\r\nwos> ",
                     b"capabilities\n": b"ERR unsupported: capabilities requires loongson2k1000la\r\nwos> ",
                     b"ls2k-mmc\n": (
                         b"ERR unsupported: ls2k-mmc requires loongson2k1000la\r\nwos> "
@@ -62,7 +62,7 @@ class RemoteDebugClientTests(unittest.TestCase):
         thread.start()
         client = MonitorClient(client_socket)
         try:
-            results = run_smoke(client)
+            results = run_smoke(client, expect_input=True)
             self.assertEqual([result.command for result in results],
                              ["ping", "status", "version", "devfs", "capabilities",
                               "ls2k-mmc", "reboot", "quit"])
