@@ -1339,3 +1339,28 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[feat] allocate owned contiguous physical frames`
+
+## 2026-08-10：批次 32——公共 DMA 区间子范围契约
+
+### 任务与设计
+
+1. 审计发现连续帧所有权和 `DmaMapping` 已存在，但 descriptor/data 子区间只能由驱动手工计算 VA/PA，容易越界或破坏对齐。
+2. 在 `DmaRegion` 增加物理末端地址查询和有界 `subregion` 构造，继续不假设 VA=PA。
+3. 让子区间重新经过地址宽度、对齐、溢出和长度验证，为后续 APBDMA/MMC/GMAC descriptor 适配提供公共入口。
+
+### 完成内容
+
+- [x] 新增 `physical_end_exclusive`。
+- [x] 新增 `subregion(offset, length, alignment, device_address_bits)`，拒绝零长度、越界、溢出和不满足新对齐的子区间。
+- [x] 增加连续区域、不同 VA/PA、边界逃逸和对齐失败测试。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path components/wateros-driver/driver-api/api-v0/Cargo.toml --lib`：4 项通过。
+- RISC-V64 裸机目标检查：通过。
+- LoongArch64 裸机目标检查：通过。
+- 公共 API 尚未接入真实 DMA executor；cache coherency、IOMMU 和 allocator→mapping 所有权转换仍需平台实现与实机验证。
+
+### 提交
+
+- `[feat] add bounded dma subregions`

@@ -47,6 +47,38 @@ impl DmaRegion {
     pub const fn physical_address(self) -> u64 { self.physical_address }
     pub const fn length(self) -> usize { self.length }
     pub const fn alignment(self) -> usize { self.alignment }
+
+    /// Physical end address (exclusive), retaining overflow checks.
+    pub fn physical_end_exclusive(self) -> DriverResult<u64> {
+        self.physical_address
+            .checked_add(self.length as u64)
+            .ok_or(DriverError::InvalidParam)
+    }
+
+    /// Derive a bounded subrange without allowing callers to escape the
+    /// original physically contiguous mapping.
+    pub fn subregion(self,
+                     offset : usize,
+                     length : usize,
+                     alignment : usize,
+                     device_address_bits : u8)
+                     -> DriverResult<Self> {
+        let end = offset.checked_add(length).ok_or(DriverError::InvalidParam)?;
+        if length == 0 || end > self.length {
+            return Err(DriverError::InvalidParam);
+        }
+        let virtual_address = self.virtual_address
+                                  .checked_add(offset)
+                                  .ok_or(DriverError::InvalidParam)?;
+        let physical_address = self.physical_address
+                                   .checked_add(offset as u64)
+                                   .ok_or(DriverError::InvalidParam)?;
+        Self::new(virtual_address,
+                  physical_address,
+                  length,
+                  alignment,
+                  device_address_bits)
+    }
 }
 
 /// Platform cache and ordering operations for one physically contiguous region.
@@ -170,5 +202,18 @@ mod tests {
                                                           ..MockCoherency::default() });
         assert_eq!(mapping.prepare_for_device(), Err(DriverError::IoError));
         assert_eq!(mapping.cpu_region(), Ok(region));
+    }
+
+    #[test]
+    fn bounded_subregions_preserve_distinct_addresses_and_reject_escape() {
+        let region = DmaRegion::new(0x8000, 0x1_0000_8000, 4096, 64, 64).unwrap();
+        assert_eq!(region.physical_end_exclusive(), Ok(0x1_0000_9000));
+        let child = region.subregion(512, 1024, 64, 64).unwrap();
+        assert_eq!(child.virtual_address(), 0x8200);
+        assert_eq!(child.physical_address(), 0x1_0000_8200);
+        assert_eq!(child.length(), 1024);
+        assert_eq!(region.subregion(4096, 1, 1, 64), Err(DriverError::InvalidParam));
+        assert_eq!(region.subregion(0, 0, 64, 64), Err(DriverError::InvalidParam));
+        assert_eq!(region.subregion(1, 64, 64, 64), Err(DriverError::InvalidParam));
     }
 }
