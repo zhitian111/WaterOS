@@ -37,16 +37,18 @@ pub(crate) fn with_allocator_interrupt_guard<R>(f : impl FnOnce() -> R) -> R {
     if was_enabled {
         let _ = arch::interrupt::disable_global_interrupt();
     }
-    let depth = local_depth.fetch_add(1, Ordering::Acquire);
+    // Interrupts are disabled before this point and this slot is CPU-local, so
+    // plain atomic load/store keep the recursion guard without locked RMW.
+    let depth = local_depth.load(Ordering::Relaxed);
     if depth > 0 {
-        local_depth.fetch_sub(1, Ordering::Release);
         let _ = arch::interrupt::restore_global_interrupt_state(state);
         panic!("recursive heap allocation detected (cpu={} depth={})",
                cpu.raw(),
                depth + 1);
     }
+    local_depth.store(1, Ordering::Relaxed);
     let ret = f();
-    local_depth.fetch_sub(1, Ordering::Release);
+    local_depth.store(0, Ordering::Relaxed);
     if was_enabled {
         let _ = arch::interrupt::restore_global_interrupt_state(state);
     }
