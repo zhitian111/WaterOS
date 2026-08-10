@@ -1204,3 +1204,28 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[feat] support dw mmc bus widths`
+
+## 2026-08-10：批次 29——VisionFive 2 显式门控 MMC 初始化入口
+
+### 任务与设计
+
+1. 将 bring-up plan、硬件证据和共享 `DwMmc` 初始化连接起来，但不改变启动阶段的自动激活策略。
+2. 新增显式初始化入口：只有静态资源合法且 clock/reset/IRQ/card path 四项证据齐全时，才消费控制器配置并执行轮询初始化。
+3. 使用 fake `RegisterIo` 覆盖成功路径与 NotReady 门控；共享核心错误通过平台错误类型原样传播。
+
+### 完成内容
+
+- [x] 新增 `initialize_controller` 和 `MmcInitializationError`。
+- [x] `bus_width`、目标频率和 FIFO 配置现在通过显式入口传入共享核心。
+- [x] 入口不在 `init_after_boot` 中调用，也不注册块设备。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path os/components/wateros-driver/driver-impl/impl-jh7110-visionfive2/Cargo.toml --lib mmc::tests`：3 项通过。
+- `cargo check --manifest-path os/components/wateros-driver/driver-impl/impl-jh7110-visionfive2/Cargo.toml --target riscv64gc-unknown-none-elf`：通过。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：JH7110 clock/reset/syscon、pinmux、供电、真实 IRQ 路由和卡路径尚未取得实机证据；本入口不会自动解除硬件闸门。
+
+### 提交
+
+- `[feat] gate dw mmc initialization`

@@ -34,6 +34,12 @@ pub enum MmcConfigError {
     MissingFifoDepth,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MmcInitializationError {
+    NotReady,
+    Core(MmcError),
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MmcHardwareEvidence {
     pub clock_verified : bool,
@@ -135,6 +141,29 @@ pub fn bring_up_plan(host : &MmcHostDescription) -> MmcBringUpPlan {
     MmcBringUpPlan { host : host.clone(), blockers }
 }
 
+/// Construct and initialize the shared controller only after explicit board
+/// evidence has been supplied. This function is not called during generic
+/// machine bring-up and does not register a block device.
+pub fn initialize_controller<R : RegisterIo>(plan : &MmcBringUpPlan,
+                                              evidence : MmcHardwareEvidence,
+                                              registers : R,
+                                              input_frequency_hz : u32,
+                                              poll_limit : usize)
+                                              -> Result<DwMmc<R>, MmcInitializationError> {
+    if !plan.activation_ready(evidence) {
+        return Err(MmcInitializationError::NotReady);
+    }
+    let config = plan.controller_config().map_err(|_| MmcInitializationError::NotReady)?;
+    let mut controller = DwMmc::probe(registers, poll_limit)
+        .map_err(MmcInitializationError::Core)?;
+    controller.initialize_polling_with_bus_width(input_frequency_hz,
+                                                 config.target_frequency_hz,
+                                                 config.fifo_depth,
+                                                 config.bus_width)
+               .map_err(MmcInitializationError::Core)?;
+    Ok(controller)
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec;
@@ -186,5 +215,42 @@ mod tests {
         assert!(plan.blockers.contains(&MmcActivationBlocker::MissingSysreg));
         assert!(!plan.can_activate());
         assert_eq!(plan.controller_config(), Err(MmcConfigError::InvalidStaticResources));
+    }
+
+    struct Registers { values : [u32; 32] }
+
+    impl RegisterIo for Registers {
+        fn read32(&mut self, offset : usize) -> Result<u32, MmcError> {
+            if offset == 0x000 || offset == 0x02c || offset == 0x044 {
+                return Ok(0);
+            }
+            self.values.get(offset / 4).copied().ok_or(MmcError::RegisterOutOfRange)
+        }
+
+        fn write32(&mut self, offset : usize, value : u32) -> Result<(), MmcError> {
+            *self.values.get_mut(offset / 4).ok_or(MmcError::RegisterOutOfRange)? = value;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn gated_initializer_consumes_controller_config_only_with_evidence() {
+        let plan = bring_up_plan(&host());
+        let evidence = MmcHardwareEvidence { clock_verified : true,
+                                              reset_verified : true,
+                                              irq_verified : true,
+                                              card_path_verified : true };
+        let initialized = initialize_controller(&plan,
+                                                evidence,
+                                                Registers { values : [0; 32] },
+                                                50_000_000,
+                                                4);
+        assert!(initialized.is_ok(), "initializer failed: {:?}", initialized.err());
+        assert!(matches!(initialize_controller(&plan,
+                                                MmcHardwareEvidence::default(),
+                                                Registers { values: [0; 32] },
+                                                50_000_000,
+                                                4),
+                         Err(MmcInitializationError::NotReady)));
     }
 }
