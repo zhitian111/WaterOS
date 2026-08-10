@@ -31,6 +31,7 @@ enum Command {
     Version,
     Ls2kIrq,
     Ls2kMmc,
+    Capabilities,
     Quit,
     Empty,
     Unknown,
@@ -48,6 +49,7 @@ fn parse_command(line : &[u8]) -> Command {
         "version" => Command::Version,
         "ls2k-irq" => Command::Ls2kIrq,
         "ls2k-mmc" => Command::Ls2kMmc,
+        "capabilities" | "caps" => Command::Capabilities,
         "quit" | "exit" => Command::Quit,
         _ => Command::Unknown,
     }
@@ -69,7 +71,7 @@ fn send_all(socket : &SocketRef, mut data : &[u8]) -> Result<(), SocketSendError
 fn command_response(command : Command) -> (alloc::string::String, bool) {
     match command {
         Command::Help => (alloc::string::String::from("commands: help, ping, status, version, \
-                                                       ls2k-irq, ls2k-mmc, quit\r\n"),
+                                                       capabilities, ls2k-irq, ls2k-mmc, quit\r\n"),
                           false),
         Command::Ping => (alloc::string::String::from("pong\r\n"), false),
         Command::Status => {
@@ -88,12 +90,36 @@ fn command_response(command : Command) -> (alloc::string::String, bool) {
                              false),
         Command::Ls2kIrq => (ls2k_irq_response(), false),
         Command::Ls2kMmc => (ls2k_mmc_response(), false),
+        Command::Capabilities => (capabilities_response(), false),
         Command::Quit => (alloc::string::String::from("bye\r\n"), true),
         Command::Empty => (alloc::string::String::new(), false),
         Command::Unknown => {
             (alloc::string::String::from("unknown command; type 'help'\r\n"), false)
         }
     }
+}
+
+#[cfg(feature = "loongson2k1000la")]
+fn capabilities_response() -> alloc::string::String {
+    let Some(snapshot) = driver::loongson2k1000_capability_snapshot() else {
+        return alloc::string::String::from("capabilities unavailable\r\n");
+    };
+    format!("capabilities uart={} irq={} mmc={} dma={} states=uart:{:?},irq:{:?},mmc:{:?},dma:{:?},network:{:?},input:{:?}\r\n",
+            snapshot.uart_count,
+            snapshot.irq_controller_count,
+            snapshot.mmc_count,
+            snapshot.dma_controller_count,
+            snapshot.uart,
+            snapshot.irq,
+            snapshot.mmc,
+            snapshot.dma,
+            snapshot.network,
+            snapshot.input)
+}
+
+#[cfg(not(feature = "loongson2k1000la"))]
+fn capabilities_response() -> alloc::string::String {
+    alloc::string::String::from("ERR unsupported: capabilities requires loongson2k1000la\r\n")
 }
 
 #[cfg(feature = "loongson2k1000la")]
@@ -287,6 +313,7 @@ mod tests {
         assert_eq!(parse_command(b"exit"), Command::Quit);
         assert_eq!(parse_command(b"ls2k-irq"),
                    Command::Ls2kIrq);
+        assert_eq!(parse_command(b" caps "), Command::Capabilities);
         assert_eq!(parse_command(b" ls2k-mmc "), Command::Ls2kMmc);
         assert_eq!(parse_command(b"\t"), Command::Empty);
     }
@@ -321,5 +348,14 @@ mod tests {
                    "ERR unavailable: ls2k-mmc requires loongarch64 target\r\n");
         #[cfg(all(feature = "loongson2k1000la", target_arch = "loongarch64"))]
         assert!(response.starts_with("ls2k-mmc ") || response.starts_with("ERR ls2k-mmc "));
+    }
+
+    #[test]
+    fn capabilities_command_is_read_only_and_profile_gated() {
+        let (response, close) = super::command_response(Command::Capabilities);
+        assert!(!close);
+        #[cfg(not(feature = "loongson2k1000la"))]
+        assert_eq!(response,
+                   "ERR unsupported: capabilities requires loongson2k1000la\r\n");
     }
 }

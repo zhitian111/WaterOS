@@ -127,6 +127,14 @@ pub fn loongson2k1000_irq_diagnostic_snapshot()
     impl_loongson2k1000la::diagnostic_irq::snapshot()
 }
 
+/// Read-only 2K1000 capability summary for diagnostics. Discovery does not
+/// imply that any hardware block has been activated.
+#[cfg(feature = "impl-loongson2k1000la")]
+pub fn loongson2k1000_capability_snapshot()
+    -> Option<impl_loongson2k1000la::topology::BoardCapabilitySnapshot> {
+    impl_loongson2k1000la::capability_snapshot()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Loongson2k1000MmcDiagnosticError {
     Busy,

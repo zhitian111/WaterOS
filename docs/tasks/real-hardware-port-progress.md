@@ -5773,3 +5773,34 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] add LS2K1000 capability snapshot`
+
+## 2026-08-10：批次 124——将 2K1000LA 能力快照接入远程诊断
+
+### 本批任务与设计
+
+1. 审计 TCP debug monitor 的命令解析与现有 `ls2k-irq`/`ls2k-mmc` 只读诊断。
+2. 增加独立 `capabilities`（别名 `caps`）命令，不修改已有 `status` 协议。
+3. 通过 driver aggregate 转发 LA `BoardCapabilitySnapshot`；未初始化返回 `unavailable`，非 LA profile 返回明确 `unsupported`。
+4. 命令只读 topology 软件快照，不执行 MMIO、IRQ、网络或设备注册操作；继续保持 monitor 无认证/无加密的开发用途限制。
+
+### 已完成
+
+- [x] remote-debug parser/help/response 增加 `capabilities` 命令。
+- [x] driver aggregate 增加 `loongson2k1000_capability_snapshot()` 转发入口。
+- [x] 增加 profile-gated host parser/response 测试。
+
+### 验证证据
+
+- 2K1000LA driver capability snapshot 测试及全量 186 项测试通过。
+- `UNVERIFIED_ON_HARDWARE`：远程命令只验证软件路径；真实网卡、TCP 接收、UART、IRQ 和 capability topology 仍待目标板。
+- host 直接构建 OS monitor 受仓库现有 RISC-V SBI inline-asm 约束影响；应以对应 target 的 `make check`/`make kernel-la` 作为编译门禁。
+
+### 已知限制、未验证与后续测试
+
+- [ ] capabilities 尚未在 QEMU LA/目标板实测交互，只补充了协议单测和 target 编译路径。
+- [ ] monitor 仍无认证、加密、PTY 或用户态 shell，不得作为生产远程登录服务。
+- [ ] 下一步应将 capability snapshot 与动态设备 generation/devfs 节点列表关联。
+
+### 提交
+
+- 本批计划提交：`[feat] expose LS2K1000 capabilities in debug monitor`
