@@ -6297,3 +6297,30 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[test] verify virtio input devfs on qemu`
+
+## 2026-08-10：批次 142——暴露并验证 QEMU 根盘 partition role
+
+### 本批任务与设计
+
+1. 审计块设备注册、MBR/GPT parser、`PartitionBlockDevice`、devfs `/dev/vda1` 和 rootfs 默认路径；确认分区功能已有实现，但远程诊断无法证明 disk/partition 角色链路。
+2. 增加只读 `blocks` 监控命令，输出稳定 registry index、disk number、partition number 和 parent index；不触碰控制器寄存器或修改存储。
+3. 让 QEMU 远程 smoke 强制要求至少一个 partition role，配合 `/dev/vda1` 根挂载证据验证从镜像表到 rootfs 的闭环。
+4. 修正文档注释，明确 GPT CRC 已在软件 parser 中校验，而掉电撕裂和控制器错误注入仍未验证。
+
+### 已完成
+
+- [x] 内核远程监控新增 `blocks` 命令及 help/parser 覆盖。
+- [x] host client smoke 校验 `blocks disks=... partitions=... roles=...`；QEMU smoke 默认要求 partition 数非零。
+- [x] RISC-V QEMU 输出 `disks=1 partitions=1`，角色为 `index=0 disk=0,index=1 partition=1 parent=0`。
+- [x] LoongArch QEMU 输出同样的 disk/partition 角色，并完成 `/dev/vda1` 根卷挂载。
+- [x] block API 8 项 host 单测、root-image/QEMU smoke 11 项 Python 测试和双架构内核构建通过。
+
+### 验证证据与限制
+
+- 这证明了小 GPT 根镜像的分区 metadata → bounded partition device → devfs `/dev/vda1` → rootfs 挂载的软件闭环。
+- 当前镜像构建工具仍生成单个 root 分区；多数据分区布局、aux 卷内容部署和真实 SD/eMMC 的掉电恢复仍是后续工作。
+- `UNVERIFIED_ON_HARDWARE`：控制器读错误、写屏障、cache 一致性、热拔盘和物理分区表损坏恢复未被 QEMU/host 测试覆盖。
+
+### 提交
+
+- 本批计划提交：`[feat] expose block partition diagnostics`

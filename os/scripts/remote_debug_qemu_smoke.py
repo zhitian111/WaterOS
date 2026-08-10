@@ -58,7 +58,7 @@ def main() -> int:
         try:
             client = connect_with_retry("127.0.0.1", args.port, args.timeout)
             try:
-                results = run_smoke(client, expect_input=args.input)
+                results = run_smoke(client, expect_input=args.input, expect_partition=True)
             finally:
                 client.close()
         except BaseException:

@@ -114,12 +114,14 @@ def connect_with_retry(host: str, port: int, timeout: float) -> MonitorClient:
     raise TimeoutError(f"monitor {host}:{port} did not become ready: {last_error}")
 
 
-def run_smoke(client: MonitorClient, *, expect_input: bool = False) -> list[CommandResult]:
+def run_smoke(client: MonitorClient, *, expect_input: bool = False,
+              expect_partition: bool = False) -> list[CommandResult]:
     client.receive_banner()
     results = [
         client.command("ping"),
         client.command("status"),
         client.command("version"),
+        client.command("blocks"),
         client.command("devfs"),
         client.command("capabilities"),
         client.command("ls2k-mmc"),
@@ -132,20 +134,24 @@ def run_smoke(client: MonitorClient, *, expect_input: bool = False) -> list[Comm
         raise MonitorProtocolError(f"incomplete status: {results[1].response!r}")
     if not results[2].response.startswith("WaterOS "):
         raise MonitorProtocolError(f"version failed: {results[2].response!r}")
-    if not results[3].response.startswith("devfs generation="):
-        raise MonitorProtocolError(f"invalid devfs response: {results[3].response!r}")
-    if expect_input and "/dev/input/event" not in results[3].response:
+    if not results[3].response.startswith("blocks disks="):
+        raise MonitorProtocolError(f"invalid blocks response: {results[3].response!r}")
+    if expect_partition and "partitions=0" in results[3].response:
+        raise MonitorProtocolError(f"partition metadata missing: {results[3].response!r}")
+    if not results[4].response.startswith("devfs generation="):
+        raise MonitorProtocolError(f"invalid devfs response: {results[4].response!r}")
+    if expect_input and "/dev/input/event" not in results[4].response:
         raise MonitorProtocolError(
-            f"input devfs node missing: {results[3].response!r}"
+            f"input devfs node missing: {results[4].response!r}"
         )
     capabilities_prefixes = (
         "capabilities ",
         "ERR capabilities ",
         "ERR unsupported: capabilities ",
     )
-    if not results[4].response.startswith(capabilities_prefixes):
+    if not results[5].response.startswith(capabilities_prefixes):
         raise MonitorProtocolError(
-            f"invalid capabilities response: {results[4].response!r}"
+            f"invalid capabilities response: {results[5].response!r}"
         )
     mmc_prefixes = (
         "ls2k-mmc ",
@@ -153,10 +159,10 @@ def run_smoke(client: MonitorClient, *, expect_input: bool = False) -> list[Comm
         "ERR unavailable: ls2k-mmc ",
         "ERR unsupported: ls2k-mmc ",
     )
-    if not results[5].response.startswith(mmc_prefixes):
-        raise MonitorProtocolError(f"invalid ls2k-mmc response: {results[5].response!r}")
-    if results[6].response != "unknown command; type 'help'\r\n":
-        raise MonitorProtocolError(f"unknown-command guard failed: {results[6].response!r}")
+    if not results[6].response.startswith(mmc_prefixes):
+        raise MonitorProtocolError(f"invalid ls2k-mmc response: {results[6].response!r}")
+    if results[7].response != "unknown command; type 'help'\r\n":
+        raise MonitorProtocolError(f"unknown-command guard failed: {results[7].response!r}")
     results.append(client.quit())
     return results
 

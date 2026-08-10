@@ -32,6 +32,7 @@ enum Command {
     Ls2kIrq,
     Ls2kMmc,
     Capabilities,
+    Blocks,
     Devfs,
     Quit,
     Empty,
@@ -51,6 +52,7 @@ fn parse_command(line : &[u8]) -> Command {
         "ls2k-irq" => Command::Ls2kIrq,
         "ls2k-mmc" => Command::Ls2kMmc,
         "capabilities" | "caps" => Command::Capabilities,
+        "blocks" => Command::Blocks,
         "devfs" => Command::Devfs,
         "quit" | "exit" => Command::Quit,
         _ => Command::Unknown,
@@ -73,7 +75,7 @@ fn send_all(socket : &SocketRef, mut data : &[u8]) -> Result<(), SocketSendError
 fn command_response(command : Command) -> (alloc::string::String, bool) {
     match command {
         Command::Help => (alloc::string::String::from("commands: help, ping, status, version, \
-                                                       capabilities, devfs, ls2k-irq, ls2k-mmc, quit\r\n"),
+                                                       capabilities, blocks, devfs, ls2k-irq, ls2k-mmc, quit\r\n"),
                           false),
         Command::Ping => (alloc::string::String::from("pong\r\n"), false),
         Command::Status => {
@@ -93,6 +95,7 @@ fn command_response(command : Command) -> (alloc::string::String, bool) {
         Command::Ls2kIrq => (ls2k_irq_response(), false),
         Command::Ls2kMmc => (ls2k_mmc_response(), false),
         Command::Capabilities => (capabilities_response(), false),
+        Command::Blocks => (blocks_response(), false),
         Command::Devfs => (devfs_response(), false),
         Command::Quit => (alloc::string::String::from("bye\r\n"), true),
         Command::Empty => (alloc::string::String::new(), false),
@@ -120,6 +123,37 @@ fn devfs_response() -> alloc::string::String {
             nodes.len(),
             truncated,
             paths)
+}
+
+/// Return the read-only block registry roles used to construct `/dev/vd*`.
+/// This is intentionally metadata only: it does not probe or mutate storage.
+fn blocks_response() -> alloc::string::String {
+    let snapshot = driver::block::block_devices_snapshot();
+    let disks = snapshot.iter().filter(|(_, _, role)| {
+        matches!(role, driver::block::BlockDeviceRole::Disk { .. })
+    }).count();
+    let partitions = snapshot.len().saturating_sub(disks);
+    let mut roles = alloc::string::String::new();
+    for (position, (index, _, role)) in snapshot.iter().enumerate() {
+        if position != 0 {
+            roles.push(',');
+        }
+        match role {
+            driver::block::BlockDeviceRole::Disk { disk_number } => {
+                roles.push_str(&format!("index={} disk={}", index, disk_number));
+            }
+            driver::block::BlockDeviceRole::Partition {
+                parent_device_index,
+                partition_number,
+            } => {
+                roles.push_str(&format!("index={} partition={} parent={}",
+                                        index,
+                                        partition_number,
+                                        parent_device_index));
+            }
+        }
+    }
+    format!("blocks disks={} partitions={} roles={}\r\n", disks, partitions, roles)
 }
 
 #[cfg(feature = "loongson2k1000la")]
@@ -339,6 +373,7 @@ mod tests {
                    Command::Ls2kIrq);
         assert_eq!(parse_command(b" caps "), Command::Capabilities);
         assert_eq!(parse_command(b" devfs "), Command::Devfs);
+        assert_eq!(parse_command(b" blocks "), Command::Blocks);
         assert_eq!(parse_command(b" ls2k-mmc "), Command::Ls2kMmc);
         assert_eq!(parse_command(b"\t"), Command::Empty);
     }

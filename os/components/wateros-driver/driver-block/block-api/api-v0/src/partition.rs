@@ -112,10 +112,10 @@ pub fn scan_mbr(device : &SharedBlockDevice) -> Result<Vec<MbrPartition>, Partit
 
 /// Read the primary GPT header and bounded partition-entry array.
 ///
-/// The header and entry-array CRCs are deliberately not checked yet: the
-/// parser validates signatures, ranges, sizes, and overlap before exposing a
-/// partition. CRC verification remains `UNVERIFIED_ON_HARDWARE` until the
-/// target storage path has a tested checksum implementation.
+/// The parser validates signatures, ranges, sizes, overlap, and both primary
+/// GPT header/entry-array CRCs before exposing a partition. This proves the
+/// image metadata contract in software; storage-controller error injection and
+/// torn-write recovery remain `UNVERIFIED_ON_HARDWARE`.
 pub fn scan_gpt(device : &SharedBlockDevice) -> Result<Vec<GptPartition>, PartitionScanError> {
     let (total_blocks, mut header) = {
         let mut device = device.lock();
