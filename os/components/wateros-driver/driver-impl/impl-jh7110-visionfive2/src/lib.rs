@@ -52,13 +52,15 @@ impl MachineDriver for Machine {
                                         plic.contexts.len());
                          }
                          for host in &board.mmc_hosts {
-                             log::info!("[driver][visionfive2] MMC host discovered base={:#x} \
-                                         irq={} width={} max_hz={:?}; clock/reset/card bring-up \
-                                         status=UNVERIFIED",
-                                        host.mmio.base,
-                                        host.irq,
-                                        host.bus_width,
-                                        host.max_frequency_hz);
+                             let plan = mmc::bring_up_plan(host);
+                             log::info!("[driver][visionfive2] MMC bring-up plan base={:#x} \
+                                         irq={} width={} max_hz={:?} blockers={:?}; \
+                                         activation=UNVERIFIED",
+                                        plan.host.mmio.base,
+                                        plan.host.irq,
+                                        plan.host.bus_width,
+                                        plan.host.max_frequency_hz,
+                                        plan.blockers);
                          }
                          Ok(())
                      });

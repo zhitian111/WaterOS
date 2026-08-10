@@ -1108,3 +1108,27 @@ python3 scripts/remote_debug_qemu_smoke.py \
 ### 提交
 
 - `[ref] reuse shared MMC core on VisionFive 2`
+
+## 2026-08-10：批次 25——VisionFive 2 MMC 分阶段 bring-up 计划
+
+### 任务与设计
+
+1. 审计发现平台启动只打印原始 MMC DTB 描述，没有把资源完整性和硬件未验证状态结构化。
+2. 新增平台层 `MmcBringUpPlan`，检查 MMIO、IRQ、bus width、BIU/CIU clock、reset 和 syscon 资源。
+3. 无论 DTB 静态资源是否完整，计划都保留 `HardwareEvidence` blocker；共享 `DwMmc` 核心和块设备注册不被自动激活。
+
+### 完成内容
+
+- [x] 新增 `MmcActivationBlocker`、`MmcBringUpPlan` 和 `bring_up_plan`。
+- [x] `init_after_boot` 改为输出 bring-up blockers，而不是把原始描述误作已准备硬件。
+- [x] 增加合法资源与 malformed 资源两组纯逻辑测试。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path components/wateros-driver/driver-impl/impl-jh7110-visionfive2/Cargo.toml --lib`：9 项通过。
+- `cargo check --manifest-path components/wateros-driver/driver-impl/impl-jh7110-visionfive2/Cargo.toml --target riscv64gc-unknown-none-elf`：通过。
+- `UNVERIFIED_ON_HARDWARE`：JH7110 clock/reset/syscon、pinmux、供电、card-detect、MMC 响应顺序及 SD 卡读写仍需实机；当前仍是轮询/PIO/单块只读路径。
+
+### 提交
+
+- `[feat] add visionfive2 mmc bringup plan`
