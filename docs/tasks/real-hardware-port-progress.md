@@ -4913,3 +4913,51 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] bound LS2K1000 masked MMC rechecks`
+
+## 2026-08-10：批次 101——线性收集 MMC timeout/fault 恢复证据
+
+### 本批任务与设计
+
+1. 将 bounded recheck 的 Timeout 与 RecheckFault 统一建模为可记录的 recovery cause，保留 polls_completed、remaining 与精确底层错误。
+2. 最终 recovery report 必须同时携带 transaction、MMC partial accumulator 和两路 owner drain receipt。
+3. 普通 `ArmedReadIrqs` 不能证明 DMA 已停止；新增只能在 quiesced DMA 完成 cache ownership 回收后产生的线性 recovery token。
+4. report 生成前先校验 runtime slot、owner variant 与两侧 generation；任一不匹配时不得清 accumulator 或消费 receipt。
+5. report 只做软件状态取证/退役，不访问额外寄存器、不解释 completion 成功，也不 rearm 中断源。
+
+### 已完成
+
+- [x] 新增 `ReadRecoveryCause::{Timeout,RecheckFault}`；fault 从 `BoundedMmcReadRecheckFailure::recovery_cause` 推导，错误与轮询统计不会由调用方重新拼接。
+- [x] 新增 must-use `QuiescedReadIrqs`，只有 `IrqArmedReadDmaSession<QuiescedSession>::finish_recovery` 能构造。
+- [x] `finish_recovery` 先完成 descriptor/payload cache ownership 回收；失败继续返还原 quiesced session，不会伪造 recovery-ready token。
+- [x] 新增 must-use `ReadRecoveryReport`，线性携带 transaction、cause、`partial_mmc_interrupts` 与 `DrainedReadIrqs`。
+- [x] 新增 `retire_quiesced_read_recovery`：先双 slot/variant/generation 预检，再在 drain 清零前捕获 MMC accumulator。
+- [x] 新增 `ReadRecoveryRetireFailure`；失败返还原 cause 与 `QuiescedReadIrqs`，runtime owners 和 receipts 保持可重试。
+- [x] timeout 模型升级为 empty→`CSENT-only`，同时模拟 DMA 已 Pending；最终 report 保留 partial `CSENT` 和原 DMA acknowledged receipt。
+- [x] production publish permit、APBDMA status decoder、真实 activation 与 IRQ rearm 继续保持关闭。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 167 项全部通过；新增 wrong-generation recovery report 原子保持测试 1 项，并升级 timeout 集成测试。
+- timeout report 只能在 Published DMA stop 后调用 `finish_recovery` 获得 token；此时 descriptor/payload mappings 已回到 CPU-owned。
+- 两步预算观察 empty、`CSENT-only` 后 Timeout，report 的 polls_completed 为 2、partial MMC bits 精确为 `1 << 6`。
+- 同一 report 返回 MMC receipt None 和已 Pending DMA 的原 acknowledged IRQ receipt，证明 partial MMC 与 DMA evidence 没有互相覆盖。
+- wrong generation 的 quiesced token 返回 MMC/WrongTransaction，cause 与 token 均可恢复；当前 generation 的 MMC/DMA owners 仍为 Armed 且随后可正常 drain。
+- unknown-only status 与寄存器 read I/O fault 均形成精确 RecheckFault；有效采样数不增加，remaining 分别保持 1 和 3。
+- production 组件 test/check、RISC-V `make check` 与 LoongArch64 `make kernel-la` 全部通过；仅有仓库既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过；dtc warning 来自预期畸形输入。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：partial accumulator 只证明软件已 read/W1C 的位，不证明 MMC source masked 时没有新状态在 report 捕获后到达。
+- [ ] `UNVERIFIED_ON_HARDWARE`：APBDMA stop confirmation 和 cache maintenance 顺序仍只有寄存器模型/typestate 测试，没有 2K1000LA 实机证据。
+- [ ] recovery report 没有 wall-clock timestamp/deadline，只保存 bounded step 统计；生产 scheduler 尚未提供时间来源和 backoff 策略。
+- [ ] `RecheckFault` 目前覆盖 unknown status 与 read I/O；W1C write I/O 已由底层测试覆盖，但尚缺贯穿完整 stop/report 链路的注入测试。
+- [ ] recovery report 当前保留 raw MMC bitmask 和 DMA receipt，不含 descriptor raw status，因为 timeout 路径尚未进入可信 production status decoder。
+- [ ] production worker/runtime 尚未保存 coordinator、Published session 或 report；本批只建立可安全组合的线性 API。
+- [ ] test-only publish permit 仍是端到端模型入口；真实 MMC/APBDMA 激活、completion worker 与块层错误上报尚未接通。
+- [ ] IRQ rearm 继续关闭；真机验证 condition clear、DMA idle 和迟到 IRQ generation 窗口前不可启用。
+- [ ] 下一批应为 production runtime 增加不激活硬件的 read coordinator storage/slot，验证 reserve→publish-state→recheck-state→recovery-report 的独占生命周期与重入拒绝。
+
+### 提交
+
+- 本批计划提交：`[feat] report LS2K1000 read recovery evidence`

@@ -110,6 +110,20 @@ pub struct BoundedMmcReadRecheckFailure {
     pub recheck : BoundedMmcReadRecheck,
 }
 
+impl BoundedMmcReadRecheckFailure {
+    pub const fn recovery_cause(&self) -> Option<ReadRecoveryCause> {
+        match self.error {
+            BoundedMmcReadRecheckError::Recheck(error) =>
+                Some(ReadRecoveryCause::RecheckFault {
+                    error,
+                    polls_completed : self.recheck.polls_completed,
+                    remaining : self.recheck.remaining,
+                }),
+            _ => None,
+        }
+    }
+}
+
 impl BoundedMmcReadRecheck {
     pub const fn new(transaction : ReadTransactionId,
                      poll_budget : u16) -> Result<Self, BoundedMmcReadRecheckError> {
@@ -234,6 +248,27 @@ pub struct DrainedReadIrqs {
     pub dma : Option<ApbDmaReadIrqReceipt>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadRecoveryCause {
+    Timeout {
+        polls_completed : u16,
+    },
+    RecheckFault {
+        error : MmcReadRecheckError,
+        polls_completed : u16,
+        remaining : u16,
+    },
+}
+
+#[derive(Debug)]
+#[must_use = "retain the read recovery evidence for diagnostics"]
+pub struct ReadRecoveryReport {
+    pub transaction : ReadTransactionId,
+    pub cause : ReadRecoveryCause,
+    pub partial_mmc_interrupts : u32,
+    pub drained : DrainedReadIrqs,
+}
+
 #[derive(Debug)]
 #[must_use = "apply both same-generation IRQ receipts or retain them for recovery"]
 pub struct ReadyReadIrqPair {
@@ -264,6 +299,21 @@ impl ArmedReadIrqs {
     #[cfg(test)]
     pub(crate) const fn fixture(transaction : ReadTransactionId) -> Self {
         Self { transaction }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+#[must_use = "retire the quiesced read IRQ generation and retain its recovery report"]
+pub struct QuiescedReadIrqs {
+    armed : ArmedReadIrqs,
+}
+
+impl QuiescedReadIrqs {
+    pub const fn transaction(&self) -> ReadTransactionId { self.armed.transaction }
+
+    #[cfg(test)]
+    const fn fixture(transaction : ReadTransactionId) -> Self {
+        Self { armed : ArmedReadIrqs::fixture(transaction) }
     }
 }
 
@@ -520,6 +570,20 @@ impl<'a, D : DmaCoherency, P : DmaCoherency>
             }),
         }
     }
+
+    /// Finish cache ownership recovery and mint the only token accepted by
+    /// `retire_quiesced_read_recovery`.
+    pub fn finish_recovery(self)
+        -> Result<QuiescedReadIrqs,
+                  crate::apbdma::SessionFailure<DriverError, Self>> {
+        match self.session.finish() {
+            Ok(()) => Ok(QuiescedReadIrqs { armed : self.armed }),
+            Err(failure) => Err(crate::apbdma::SessionFailure {
+                error : failure.error,
+                session : Self { armed : self.armed, session : failure.session },
+            }),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -669,6 +733,17 @@ impl ReadIrqRetireFailure {
     pub fn into_armed(self) -> ArmedReadIrqs { self.armed }
 }
 
+#[must_use = "recover the quiesced generation and retry retirement"]
+pub struct ReadRecoveryRetireFailure {
+    pub error : ReadIrqRetireError,
+    pub cause : ReadRecoveryCause,
+    quiesced : QuiescedReadIrqs,
+}
+
+impl ReadRecoveryRetireFailure {
+    pub fn into_quiesced(self) -> QuiescedReadIrqs { self.quiesced }
+}
+
 /// Reserve two runtime owner slots and arm the expected MMC/APBDMA variants.
 pub fn reserve_read_irq_owners<'a, I, R>(
     runtime : &'a mut crate::irq_runtime::BoardIrqRuntime<I, BoardIrqOwner<R>>,
@@ -721,6 +796,63 @@ where I : crate::liointc::RegisterIo
     };
     drain_read_owners(mmc, dma, transaction).map_err(|error| ReadIrqRetireFailure {
         error : ReadIrqRetireError::Drain(error), armed,
+    })
+}
+
+/// Capture generation-local partial MMC evidence and retire both owners only
+/// after DMA stop and cache recovery produced a `QuiescedReadIrqs` token.
+/// This is software-state retirement only; both interrupt sources stay masked.
+pub fn retire_quiesced_read_recovery<I, R>(
+    runtime : &mut crate::irq_runtime::BoardIrqRuntime<I, BoardIrqOwner<R>>,
+    mmc_irq : GlobalIrq,
+    dma_irq : GlobalIrq,
+    quiesced : QuiescedReadIrqs,
+    cause : ReadRecoveryCause)
+    -> Result<ReadRecoveryReport, ReadRecoveryRetireFailure>
+where I : crate::liointc::RegisterIo
+{
+    let transaction = quiesced.armed.transaction;
+    let (mmc, dma) = match runtime.owners_mut(mmc_irq, dma_irq) {
+        Ok(owners) => owners,
+        Err(error) => {
+            return Err(ReadRecoveryRetireFailure {
+                error : ReadIrqRetireError::Runtime(error), cause, quiesced,
+            });
+        },
+    };
+    let BoardIrqOwner::MmcCommand(mmc) = mmc else {
+        return Err(ReadRecoveryRetireFailure {
+            error : ReadIrqRetireError::MmcOwnerVariant, cause, quiesced,
+        });
+    };
+    let BoardIrqOwner::ApbDmaDeferred(dma) = dma else {
+        return Err(ReadRecoveryRetireFailure {
+            error : ReadIrqRetireError::DmaOwnerVariant, cause, quiesced,
+        });
+    };
+    if let Err(error) = validate_binding(mmc.read_binding(), transaction) {
+        return Err(ReadRecoveryRetireFailure {
+            error : ReadIrqRetireError::Drain(ReadPairOwnerFailure {
+                owner : ReadPairOwner::Mmc, error,
+            }),
+            cause,
+            quiesced,
+        });
+    }
+    if let Err(error) = validate_binding(dma.read_binding(), transaction) {
+        return Err(ReadRecoveryRetireFailure {
+            error : ReadIrqRetireError::Drain(ReadPairOwnerFailure {
+                owner : ReadPairOwner::Dma, error,
+            }),
+            cause,
+            quiesced,
+        });
+    }
+    let partial_mmc_interrupts = mmc.read_interrupts;
+    let drained = drain_read_owners(mmc, dma, transaction)
+        .expect("bindings were validated before recovery drain");
+    Ok(ReadRecoveryReport {
+        transaction, cause, partial_mmc_interrupts, drained,
     })
 }
 
@@ -1126,10 +1258,12 @@ mod tests {
     struct MockRegisters {
         status : u32,
         writes : Vec<(usize, u32)>,
+        fail_read : bool,
     }
 
     impl RegisterIo for MockRegisters {
         fn read32(&mut self, offset : usize) -> Result<u32, MmcError> {
+            if self.fail_read { return Err(MmcError::RegisterOutOfRange); }
             if offset == REG_INT { Ok(self.status) } else { Err(MmcError::RegisterOutOfRange) }
         }
         fn write32(&mut self, offset : usize, value : u32) -> Result<(), MmcError> {
@@ -1168,7 +1302,7 @@ mod tests {
     fn mmc_owner_persists_state_through_owner_table() {
         let irq = GlobalIrq::from_bank_local(0, 31).unwrap();
         let owner = BoardIrqOwner::MmcCommand(MmcCommandOwner::new(
-            irq, MockRegisters { status : COMMAND_SENT, writes : Vec::new() }));
+            irq, MockRegisters { status : COMMAND_SENT, ..MockRegisters::default() }));
         let mut table = IrqOwnerTable::new();
         table.register(irq, owner).unwrap_or_else(|_| panic!("register failed"));
         let active = table.begin(acknowledged(irq)).unwrap();
@@ -1251,7 +1385,7 @@ mod tests {
         let dma_irq = GlobalIrq::from_bank_local(1, 13).unwrap();
         let mut mmc = MmcCommandOwner::new(
             mmc_irq,
-            MockRegisters { status : COMMAND_SENT | 1, writes : Vec::new() });
+            MockRegisters { status : COMMAND_SENT | 1, ..MockRegisters::default() });
         let mut dma = DeferredApbDmaOwner::new(dma_irq);
         mmc.arm_read(current).unwrap();
         dma.arm_read(current).unwrap();
@@ -1289,7 +1423,7 @@ mod tests {
         let dma_irq = GlobalIrq::from_bank_local(1, 13).unwrap();
         let mut mmc = MmcCommandOwner::new(
             mmc_irq,
-            MockRegisters { status : COMMAND_SENT | 1, writes : Vec::new() });
+            MockRegisters { status : COMMAND_SENT | 1, ..MockRegisters::default() });
         assert_eq!(mmc.arm_read(first), Ok(()));
         assert_eq!(mmc.arm_read(second), Err(ReadIrqOwnerError::AlreadyArmed));
         assert_eq!(mmc.handle(acknowledged(mmc_irq)), IrqDisposition::KeepMasked);
@@ -1316,7 +1450,7 @@ mod tests {
         let mmc_irq = GlobalIrq::from_bank_local(0, 31).unwrap();
         let mut mmc = MmcCommandOwner::new(
             mmc_irq,
-            MockRegisters { status : COMMAND_SENT, writes : Vec::new() });
+            MockRegisters { status : COMMAND_SENT, ..MockRegisters::default() });
         mmc.arm_read(current).unwrap();
         assert_eq!(mmc.handle(acknowledged(mmc_irq)), IrqDisposition::KeepMasked);
         assert_eq!(mmc.read_binding(), Some(ReadIrqOwnerBinding::Armed(current)));
@@ -1411,9 +1545,29 @@ mod tests {
         assert_eq!(failure.error,
                    BoundedMmcReadRecheckError::Recheck(MmcReadRecheckError::Ack(
                        MmcIrqAckError::UnknownPending(1 << 20))));
+        assert_eq!(failure.recovery_cause(),
+                   Some(ReadRecoveryCause::RecheckFault {
+                       error : MmcReadRecheckError::Ack(
+                           MmcIrqAckError::UnknownPending(1 << 20)),
+                       polls_completed : 0,
+                       remaining : 1,
+                   }));
         let mmc = runtime.owner_mut(mmc_irq).unwrap();
         let BoardIrqOwner::MmcCommand(mmc) = mmc else { panic!("wrong MMC variant") };
         assert_eq!(mmc.read_binding(), Some(ReadIrqOwnerBinding::Armed(timeout)));
+        mmc.registers_mut().fail_read = true;
+        let failure = BoundedMmcReadRecheck::new(timeout, 3).unwrap()
+            .step(&mut runtime, mmc_irq).unwrap_err();
+        let io_error = MmcReadRecheckError::Ack(MmcIrqAckError::Io(
+            MmcError::RegisterOutOfRange));
+        assert_eq!(failure.error, BoundedMmcReadRecheckError::Recheck(io_error));
+        assert_eq!(failure.recovery_cause(),
+                   Some(ReadRecoveryCause::RecheckFault {
+                       error : io_error, polls_completed : 0, remaining : 3,
+                   }));
+        let mmc = runtime.owner_mut(mmc_irq).unwrap();
+        let BoardIrqOwner::MmcCommand(mmc) = mmc else { panic!("wrong MMC variant") };
+        mmc.registers_mut().fail_read = false;
         mmc.disarm_read(timeout).unwrap();
         assert_eq!(BoundedMmcReadRecheck::new(timeout, 0),
                    Err(BoundedMmcReadRecheckError::InvalidBudget));
@@ -1477,7 +1631,7 @@ mod tests {
         let dma_irq = GlobalIrq::from_bank_local(1, 13).unwrap();
         let mut mmc = MmcCommandOwner::new(
             mmc_irq,
-            MockRegisters { status : COMMAND_SENT | 1, writes : Vec::new() });
+            MockRegisters { status : COMMAND_SENT | 1, ..MockRegisters::default() });
         let mut dma = DeferredApbDmaOwner::new(dma_irq);
         arm_read_owners(&mut mmc, &mut dma, current).unwrap();
         assert_eq!(dma.handle(acknowledged(dma_irq)), IrqDisposition::KeepMasked);
@@ -1541,6 +1695,43 @@ mod tests {
             .unwrap_or_else(|_| panic!("committed generation did not drain"));
         assert!(drained.mmc.is_none());
         assert!(drained.dma.is_none());
+    }
+
+    #[test]
+    fn recovery_report_rejects_wrong_generation_without_draining_owners() {
+        let mmc_irq = GlobalIrq::from_bank_local(0, 31).unwrap();
+        let dma_irq = GlobalIrq::from_bank_local(1, 13).unwrap();
+        let current = transaction(83);
+        let wrong = transaction(84);
+        let mut runtime = owner_runtime(mmc_irq, dma_irq, false);
+        let armed = reserve_read_irq_owners(&mut runtime, mmc_irq, dma_irq, current)
+            .unwrap_or_else(|_| panic!("guard reservation failed"))
+            .commit();
+        let cause = ReadRecoveryCause::Timeout { polls_completed : 4 };
+        let failure = retire_quiesced_read_recovery(
+            &mut runtime,
+            mmc_irq,
+            dma_irq,
+            QuiescedReadIrqs::fixture(wrong),
+            cause)
+            .expect_err("wrong recovery generation drained current owners");
+        assert_eq!(failure.error,
+                   ReadIrqRetireError::Drain(ReadPairOwnerFailure {
+                       owner : ReadPairOwner::Mmc,
+                       error : ReadIrqOwnerError::WrongTransaction,
+                   }));
+        assert_eq!(failure.cause, cause);
+        assert_eq!(failure.into_quiesced().transaction(), wrong);
+        let BoardIrqOwner::MmcCommand(mmc) = runtime.owner(mmc_irq).unwrap() else {
+            panic!("wrong MMC variant")
+        };
+        assert_eq!(mmc.read_binding(), Some(ReadIrqOwnerBinding::Armed(current)));
+        let BoardIrqOwner::ApbDmaDeferred(dma) = runtime.owner(dma_irq).unwrap() else {
+            panic!("wrong DMA variant")
+        };
+        assert_eq!(dma.read_binding(), Some(ReadIrqOwnerBinding::Armed(current)));
+        retire_read_irq_owners(&mut runtime, mmc_irq, dma_irq, armed)
+            .unwrap_or_else(|_| panic!("current generation did not remain drainable"));
     }
 
     #[test]

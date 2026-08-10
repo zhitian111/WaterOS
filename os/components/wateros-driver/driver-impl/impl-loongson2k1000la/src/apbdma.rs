@@ -2016,17 +2016,34 @@ mod tests {
             crate::board_irq_owner::BoundedMmcReadRecheckProgress::Pending(recheck) => recheck,
             _ => panic!("first empty sample was not pending"),
         };
+        let mmc = runtime.owner_mut(mmc_irq).unwrap();
+        let crate::board_irq_owner::BoardIrqOwner::MmcCommand(mmc) = mmc else {
+            panic!("wrong MMC owner variant")
+        };
+        mmc.registers_mut().interrupts = 1 << 6;
         assert_eq!(recheck.step(&mut runtime, mmc_irq).unwrap(),
                    crate::board_irq_owner::BoundedMmcReadRecheckProgress::Timeout {
                        transaction, polls_completed : 2,
                    });
-        let armed = published.stop().unwrap().finish().unwrap();
-        assert_eq!(armed.transaction(), transaction);
-        let drained = crate::board_irq_owner::retire_read_irq_owners(
-            &mut runtime, mmc_irq, dma_irq(), armed)
+        let quiesced = published.stop().unwrap().finish_recovery().unwrap();
+        assert_eq!(quiesced.transaction(), transaction);
+        let report = crate::board_irq_owner::retire_quiesced_read_recovery(
+            &mut runtime,
+            mmc_irq,
+            dma_irq(),
+            quiesced,
+            crate::board_irq_owner::ReadRecoveryCause::Timeout {
+                polls_completed : 2,
+            })
             .unwrap_or_else(|_| panic!("timeout owners did not drain"));
-        assert!(drained.mmc.is_none());
-        assert_eq!(drained.dma.unwrap().acknowledged.irq(), dma_irq());
+        assert_eq!(report.transaction, transaction);
+        assert_eq!(report.cause,
+                   crate::board_irq_owner::ReadRecoveryCause::Timeout {
+                       polls_completed : 2,
+                   });
+        assert_eq!(report.partial_mmc_interrupts, 1 << 6);
+        assert!(report.drained.mmc.is_none());
+        assert_eq!(report.drained.dma.unwrap().acknowledged.irq(), dma_irq());
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
     }
