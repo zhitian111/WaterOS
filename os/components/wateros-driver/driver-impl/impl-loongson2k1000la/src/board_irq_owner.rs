@@ -328,7 +328,7 @@ impl QuiescedReadIrqs {
     pub const fn transaction(&self) -> ReadTransactionId { self.armed.transaction }
 
     #[cfg(test)]
-    const fn fixture(transaction : ReadTransactionId) -> Self {
+    pub(crate) const fn fixture(transaction : ReadTransactionId) -> Self {
         Self { armed : ArmedReadIrqs::fixture(transaction) }
     }
 }

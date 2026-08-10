@@ -2006,41 +2006,58 @@ mod tests {
             MockMmcRegisters::default(),
             crate::mmc::ReadDataPublishPermit::fixture());
         let published = running.publish(&mut publisher).unwrap();
+        let coordinator = crate::read_coordinator::ReadCoordinatorSlot::new();
+        coordinator.reserve(transaction).unwrap().commit();
+        coordinator.mark_published(transaction, 2).unwrap();
+        coordinator.record_recheck(
+            crate::board_irq_owner::BoundedMmcReadRecheck::new(transaction, 2).unwrap())
+            .unwrap_or_else(|_| panic!("bounded recheck token rejected"));
         assert_eq!(runtime.owner_mut(dma_irq()).unwrap()
                           .handle(acknowledged_dma_irq()),
                    crate::irq_domain::IrqDisposition::KeepMasked);
 
-        let recheck = crate::board_irq_owner::BoundedMmcReadRecheck::new(
-            transaction, 2).unwrap();
-        let recheck = match recheck.step(&mut runtime, mmc_irq).unwrap() {
-            crate::board_irq_owner::BoundedMmcReadRecheckProgress::Pending(recheck) => recheck,
-            _ => panic!("first empty sample was not pending"),
-        };
+        assert_eq!(coordinator.service_recheck(transaction).unwrap()
+                              .step(&mut runtime, mmc_irq),
+                   Ok(crate::read_coordinator::ReadCoordinatorStepProgress::Pending {
+                       transaction, remaining : 1, polls_completed : 1,
+                   }));
         let mmc = runtime.owner_mut(mmc_irq).unwrap();
         let crate::board_irq_owner::BoardIrqOwner::MmcCommand(mmc) = mmc else {
             panic!("wrong MMC owner variant")
         };
         mmc.registers_mut().interrupts = 1 << 6;
-        assert_eq!(recheck.step(&mut runtime, mmc_irq).unwrap(),
-                   crate::board_irq_owner::BoundedMmcReadRecheckProgress::Timeout {
-                       transaction, polls_completed : 2,
-                   });
+        let cause = crate::board_irq_owner::ReadRecoveryCause::Timeout {
+            polls_completed : 2,
+        };
+        assert_eq!(coordinator.service_recheck(transaction).unwrap()
+                              .step(&mut runtime, mmc_irq),
+                   Ok(crate::read_coordinator::ReadCoordinatorStepProgress::RecoveryPending {
+                       transaction, cause,
+                   }));
         let quiesced = published.stop().unwrap().finish_recovery().unwrap();
         assert_eq!(quiesced.transaction(), transaction);
-        let report = crate::board_irq_owner::retire_quiesced_read_recovery(
-            &mut runtime,
-            mmc_irq,
-            dma_irq(),
-            quiesced,
-            crate::board_irq_owner::ReadRecoveryCause::Timeout {
-                polls_completed : 2,
-            })
-            .unwrap_or_else(|_| panic!("timeout owners did not drain"));
+        let failure = coordinator.service_recovery(transaction).unwrap()
+            .retire_and_record(&mut runtime, dma_irq(), mmc_irq, quiesced)
+            .expect_err("reversed owner slots retired");
+        assert_eq!(failure.error,
+                   crate::read_coordinator::ReadCoordinatorRecoveryError::Retire(
+                       crate::board_irq_owner::ReadIrqRetireError::MmcOwnerVariant));
+        assert_eq!(failure.cause, cause);
+        let quiesced = failure.into_quiesced();
+        assert_eq!(coordinator.snapshot().unwrap().phase,
+                   crate::read_coordinator::ReadCoordinatorPhase::RecoveryPending);
+        coordinator.service_recovery(transaction).unwrap()
+                   .retire_and_record(&mut runtime, mmc_irq, dma_irq(), quiesced)
+                   .unwrap_or_else(|_| panic!("timeout owners did not drain"));
+        let snapshot = coordinator.snapshot().unwrap();
+        assert_eq!(snapshot.phase,
+                   crate::read_coordinator::ReadCoordinatorPhase::RecoveryRecorded);
+        assert_eq!(snapshot.recovery_cause, Some(cause));
+        assert_eq!(snapshot.partial_mmc_interrupts, Some(1 << 6));
+        assert!(snapshot.has_dma_receipt);
+        let report = coordinator.take_recovery(transaction).unwrap();
         assert_eq!(report.transaction, transaction);
-        assert_eq!(report.cause,
-                   crate::board_irq_owner::ReadRecoveryCause::Timeout {
-                       polls_completed : 2,
-                   });
+        assert_eq!(report.cause, cause);
         assert_eq!(report.partial_mmc_interrupts, 1 << 6);
         assert!(report.drained.mmc.is_none());
         assert_eq!(report.drained.dma.unwrap().acknowledged.irq(), dma_irq());

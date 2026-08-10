@@ -5061,3 +5061,53 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] service LS2K1000 read rechecks exclusively`
+
+## 2026-08-10：批次 104——原子归档 quiesced read recovery report
+
+### 本批任务与设计
+
+1. RecoveryPending 增加独占 service；recovery cause 从 slot 读取，不允许调用方重复拼接 timeout/fault 统计。
+2. 在同一个 SERVICING 临界区执行 quiesced generation 校验、runtime owner drain、partial evidence 捕获与 report publication。
+3. generation/slot/variant/drain 失败必须同时保留 slot RecoveryPending 和线性 `QuiescedReadIrqs`，可修正后原位重试。
+4. owner 已成功 drain 后，API 不提供尚未把 report 移入 slot 的正常返回点。
+5. 继续保持 MMC/APBDMA sources masked，不把 stop/quiesce 解释为传输成功或 rearm 许可。
+
+### 已完成
+
+- [x] 新增 `ReadCoordinatorSlot::service_recovery`，只允许同 generation 的 RecoveryPending 状态进入 SERVICING。
+- [x] 新增 must-use `ReadRecoveryService`；`retire_and_record` 自动使用 slot 内 exact `ReadRecoveryCause`。
+- [x] `retire_and_record` 复用 `retire_quiesced_read_recovery` 捕获 MMC accumulator 与两路 receipts，成功后直接替换为 RecoveryRecorded。
+- [x] 新增 `ReadCoordinatorRecoveryError::{WrongTransaction,Retire}` 与 must-use failure，统一返还 cause 和 quiesced token。
+- [x] 在任何 owner 访问前比较 slot transaction 与 quiesced transaction，修复“旧代 token/owners 一致但 slot 已换代”可能先 drain 后发现的窗口。
+- [x] runtime reversed slot/owner variant 失败包装精确底层 `ReadIrqRetireError`，slot service drop 后恢复 Live/RecoveryPending。
+- [x] test-only 扩大 `QuiescedReadIrqs::fixture` 到 crate 可见，用于无物理 DMA 的 fault recovery owner 模型；production 仍只能由 `finish_recovery` 构造。
+- [x] APBDMA timeout 集成测试升级为完整 coordinator slot 生命周期并使用真实模型 stop/cache finish token。
+- [x] production activation、publish permit、status decoder 与 IRQ rearm 保持关闭。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 176 项全部通过；新增 fault recovery service 测试 1 项，并升级 timeout stop/drain 集成测试。
+- timeout 链路覆盖 owner reserve→DMA start→MMC publish→slot Published/Rechecking→empty/`CSENT`→RecoveryPending Timeout(2)。
+- DMA IRQ 已 Pending；Published session stop/finish 后 mappings 才 CPU-owned，并产生真实 `QuiescedReadIrqs`。
+- 首次故意交换 MMC/DMA slot，返回 Retire(MmcOwnerVariant)、原 cause 与 quiesced token；slot 仍 RecoveryPending，正确参数重试成功。
+- 成功 snapshot 为 RecoveryRecorded，保留 partial `CSENT`、Timeout(2) 和 DMA receipt presence；take 返回原 acknowledged DMA IRQ。
+- fault 链路先累积 `CSENT`，再遇到 unknown-only status 进入 RecheckFault；service drain 前捕获 partial `CSENT`，两路 Armed owners 均被退役。
+- wrong quiesced generation 在 owner drain 前返回 expected/actual；slot 仍 RecoveryPending，MMC owner 仍为 Armed(current)，正确 token 随后成功。
+- production 组件 test/check、RISC-V `make check` 与 LoongArch64 `make kernel-la` 全部通过；仅有仓库既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过；dtc warning 来自预期畸形输入。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：真实 DMA stop confirmation、cache maintenance 和 owner drain 的相对时序仍需 2K1000LA 实测。
+- [ ] `UNVERIFIED_ON_HARDWARE`：report publication 后 source 仍 masked；真机确认 MMC condition clear 与 APBDMA idle 前不能 rearm。
+- [ ] timeout 端到端使用真实模型 Published/stop/finish；fault owner 测试使用 test-only quiesced fixture，没有重复模拟 DMA mapping stop。
+- [ ] `retire_and_record` 对 Rust panic 没有事务回滚；底层 prevalidation 后 drain/赋值路径无 fallible 调用，但 production panic=abort 策略仍需保持。
+- [ ] slot 仍不拥有 Published DMA session；外部 worker 必须先完成 stop/finish，再把 quiesced token交给 recovery service。
+- [ ] 没有 scheduler deadline/backoff/wake API；timeout 仍是 step budget，不是 wall-clock 时间。
+- [ ] Terminal success 路径尚未通过 coordinator service 整合 paired MMC/DMA receipt take、descriptor status 与 completion tracker。
+- [ ] production runtime 仍不构造 APBDMA owner，真实 command publish、DMA status decoder、block completion callback 与 IRQ rearm 均关闭。
+- [ ] 下一批应实现 Terminal 独占 completion service，把 paired receipt take、DMA acknowledge/status inspection、MMC snapshot apply 与 slot release/recovery 转换串成一个模型闭环。
+
+### 提交
+
+- 本批计划提交：`[feat] archive LS2K1000 read recovery atomically`

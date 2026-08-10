@@ -8,8 +8,10 @@
 
 use crate::{board_irq_owner::{BoardIrqOwner, BoundedMmcReadRecheck,
                               BoundedMmcReadRecheckError,
-                              BoundedMmcReadRecheckStep, ReadRecoveryCause,
-                              ReadRecoveryReport, ReadTransactionId},
+                              BoundedMmcReadRecheckStep, QuiescedReadIrqs,
+                              ReadRecoveryCause, ReadRecoveryReport,
+                              ReadIrqRetireError, ReadTransactionId,
+                              retire_quiesced_read_recovery},
             diagnostic_slot::{DiagnosticRuntimeSlot, DiagnosticSlotState,
                               DrainError, RuntimeReservation, RuntimeService, SlotError},
             irq_domain::GlobalIrq,
@@ -91,6 +93,26 @@ pub enum ReadCoordinatorStepProgress {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadCoordinatorStepFailure {
     pub error : BoundedMmcReadRecheckError,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadCoordinatorRecoveryError {
+    WrongTransaction {
+        expected : ReadTransactionId,
+        actual : ReadTransactionId,
+    },
+    Retire(ReadIrqRetireError),
+}
+
+#[must_use = "recover the quiesced token and retry the recovery service"]
+pub struct ReadCoordinatorRecoveryFailure {
+    pub error : ReadCoordinatorRecoveryError,
+    pub cause : ReadRecoveryCause,
+    quiesced : QuiescedReadIrqs,
+}
+
+impl ReadCoordinatorRecoveryFailure {
+    pub fn into_quiesced(self) -> QuiescedReadIrqs { self.quiesced }
 }
 
 enum ReadCoordinatorState {
@@ -260,6 +282,24 @@ impl ReadCoordinatorSlot {
             });
         }
         Ok(ReadRecheckService { service, transaction })
+    }
+
+    pub fn service_recovery(&self,
+                            transaction : ReadTransactionId)
+                            -> Result<ReadRecoveryService<'_>, ReadCoordinatorError> {
+        let service = self.inner.service().map_err(ReadCoordinatorError::Slot)?;
+        if service.transaction() != transaction {
+            return Err(ReadCoordinatorError::WrongTransaction {
+                expected : service.transaction(), actual : transaction,
+            });
+        }
+        if service.phase() != ReadCoordinatorPhase::RecoveryPending {
+            return Err(ReadCoordinatorError::WrongPhase {
+                expected : ReadCoordinatorPhase::RecoveryPending,
+                actual : service.phase(),
+            });
+        }
+        Ok(ReadRecoveryService { service, transaction })
     }
 
     pub fn record_recovery(&self,
@@ -445,6 +485,59 @@ impl ReadRecheckService<'_> {
                 }
             },
         }
+    }
+}
+
+#[must_use = "retire the quiesced owners or drop the service to retry later"]
+pub struct ReadRecoveryService<'a> {
+    service : RuntimeService<'a, ReadCoordinatorState>,
+    transaction : ReadTransactionId,
+}
+
+impl ReadRecoveryService<'_> {
+    pub const fn transaction(&self) -> ReadTransactionId { self.transaction }
+
+    /// Atomically retire software IRQ owners and publish their report into the
+    /// coordinator slot. Both hardware interrupt sources remain masked.
+    pub fn retire_and_record<I, R>(
+        mut self,
+        runtime : &mut crate::irq_runtime::BoardIrqRuntime<I, BoardIrqOwner<R>>,
+        mmc_irq : GlobalIrq,
+        dma_irq : GlobalIrq,
+        quiesced : QuiescedReadIrqs)
+        -> Result<(), ReadCoordinatorRecoveryFailure>
+    where I : crate::liointc::RegisterIo
+    {
+        let cause = match &*self.service {
+            ReadCoordinatorState::RecoveryPending { cause, .. } => *cause,
+            _ => unreachable!("recovery phase was validated before construction"),
+        };
+        if quiesced.transaction() != self.transaction {
+            return Err(ReadCoordinatorRecoveryFailure {
+                error : ReadCoordinatorRecoveryError::WrongTransaction {
+                    expected : self.transaction,
+                    actual : quiesced.transaction(),
+                },
+                cause,
+                quiesced,
+            });
+        }
+        let report = match retire_quiesced_read_recovery(
+            runtime, mmc_irq, dma_irq, quiesced, cause)
+        {
+            Ok(report) => report,
+            Err(failure) => {
+                let error = failure.error;
+                let cause = failure.cause;
+                return Err(ReadCoordinatorRecoveryFailure {
+                    error : ReadCoordinatorRecoveryError::Retire(error),
+                    cause,
+                    quiesced : failure.into_quiesced(),
+                });
+            },
+        };
+        *self.service = ReadCoordinatorState::RecoveryRecorded(report);
+        Ok(())
     }
 }
 
@@ -820,5 +913,79 @@ mod tests {
                    Ok(ReadCoordinatorStepProgress::Terminal {
                        transaction : current, polls_completed : 1,
                    }));
+    }
+
+    #[test]
+    fn fault_recovery_service_records_partial_snapshot_before_owner_drain() {
+        let mmc_irq = GlobalIrq::from_bank_local(0, 31).unwrap();
+        let dma_irq = GlobalIrq::from_bank_local(1, 13).unwrap();
+        let current = transaction(15);
+        let mut runtime = runtime(mmc_irq, dma_irq);
+        let BoardIrqOwner::MmcCommand(mmc) = runtime.owner_mut(mmc_irq).unwrap() else {
+            panic!("wrong MMC owner")
+        };
+        mmc.arm_read(current).unwrap();
+        mmc.registers_mut().status = 1 << 6;
+        let BoardIrqOwner::ApbDmaDeferred(dma) = runtime.owner_mut(dma_irq).unwrap() else {
+            panic!("wrong DMA owner")
+        };
+        dma.arm_read(current).unwrap();
+        let slot = ReadCoordinatorSlot::new();
+        slot.reserve(current).unwrap().commit();
+        slot.mark_published(current, 3).unwrap();
+        slot.record_recheck(BoundedMmcReadRecheck::new(current, 3).unwrap())
+            .unwrap_or_else(|_| panic!("recheck rejected"));
+        assert_eq!(slot.service_recheck(current).unwrap().step(&mut runtime, mmc_irq),
+                   Ok(ReadCoordinatorStepProgress::Pending {
+                       transaction : current, remaining : 2, polls_completed : 1,
+                   }));
+        let BoardIrqOwner::MmcCommand(mmc) = runtime.owner_mut(mmc_irq).unwrap() else {
+            panic!("wrong MMC owner")
+        };
+        mmc.registers_mut().status = 1 << 20;
+        let progress = slot.service_recheck(current).unwrap().step(&mut runtime, mmc_irq)
+                           .unwrap();
+        let ReadCoordinatorStepProgress::RecoveryPending { cause, .. } = progress else {
+            panic!("unknown status did not enter recovery")
+        };
+        let wrong = transaction(16);
+        let failure = slot.service_recovery(current).unwrap()
+            .retire_and_record(&mut runtime,
+                               mmc_irq,
+                               dma_irq,
+                               QuiescedReadIrqs::fixture(wrong))
+            .expect_err("wrong quiesced generation retired current owners");
+        assert_eq!(failure.error, ReadCoordinatorRecoveryError::WrongTransaction {
+            expected : current, actual : wrong,
+        });
+        assert_eq!(failure.cause, cause);
+        assert_eq!(failure.into_quiesced().transaction(), wrong);
+        assert_eq!(slot.snapshot().unwrap().phase, ReadCoordinatorPhase::RecoveryPending);
+        let BoardIrqOwner::MmcCommand(mmc) = runtime.owner(mmc_irq).unwrap() else {
+            panic!("wrong MMC owner")
+        };
+        assert_eq!(mmc.read_binding(), Some(ReadIrqOwnerBinding::Armed(current)));
+        slot.service_recovery(current).unwrap()
+            .retire_and_record(&mut runtime,
+                               mmc_irq,
+                               dma_irq,
+                               QuiescedReadIrqs::fixture(current))
+            .unwrap_or_else(|_| panic!("fault owners did not retire"));
+        let snapshot = slot.snapshot().unwrap();
+        assert_eq!(snapshot.phase, ReadCoordinatorPhase::RecoveryRecorded);
+        assert_eq!(snapshot.recovery_cause, Some(cause));
+        assert_eq!(snapshot.partial_mmc_interrupts, Some(1 << 6));
+        assert!(!snapshot.has_mmc_receipt);
+        assert!(!snapshot.has_dma_receipt);
+        let report = slot.take_recovery(current).unwrap();
+        assert_eq!(report.partial_mmc_interrupts, 1 << 6);
+        let BoardIrqOwner::MmcCommand(mmc) = runtime.owner(mmc_irq).unwrap() else {
+            panic!("wrong MMC owner")
+        };
+        assert_eq!(mmc.read_binding(), None);
+        let BoardIrqOwner::ApbDmaDeferred(dma) = runtime.owner(dma_irq).unwrap() else {
+            panic!("wrong DMA owner")
+        };
+        assert_eq!(dma.read_binding(), None);
     }
 }
