@@ -4577,3 +4577,51 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] retain LS2K1000 DMA IRQ evidence`
+
+## 2026-08-10：批次 94——以 generation 配对 MMC 与 APBDMA 读取中断
+
+### 本批任务与设计
+
+1. 为每次读取分配非零且不回绕的 software transaction generation。
+2. MMC/APBDMA 两路 owner 必须显式 arm 同一 generation 后才能生成 read receipt。
+3. MMC receipt 保留已 W1C 的 known INT snapshot；DMA receipt 保留线性 `AcknowledgedIrq`。
+4. 两路 receipt 在交给 carrying tracker 前必须通过 generation pair 校验。
+5. 未 arm、重复 arm、未消费 receipt、错代和重复 receipt 均 fail-closed，read source 不提前 rearm。
+
+### 已完成
+
+- [x] 新增 `ReadTransactionId` 与 `ReadTransactionSequence`；0 非法，计数到 `u64::MAX` 后返回 Exhausted 而非回绕。
+- [x] `MmcCommandOwner::arm_read` 与 `DeferredApbDmaOwner::arm_read` 绑定同一代际，均保持单 active/single pending。
+- [x] 新增 `acknowledge_interrupt_observed`，在保持原 ack API 兼容的同时返回精确 known interrupt snapshot。
+- [x] armed MMC IRQ 清 W1C 后生成 `MmcReadIrqReceipt` 并 KeepMasked；普通未 armed command 行为仍按原契约 rearm。
+- [x] armed APBDMA IRQ 生成携带原 `AcknowledgedIrq` 的 `ApbDmaReadIrqReceipt`；未 arm IRQ 返回 NotArmed 并 KeepMasked。
+- [x] `ReadIrqPair` 接受任意到达顺序，只在 MMC/DMA generation 都匹配且各一份时返回 ready pair。
+- [x] mismatch/duplicate submit 返回原 receipt，不吞掉线性 DMA token。
+- [x] 集成 fixture 将同代 MMC `CSENT|DFIN` 与 DMA receipt 配对，再依次驱动 APBDMA typestate 和 carrying tracker，最终三项 evidence 全部成立。
+- [x] production data path、APBDMA status success decoder 与 IRQ rearm coordinator 仍保持关闭。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 154 项全部通过；新增 4 项 sequence/owner/pair/carrying 集成测试。
+- sequence 从 1 单调分配，0 无法构造；从 `u64::MAX` 分配一次后稳定 Exhausted。
+- 两路 owner 均拒绝 AlreadyArmed；存在 pending receipt 时拒绝新 generation，重复 IRQ 不覆盖首个 receipt。
+- APBDMA 未 arm IRQ 明确记录 NotArmed；所有 read-mode IRQ disposition 均为 KeepMasked。
+- stale generation 被 pair 拒绝并返还 receipt；同源 duplicate 被分类，MMC→DMA 与 DMA 等待 MMC 的顺序均覆盖。
+- carrying fixture 中仅 DMA receipt 到达时 tracker 保持 Pending；同代 MMC `CSENT|DFIN` 到达后才 Completed。
+- completed evidence 精确为 command/data/DMA 三项 true；显式 quiesced finish 后两份 mapping 才 CPU-owned。
+- production 组件 check、RISC-V `make check`、LoongArch64 `make kernel-la` 均通过；仅有仓库既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过；dtc warning 来自预期畸形输入。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：cookie 是纯软件 arm identity，硬件 IRQ 不携带 tag；source rearm 后物理迟到 IRQ仍可能被归到新 generation。
+- [ ] 当前策略因此在 receipt 消费后仍不提供 read IRQ rearm；真机确认 clear/idle/latency 边界前必须保持 masked。
+- [ ] MMC W1C receipt 证明 observed known bits 被清除，不证明 RSP0 已稳定或 APBDMA 已停止访问内存。
+- [ ] production diagnostic runtime 仍不构造 APBDMA owner，尚无同时 arm 两个 runtime owner 的板级 coordinator。
+- [ ] published carrying tracker 仍由 test-only permit 构造，production 无法提交配对 receipt 到真实块设备请求。
+- [ ] transaction abort 还没有对两个 owner 做原子 disarm/drain；任一 arm 后启动失败会需要显式回滚协议。
+- [ ] 下一批应实现可恢复的双 owner arm transaction：prepare→arm MMC→arm DMA 的部分失败回滚、abort/drain 与 generation retirement，保证启动错误不遗留 armed/pending owner。
+
+### 提交
+
+- 本批计划提交：`[feat] pair LS2K1000 read IRQ generations`

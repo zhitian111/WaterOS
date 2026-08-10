@@ -204,6 +204,12 @@ pub struct MmcIrqAckFailure {
     pub acknowledged : AcknowledgedIrq,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct MmcIrqAckReceipt {
+    pub interrupts : u32,
+    pub disposition : IrqDisposition,
+}
+
 pub trait RegisterIo {
     fn read32(&mut self, offset : usize) -> Result<u32, MmcError>;
     fn write32(&mut self, offset : usize, value : u32) -> Result<(), MmcError>;
@@ -267,6 +273,17 @@ pub fn acknowledge_interrupt<R : RegisterIo>(registers : &mut R,
                                              expected : GlobalIrq,
                                              acknowledged : AcknowledgedIrq)
                                              -> Result<IrqDisposition, MmcIrqAckFailure> {
+    acknowledge_interrupt_observed(registers, expected, acknowledged)
+        .map(|receipt| receipt.disposition)
+}
+
+/// Clear one documented MMC interrupt snapshot while retaining the exact
+/// known bits for a transaction coordinator.
+pub fn acknowledge_interrupt_observed<R : RegisterIo>(
+    registers : &mut R,
+    expected : GlobalIrq,
+    acknowledged : AcknowledgedIrq)
+    -> Result<MmcIrqAckReceipt, MmcIrqAckFailure> {
     if acknowledged.irq() != expected {
         return Err(MmcIrqAckFailure { error : MmcIrqAckError::UnexpectedSource,
                                       acknowledged });
@@ -292,7 +309,10 @@ pub fn acknowledge_interrupt<R : RegisterIo>(registers : &mut R,
         return Err(MmcIrqAckFailure { error : MmcIrqAckError::UnknownPending(unknown),
                                       acknowledged });
     }
-    Ok(IrqDisposition::Rearm(DeviceAckedIrq::after_device_clear(expected)))
+    Ok(MmcIrqAckReceipt {
+        interrupts : known,
+        disposition : IrqDisposition::Rearm(DeviceAckedIrq::after_device_clear(expected)),
+    })
 }
 
 pub struct Uninitialized;

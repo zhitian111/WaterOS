@@ -1634,11 +1634,14 @@ mod tests {
                                              &mut payload,
                                              &mut executor);
         let mut owner = crate::board_irq_owner::DeferredApbDmaOwner::new(dma_irq());
+        let transaction = crate::board_irq_owner::ReadTransactionId::new(1).unwrap();
+        owner.arm_read(transaction).unwrap();
         assert_eq!(owner.handle(acknowledged_dma_irq()),
                    crate::irq_domain::IrqDisposition::KeepMasked);
-        let acknowledged = owner.take_acknowledged().unwrap();
-        assert_eq!(owner.take_acknowledged(), None);
-        let tracker = tracker.acknowledge_dma_irq(acknowledged).unwrap();
+        let receipt = owner.take_read_receipt().unwrap();
+        assert_eq!(receipt.transaction, transaction);
+        assert_eq!(owner.take_read_receipt(), None);
+        let tracker = tracker.acknowledge_dma_irq(receipt.acknowledged).unwrap();
         let mut reader = MockStatusReader { status : 0x100,
                                             ..MockStatusReader::default() };
         let failure = match tracker.inspect_dma_status(&mut reader, &UnverifiedStatusDecoder) {
@@ -1661,6 +1664,63 @@ mod tests {
             _ => panic!("fixture cleanup did not retain quiesced DMA"),
         };
         recovery.into_quiesced_session().finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+    }
+
+    #[test]
+    fn paired_mmc_and_dma_receipts_complete_only_their_read_generation() {
+        let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                      Direction::DeviceToMemory).unwrap();
+        let (mut descriptor, mut payload) = mappings(transfer);
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+        let tracker = published_read_tracker(transfer,
+                                             &mut descriptor,
+                                             &mut payload,
+                                             &mut executor);
+        let transaction = crate::board_irq_owner::ReadTransactionId::new(23).unwrap();
+        let mmc_irq = GlobalIrq::from_bank_local(0, 31).unwrap();
+        let mut mmc_owner = crate::board_irq_owner::MmcCommandOwner::new(
+            mmc_irq,
+            MockMmcCompletionRegisters { interrupts : (1 << 6) | 1,
+                                         response : 0,
+                                         fail_first_read : false,
+                                         operations : Vec::new() });
+        let mut dma_owner = crate::board_irq_owner::DeferredApbDmaOwner::new(dma_irq());
+        mmc_owner.arm_read(transaction).unwrap();
+        dma_owner.arm_read(transaction).unwrap();
+        assert_eq!(dma_owner.handle(acknowledged_dma_irq()),
+                   crate::irq_domain::IrqDisposition::KeepMasked);
+        assert_eq!(mmc_owner.handle(AcknowledgedIrq::after_mask_ack(mmc_irq)),
+                   crate::irq_domain::IrqDisposition::KeepMasked);
+
+        let mut pair = crate::board_irq_owner::ReadIrqPair::new(transaction);
+        pair.submit_mmc(mmc_owner.take_read_receipt().unwrap())
+            .unwrap_or_else(|_| panic!("matching MMC receipt rejected"));
+        assert!(pair.take_ready().is_none());
+        pair.submit_dma(dma_owner.take_read_receipt().unwrap())
+            .unwrap_or_else(|_| panic!("matching DMA receipt rejected"));
+        let (mmc_receipt, dma_receipt) = pair.take_ready().unwrap();
+
+        let tracker = tracker.acknowledge_dma_irq(dma_receipt.acknowledged).unwrap();
+        let mut reader = MockStatusReader { status : 0x100,
+                                            ..MockStatusReader::default() };
+        let tracker = match tracker.inspect_dma_status(&mut reader, &FixtureStatusDecoder)
+                                   .unwrap() {
+            crate::mmc::ReadCompletionProgress::Pending(tracker) => tracker,
+            _ => panic!("DMA receipt completed read before MMC receipt"),
+        };
+        let completed = match tracker.command_observed(mmc_receipt.interrupts) {
+            crate::mmc::ReadCompletionProgress::Completed(completed) => completed,
+            _ => panic!("paired receipts did not complete their read"),
+        };
+        assert_eq!(completed.evidence,
+                   crate::mmc::ReadCompletionEvidence {
+                       command_response_validated : true,
+                       data_finished : true,
+                       dma_finished : true,
+                   });
+        completed.into_quiesced_session().finish().unwrap();
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
     }
