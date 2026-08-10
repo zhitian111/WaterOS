@@ -239,6 +239,18 @@ mod tests {
     }
 
     #[test]
+    fn rejects_width_overflow_and_invalid_alignment_without_constructing_region() {
+        assert_eq!(DmaRegion::new(0x4000, u64::MAX - 3, 8, 4, 64),
+                   Err(DriverError::InvalidParam));
+        assert_eq!(DmaRegion::new(0x4000, 0x8000, 64, 3, 32),
+                   Err(DriverError::InvalidParam));
+        assert_eq!(DmaRegion::new(0x4000, 0x8000, 64, 0, 32),
+                   Err(DriverError::InvalidParam));
+        let region = DmaRegion::new(0x4000, u64::MAX - 63, 64, 64, 64).unwrap();
+        assert_eq!(region.physical_end_exclusive(), Err(DriverError::InvalidParam));
+    }
+
+    #[test]
     fn unsupported_backend_never_transfers_device_ownership() {
         let region = DmaRegion::new(0x4000, 0x8000, 64, 32, 32).unwrap();
         let mut mapping = DmaMapping::new(region, DmaDirection::Bidirectional,

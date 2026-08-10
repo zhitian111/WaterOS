@@ -2017,6 +2017,25 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - 注销 API 只处理注册表可见性；驱动必须在调用前停止 IRQ/DMA，这个顺序仍需硬件验证。
 - `UNVERIFIED_ON_HARDWARE`：真实 USB/HID 热插拔、控制器中断、DMA/cache 和实体板 `/dev` 生命周期仍待验证。
 
+## 2026-08-10：批次 71——共有 DMA 地址边界回归
+
+### 任务与设计
+
+1. 复核 `DmaRegion` 的物理地址宽度、长度溢出和对齐校验，确保静态契约不会把不可表达的 DMA 区域交给平台驱动。
+2. 保持地址可表达性与真实总线可达性/cache coherency 分离；不把 host 单测当作硬件 DMA 证据。
+3. 使用极小纯 Rust fixture 增加溢出/非法对齐覆盖。
+
+### 完成内容
+
+- [x] 新增物理地址末端溢出、非二次对齐和零对齐参数回归测试。
+- [x] 新增 `physical_end_exclusive` 溢出断言，确保返回错误而不 wrap。
+- [x] 未修改 DmaMapping ownership 状态机或平台 DMA ABI。
+
+### 验证证据与限制
+
+- `wateros-driver-api-v0` DMA 测试：6 项通过。
+- `UnsupportedDmaCoherency` 仍 fail-closed；真实 IOMMU、总线地址窗口、cache flush/invalidate、IRQ 完成顺序仍需两平台实机验证。
+
 ## 2026-08-10：批次 65——稳定 QMP 输入注入诊断
 
 ### 任务与设计
