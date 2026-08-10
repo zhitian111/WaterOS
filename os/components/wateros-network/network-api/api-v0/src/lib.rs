@@ -87,6 +87,17 @@ pub enum SocketState {
     Closed,
 }
 
+/// `/proc/net` 等只读管理接口需要的 socket 状态快照。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NetworkSocketSnapshot {
+    pub kind : SocketKind,
+    pub state : SocketState,
+    pub local : Ipv4Endpoint,
+    pub peer : Ipv4Endpoint,
+    pub tx_queue : usize,
+    pub rx_queue : usize,
+}
+
 /// 非阻塞 TCP 连接完成后，通过 `SO_ERROR` 交给用户态的结果。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SocketConnectError {

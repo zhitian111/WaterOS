@@ -16,7 +16,9 @@ use api_v0::{
     ProcMountLine, TaskArgvLookup, TaskExeLookup, TaskFdLookup, TaskId, TaskTimerSlackLookup,
     UptimeLookup,
 };
+use core::fmt::Write;
 use fs_api_v0::{FsAccessMode, FsCapability, FsImpl, FsKind};
+use network::{SocketKind, SocketState};
 use spin::Mutex;
 use task::{ProcessId, ProcessState, TaskState, ThreadId};
 
@@ -115,6 +117,9 @@ enum ProcNode {
     ProcNetTcp6,
     ProcNetUdp,
     ProcNetUdp6,
+    ProcNetRaw,
+    ProcNetRaw6,
+    ProcNetUnix,
     SysDir,
     SysKernelDir,
     SysKernelPidMax,
@@ -150,6 +155,9 @@ fn proc_inode(node : ProcNode) -> u64 {
         ProcNode::ProcNetTcp6 => 13,
         ProcNode::ProcNetUdp => 14,
         ProcNode::ProcNetUdp6 => 15,
+        ProcNode::ProcNetRaw => 16,
+        ProcNode::ProcNetRaw6 => 17,
+        ProcNode::ProcNetUnix => 18,
         ProcNode::SysDir => 9,
         ProcNode::SysKernelDir => 10,
         ProcNode::SysKernelPidMax => 4,
@@ -254,6 +262,9 @@ fn parse_node(path : &str) -> Option<ProcNode> {
         ["net", "tcp6"] => Some(ProcNode::ProcNetTcp6),
         ["net", "udp"] => Some(ProcNode::ProcNetUdp),
         ["net", "udp6"] => Some(ProcNode::ProcNetUdp6),
+        ["net", "raw"] => Some(ProcNode::ProcNetRaw),
+        ["net", "raw6"] => Some(ProcNode::ProcNetRaw6),
+        ["net", "unix"] => Some(ProcNode::ProcNetUnix),
         ["sys"] => Some(ProcNode::SysDir),
         ["sys", "kernel"] => Some(ProcNode::SysKernelDir),
         ["sys", "kernel", "pid_max"] => Some(ProcNode::SysKernelPidMax),
@@ -570,9 +581,44 @@ fn format_mounts() -> Vec<u8> {
     out
 }
 
-// 当前 procfs 不枚举网络栈中的 socket；提供合法空表供 netstat 读取。
 const PROC_NET_TABLE : &[u8] =
     b"  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+const PROC_NET_UNIX_TABLE : &[u8] =
+    b"Num       RefCount Protocol Flags    Type St Inode Path\n";
+
+fn proc_ipv4_hex(address : [u8; 4]) -> u32 { u32::from_le_bytes(address) }
+
+fn proc_socket_state(state : SocketState, protocol : SocketKind) -> u8 {
+    match (protocol, state) {
+        (SocketKind::Udp, _) => 0x07,
+        (_, SocketState::Listening { .. }) => 0x0a,
+        (_, SocketState::Connecting) => 0x02,
+        (_, SocketState::Connected) => 0x01,
+        (_, SocketState::Created | SocketState::Bound { .. } | SocketState::Closed) => 0x07,
+    }
+}
+
+fn format_proc_net_table(protocol : SocketKind) -> Vec<u8> {
+    let mut out = String::from_utf8_lossy(PROC_NET_TABLE).into_owned();
+    for (slot, socket) in network::stack::network_socket_table_snapshot()
+                                  .unwrap_or_default()
+                                  .into_iter()
+                                  .filter(|socket| socket.kind == protocol)
+                                  .enumerate()
+    {
+        let _ = writeln!(out,
+                         "{:4}: {:08X}:{:04X} {:08X}:{:04X} {:02X} {:08X}:{:08X} 00:00000000 00000000     0        0 0 1 0000000000000000 100 0 0 10 0",
+                         slot,
+                         proc_ipv4_hex(socket.local.address),
+                         socket.local.port,
+                         proc_ipv4_hex(socket.peer.address),
+                         socket.peer.port,
+                         proc_socket_state(socket.state, protocol),
+                         socket.tx_queue,
+                         socket.rx_queue);
+    }
+    out.into_bytes()
+}
 
 /// 内核 procfs 只读视图（零大小；无实例状态）。
 // 本结构代码由AI完成
@@ -600,7 +646,10 @@ impl ProcFsView for KernelProcFs {
             ProcNode::ProcNetTcp |
             ProcNode::ProcNetTcp6 |
             ProcNode::ProcNetUdp |
-            ProcNode::ProcNetUdp6 => true,
+            ProcNode::ProcNetUdp6 |
+            ProcNode::ProcNetRaw |
+            ProcNode::ProcNetRaw6 |
+            ProcNode::ProcNetUnix => true,
             ProcNode::SysKernelPidMax | ProcNode::SysKernelTainted => true,
             ProcNode::PidDir(pid) |
             ProcNode::PidStat(pid) |
@@ -649,6 +698,9 @@ impl ProcFsView for KernelProcFs {
             ProcNode::ProcNetTcp6 |
             ProcNode::ProcNetUdp |
             ProcNode::ProcNetUdp6 |
+            ProcNode::ProcNetRaw |
+            ProcNode::ProcNetRaw6 |
+            ProcNode::ProcNetUnix |
             ProcNode::SysKernelPidMax |
             ProcNode::SysKernelTainted => Ok(FsMetadata { node_type : FsNodeType::File,
                                                           size : self.read(rel_path)?
@@ -710,10 +762,13 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidFd(_, _) => {
                 Err(FsError::NotAFile)
             }
-            ProcNode::ProcNetTcp |
+            ProcNode::ProcNetTcp => Ok(format_proc_net_table(SocketKind::Tcp)),
+            ProcNode::ProcNetUdp => Ok(format_proc_net_table(SocketKind::Udp)),
             ProcNode::ProcNetTcp6 |
-            ProcNode::ProcNetUdp |
-            ProcNode::ProcNetUdp6 => Ok(PROC_NET_TABLE.to_vec()),
+            ProcNode::ProcNetUdp6 |
+            ProcNode::ProcNetRaw |
+            ProcNode::ProcNetRaw6 => Ok(PROC_NET_TABLE.to_vec()),
+            ProcNode::ProcNetUnix => Ok(PROC_NET_UNIX_TABLE.to_vec()),
             ProcNode::Meminfo => Ok(format_meminfo()),
             ProcNode::Cpuinfo => Ok(format_cpuinfo()),
             ProcNode::Uptime => Ok(format_uptime()),
@@ -735,10 +790,22 @@ impl ProcFsView for KernelProcFs {
     fn read_range(&self, rel_path : &str, offset : u64, buf : &mut [u8]) -> FsResult<usize> {
         let node = parse_node(rel_path).ok_or(FsError::NotFound)?;
         let static_data : &[u8] = match node {
-            ProcNode::ProcNetTcp |
             ProcNode::ProcNetTcp6 |
-            ProcNode::ProcNetUdp |
             ProcNode::ProcNetUdp6 => PROC_NET_TABLE,
+            ProcNode::ProcNetRaw |
+            ProcNode::ProcNetRaw6 => PROC_NET_TABLE,
+            ProcNode::ProcNetUnix => PROC_NET_UNIX_TABLE,
+            ProcNode::ProcNetTcp |
+            ProcNode::ProcNetUdp => {
+                let data = self.read(rel_path)?;
+                let start = offset as usize;
+                if start >= data.len() {
+                    return Ok(0);
+                }
+                let n = core::cmp::min(buf.len(), data.len() - start);
+                buf[..n].copy_from_slice(&data[start..start + n]);
+                return Ok(n);
+            }
             ProcNode::SysKernelPidMax => b"32768\n",
             ProcNode::SysKernelTainted => b"0\n",
             _ => return ProcFsView::read_range(self, rel_path, offset, buf),
@@ -813,6 +880,12 @@ impl ProcFsView for KernelProcFs {
                 FsDirEntry { name : String::from("udp"),
                              node_type : FsNodeType::File },
                 FsDirEntry { name : String::from("udp6"),
+                             node_type : FsNodeType::File },
+                FsDirEntry { name : String::from("raw"),
+                             node_type : FsNodeType::File },
+                FsDirEntry { name : String::from("raw6"),
+                             node_type : FsNodeType::File },
+                FsDirEntry { name : String::from("unix"),
                              node_type : FsNodeType::File },
             ]),
             ProcNode::PidDir(pid) => {

@@ -9,7 +9,8 @@ use super::poll::{poll, poll_socket_events};
 use super::state::NetworkStack;
 use super::tcp::{tcp_is_accept_ready, tcp_is_connected};
 use super::types::{
-    Ipv4Endpoint, NetworkError, SocketKind, SocketPollSnapshot, SocketSendError, SocketState,
+    Ipv4Endpoint, NetworkError, NetworkSocketSnapshot, SocketKind, SocketPollSnapshot,
+    SocketSendError, SocketState,
 };
 
 /// 与 syscall 阻塞 connect 的兜底时间一致；成功建连后会取消，不影响长连接空闲时间。
@@ -38,6 +39,63 @@ fn normalize_connect_ip(ip : [u8; 4]) -> [u8; 4] {
 
 
 impl NetworkStack {
+    fn socket_table_snapshot(&mut self) -> alloc::vec::Vec<NetworkSocketSnapshot> {
+        let handles = self.metas
+                          .keys()
+                          .copied()
+                          .collect::<alloc::vec::Vec<_>>();
+        let mut seen_listener_groups = alloc::collections::BTreeSet::new();
+        let mut snapshots = alloc::vec::Vec::new();
+        for handle in handles {
+            let (kind, state, local_ip, local_port, peer_ip, peer_port, listener_group) = {
+                let meta = match self.metas.get(&handle) {
+                    Some(meta) => meta,
+                    None => continue,
+                };
+                (meta.kind,
+                 meta.state,
+                 meta.local_ip,
+                 meta.local_port,
+                 meta.peer_ip,
+                 meta.peer_port,
+                 meta.listener_group)
+            };
+            if let Some(group) = listener_group {
+                if !seen_listener_groups.insert(group) {
+                    continue;
+                }
+            }
+            let address = local_ip.unwrap_or_else(|| {
+                if peer_ip[0] == 127 {
+                    [127, 0, 0, 1]
+                } else if matches!(state, SocketState::Connecting | SocketState::Connected) {
+                    self.local_ip
+                } else {
+                    [0; 4]
+                }
+            });
+            let (tx_queue, rx_queue) = match kind {
+                SocketKind::Tcp => {
+                    let socket = self.sockets.get::<tcp::Socket>(handle);
+                    (socket.send_queue(), socket.recv_queue())
+                }
+                SocketKind::Udp => {
+                    let socket = self.sockets.get::<udp::Socket>(handle);
+                    (socket.send_queue(), socket.recv_queue())
+                }
+            };
+            snapshots.push(NetworkSocketSnapshot {
+                kind,
+                state,
+                local : Ipv4Endpoint { address, port : local_port },
+                peer : Ipv4Endpoint { address : peer_ip, port : peer_port },
+                tx_queue,
+                rx_queue,
+            });
+        }
+        snapshots
+    }
+
     // 绑定与基本状态。
     fn bind(&mut self,
             handle : SocketHandle,
@@ -383,6 +441,13 @@ impl NetworkStack {
 pub fn socket_kind(handle : SocketHandle) -> Result<SocketKind, NetworkError> {
     with_stack(NetworkError::StackUnavailable,
                |stack| stack.kind(handle))
+}
+
+/// 枚举当前 TCP/UDP socket，供 `/proc/net` 等只读管理接口使用。
+pub fn network_socket_table_snapshot()
+                                     -> Result<alloc::vec::Vec<NetworkSocketSnapshot>, NetworkError> {
+    with_stack_mut(NetworkError::StackUnavailable,
+                   |stack| Ok(stack.socket_table_snapshot()))
 }
 
 /// 将 socket 绑定到本机地址/端口。None 表示 0.0.0.0 wildcard。
