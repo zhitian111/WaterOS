@@ -19,10 +19,11 @@ from scripts.tests.test_remote_debug_client import MMC_RESPONSE
 
 
 class MmcEvidenceVerifyTests(unittest.TestCase):
-    def _record(self, directory: Path, board: str, name: str) -> Path:
+    def _record(self, directory: Path, board: str, name: str, second: int = 0) -> Path:
         path = directory / name
         write_mmc_evidence(path, board, MMC_RESPONSE,
-                           captured_at=datetime(2026, 8, 10, tzinfo=timezone.utc))
+                           captured_at=datetime(2026, 8, 10, 0, 0, second,
+                                                tzinfo=timezone.utc))
         return path
 
     def test_verifies_raw_hash_and_reconstructed_index(self) -> None:
@@ -140,6 +141,57 @@ class MmcEvidenceVerifyTests(unittest.TestCase):
             summary = json.loads(incomplete.stdout)
             self.assertFalse(summary["complete"])
             self.assertEqual(summary["missing"], ["board-a/warm"])
+
+    def test_v2_requires_distinct_samples_and_enforces_scenario_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            first = self._record(root, "board-a", "first.json", 1)
+            second = self._record(root, "board-a", "second.json", 2)
+            manifest_path = root / "manifest-v2.json"
+            expected = [{
+                "board_id": "board-a",
+                "scenario": "cold-card",
+                "minimum_samples": 2,
+                "assert_fields": {
+                    "card": "non-removable",
+                    "controller": "ok",
+                    "trace": "none",
+                },
+            }]
+            entries = [
+                {"board_id": "board-a", "scenario": "cold-card", "path": first.name},
+                {"board_id": "board-a", "scenario": "cold-card", "path": second.name},
+            ]
+            manifest = {
+                "schema": "wateros-ls2k-mmc-manifest-v2",
+                "expected": expected,
+                "evidence": entries[:1],
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            incomplete = verify_manifest(manifest_path)
+            self.assertEqual(incomplete.missing, ("board-a/cold-card#2",))
+            manifest["evidence"] = entries
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            self.assertTrue(verify_manifest(manifest_path).complete)
+
+            manifest["evidence"] = [entries[0], entries[0]]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(EvidenceVerificationError, "path more than once"):
+                verify_manifest(manifest_path)
+            manifest["evidence"] = entries
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            duplicate_time = json.loads(second.read_text(encoding="utf-8"))
+            duplicate_time["captured_at"] = json.loads(first.read_text(encoding="utf-8"))["captured_at"]
+            second.write_text(json.dumps(duplicate_time), encoding="utf-8")
+            with self.assertRaisesRegex(EvidenceVerificationError, "distinct captured_at"):
+                verify_manifest(manifest_path)
+
+            expected[0]["assert_fields"]["present"] = "1"
+            manifest["evidence"] = entries[:1]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(EvidenceVerificationError, "assertion failed"):
+                verify_manifest(manifest_path)
 
 
 if __name__ == "__main__":

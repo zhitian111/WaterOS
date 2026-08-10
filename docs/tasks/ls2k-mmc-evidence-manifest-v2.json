@@ -1,0 +1,12 @@
+{
+  "schema": "wateros-ls2k-mmc-manifest-v2",
+  "expected": [
+    {"board_id": "ls2k1000-board-a", "scenario": "cold-no-card", "minimum_samples": 2, "assert_fields": {"card": "gpio", "present": "0", "controller": "ok", "trace": "none", "assessment": "unavailable"}},
+    {"board_id": "ls2k1000-board-a", "scenario": "cold-card", "minimum_samples": 2, "assert_fields": {"card": "gpio", "present": "1", "controller": "ok", "trace": "none", "assessment": "unavailable"}},
+    {"board_id": "ls2k1000-board-a", "scenario": "warm-card", "minimum_samples": 2, "assert_fields": {"card": "gpio", "present": "1", "controller": "ok", "trace": "none", "assessment": "unavailable"}},
+    {"board_id": "ls2k1000-board-b", "scenario": "cold-no-card", "minimum_samples": 2, "assert_fields": {"card": "gpio", "present": "0", "controller": "ok", "trace": "none", "assessment": "unavailable"}},
+    {"board_id": "ls2k1000-board-b", "scenario": "cold-card", "minimum_samples": 2, "assert_fields": {"card": "gpio", "present": "1", "controller": "ok", "trace": "none", "assessment": "unavailable"}},
+    {"board_id": "ls2k1000-board-b", "scenario": "warm-card", "minimum_samples": 2, "assert_fields": {"card": "gpio", "present": "1", "controller": "ok", "trace": "none", "assessment": "unavailable"}}
+  ],
+  "evidence": []
+}

@@ -30,6 +30,7 @@ class VerifiedEvidence:
     board_id: str
     captured_at: str
     response_sha256: str
+    fields: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -40,7 +41,7 @@ class ManifestSummary:
 
     @property
     def complete(self) -> bool:
-        return not self.missing and self.expected == self.verified
+        return not self.missing and self.verified >= self.expected
 
 
 def _read_json_object(path: Path, limit: int) -> dict[str, Any]:
@@ -109,7 +110,8 @@ def verify_evidence_file(path: Path) -> VerifiedEvidence:
     return VerifiedEvidence(path=str(path),
                             board_id=record["board_id"],
                             captured_at=captured_at,
-                            response_sha256=digest)
+                            response_sha256=digest,
+                            fields=parsed.fields)
 
 
 def _manifest_path(root: Path, value: object) -> Path:
@@ -128,31 +130,55 @@ def verify_manifest(path: Path) -> ManifestSummary:
     manifest = _read_json_object(path, MAX_MANIFEST_FILE)
     if set(manifest) != {"schema", "expected", "evidence"}:
         raise EvidenceVerificationError("manifest has unexpected or missing top-level fields")
-    if manifest["schema"] != "wateros-ls2k-mmc-manifest-v1":
+    schema = manifest["schema"]
+    if schema not in ("wateros-ls2k-mmc-manifest-v1", "wateros-ls2k-mmc-manifest-v2"):
         raise EvidenceVerificationError("unsupported MMC evidence manifest schema")
     if not isinstance(manifest["expected"], list) or not isinstance(manifest["evidence"], list):
         raise EvidenceVerificationError("manifest expected and evidence must be arrays")
 
-    expected: set[tuple[str, str]] = set()
-    seen_boards: set[str] = set()
-    for entry in manifest["expected"]:
-        if not isinstance(entry, dict) or set(entry) != {"board_id", "scenarios"}:
-            raise EvidenceVerificationError("invalid manifest expected entry")
-        board_id = entry["board_id"]
-        scenarios = entry["scenarios"]
-        if not _valid_name(board_id) or board_id in seen_boards:
-            raise EvidenceVerificationError("invalid or duplicate expected board_id")
-        if not isinstance(scenarios, list) or not scenarios:
-            raise EvidenceVerificationError("each expected board needs at least one scenario")
-        seen_boards.add(board_id)
-        for scenario in scenarios:
-            if not _valid_name(scenario) or (board_id, scenario) in expected:
-                raise EvidenceVerificationError("invalid or duplicate expected scenario")
-            expected.add((board_id, scenario))
+    expected: dict[tuple[str, str], tuple[int, dict[str, str]]] = {}
+    if schema.endswith("v1"):
+        seen_boards: set[str] = set()
+        for entry in manifest["expected"]:
+            if not isinstance(entry, dict) or set(entry) != {"board_id", "scenarios"}:
+                raise EvidenceVerificationError("invalid manifest v1 expected entry")
+            board_id = entry["board_id"]
+            scenarios = entry["scenarios"]
+            if not _valid_name(board_id) or board_id in seen_boards:
+                raise EvidenceVerificationError("invalid or duplicate expected board_id")
+            if not isinstance(scenarios, list) or not scenarios:
+                raise EvidenceVerificationError("each expected board needs at least one scenario")
+            seen_boards.add(board_id)
+            for scenario in scenarios:
+                key = (board_id, scenario)
+                if not _valid_name(scenario) or key in expected:
+                    raise EvidenceVerificationError("invalid or duplicate expected scenario")
+                expected[key] = (1, {})
+    else:
+        required = {"board_id", "scenario", "minimum_samples", "assert_fields"}
+        for entry in manifest["expected"]:
+            if not isinstance(entry, dict) or set(entry) != required:
+                raise EvidenceVerificationError("invalid manifest v2 expected entry")
+            board_id = entry["board_id"]
+            scenario = entry["scenario"]
+            minimum = entry["minimum_samples"]
+            assertions = entry["assert_fields"]
+            key = (board_id, scenario)
+            if not _valid_name(board_id) or not _valid_name(scenario) or key in expected:
+                raise EvidenceVerificationError("invalid or duplicate expected board/scenario")
+            if not isinstance(minimum, int) or isinstance(minimum, bool) or not 1 <= minimum <= 16:
+                raise EvidenceVerificationError("minimum_samples must be in 1..16")
+            if (not isinstance(assertions, dict) or not assertions or
+                    any(not isinstance(name, str) or not name or not isinstance(value, str)
+                        for name, value in assertions.items())):
+                raise EvidenceVerificationError("assert_fields must be a non-empty string map")
+            expected[key] = (minimum, assertions)
     if not expected:
         raise EvidenceVerificationError("manifest expected set must not be empty")
 
-    verified: set[tuple[str, str]] = set()
+    counts = {key: 0 for key in expected}
+    timestamps: dict[tuple[str, str], set[str]] = {key: set() for key in expected}
+    paths: set[Path] = set()
     root = path.resolve().parent
     for entry in manifest["evidence"]:
         if not isinstance(entry, dict) or set(entry) != {"board_id", "scenario", "path"}:
@@ -162,14 +188,34 @@ def verify_manifest(path: Path) -> ManifestSummary:
         key = (board_id, scenario)
         if not _valid_name(board_id) or not _valid_name(scenario) or key not in expected:
             raise EvidenceVerificationError("manifest evidence is not in the expected set")
-        if key in verified:
+        if schema.endswith("v1") and counts[key] != 0:
             raise EvidenceVerificationError("duplicate evidence for board/scenario pair")
-        record = verify_evidence_file(_manifest_path(root, entry["path"]))
+        evidence_path = _manifest_path(root, entry["path"])
+        if evidence_path in paths:
+            raise EvidenceVerificationError("manifest references one evidence path more than once")
+        paths.add(evidence_path)
+        record = verify_evidence_file(evidence_path)
         if record.board_id != board_id:
             raise EvidenceVerificationError("manifest board_id does not match evidence record")
-        verified.add(key)
-    missing = tuple(f"{board}/{scenario}" for board, scenario in sorted(expected - verified))
-    return ManifestSummary(expected=len(expected), verified=len(verified), missing=missing)
+        if record.captured_at in timestamps[key]:
+            raise EvidenceVerificationError("repeated samples must have distinct captured_at values")
+        timestamps[key].add(record.captured_at)
+        for name, value in expected[key][1].items():
+            if record.fields.get(name) != value:
+                raise EvidenceVerificationError(
+                    f"{board_id}/{scenario} assertion failed: {name}={value}"
+                )
+        counts[key] += 1
+    missing_items: list[str] = []
+    for (board, scenario), (minimum, _) in sorted(expected.items()):
+        for sample in range(counts[(board, scenario)] + 1, minimum + 1):
+            if schema.endswith("v1"):
+                missing_items.append(f"{board}/{scenario}")
+            else:
+                missing_items.append(f"{board}/{scenario}#{sample}")
+    return ManifestSummary(expected=sum(rule[0] for rule in expected.values()),
+                           verified=sum(counts.values()),
+                           missing=tuple(missing_items))
 
 
 def main() -> int:
@@ -180,7 +226,11 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.evidence is not None:
-            result = asdict(verify_evidence_file(args.evidence))
+            verified = verify_evidence_file(args.evidence)
+            result = {"path": verified.path,
+                      "board_id": verified.board_id,
+                      "captured_at": verified.captured_at,
+                      "response_sha256": verified.response_sha256}
             result["valid"] = True
         else:
             summary = verify_manifest(args.manifest)

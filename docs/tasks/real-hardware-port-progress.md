@@ -3952,3 +3952,66 @@ manifest 的 `expected` 定义板卡和场景，`evidence` 中的相对路径必
 ### 提交
 
 - `[feat] verify LS2K1000 MMC evidence archives`
+
+## 2026-08-10：批次 82——LS2K1000 MMC 两板多样本采集协议
+
+### 任务与设计
+
+1. 保留 manifest v1 单样本兼容，同时增加 v2 的 minimum sample count 与响应字段断言。
+2. 同一板卡/场景允许多个独立证据文件，但路径与采集时间不能重复。
+3. 场景语义由受版本控制的 `assert_fields` 明确表达，不在 verifier 中硬编码场景名称。
+4. 提供两板、三场景、每场景两样本的模板与逐步采集操作文档。
+5. 模板在没有物理板时必须明确报告全部 missing，不能用软件 fixture 填充正式 evidence。
+
+v2 允许模板声明 `card=gpio,present=0/1,controller=ok,trace=none` 等跨场景 invariant。
+verifier 对每一份 raw response 完整重验证后再执行断言。允许多个样本的响应内容完全相同，因为稳定
+controller 可能产生相同寄存器值；独立性以不同文件路径和 UTC `captured_at` 为最低软件证据。
+
+### 完成内容
+
+- [x] `verify_manifest()` 同时支持 `wateros-ls2k-mmc-manifest-v1` 与 v2。
+- [x] v2 expected entry 新增 `minimum_samples`，范围限制为 1..16。
+- [x] v2 expected entry 新增非空 `assert_fields` string map，对原始响应重建出的 fields 精确比较。
+- [x] v2 允许同一 `(board_id, scenario)` 多份记录，summary 的 expected/verified 以样本数统计。
+- [x] 缺失样本稳定表示为 `board/scenario#N`；超过最低样本数仍可通过并计入 verified。
+- [x] manifest 全局拒绝重复/别名后的相同 evidence path。
+- [x] 同一板卡/场景的重复 `captured_at` 被拒绝，避免同一归档伪装为重复采样。
+- [x] v1 继续拒绝同一 pair 多份 evidence，旧 manifest 的结果和 missing 格式不变。
+- [x] 单文件 CLI 摘要不暴露完整 parsed fields；fields 仅在内部用于 v2 assertion。
+- [x] 新增两板 × `cold-no-card`/`cold-card`/`warm-card` 模板，每格要求两份，共 12 份。
+- [x] 模板要求 no-card `present=0`、card 场景 `present=1`、controller 正常且保持 read-only trace 状态。
+- [x] 新增上板准备、冷启动/热重启定义、采集命令、manifest entry 和离线验收指南。
+
+### 产物
+
+- `docs/tasks/ls2k-mmc-evidence-manifest-v2.json`
+- `docs/guides/ls2k-mmc-evidence-capture.md`
+
+### 验证证据
+
+- 全部 53 项 Python host 测试通过；新增 v2 聚合测试 1 项，既有 v1/remote/QEMU 用例继续通过。
+- v2 fixture 验证第一份样本报告 `board-a/cold-card#2`，第二份不同时间样本补齐后 complete。
+- v2 负向 fixture 覆盖重复路径、重复 captured_at 和 `present` 场景断言失败。
+- v1 两板六场景、篡改矩阵、路径逃逸与 CLI 返回码测试继续通过。
+- 正式模板由 verifier 成功解析并按预期返回 exit 1：expected=12、verified=0、12 项全部 missing。
+- `py_compile`、全部 topology/畸形 DTB fixture 和 `git diff --check` 通过；dtc warning 为预期畸形输入。
+- 本批只修改离线脚本与文档，没有 Rust、guest MMIO、内核或镜像变更，未生成大体积内核/磁盘镜像。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：正式模板的 12 个 evidence entry 均为空，必须保持 missing 直到真实板卡采集。
+- [ ] `ls2k1000-board-a/b` 是占位 ID，上板前必须替换为实际资产编号并评审提交。
+- [ ] 模板按当前 DTB 假设可移除 GPIO card detect；若某板为 non-removable，必须评审修改断言。
+- [ ] 不同 captured_at 只证明归档时间字符串不同，不能证明真的断电、热重启或插拔卡片。
+- [ ] field assertion 是精确文本比较；formatter/schema 升级时应创建新模板版本，不能静默放宽旧模板。
+- [ ] controller=ok 失败记录仍可单文件归档审计，但不能计入当前验收矩阵。
+- [ ] 两份样本只能初步发现不稳定状态，不能代替长时间压力测试、协议 trace 或真实块读写。
+- [ ] 下一批应回到 MMC 数据路径前置工作：审计最小只读块传输所需的 command/data typestate、buffer ownership 与 PIO/DMA 选择，继续保持生产入口关闭。
+
+### 参考与许可证
+
+- 本批只使用仓库自有格式和 Python 标准库，未引入第三方代码或许可证。
+
+### 提交
+
+- `[feat] define LS2K1000 MMC evidence matrix`
