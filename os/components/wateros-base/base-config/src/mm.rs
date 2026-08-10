@@ -27,6 +27,12 @@ pub const QEMU_VIRT_PHYS_RAM_SIZE : usize = QEMU_VIRT_PHYS_RAM_END - QEMU_VIRT_P
 pub const QEMU_VIRT_RTC_PHYS_START : usize = 0x0010_1000;
 pub const QEMU_VIRT_RTC_PHYS_END : usize = 0x0010_2000;
 
+/// QEMU RISC-V virt PLIC aperture from the machine DTB (`0x0c00_0000`,
+/// size `0x0060_0000`).  It sits below the UART/VirtIO MMIO window and must
+/// therefore be mapped explicitly once Sv39 is enabled.
+pub const QEMU_VIRT_PLIC_PHYS_START : usize = 0x0c00_0000;
+pub const QEMU_VIRT_PLIC_PHYS_END : usize = 0x0c60_0000;
+
 /// QEMU `virt` 低地址 MMIO 恒等映射区间（半开）：UART、`virtio,mmio` 等外设所在物理地址。
 /// 与 OpenSBI/QEMU 设备树常见布局一致；**不是** DRAM，扩大 RAM 映射无法替代。
 pub const QEMU_VIRT_MMIO_PHYS_START : usize = 0x1000_0000;

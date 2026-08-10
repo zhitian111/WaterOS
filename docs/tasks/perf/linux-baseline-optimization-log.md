@@ -1413,3 +1413,18 @@ supervisor context（hart 5）区域，说明当前内核的设备映射尚未�
 不调用 `init_external_irq` 或 `enable_external_interrupt`，先恢复同步 block 基线。下一步
 必须先在平台 MMIO 映射层增加 PLIC/EIOINTC/PCH-PIC 区域并做无设备 handler 的 claim/
 complete 冒烟，再进入单请求中断等待；不能把“代码可编译”当作控制器已可运行。
+
+## IRQ-02：PLIC MMIO 映射与外部线恢复
+
+状态：RISC-V 运行验收通过，LoongArch 构建验收通过（2026-08-10）
+
+- `base-config` 增加 QEMU virt DTB 对应的 PLIC aperture
+  `0x0c000000..0x0c600000`；Sv39 内核页表以 `R|W` 恒等映射完整区域。
+- 修正 PLIC per-context enable base：`0x2000`；threshold/claim base 保持
+  `0x200000`。启动路径恢复 controller init 和 external interrupt enable。
+- `make check ARCH={rv,la} PROFILE=final` 均通过。
+- RISC-V Final 使用 `-smp 8 -snapshot` 运行通过，出现 `[fs] init end` 和
+  `all commands finished`，未再出现 `0xc20b000` StorePageFault、fatal trap、panic 或
+  SIGSEGV。
+- LoongArch 当前仍缺少可运行的 `sdcard-la.img`，因此只记录 Final 构建证据，不声明
+  运行通过。
