@@ -3,8 +3,9 @@
 //! Clock/reset/syscon descriptions belong to this board layer. Controller PIO
 //! and SD protocol logic live in `wateros-driver-block-impl-dw-mmc` so another
 //! platform can reuse them without importing JH7110 topology assumptions.
-use alloc::vec::Vec;
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use api_v0::MmioRegion;
+use block::{BlockDevice, DriverError, Lba, SharedBlockDevice, BLOCK_SIZE};
 
 pub use dw_mmc::mmc::{clock_divider, DwMmc, MmcError, MmioRegisters, RegisterIo};
 use dw_mmc::sd::SdCard;
@@ -42,6 +43,35 @@ pub enum MmcInitializationError {
     NotReady,
     Core(MmcError),
     Card(MmcError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MmcRegistrationError {
+    InvalidBlockSize,
+    UnknownCapacity,
+    EmptyDevice,
+    Read(DriverError),
+}
+
+/// Register an already initialized SD device only after a bounded read probe.
+///
+/// This helper is intentionally separate from controller/card initialization:
+/// callers can run it after explicit board evidence, and a failed probe never
+/// mutates the global block registry.
+pub fn register_readonly_block_device(device : SharedBlockDevice)
+                                     -> Result<usize, MmcRegistrationError> {
+    let mut guard = device.lock();
+    if guard.block_size() != BLOCK_SIZE {
+        return Err(MmcRegistrationError::InvalidBlockSize);
+    }
+    let total = guard.total_blocks().ok_or(MmcRegistrationError::UnknownCapacity)?;
+    if total == 0 {
+        return Err(MmcRegistrationError::EmptyDevice);
+    }
+    let mut sample = [0u8; BLOCK_SIZE];
+    guard.read_blocks(Lba(0), &mut sample).map_err(MmcRegistrationError::Read)?;
+    drop(guard);
+    Ok(block::register_block_device(device))
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -195,6 +225,7 @@ pub fn initialize_sd_card<R : RegisterIo>(plan : &MmcBringUpPlan,
 #[cfg(test)]
 mod tests {
     use alloc::vec;
+    use spin::Mutex;
     use super::*;
 
     fn host() -> MmcHostDescription {
@@ -211,6 +242,38 @@ mod tests {
                                                           offset : 0x10,
                                                           shift : 0,
                                                           mask : 0x3 }) }
+    }
+
+    struct ProbeDisk {
+        total : Option<u64>,
+        fail : bool,
+    }
+    impl BlockDevice for ProbeDisk {
+        fn total_blocks(&self) -> Option<u64> { self.total }
+        fn read_blocks(&mut self, _start : Lba, output : &mut [u8]) -> block::DriverResult<()> {
+            if self.fail { return Err(DriverError::IoError); }
+            output.fill(0xA5);
+            Ok(())
+        }
+        fn write_blocks(&mut self, _start : Lba, _input : &[u8]) -> block::DriverResult<()> {
+            Err(DriverError::Unsupported)
+        }
+    }
+    fn probe_disk(total : Option<u64>, fail : bool) -> SharedBlockDevice {
+        Arc::new(Mutex::new(Box::new(ProbeDisk { total, fail })))
+    }
+
+    #[test]
+    fn registration_requires_capacity_and_first_read() {
+        let before = block::block_device_count();
+        assert_eq!(register_readonly_block_device(probe_disk(None, false)),
+                   Err(MmcRegistrationError::UnknownCapacity));
+        assert_eq!(register_readonly_block_device(probe_disk(Some(1), true)),
+                   Err(MmcRegistrationError::Read(DriverError::IoError)));
+        assert_eq!(block::block_device_count(), before);
+        let index = register_readonly_block_device(probe_disk(Some(1), false)).unwrap();
+        assert!(block::block_device_count() > before);
+        assert!(block::unregister_block_device(index));
     }
 
     #[test]

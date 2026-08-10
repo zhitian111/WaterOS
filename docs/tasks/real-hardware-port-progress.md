@@ -1256,6 +1256,30 @@ python3 scripts/remote_debug_qemu_smoke.py \
 
 - `[feat] expose visionfive2 sd initialization`
 
+## 2026-08-10：批次 51——VisionFive 2 SD 只读注册闸门
+
+### 任务与设计
+
+1. 审计发现 `initialize_sd_card` 只返回协议对象，没有把容量和首块读取作为设备注册前提；直接注册会把响应不稳定的卡暴露给分区扫描和根文件系统。
+2. 新增独立 `register_readonly_block_device`：检查 512-byte block size、非零已知容量，读取 LBA0 一整块成功后才调用共享注册 API。
+3. 失败路径发生在注册前，保证全局 block registry 和 topology generation 不变化；写入仍由 SD adapter 明确拒绝。
+
+### 完成内容
+
+- [x] 新增 `MmcRegistrationError` 和首块读取后注册 helper。
+- [x] 复用共享 `register_block_device` 的自动分区扫描与 devfs topology 更新。
+- [x] fake block device 单测覆盖未知容量、首读失败无污染、成功注册后注销。
+
+### 验证证据与限制
+
+- VisionFive2 驱动 crate 全部 lib 单测：12 项通过。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 SD CMD/PIO 时序、卡容量/首块内容、JH7110 IRQ/DMA/cache、掉电和物理注册仍需实机；本闸门只保证注册前的软件契约。
+
+### 提交
+
+- `[feat] gate visionfive2 sd block registration`
+
 ## 2026-08-10：批次 48——VisionFive 2 MMC 静态参数诊断
 
 ### 任务与设计
