@@ -1114,6 +1114,7 @@ pub enum ReadCommandFailure {
 pub enum ReadDmaFailure {
     Start,
     Completion,
+    Hardware(u32),
     Stop,
 }
 
@@ -1628,6 +1629,48 @@ pub(crate) struct PublishedReadDmaSession<'a, 'e, R, D, P> {
 }
 
 #[cfg(test)]
+pub(crate) struct AcknowledgedReadDmaSession<'a, D, P> {
+    read : DeferredReadPlan,
+    dma : apbdma::IrqCompletionSession<'a, D, P>,
+}
+
+#[cfg(test)]
+pub(crate) struct QuiescedReadDmaSession<'a, D, P> {
+    read : DeferredReadPlan,
+    dma : apbdma::QuiescedSession<'a, D, P>,
+}
+
+#[cfg(test)]
+pub(crate) struct ReadDmaIrqFailure<'a, 'e, R, D, P> {
+    pub error : apbdma::ExecutorError,
+    pub tracker : ReadCompletionTracker<PublishedReadDmaSession<'a, 'e, R, D, P>>,
+}
+
+#[cfg(test)]
+pub(crate) struct ReadDmaInspectionFailure<'a, D, P> {
+    pub error : apbdma::DescriptorStatusError,
+    pub tracker : ReadCompletionTracker<AcknowledgedReadDmaSession<'a, D, P>>,
+}
+
+#[cfg(test)]
+impl<R, D, P> core::fmt::Debug for ReadDmaIrqFailure<'_, '_, R, D, P> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("ReadDmaIrqFailure")
+                 .field("error", &self.error)
+                 .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+impl<D, P> core::fmt::Debug for ReadDmaInspectionFailure<'_, D, P> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("ReadDmaInspectionFailure")
+                 .field("error", &self.error)
+                 .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
 impl<'a, 'e, R : apbdma::OrderIo, D, P> RunningReadDmaSession<'a, 'e, R, D, P> {
     pub(crate) fn publish<C : ReadCommandPublisher>(
         self,
@@ -1658,6 +1701,100 @@ impl<'a, 'e, R : apbdma::OrderIo, D, P> PublishedReadDmaSession<'a, 'e, R, D, P>
                 session : Self { read : self.read, dma : failure.session },
             }),
         }
+    }
+}
+
+#[cfg(test)]
+impl<'a, 'e, R : apbdma::OrderIo, D, P>
+    ReadCompletionTracker<PublishedReadDmaSession<'a, 'e, R, D, P>>
+{
+    pub(crate) fn acknowledge_dma_irq(
+        self,
+        acknowledged : AcknowledgedIrq)
+        -> Result<ReadCompletionTracker<AcknowledgedReadDmaSession<'a, D, P>>,
+                  ReadDmaIrqFailure<'a, 'e, R, D, P>> {
+        let ReadCompletionTracker { plan, buffer, evidence } = self;
+        let PublishedReadDmaSession { read, dma } = buffer;
+        match dma.complete_irq(acknowledged) {
+            Ok(dma) => Ok(ReadCompletionTracker {
+                plan,
+                buffer : AcknowledgedReadDmaSession { read, dma },
+                evidence,
+            }),
+            Err(failure) => Err(ReadDmaIrqFailure {
+                error : failure.error,
+                tracker : ReadCompletionTracker {
+                    plan,
+                    buffer : PublishedReadDmaSession { read, dma : failure.session },
+                    evidence,
+                },
+            }),
+        }
+    }
+}
+
+#[cfg(test)]
+impl<'a, D : DmaCoherency, P> ReadCompletionTracker<AcknowledgedReadDmaSession<'a, D, P>> {
+    pub(crate) fn inspect_dma_status<R : apbdma::DescriptorStatusReader,
+                                    C : apbdma::DescriptorStatusDecoder>(
+        self,
+        reader : &mut R,
+        decoder : &C)
+        -> Result<ReadCompletionProgress<QuiescedReadDmaSession<'a, D, P>>,
+                  ReadDmaInspectionFailure<'a, D, P>> {
+        let ReadCompletionTracker { plan, buffer, evidence } = self;
+        let AcknowledgedReadDmaSession { read, dma } = buffer;
+        match dma.inspect_status(reader, decoder) {
+            Ok((completion, dma)) => {
+                let tracker = ReadCompletionTracker {
+                    plan,
+                    buffer : QuiescedReadDmaSession { read, dma },
+                    evidence,
+                };
+                Ok(match completion {
+                    apbdma::DescriptorCompletion::Complete => tracker.dma_completed(),
+                    apbdma::DescriptorCompletion::HardwareError(status) => {
+                        tracker.dma_failed(ReadDmaFailure::Hardware(status))
+                    },
+                })
+            },
+            Err(failure) => Err(ReadDmaInspectionFailure {
+                error : failure.error,
+                tracker : ReadCompletionTracker {
+                    plan,
+                    buffer : AcknowledgedReadDmaSession { read, dma : failure.session },
+                    evidence,
+                },
+            }),
+        }
+    }
+}
+
+#[cfg(test)]
+impl<'a, D : DmaCoherency, P : DmaCoherency> QuiescedReadDmaSession<'a, D, P> {
+    pub(crate) fn finish(self)
+                         -> Result<(), apbdma::SessionFailure<DriverError, Self>> {
+        match self.dma.finish() {
+            Ok(()) => Ok(()),
+            Err(failure) => Err(apbdma::SessionFailure {
+                error : failure.error,
+                session : Self { read : self.read, dma : failure.session },
+            }),
+        }
+    }
+}
+
+#[cfg(test)]
+impl<'a, D, P> ReadCompleted<QuiescedReadDmaSession<'a, D, P>> {
+    pub(crate) fn into_quiesced_session(self) -> QuiescedReadDmaSession<'a, D, P> {
+        self.buffer
+    }
+}
+
+#[cfg(test)]
+impl<'a, D, P> ReadCompletionRecovery<QuiescedReadDmaSession<'a, D, P>> {
+    pub(crate) fn into_quiesced_session(self) -> QuiescedReadDmaSession<'a, D, P> {
+        ManuallyDrop::into_inner(self._buffer)
     }
 }
 

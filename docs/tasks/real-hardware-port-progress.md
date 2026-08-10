@@ -4486,3 +4486,48 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] observe LS2K1000 MMC read commands`
+
+## 2026-08-10：批次 92——以 APBDMA IRQ 与描述符状态驱动读取完成
+
+### 本批任务与设计
+
+1. 审计 APBDMA `RunningSession`→`IrqCompletionSession`→`QuiescedSession` 与 MMC tracker 的资源边界。
+2. 只有匹配的 acknowledged APBDMA IRQ 才释放 executor borrow；错误 IRQ 返回原 carrying tracker。
+3. IRQ 后必须同步并读取描述符状态；缓存、读取和未知状态失败均返回同一 acknowledged tracker 供重试。
+4. `Complete` 才提交 DMA completion fact；`HardwareError(raw)` 进入保留原始状态值的 recovery。
+5. 无论 command/data evidence 先到还是 DMA evidence 先到，都保留 read plan、evidence 与两份 mapping ownership。
+
+### 已完成
+
+- [x] 新增 test-only acknowledged/quiesced read-DMA carrying session，把 APBDMA typestate 直接嵌入 tracker 资源类型。
+- [x] `acknowledge_dma_irq` 在错误 source 时保留 `PublishedReadDmaSession` 和 executor borrow，正确 source 后转为 acknowledged session。
+- [x] `inspect_dma_status` 在 cache/read/decode failure 后保留 `IrqCompletionSession`，可在同一资源上重试。
+- [x] 明确完成状态转为 carrying `QuiescedSession` 后提交 DMA fact，不再用独立软件调用模拟 IRQ completion。
+- [x] `ReadDmaFailure::Hardware(u32)` 保存描述符原始错误状态，并返回 quiesced recovery 供安全 finish。
+- [x] completed/recovery 专用 extractor 只返回 carrying quiesced session；CPU ownership 仍需显式 finish。
+- [x] 没有创建 production IRQ/status permit，也没有启用默认 MMC block device。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 148 项全部通过；新增 3 项 IRQ/status/tracker 聚合测试。
+- 正确 IRQ + `Complete` 在 command/DFIN 已到时产生 Completed，三项 evidence 均为 true。
+- DMA evidence 先到时保持 Pending，随后 command/DFIN 到齐才 Completed，证明转换顺序无关。
+- 错误 IRQ 返回 `UnexpectedIrq`，同一 tracker 随后接受正确 IRQ；资源和 executor 状态没有丢失。
+- cache sync 一次失败、descriptor read 失败、Unknown 状态均保留 acknowledged tracker，依次重试后成功；reader call 顺序也被断言。
+- `HardwareError(0x80000042)` 精确进入 `Dma(Hardware(0x80000042))` recovery；显式 finish 后 descriptor/payload 才 CPU-owned。
+- production 组件 check、RISC-V `make check`、LoongArch64 `make kernel-la` 均通过；仅有仓库既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过；dtc warning 来自预期畸形输入。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：descriptor status `0x100` 表示 Complete、最高位表示 HardwareError 目前只是 fixture decoder，不是已确认的 2K1000 APBDMA 位定义。
+- [ ] `UNVERIFIED_ON_HARDWARE`：acknowledged DMA IRQ 是否足以证明引擎停止访问 descriptor/payload，仍需两块目标板上的 trace 与 cache 压力测试。
+- [ ] 当前 carrying transition 仅在 test 配置可构造；production IRQ owner 尚未把 APBDMA token 路由给 MMC read session。
+- [ ] descriptor status 的 authoritative 文档/上游实现尚未确认，因此 production 必须继续 fail-closed，不能使用 fixture decoder。
+- [ ] MMC command observer 仍是 polling fixture，尚未绑定 MMC IRQ owner；APBDMA 与 MMC 两路 IRQ 的真实合并/先后仍待真机验证。
+- [ ] CMD18 的 CMD12、card state 与 partial-block recovery 尚未实现。
+- [ ] 下一批应审计主线/厂商 APBDMA 描述符完成位来源；若仍无法确认，则实现 production-safe `StatusUnverified` 诊断路径和 IRQ owner carrying handoff，但保持数据面禁用。
+
+### 提交
+
+- 本批计划提交：`[feat] bind LS2K1000 DMA IRQ to read completion`

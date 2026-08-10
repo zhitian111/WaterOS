@@ -1489,6 +1489,140 @@ mod tests {
     }
 
     #[test]
+    fn published_read_dma_irq_and_status_complete_the_tracker() {
+        let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                      Direction::DeviceToMemory).unwrap();
+        let (mut descriptor, mut payload) = mappings(transfer);
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+        let tracker = published_read_tracker(transfer,
+                                             &mut descriptor,
+                                             &mut payload,
+                                             &mut executor);
+        let tracker = match tracker.command_validated() {
+            crate::mmc::ReadCompletionProgress::Pending(tracker) => tracker,
+            _ => panic!("command fact prematurely completed the read"),
+        };
+        let tracker = match tracker.controller_interrupt(1) {
+            crate::mmc::ReadCompletionProgress::Pending(tracker) => tracker,
+            _ => panic!("data fact prematurely completed the read"),
+        };
+        let tracker = tracker.acknowledge_dma_irq(acknowledged_dma_irq()).unwrap();
+        let mut reader = MockStatusReader { status : 0x100, ..MockStatusReader::default() };
+        let completed = match tracker.inspect_dma_status(&mut reader, &FixtureStatusDecoder)
+                                     .unwrap() {
+            crate::mmc::ReadCompletionProgress::Completed(completed) => completed,
+            _ => panic!("verified DMA completion did not complete the read"),
+        };
+        assert_eq!(completed.evidence,
+                   crate::mmc::ReadCompletionEvidence {
+                       command_response_validated : true,
+                       data_finished : true,
+                       dma_finished : true,
+                   });
+        completed.into_quiesced_session().finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+    }
+
+    #[test]
+    fn published_read_retries_wrong_irq_and_status_observation() {
+        let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                      Direction::DeviceToMemory).unwrap();
+        let descriptor_region = DmaRegion::new(0x4000, 0x2000, 64, 32, 64).unwrap();
+        let payload_region = DmaRegion::new(0x8000, 0x3000, 512, 32, 64).unwrap();
+        let mut descriptor = DmaMapping::new(
+            descriptor_region,
+            DmaDirection::Bidirectional,
+            MockCache { fail_cpu_syncs : 1, ..MockCache::default() });
+        let mut payload = DmaMapping::new(payload_region,
+                                          DmaDirection::FromDevice,
+                                          MockCache::default());
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+        let tracker = published_read_tracker(transfer,
+                                             &mut descriptor,
+                                             &mut payload,
+                                             &mut executor);
+        let wrong = AcknowledgedIrq::after_mask_ack(
+            GlobalIrq::from_bank_local(0, 13).unwrap());
+        let failure = match tracker.acknowledge_dma_irq(wrong) {
+            Err(failure) => failure,
+            Ok(_) => panic!("wrong IRQ advanced the read tracker"),
+        };
+        assert_eq!(failure.error, ExecutorError::UnexpectedIrq);
+        let tracker = failure.tracker
+                             .acknowledge_dma_irq(acknowledged_dma_irq()).unwrap();
+
+        let mut reader = MockStatusReader { status : 0x100,
+                                            ..MockStatusReader::default() };
+        let failure = match tracker.inspect_dma_status(&mut reader, &FixtureStatusDecoder) {
+            Err(failure) => failure,
+            Ok(_) => panic!("failed descriptor cache sync advanced the tracker"),
+        };
+        assert_eq!(failure.error, DescriptorStatusError::Cache(DriverError::IoError));
+        assert_eq!(reader.calls, 0);
+        reader.fail = true;
+        let failure = match failure.tracker
+                                   .inspect_dma_status(&mut reader, &FixtureStatusDecoder) {
+            Err(failure) => failure,
+            Ok(_) => panic!("failed descriptor read advanced the tracker"),
+        };
+        assert_eq!(failure.error, DescriptorStatusError::Read);
+        reader.fail = false;
+        reader.status = 0x42;
+        let failure = match failure.tracker
+                                   .inspect_dma_status(&mut reader, &FixtureStatusDecoder) {
+            Err(failure) => failure,
+            Ok(_) => panic!("unknown descriptor status advanced the tracker"),
+        };
+        assert_eq!(failure.error, DescriptorStatusError::Unknown(0x42));
+        reader.status = 0x100;
+        let tracker = match failure.tracker
+                                   .inspect_dma_status(&mut reader, &FixtureStatusDecoder)
+                                   .unwrap() {
+            crate::mmc::ReadCompletionProgress::Pending(tracker) => tracker,
+            _ => panic!("DMA fact completed the read before command/data"),
+        };
+        let tracker = match tracker.command_validated() {
+            crate::mmc::ReadCompletionProgress::Pending(tracker) => tracker,
+            _ => panic!("command fact completed the read before data"),
+        };
+        let completed = match tracker.controller_interrupt(1) {
+            crate::mmc::ReadCompletionProgress::Completed(completed) => completed,
+            _ => panic!("all three facts did not complete the read"),
+        };
+        completed.into_quiesced_session().finish().unwrap();
+        assert_eq!(reader.calls, 3);
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+    }
+
+    #[test]
+    fn published_read_descriptor_hardware_error_enters_quiesced_recovery() {
+        let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                      Direction::DeviceToMemory).unwrap();
+        let (mut descriptor, mut payload) = mappings(transfer);
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+        let tracker = published_read_tracker(transfer,
+                                             &mut descriptor,
+                                             &mut payload,
+                                             &mut executor)
+                          .acknowledge_dma_irq(acknowledged_dma_irq()).unwrap();
+        let mut reader = MockStatusReader { status : 0x8000_0042,
+                                            ..MockStatusReader::default() };
+        let recovery = match tracker.inspect_dma_status(&mut reader, &FixtureStatusDecoder)
+                                    .unwrap() {
+            crate::mmc::ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+            _ => panic!("descriptor hardware error did not enter recovery"),
+        };
+        assert_eq!(recovery.failure,
+                   crate::mmc::ReadCompletionFailure::Dma(
+                       crate::mmc::ReadDmaFailure::Hardware(0x8000_0042)));
+        recovery.into_quiesced_session().finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+    }
+
+    #[test]
     fn published_read_errors_return_running_session_for_stop_recovery() {
         let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
                                       Direction::DeviceToMemory).unwrap();
