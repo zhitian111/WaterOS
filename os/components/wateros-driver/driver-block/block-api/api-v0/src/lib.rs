@@ -113,6 +113,7 @@ pub trait BlockDevice: Send {
 pub fn register_block_device(device: SharedBlockDevice) -> usize {
     let scan = scan_mbr(&device);
     let mut children = Vec::new();
+    let mut gpt_error = None;
     match &scan {
         Ok(partitions) => {
             for partition in partitions {
@@ -125,20 +126,23 @@ pub fn register_block_device(device: SharedBlockDevice) -> usize {
             }
         }
         Err(PartitionScanError::ProtectiveGpt) => {
-            if let Ok(partitions) = scan_gpt(&device) {
-                for partition in partitions {
-                    if let Some(sectors) = partition.end_lba
-                                                     .checked_sub(partition.start_lba)
-                                                     .and_then(|count| count.checked_add(1))
-                {
-                    if let Ok(child) = PartitionBlockDevice::shared(device.clone(),
-                                                                    partition.start_lba,
-                                                                    sectors)
-                    {
-                        children.push((partition.number, child));
+            match scan_gpt(&device) {
+                Ok(partitions) => {
+                    for partition in partitions {
+                        if let Some(sectors) = partition.end_lba
+                                                         .checked_sub(partition.start_lba)
+                                                         .and_then(|count| count.checked_add(1))
+                        {
+                            if let Ok(child) = PartitionBlockDevice::shared(device.clone(),
+                                                                            partition.start_lba,
+                                                                            sectors)
+                            {
+                                children.push((partition.number, child));
+                            }
+                        }
                     }
                 }
-                }
+                Err(error) => gpt_error = Some(error),
             }
         }
         Err(_) => {}
@@ -163,12 +167,21 @@ pub fn register_block_device(device: SharedBlockDevice) -> usize {
         Ok(_) => {},
         // 没有 MBR 签名是合法的整盘文件系统布局，不需要告警。
         Err(PartitionScanError::InvalidSignature) => {},
+        // Protective MBR is expected when GPT was parsed successfully. Only
+        // report the bounded GPT failure that prevented child registration.
+        Err(PartitionScanError::ProtectiveGpt) if gpt_error.is_none() => {},
         Err(error) => {
             #[cfg(feature = "logging")]
             logging::warn!("[driver-block-api] disk #{disk_number} partition scan skipped: {error:?}");
             #[cfg(not(feature = "logging"))]
             let _ = error;
         },
+    }
+    if let Some(error) = gpt_error {
+        #[cfg(feature = "logging")]
+        logging::warn!("[driver-block-api] disk #{disk_number} GPT scan failed: {error:?}");
+        #[cfg(not(feature = "logging"))]
+        let _ = error;
     }
     disk_index
 }

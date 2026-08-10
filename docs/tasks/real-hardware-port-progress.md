@@ -1809,3 +1809,28 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[test] add operator shell preflight`
+
+## 2026-08-10：批次 56——QEMU guest GPT 根盘接通与 virtio 容量修复
+
+### 任务与设计
+
+1. 使用 16MiB GPT 临时根盘和现有 RISC-V kernel，推进一次真正的 QEMU guest 端到端检查；缺少 guest 产物时才允许 skip。
+2. 对 guest 串口中 `ProtectiveGpt`/`InvalidGptHeader` 进行根因定位，不把 Python 镜像 verifier 或 host 单测当成内核已接通的证据。
+3. 修复应保持 BlockDevice 契约最小化：virtio-blk 直接暴露 virtio-drivers 提供的 512-byte sector capacity，供 GPT 主/备 header 边界校验使用。
+
+### 完成内容
+
+- [x] `VirtioBlkDevice` 实现 `BlockDevice::total_blocks()`，返回 `VirtIOBlk::capacity()`。
+- [x] `register_block_device` 保留 GPT 扫描失败诊断，便于区分 Protective MBR、无 GPT 和真实 header 错误。
+- [x] 16MiB GPT 镜像在 QEMU guest 中完成 `/dev/vda1` 分区发现和 ext4 root RW 挂载；guest 日志显示 `devices registered: block=2`、`mount root RW from /dev/vda1`。
+
+### 验证证据与限制
+
+- `make kernel-rv`：通过（RISC-V release kernel，仓库既有 warnings）。
+- QEMU guest：virtio-blk 识别容量 16384KB，GPT 分区扫描成功，ext4 root 挂载成功。
+- remote-debug monitor：本次 kernel profile 未启用 monitor，连接按预期超时；这不是 GPT/根盘失败。
+- `UNVERIFIED_ON_HARDWARE`：真实 SD/eMMC/AHCI 控制器、DMA/cache/IRQ、写入掉电恢复以及 VisionFive 2/Loongson 2K1000 物理板仍未验证。
+
+### 提交
+
+- `[fix] expose virtio block capacity`

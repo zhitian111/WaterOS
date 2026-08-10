@@ -128,6 +128,12 @@ impl VirtioBlkDevice {
 }
 
 impl BlockDevice for VirtioBlkDevice {
+    /// Expose the VirtIO capacity in 512-byte sectors so partition scanners can
+    /// validate primary/backup metadata against the actual device boundary.
+    fn total_blocks(&self) -> Option<u64> {
+        Some(self.inner.capacity())
+    }
+
     /// 以 LBA 为单位读入 `buf`；长度须为块大小的整数倍，否则由 VirtIO 层返回错误。
     fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
         self.inner
