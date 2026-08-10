@@ -5998,3 +5998,34 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[docs] record driver reuse and licenses`
+
+## 2026-08-10：批次 131——提供原子 devfs generation/node 快照
+
+### 本批任务与设计
+
+1. 审计远程 `devfs` 命令和 VFS 目录消费者，确认分开读取 generation 与 nodes 会在设备注册/注销并发时形成跨视图结果。
+2. 为 kernel、简化和 dummy devfs 增加 `snapshot()`，在同一软件视图临界区复制 generation 与节点列表。
+3. 远程 monitor 改用原子快照，保留最多 32 条路径的输出上限和只读性质。
+4. 用 input 注册/注销 host 测试证明 generation 与节点路径同时变化且注销后路径消失。
+
+### 已完成
+
+- [x] 三种 devfs 实现提供 `(generation, Vec<DevNode>)` 原子快照。
+- [x] `remote_debug devfs` 使用原子快照，不再拼接两个独立读取结果。
+- [x] kernel devfs 测试覆盖 input 添加/移除前后的 generation、节点一致性。
+
+### 验证证据
+
+- kernel devfs、简化 devfs、VFS、input/character host 测试通过。
+- `make check EXTRA_FEATURES=remote-debug-monitor` 与 `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 通过。
+- `UNVERIFIED_ON_HARDWARE`：原子性只覆盖软件锁和快照，不证明真实控制器热插拔、IRQ/DMA 停止顺序或设备电气状态。
+
+### 已知限制、未验证与后续测试
+
+- [ ] VFS `VfsDevInventory` 仍提供独立的 list/generation 方法，后续可增加同语义的高层 snapshot 以避免桥接层重复枚举。
+- [ ] 节点快照仍不包含 major/minor、权限、uevent 或输入设备能力表。
+- [ ] 尚未在 QEMU guest 注入键盘/鼠标事件并同时观察 snapshot 变化。
+
+### 提交
+
+- 本批计划提交：`[feat] provide atomic devfs node snapshots`

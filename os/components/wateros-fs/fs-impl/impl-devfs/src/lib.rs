@@ -113,6 +113,13 @@ pub fn generation() -> u64 {
     VIEW_GENERATION.load(Ordering::Acquire)
 }
 
+/// 原子复制当前 generation 与节点列表，避免动态设备变化造成跨视图快照。
+pub fn snapshot() -> (u64, Vec<DevNode>) {
+    ensure_fresh();
+    let nodes = DEV_NODES.lock();
+    (VIEW_GENERATION.load(Ordering::Acquire), nodes.clone())
+}
+
 /// 返回当前缓存的节点列表副本。
 pub fn list_nodes() -> Vec<DevNode> {
     ensure_fresh();

@@ -61,3 +61,6 @@ pub fn set_dt_unsupported_paths(paths: Vec<String>) {
 
 /// Dummy devfs 永远没有可见节点，代际固定为零。
 pub fn generation() -> u64 { 0 }
+
+/// Dummy devfs 的原子空快照。
+pub fn snapshot() -> (u64, Vec<DevNode>) { (0, Vec::new()) }

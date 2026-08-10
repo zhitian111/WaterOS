@@ -106,8 +106,7 @@ fn command_response(command : Command) -> (alloc::string::String, bool) {
 /// This reports cached node paths only; it does not probe hardware or grant a
 /// shell. The output is intentionally capped for the line-oriented monitor.
 fn devfs_response() -> alloc::string::String {
-    let generation = fs::devfs::active_impl::generation();
-    let nodes = fs::devfs::active_impl::list_nodes();
+    let (generation, nodes) = fs::devfs::active_impl::snapshot();
     let mut paths = alloc::string::String::new();
     for (index, node) in nodes.iter().take(32).enumerate() {
         if index != 0 {

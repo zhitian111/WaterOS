@@ -317,11 +317,15 @@ mod tests {
         let manager = KernelDevFsManager;
         let path = format!("/dev/input/event{index}");
         assert!(manager.list_nodes().iter().any(|node| node.path == path));
-        assert!(generation() > before);
+        let (registered_generation, registered_nodes) = snapshot();
+        assert!(registered_generation > before);
+        assert!(registered_nodes.iter().any(|node| node.path == path));
         assert!(manager.lookup_character_device(&path).is_ok());
         assert!(unregister_input_device(index));
         assert!(!manager.list_nodes().iter().any(|node| node.path == path));
-        assert!(generation() > before);
+        let (removed_generation, removed_nodes) = snapshot();
+        assert!(removed_generation > registered_generation);
+        assert!(!removed_nodes.iter().any(|node| node.path == path));
         assert!(manager.lookup_character_device(&path).is_err());
     }
 }
@@ -338,6 +342,13 @@ pub fn refresh() -> usize {
 pub fn generation() -> u64 {
     ensure_fresh();
     DEVFS.lock().view_generation
+}
+
+/// 原子复制当前 generation 与节点列表，避免动态设备变化造成跨视图快照。
+pub fn snapshot() -> (u64, Vec<DevNode>) {
+    ensure_fresh();
+    let inner = DEVFS.lock();
+    (inner.view_generation, inner.nodes.clone())
 }
 
 /// 登记 DTB 占位路径（下次 [`refresh`] 时合并进节点表）。
