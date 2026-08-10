@@ -308,13 +308,14 @@ pub fn clear_masked_interrupt_snapshot<R : RegisterIo>(
         Err(error) => return Err(MmcIrqAckError::Io(error)),
     };
     let known = status & INT_CLEAR;
+    let unknown = status & !INT_CLEAR;
     if known == 0 {
+        if unknown != 0 { return Err(MmcIrqAckError::UnknownPending(unknown)); }
         return Err(MmcIrqAckError::NoKnownPending);
     }
     if let Err(error) = registers.write32(REG_INT, known) {
         return Err(MmcIrqAckError::Io(error));
     }
-    let unknown = status & !INT_CLEAR;
     if unknown != 0 {
         return Err(MmcIrqAckError::UnknownPending(unknown));
     }

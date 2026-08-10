@@ -75,6 +75,118 @@ pub enum MmcReadRecheckError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoundedMmcReadRecheck {
+    transaction : ReadTransactionId,
+    remaining : u16,
+    polls_completed : u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoundedMmcReadRecheckError {
+    InvalidBudget,
+    Runtime(crate::irq_runtime::RuntimeError),
+    OwnerVariant,
+    Binding(Option<ReadIrqOwnerBinding>),
+    Recheck(MmcReadRecheckError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoundedMmcReadRecheckProgress {
+    Pending(BoundedMmcReadRecheck),
+    Terminal {
+        transaction : ReadTransactionId,
+        polls_completed : u16,
+    },
+    Timeout {
+        transaction : ReadTransactionId,
+        polls_completed : u16,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use = "recover the bounded recheck and retry or enter read recovery"]
+pub struct BoundedMmcReadRecheckFailure {
+    pub error : BoundedMmcReadRecheckError,
+    pub recheck : BoundedMmcReadRecheck,
+}
+
+impl BoundedMmcReadRecheck {
+    pub const fn new(transaction : ReadTransactionId,
+                     poll_budget : u16) -> Result<Self, BoundedMmcReadRecheckError> {
+        if poll_budget == 0 { return Err(BoundedMmcReadRecheckError::InvalidBudget); }
+        Ok(Self { transaction, remaining : poll_budget, polls_completed : 0 })
+    }
+
+    pub const fn transaction(&self) -> ReadTransactionId { self.transaction }
+    pub const fn remaining(&self) -> u16 { self.remaining }
+    pub const fn polls_completed(&self) -> u16 { self.polls_completed }
+
+    /// Execute one serialized masked-status sample. No loop, delay or rearm is
+    /// performed here; Pending must be scheduled explicitly by the caller.
+    pub fn step<I, R>(mut self,
+                      runtime : &mut crate::irq_runtime::BoardIrqRuntime<
+                          I, BoardIrqOwner<R>>,
+                      mmc_irq : GlobalIrq)
+                      -> Result<BoundedMmcReadRecheckProgress,
+                                BoundedMmcReadRecheckFailure>
+    where I : crate::liointc::RegisterIo, R : RegisterIo
+    {
+        let owner = runtime.owner_mut(mmc_irq).map_err(|error| {
+            BoundedMmcReadRecheckFailure {
+                error : BoundedMmcReadRecheckError::Runtime(error), recheck : self,
+            }
+        })?;
+        let BoardIrqOwner::MmcCommand(owner) = owner else {
+            return Err(BoundedMmcReadRecheckFailure {
+                error : BoundedMmcReadRecheckError::OwnerVariant, recheck : self,
+            });
+        };
+        match owner.read_binding() {
+            Some(ReadIrqOwnerBinding::Pending(transaction))
+                if transaction == self.transaction => {
+                    return Ok(BoundedMmcReadRecheckProgress::Terminal {
+                        transaction, polls_completed : self.polls_completed,
+                    });
+                },
+            Some(ReadIrqOwnerBinding::Armed(transaction))
+                if transaction == self.transaction => {},
+            binding => {
+                return Err(BoundedMmcReadRecheckFailure {
+                    error : BoundedMmcReadRecheckError::Binding(binding), recheck : self,
+                });
+            },
+        }
+        let result = owner.recheck_masked_read();
+        let no_pending = matches!(result,
+                                  Err(MmcReadRecheckError::Ack(
+                                      MmcIrqAckError::NoKnownPending)));
+        if let Err(error) = result {
+            if !no_pending {
+                return Err(BoundedMmcReadRecheckFailure {
+                    error : BoundedMmcReadRecheckError::Recheck(error), recheck : self,
+                });
+            }
+        }
+        self.remaining -= 1;
+        self.polls_completed += 1;
+        if result == Ok(true) {
+            return Ok(BoundedMmcReadRecheckProgress::Terminal {
+                transaction : self.transaction,
+                polls_completed : self.polls_completed,
+            });
+        }
+        if self.remaining == 0 {
+            Ok(BoundedMmcReadRecheckProgress::Timeout {
+                transaction : self.transaction,
+                polls_completed : self.polls_completed,
+            })
+        } else {
+            Ok(BoundedMmcReadRecheckProgress::Pending(self))
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadIrqOwnerBinding {
     Armed(ReadTransactionId),
     Pending(ReadTransactionId),
@@ -1234,6 +1346,77 @@ mod tests {
         assert_eq!(mmc.read_binding(), Some(ReadIrqOwnerBinding::Armed(replacement)));
         assert_eq!(mmc.take_read_receipt(), None);
         mmc.disarm_read(replacement).unwrap();
+    }
+
+    #[test]
+    fn bounded_runtime_recheck_covers_terminal_timeout_fault_and_wrong_generation() {
+        let mmc_irq = GlobalIrq::from_bank_local(0, 31).unwrap();
+        let dma_irq = GlobalIrq::from_bank_local(1, 13).unwrap();
+        let current = transaction(46);
+        let timeout = transaction(47);
+        let wrong = transaction(48);
+        let mut runtime = owner_runtime(mmc_irq, dma_irq, false);
+        let mmc = runtime.owner_mut(mmc_irq).unwrap();
+        let BoardIrqOwner::MmcCommand(mmc) = mmc else { panic!("wrong MMC variant") };
+        mmc.arm_read(current).unwrap();
+
+        let recheck = BoundedMmcReadRecheck::new(current, 3).unwrap();
+        let recheck = match recheck.step(&mut runtime, mmc_irq).unwrap() {
+            BoundedMmcReadRecheckProgress::Pending(recheck) => recheck,
+            _ => panic!("empty first sample was not pending"),
+        };
+        assert_eq!(recheck.remaining(), 2);
+        assert_eq!(recheck.polls_completed(), 1);
+        let mmc = runtime.owner_mut(mmc_irq).unwrap();
+        let BoardIrqOwner::MmcCommand(mmc) = mmc else { panic!("wrong MMC variant") };
+        mmc.registers_mut().status = COMMAND_SENT;
+        let recheck = match recheck.step(&mut runtime, mmc_irq).unwrap() {
+            BoundedMmcReadRecheckProgress::Pending(recheck) => recheck,
+            _ => panic!("CSENT-only sample was not pending"),
+        };
+        let mmc = runtime.owner_mut(mmc_irq).unwrap();
+        let BoardIrqOwner::MmcCommand(mmc) = mmc else { panic!("wrong MMC variant") };
+        mmc.registers_mut().status = 1;
+        assert_eq!(recheck.step(&mut runtime, mmc_irq).unwrap(),
+                   BoundedMmcReadRecheckProgress::Terminal {
+                       transaction : current, polls_completed : 3,
+                   });
+        let mmc = runtime.owner_mut(mmc_irq).unwrap();
+        let BoardIrqOwner::MmcCommand(mmc) = mmc else { panic!("wrong MMC variant") };
+        assert_eq!(mmc.take_read_receipt().unwrap().interrupts, COMMAND_SENT | 1);
+        mmc.registers_mut().status = 0;
+        mmc.arm_read(timeout).unwrap();
+
+        let failure = BoundedMmcReadRecheck::new(wrong, 1).unwrap()
+            .step(&mut runtime, mmc_irq).unwrap_err();
+        assert_eq!(failure.error,
+                   BoundedMmcReadRecheckError::Binding(
+                       Some(ReadIrqOwnerBinding::Armed(timeout))));
+        assert_eq!(failure.recheck.transaction(), wrong);
+        let recheck = BoundedMmcReadRecheck::new(timeout, 2).unwrap();
+        let recheck = match recheck.step(&mut runtime, mmc_irq).unwrap() {
+            BoundedMmcReadRecheckProgress::Pending(recheck) => recheck,
+            _ => panic!("first empty timeout sample was not pending"),
+        };
+        assert_eq!(recheck.step(&mut runtime, mmc_irq).unwrap(),
+                   BoundedMmcReadRecheckProgress::Timeout {
+                       transaction : timeout, polls_completed : 2,
+                   });
+        let mmc = runtime.owner_mut(mmc_irq).unwrap();
+        let BoardIrqOwner::MmcCommand(mmc) = mmc else { panic!("wrong MMC variant") };
+        assert_eq!(mmc.read_binding(), Some(ReadIrqOwnerBinding::Armed(timeout)));
+        mmc.registers_mut().status = 1 << 20;
+        let failure = BoundedMmcReadRecheck::new(timeout, 1).unwrap()
+            .step(&mut runtime, mmc_irq).unwrap_err();
+        assert_eq!(failure.error,
+                   BoundedMmcReadRecheckError::Recheck(MmcReadRecheckError::Ack(
+                       MmcIrqAckError::UnknownPending(1 << 20))));
+        let mmc = runtime.owner_mut(mmc_irq).unwrap();
+        let BoardIrqOwner::MmcCommand(mmc) = mmc else { panic!("wrong MMC variant") };
+        assert_eq!(mmc.read_binding(), Some(ReadIrqOwnerBinding::Armed(timeout)));
+        mmc.disarm_read(timeout).unwrap();
+        assert_eq!(BoundedMmcReadRecheck::new(timeout, 0),
+                   Err(BoundedMmcReadRecheckError::InvalidBudget));
     }
 
     #[test]

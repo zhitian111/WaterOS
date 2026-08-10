@@ -1982,6 +1982,56 @@ mod tests {
     }
 
     #[test]
+    fn bounded_mmc_timeout_stops_dma_before_retiring_mixed_owner_state() {
+        let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                      Direction::DeviceToMemory).unwrap();
+        let (mut descriptor, mut payload) = mappings(transfer);
+        let recovery = crate::mmc::combined_recovery_fixture(0u8);
+        let read = *recovery.plan();
+        let prepared = crate::mmc::ReadDmaBinding::bind(&read,
+                                                        transfer,
+                                                        &descriptor,
+                                                        &payload).unwrap()
+                                                    .prepare(&mut descriptor, &mut payload).unwrap();
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+        let transaction = crate::board_irq_owner::ReadTransactionId::new(27).unwrap();
+        let mmc_irq = GlobalIrq::from_bank_local(0, 31).unwrap();
+        let mut runtime = read_irq_runtime(mmc_irq, dma_irq(), 0);
+        let armed = crate::board_irq_owner::reserve_read_irq_owners(
+            &mut runtime, mmc_irq, dma_irq(), transaction)
+            .unwrap_or_else(|_| panic!("reserve read owners failed"))
+            .commit();
+        let running = armed.bind_prepared_dma(prepared).start(&mut executor).unwrap();
+        let mut publisher = crate::mmc::ReadDataCommandPublisher::new(
+            MockMmcRegisters::default(),
+            crate::mmc::ReadDataPublishPermit::fixture());
+        let published = running.publish(&mut publisher).unwrap();
+        assert_eq!(runtime.owner_mut(dma_irq()).unwrap()
+                          .handle(acknowledged_dma_irq()),
+                   crate::irq_domain::IrqDisposition::KeepMasked);
+
+        let recheck = crate::board_irq_owner::BoundedMmcReadRecheck::new(
+            transaction, 2).unwrap();
+        let recheck = match recheck.step(&mut runtime, mmc_irq).unwrap() {
+            crate::board_irq_owner::BoundedMmcReadRecheckProgress::Pending(recheck) => recheck,
+            _ => panic!("first empty sample was not pending"),
+        };
+        assert_eq!(recheck.step(&mut runtime, mmc_irq).unwrap(),
+                   crate::board_irq_owner::BoundedMmcReadRecheckProgress::Timeout {
+                       transaction, polls_completed : 2,
+                   });
+        let armed = published.stop().unwrap().finish().unwrap();
+        assert_eq!(armed.transaction(), transaction);
+        let drained = crate::board_irq_owner::retire_read_irq_owners(
+            &mut runtime, mmc_irq, dma_irq(), armed)
+            .unwrap_or_else(|_| panic!("timeout owners did not drain"));
+        assert!(drained.mmc.is_none());
+        assert_eq!(drained.dma.unwrap().acknowledged.irq(), dma_irq());
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+    }
+
+    #[test]
     fn published_read_errors_return_running_session_for_stop_recovery() {
         let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
                                       Direction::DeviceToMemory).unwrap();

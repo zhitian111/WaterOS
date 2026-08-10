@@ -4865,3 +4865,51 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] carry LS2K1000 paired read completion`
+
+## 2026-08-10：批次 100——有界调度 masked MMC recheck 与超时恢复
+
+### 本批任务与设计
+
+1. 将 masked MMC recheck 建模为可暂停的单步协调器；每步只采样一次寄存器，不在驱动内循环、延时或隐式 rearm。
+2. 用非零 poll budget 区分 Pending、Terminal、Timeout 与可恢复 fault，并记录 transaction、剩余预算和已完成采样数。
+3. 每次 step 均校验 runtime slot、owner variant 与 generation；错误代次不得读取或改变当前 transaction 的硬件/owner 状态。
+4. 空状态与非终止 partial snapshot 消耗一次预算；I/O、未知状态位及 owner 错误不消耗预算，并返还原协调器供调用方决定重试或恢复。
+5. Timeout 不撤销 MMC owner、不丢弃 partial snapshot；调用方必须先 stop DMA、完成 cache ownership 回收，再退役可能为 Armed/Pending 混合状态的两路 owner。
+
+### 已完成
+
+- [x] 新增 must-use `BoundedMmcReadRecheck`，以非零 `u16` 预算携带同一 `ReadTransactionId`，并公开 remaining/polls_completed 诊断信息。
+- [x] 新增 `BoundedMmcReadRecheckProgress::{Pending,Terminal,Timeout}`；Pending 显式返还下一步 token，避免一次调用无限轮询。
+- [x] runtime 中已为同代 Pending 时直接返回 Terminal，不重复读取/W1C；只有同代 Armed owner 才执行一次 masked sample。
+- [x] `NoKnownPending` 与 `Ok(false)` 均计为一次有效采样；terminal snapshot 在当步返回 Terminal，预算耗尽则精确返回 Timeout。
+- [x] 新增 recoverable `BoundedMmcReadRecheckFailure`；slot/variant/generation、I/O/W1C 与未知位错误均返还未消费的协调器。
+- [x] 修正 unknown-only MMC status 被误报为 `NoKnownPending` 的问题；现返回精确 `UnknownPending`，且不会尝试清除未知位。
+- [x] 新增模型超时恢复：DMA receipt 已 Pending、MMC 仍 Armed 时，先停止 Published DMA 并 finish cache ownership，再以 abort drain 退役混合 owner 状态。
+- [x] production publish permit、APBDMA success decoder、真实 activation 与 IRQ rearm 继续保持关闭。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 166 项全部通过；新增有界 coordinator 状态矩阵与 timeout stop/drain 集成测试 2 项。
+- 三步预算依次观察 empty、`CSENT-only`、`DFIN`，最终 Terminal 且 polls_completed 精确为 3；partial snapshot 合并为 `CSENT|DFIN`。
+- 两次 empty sample 在预算 2 时精确 Timeout；MMC owner 仍为同代 Armed，未生成 receipt、未 rearm source。
+- wrong generation 返回当前 Armed binding 且协调器仍可恢复；零预算构造被拒绝。
+- unknown-only status 返回 `UnknownPending`，不消耗协调器预算，owner 与 generation 保持不变。
+- DMA 已 Pending 而 MMC timeout 时，stop/finish 后 mappings 才回到 CPU-owned；混合 drain 返回原 DMA acknowledged receipt，MMC receipt 仍为空。
+- production 组件 test/check、RISC-V `make check` 与 LoongArch64 `make kernel-la` 全部通过；仅有仓库既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过；dtc warning 来自预期畸形输入。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：实际轮询间隔和合理预算尚无实机时序数据；当前 budget 是 step 次数，不是 wall-clock deadline。
+- [ ] `UNVERIFIED_ON_HARDWARE`：MMC source masked 时后续状态的锁存可见性、W1C 与新事件竞争窗口仍需 2K1000LA 实测。
+- [ ] I/O/未知位 fault 不消耗预算是为了允许受控重试，但 production 调用方必须另设 fault retry/deadline 策略，避免错误路径无限调度。
+- [ ] Timeout 保留 owner accumulator，但当前没有公开的统一 recovery report 把 partial MMC snapshot 与 DMA receipt 一并上报。
+- [ ] coordinator 尚未存入 production worker/runtime；当前测试通过显式线性 token 模拟跨调度 step。
+- [ ] timeout stop/drain 集成仍为 test-only，因为 production publish permit 与 APBDMA descriptor status decoder 尚未开放。
+- [ ] production diagnostic runtime 仍不构造 APBDMA owner，真实 read activation 与 completion worker 入口继续被安全门阻断。
+- [ ] IRQ rearm 继续关闭；真机确认 condition clear、DMA idle 和迟到 IRQ generation 风险前不可启用。
+- [ ] 下一批应增加 timeout/fault recovery report，线性携带 partial MMC snapshot、poll statistics 与 DMA/owner drain evidence，再考虑接入 production worker storage。
+
+### 提交
+
+- 本批计划提交：`[feat] bound LS2K1000 masked MMC rechecks`
