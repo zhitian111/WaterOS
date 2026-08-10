@@ -34,6 +34,22 @@ class RootImageQemuSmokeTests(unittest.TestCase):
                 command = build_smoke_command("rv", "pre", image, kernel, root=root)
             self.assertIn("-snapshot", command)
             self.assertIn(f"file={image}", command)
+            environment = build.call_args.args[2]
+            self.assertEqual(environment["WOS_QEMU_MEM"], "256M")
+
+    def test_loongarch_smoke_uses_one_gibibyte_default(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "root.img"
+            kernel = root / "kernel-la"
+            image.write_bytes(b"image")
+            kernel.write_bytes(b"kernel")
+            with patch("qemu_smoke.build_qemu_launch") as build:
+                build.return_value.argv = [
+                    "qemu-system-loongarch64", "-drive", f"file={image}", "-snapshot"
+                ]
+                build_smoke_command("la", "pre", image, kernel, root=root)
+            self.assertEqual(build.call_args.args[2]["WOS_QEMU_MEM"], "1G")
 
     def test_missing_kernel_is_rejected_before_qemu(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

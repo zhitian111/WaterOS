@@ -6636,3 +6636,27 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[fix] preserve single root image builds`
+
+## 2026-08-10：批次 156——按架构修正 QEMU smoke 内存并复测 LA
+
+### 本批任务与设计
+
+1. 复核发现 LA QEMU 维护脚本使用 1 GiB，而 root-image smoke 固定 256 MiB；这会把资源不足误判成平台挂载问题。
+2. RV 继续使用 256 MiB 小内存，LA smoke 默认改为 1 GiB；只影响测试启动器，不改变内核或生产配置。
+3. 增加命令构建测试，锁定两架构内存参数。
+
+### 已完成
+
+- [x] `build_smoke_command` 按 arch 选择 `WOS_QEMU_MEM=256M/1G`。
+- [x] QEMU smoke host 测试 7 项通过。
+- [x] 以 1 GiB 构建并启动 LA pre/final kernel；guest 能输出 busybox/operator 日志，但最小 manifest 下仍未出现 stage-00 root/aux mount marker。
+- [x] 临时 LA kernel、双分区镜像和辅助 manifest 已清理。
+
+### 验证证据与限制
+
+- LA 当前最小镜像验证表明问题已不是 256 MiB 单一因素；还需使用正式 LA rootfs manifest/启动配置定位为何 block probe/root bring-up 未进入 stage-00。
+- `UNVERIFIED_ON_HARDWARE`：LoongArch PCIe virtio block 枚举、真实固件 DTB、SD/eMMC root/aux mount 仍待进一步验证。
+
+### 提交
+
+- 本批计划提交：`[fix] use arch specific qemu smoke memory`

@@ -86,7 +86,9 @@ def build_smoke_command(
                 "WOS_SDCARD": str(image),
                 "WOS_QEMU_SNAPSHOT": "1",
                 "WOS_SMP": "1",
-                "WOS_QEMU_MEM": "256M",
+                # The LA virt bring-up needs the same 1 GiB floor used by the
+                # maintained LA launcher; keep RV smoke small for disk tests.
+                "WOS_QEMU_MEM": "1G" if arch == "la" else "256M",
                 "WOS_GRAPHICS": "0",
             },
             root=root,
