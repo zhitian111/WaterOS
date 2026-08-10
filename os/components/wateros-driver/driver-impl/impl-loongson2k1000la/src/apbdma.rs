@@ -313,6 +313,23 @@ impl<E : core::fmt::Debug, S> core::fmt::Debug for SessionFailure<E, S> {
     }
 }
 
+/// IRQ completion failure retaining both the linear acknowledgement and the
+/// still-running session for validation, retry or explicit stop recovery.
+pub struct IrqSessionFailure<E, S> {
+    pub error : E,
+    pub acknowledged : AcknowledgedIrq,
+    pub session : S,
+}
+
+impl<E : core::fmt::Debug, S> core::fmt::Debug for IrqSessionFailure<E, S> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("IrqSessionFailure")
+                 .field("error", &self.error)
+                 .field("acknowledged", &self.acknowledged)
+                 .finish_non_exhaustive()
+    }
+}
+
 /// Both mappings have been synchronized for the device but hardware has not
 /// started. The mutable borrows keep the backing resources alive.
 #[must_use = "cancel or start a prepared DMA session"]
@@ -437,12 +454,14 @@ impl<'a, D : DmaCoherency, P : DmaCoherency> PreparedSession<'a, D, P> {
 impl<'a, 'e, R : OrderIo, D, P> RunningSession<'a, 'e, R, D, P> {
     pub fn complete_irq(self, acknowledged : AcknowledgedIrq)
                         -> Result<IrqCompletionSession<'a, D, P>,
-                                  SessionFailure<ExecutorError, Self>> {
+                                  IrqSessionFailure<ExecutorError, Self>> {
         match self.executor.complete_irq(acknowledged) {
             Ok(completion) => Ok(IrqCompletionSession { completion,
                                                        descriptor : self.descriptor,
                                                        payload : self.payload }),
-            Err(error) => Err(SessionFailure { error, session : self }),
+            Err((error, acknowledged)) => Err(IrqSessionFailure {
+                error, acknowledged, session : self,
+            }),
         }
     }
 
@@ -711,11 +730,14 @@ impl<R : OrderIo> Executor<R> {
 
     /// Called only after the APBDMA IRQ has been claimed and acknowledged.
     pub(crate) fn complete_irq(&mut self, acknowledged : AcknowledgedIrq)
-                               -> Result<Completion, ExecutorError> {
+                               -> Result<Completion, (ExecutorError, AcknowledgedIrq)> {
         if acknowledged.irq() != self.expected_irq {
-            return Err(ExecutorError::UnexpectedIrq);
+            return Err((ExecutorError::UnexpectedIrq, acknowledged));
         }
-        let plan = self.running.take().ok_or(ExecutorError::Idle)?;
+        let plan = match self.running.take() {
+            Some(plan) => plan,
+            None => return Err((ExecutorError::Idle, acknowledged)),
+        };
         Ok(Completion { plan })
     }
 
@@ -909,6 +931,44 @@ mod tests {
         operations : Vec<(bool, usize, u32)>,
     }
 
+    #[derive(Default)]
+    struct ModelLioIo;
+
+    impl crate::liointc::RegisterIo for ModelLioIo {
+        fn read32(&self, _address : usize) -> u32 { 0 }
+        fn write32(&mut self, _address : usize, _value : u32) {}
+        fn write8(&mut self, _address : usize, _value : u8) {}
+    }
+
+    fn read_irq_runtime(
+        mmc_irq : GlobalIrq,
+        dma_irq : GlobalIrq)
+        -> crate::irq_runtime::BoardIrqRuntime<
+            ModelLioIo,
+            crate::board_irq_owner::BoardIrqOwner<MockMmcCompletionRegisters>> {
+        let bank0 = crate::liointc::LioIntc::new(ModelLioIo, 0, 0x1000, &[0x2000]).unwrap();
+        let bank1 = crate::liointc::LioIntc::new(ModelLioIo, 1, 0x1040, &[0x2040]).unwrap();
+        let mut runtime = crate::irq_runtime::BoardIrqRuntime::new(
+            [Some(bank0), Some(bank1)], [None; 8]).unwrap();
+        runtime.register(
+            mmc_irq,
+            crate::board_irq_owner::BoardIrqOwner::MmcCommand(
+                crate::board_irq_owner::MmcCommandOwner::new(
+                    mmc_irq,
+                    MockMmcCompletionRegisters {
+                        interrupts : (1 << 6) | 1,
+                        response : 0,
+                        fail_first_read : false,
+                        operations : Vec::new(),
+                    }))).unwrap_or_else(|_| panic!("register MMC owner failed"));
+        runtime.register(
+            dma_irq,
+            crate::board_irq_owner::BoardIrqOwner::ApbDmaDeferred(
+                crate::board_irq_owner::DeferredApbDmaOwner::new(dma_irq)))
+            .unwrap_or_else(|_| panic!("register DMA owner failed"));
+        runtime
+    }
+
     impl crate::mmc::RegisterIo for MockMmcCompletionRegisters {
         fn read32(&mut self, offset : usize) -> Result<u32, dw_mmc::mmc::MmcError> {
             self.operations.push((true, offset, 0));
@@ -1053,7 +1113,9 @@ mod tests {
         assert!(descriptor.cpu_region().is_ok());
 
         assert!(payload.cpu_region().is_ok());
-        assert_eq!(executor.complete_irq(acknowledged_dma_irq()), Err(ExecutorError::Idle));
+        let (error, acknowledged) = executor.complete_irq(acknowledged_dma_irq()).unwrap_err();
+        assert_eq!(error, ExecutorError::Idle);
+        assert_eq!(acknowledged.irq(), dma_irq());
         let io = executor.into_inner();
         assert_eq!(io.writes, vec![0, plan.start_order]);
     }
@@ -1563,13 +1625,14 @@ mod tests {
                                              &mut descriptor,
                                              &mut payload,
                                              &mut executor);
-        let wrong = AcknowledgedIrq::after_mask_ack(
-            GlobalIrq::from_bank_local(0, 13).unwrap());
+        let wrong_irq = GlobalIrq::from_bank_local(0, 13).unwrap();
+        let wrong = AcknowledgedIrq::after_mask_ack(wrong_irq);
         let failure = match tracker.acknowledge_dma_irq(wrong) {
             Err(failure) => failure,
             Ok(_) => panic!("wrong IRQ advanced the read tracker"),
         };
         assert_eq!(failure.error, ExecutorError::UnexpectedIrq);
+        assert_eq!(failure.acknowledged.irq(), wrong_irq);
         let tracker = failure.tracker
                              .acknowledge_dma_irq(acknowledged_dma_irq()).unwrap();
 
@@ -1693,36 +1756,48 @@ mod tests {
         let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
                                       Direction::DeviceToMemory).unwrap();
         let (mut descriptor, mut payload) = mappings(transfer);
+        let recovery = crate::mmc::combined_recovery_fixture(0u8);
+        let read = *recovery.plan();
+        let prepared = crate::mmc::ReadDmaBinding::bind(&read,
+                                                        transfer,
+                                                        &descriptor,
+                                                        &payload).unwrap()
+                                                    .prepare(&mut descriptor, &mut payload).unwrap();
         let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
-        let tracker = published_read_tracker(transfer,
-                                             &mut descriptor,
-                                             &mut payload,
-                                             &mut executor);
         let transaction = crate::board_irq_owner::ReadTransactionId::new(23).unwrap();
         let mmc_irq = GlobalIrq::from_bank_local(0, 31).unwrap();
-        let mut mmc_owner = crate::board_irq_owner::MmcCommandOwner::new(
-            mmc_irq,
-            MockMmcCompletionRegisters { interrupts : (1 << 6) | 1,
-                                         response : 0,
-                                         fail_first_read : false,
-                                         operations : Vec::new() });
-        let mut dma_owner = crate::board_irq_owner::DeferredApbDmaOwner::new(dma_irq());
-        mmc_owner.arm_read(transaction).unwrap();
-        dma_owner.arm_read(transaction).unwrap();
+        let mut runtime = read_irq_runtime(mmc_irq, dma_irq());
+        let armed = crate::board_irq_owner::reserve_read_irq_owners(
+            &mut runtime, mmc_irq, dma_irq(), transaction)
+            .unwrap_or_else(|_| panic!("reserve read owners failed"))
+            .commit();
+        let running = armed.bind_prepared_dma(prepared).start(&mut executor).unwrap();
+        let mut publisher = crate::mmc::ReadDataCommandPublisher::new(
+            MockMmcRegisters::default(),
+            crate::mmc::ReadDataPublishPermit::fixture());
+        let published = running.publish(&mut publisher).unwrap();
+
+        let dma_owner = runtime.owner_mut(dma_irq()).unwrap();
         assert_eq!(dma_owner.handle(acknowledged_dma_irq()),
                    crate::irq_domain::IrqDisposition::KeepMasked);
+        let failure = match published.take_pending_pair(&mut runtime, mmc_irq, dma_irq()) {
+            Err(failure) => failure,
+            Ok(_) => panic!("DMA-only pair advanced session"),
+        };
+        assert_eq!(failure.error,
+                   crate::board_irq_owner::ReadPendingPairError::MmcBinding(
+                       Some(crate::board_irq_owner::ReadIrqOwnerBinding::Armed(transaction))));
+        let published = failure.session;
+        let mmc_owner = runtime.owner_mut(mmc_irq).unwrap();
         assert_eq!(mmc_owner.handle(AcknowledgedIrq::after_mask_ack(mmc_irq)),
                    crate::irq_domain::IrqDisposition::KeepMasked);
-
-        let mut pair = crate::board_irq_owner::ReadIrqPair::new(transaction);
-        pair.submit_mmc(mmc_owner.take_read_receipt().unwrap())
-            .unwrap_or_else(|_| panic!("matching MMC receipt rejected"));
-        assert!(pair.take_ready().is_none());
-        pair.submit_dma(dma_owner.take_read_receipt().unwrap())
-            .unwrap_or_else(|_| panic!("matching DMA receipt rejected"));
-        let (mmc_receipt, dma_receipt) = pair.take_ready().unwrap();
-
-        let tracker = tracker.acknowledge_dma_irq(dma_receipt.acknowledged).unwrap();
+        let paired = published.take_pending_pair(&mut runtime, mmc_irq, dma_irq())
+                              .unwrap_or_else(|_| panic!("matching pair rejected"));
+        let paired = paired.acknowledge_dma_irq()
+                           .unwrap_or_else(|_| panic!("paired DMA IRQ rejected"));
+        assert_eq!(paired.mmc.transaction, transaction);
+        let mmc_interrupts = paired.mmc.interrupts;
+        let tracker = paired.tracker;
         let mut reader = MockStatusReader { status : 0x100,
                                             ..MockStatusReader::default() };
         let tracker = match tracker.inspect_dma_status(&mut reader, &FixtureStatusDecoder)
@@ -1730,7 +1805,7 @@ mod tests {
             crate::mmc::ReadCompletionProgress::Pending(tracker) => tracker,
             _ => panic!("DMA receipt completed read before MMC receipt"),
         };
-        let completed = match tracker.command_observed(mmc_receipt.interrupts) {
+        let completed = match tracker.command_observed(mmc_interrupts) {
             crate::mmc::ReadCompletionProgress::Completed(completed) => completed,
             _ => panic!("paired receipts did not complete their read"),
         };
@@ -1741,6 +1816,63 @@ mod tests {
                        dma_finished : true,
                    });
         completed.into_quiesced_session().finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+    }
+
+    #[test]
+    fn paired_session_failure_retains_both_receipts_and_running_dma() {
+        let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                      Direction::DeviceToMemory).unwrap();
+        let (mut descriptor, mut payload) = mappings(transfer);
+        let recovery = crate::mmc::combined_recovery_fixture(0u8);
+        let read = *recovery.plan();
+        let prepared = crate::mmc::ReadDmaBinding::bind(&read,
+                                                        transfer,
+                                                        &descriptor,
+                                                        &payload).unwrap()
+                                                    .prepare(&mut descriptor, &mut payload).unwrap();
+        let runtime_dma_irq = dma_irq();
+        let executor_dma_irq = GlobalIrq::from_bank_local(1, 14).unwrap();
+        let mut executor = Executor::new(MockOrderIo::default(), executor_dma_irq);
+        let transaction = crate::board_irq_owner::ReadTransactionId::new(24).unwrap();
+        let mmc_irq = GlobalIrq::from_bank_local(0, 31).unwrap();
+        let mut runtime = read_irq_runtime(mmc_irq, runtime_dma_irq);
+        let armed = crate::board_irq_owner::reserve_read_irq_owners(
+            &mut runtime, mmc_irq, runtime_dma_irq, transaction)
+            .unwrap_or_else(|_| panic!("reserve read owners failed"))
+            .commit();
+        let running = armed.bind_prepared_dma(prepared).start(&mut executor).unwrap();
+        let mut publisher = crate::mmc::ReadDataCommandPublisher::new(
+            MockMmcRegisters::default(),
+            crate::mmc::ReadDataPublishPermit::fixture());
+        let published = running.publish(&mut publisher).unwrap();
+
+        assert_eq!(runtime.owner_mut(runtime_dma_irq).unwrap()
+                          .handle(acknowledged_dma_irq()),
+                   crate::irq_domain::IrqDisposition::KeepMasked);
+        assert_eq!(runtime.owner_mut(mmc_irq).unwrap()
+                          .handle(AcknowledgedIrq::after_mask_ack(mmc_irq)),
+                   crate::irq_domain::IrqDisposition::KeepMasked);
+        let paired = published.take_pending_pair(&mut runtime, mmc_irq, runtime_dma_irq)
+                              .unwrap_or_else(|_| panic!("matching pair rejected"));
+        let failure = match paired.acknowledge_dma_irq() {
+            Err(failure) => failure,
+            Ok(_) => panic!("mismatched executor IRQ accepted"),
+        };
+        assert_eq!(failure.mmc.transaction, transaction);
+        assert_eq!(failure.dma_transaction, transaction);
+        assert_eq!(failure.failure.error, ExecutorError::UnexpectedIrq);
+        assert_eq!(failure.failure.acknowledged.irq(), runtime_dma_irq);
+        let recovery = match failure.failure.tracker
+                                            .command_failed(
+                                                crate::mmc::ReadCommandFailure::Io) {
+            crate::mmc::ReadCompletionProgress::RecoveryRequired(recovery) => recovery,
+            _ => panic!("running DMA was not retained for recovery"),
+        };
+        recovery.into_published_session()
+                .stop().unwrap()
+                .finish().unwrap();
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
     }
@@ -2159,13 +2291,14 @@ mod tests {
         let running = prepare_session(plan, &mut descriptor, &mut payload).unwrap()
                                                                           .start(&mut executor)
                                                                           .unwrap();
-        let wrong = AcknowledgedIrq::after_mask_ack(
-            GlobalIrq::from_bank_local(0, 13).unwrap());
+        let wrong_irq = GlobalIrq::from_bank_local(0, 13).unwrap();
+        let wrong = AcknowledgedIrq::after_mask_ack(wrong_irq);
         let failure = match running.complete_irq(wrong) {
             Err(failure) => failure,
             Ok(_) => panic!("wrong IRQ completed APBDMA"),
         };
         assert_eq!(failure.error, ExecutorError::UnexpectedIrq);
+        assert_eq!(failure.acknowledged.irq(), wrong_irq);
         let completion = failure.session.complete_irq(acknowledged_dma_irq()).unwrap();
         // SAFETY: the mock IRQ deterministically marks this transfer stopped.
         unsafe { completion.reclaim_unverified() }.finish().unwrap();

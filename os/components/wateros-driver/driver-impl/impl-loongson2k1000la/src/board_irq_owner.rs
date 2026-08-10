@@ -115,6 +115,17 @@ pub struct DrainedReadIrqs {
     pub dma : Option<ApbDmaReadIrqReceipt>,
 }
 
+#[derive(Debug)]
+#[must_use = "apply both same-generation IRQ receipts or retain them for recovery"]
+pub struct ReadyReadIrqPair {
+    pub mmc : MmcReadIrqReceipt,
+    pub dma : ApbDmaReadIrqReceipt,
+}
+
+impl ReadyReadIrqPair {
+    pub const fn transaction(&self) -> ReadTransactionId { self.mmc.transaction }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 #[must_use = "bind the armed IRQ generation to a read session or retire it"]
 pub struct ArmedReadIrqs {
@@ -145,6 +156,32 @@ impl ArmedReadIrqs {
 pub struct IrqArmedReadDmaSession<S> {
     armed : ArmedReadIrqs,
     session : S,
+}
+
+#[cfg(test)]
+pub(crate) struct IrqPairedReadDmaSession<S> {
+    pair : ReadyReadIrqPair,
+    session : S,
+}
+
+#[cfg(test)]
+pub(crate) struct ReadSessionPendingPairFailure<S> {
+    pub error : ReadPendingPairError,
+    pub session : IrqArmedReadDmaSession<S>,
+}
+
+#[cfg(test)]
+pub(crate) struct PairedAcknowledgedReadDmaSession<'a, D, P> {
+    pub mmc : MmcReadIrqReceipt,
+    pub tracker : crate::mmc::ReadCompletionTracker<
+        crate::mmc::AcknowledgedReadDmaSession<'a, D, P>>,
+}
+
+#[cfg(test)]
+pub(crate) struct PairedReadDmaIrqFailure<'a, 'e, R, D, P> {
+    pub mmc : MmcReadIrqReceipt,
+    pub dma_transaction : ReadTransactionId,
+    pub failure : crate::mmc::ReadDmaIrqFailure<'a, 'e, R, D, P>,
 }
 
 impl<S> IrqArmedReadDmaSession<S> {
@@ -311,6 +348,26 @@ impl<'a, 'e, R : crate::apbdma::OrderIo, D, P>
 {
     pub(crate) const fn plan(&self) -> &crate::mmc::DeferredReadPlan { self.session.plan() }
 
+    pub(crate) fn take_pending_pair<I, O>(
+        self,
+        runtime : &mut crate::irq_runtime::BoardIrqRuntime<I, BoardIrqOwner<O>>,
+        mmc_irq : GlobalIrq,
+        dma_irq : GlobalIrq)
+        -> Result<IrqPairedReadDmaSession<crate::mmc::PublishedReadDmaSession<'a, 'e, R, D, P>>,
+                  ReadSessionPendingPairFailure<
+                      crate::mmc::PublishedReadDmaSession<'a, 'e, R, D, P>>>
+    where I : crate::liointc::RegisterIo
+    {
+        let Self { armed, session } = self;
+        match take_pending_read_irq_pair(runtime, mmc_irq, dma_irq, armed) {
+            Ok(pair) => Ok(IrqPairedReadDmaSession { pair, session }),
+            Err(failure) => Err(ReadSessionPendingPairFailure {
+                error : failure.error,
+                session : Self { armed : failure.into_armed(), session },
+            }),
+        }
+    }
+
     pub(crate) fn stop(self)
         -> Result<IrqArmedReadDmaSession<crate::apbdma::QuiescedSession<'a, D, P>>,
                   crate::apbdma::SessionFailure<crate::apbdma::ExecutorError, Self>> {
@@ -319,6 +376,27 @@ impl<'a, 'e, R : crate::apbdma::OrderIo, D, P>
             Err(failure) => Err(crate::apbdma::SessionFailure {
                 error : failure.error,
                 session : Self { armed : self.armed, session : failure.session },
+            }),
+        }
+    }
+}
+
+#[cfg(test)]
+impl<'a, 'e, R : crate::apbdma::OrderIo, D, P>
+    IrqPairedReadDmaSession<crate::mmc::PublishedReadDmaSession<'a, 'e, R, D, P>>
+{
+    pub(crate) fn acknowledge_dma_irq(
+        self)
+        -> Result<PairedAcknowledgedReadDmaSession<'a, D, P>,
+                  PairedReadDmaIrqFailure<'a, 'e, R, D, P>> {
+        let Self { pair, session } = self;
+        let ReadyReadIrqPair { mmc, dma } = pair;
+        let dma_transaction = dma.transaction;
+        match session.into_completion_tracker()
+                     .acknowledge_dma_irq(dma.acknowledged) {
+            Ok(tracker) => Ok(PairedAcknowledgedReadDmaSession { mmc, tracker }),
+            Err(failure) => Err(PairedReadDmaIrqFailure {
+                mmc, dma_transaction, failure,
             }),
         }
     }
@@ -377,6 +455,27 @@ pub enum ReadIrqRetireError {
     MmcOwnerVariant,
     DmaOwnerVariant,
     Drain(ReadPairOwnerFailure),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadPendingPairError {
+    Runtime(crate::irq_runtime::RuntimeError),
+    MmcOwnerVariant,
+    DmaOwnerVariant,
+    MmcBinding(Option<ReadIrqOwnerBinding>),
+    DmaBinding(Option<ReadIrqOwnerBinding>),
+    MmcReceiptMissing,
+    DmaReceiptMissing,
+}
+
+#[must_use = "recover the armed generation and retry after both IRQs are pending"]
+pub struct ReadPendingPairFailure {
+    pub error : ReadPendingPairError,
+    armed : ArmedReadIrqs,
+}
+
+impl ReadPendingPairFailure {
+    pub fn into_armed(self) -> ArmedReadIrqs { self.armed }
 }
 
 #[must_use = "recover the armed generation and retry or keep both IRQs masked"]
@@ -442,6 +541,65 @@ where I : crate::liointc::RegisterIo
     drain_read_owners(mmc, dma, transaction).map_err(|error| ReadIrqRetireFailure {
         error : ReadIrqRetireError::Drain(error), armed,
     })
+}
+
+/// Atomically take both receipts only when both owners are Pending for the
+/// carried generation. Any incomplete or mismatched state is left unchanged.
+pub fn take_pending_read_irq_pair<I, R>(
+    runtime : &mut crate::irq_runtime::BoardIrqRuntime<I, BoardIrqOwner<R>>,
+    mmc_irq : GlobalIrq,
+    dma_irq : GlobalIrq,
+    armed : ArmedReadIrqs)
+    -> Result<ReadyReadIrqPair, ReadPendingPairFailure>
+where I : crate::liointc::RegisterIo
+{
+    let transaction = armed.transaction;
+    let (mmc, dma) = match runtime.owners_mut(mmc_irq, dma_irq) {
+        Ok(owners) => owners,
+        Err(error) => {
+            return Err(ReadPendingPairFailure {
+                error : ReadPendingPairError::Runtime(error), armed,
+            });
+        },
+    };
+    let BoardIrqOwner::MmcCommand(mmc) = mmc else {
+        return Err(ReadPendingPairFailure {
+            error : ReadPendingPairError::MmcOwnerVariant, armed,
+        });
+    };
+    let BoardIrqOwner::ApbDmaDeferred(dma) = dma else {
+        return Err(ReadPendingPairFailure {
+            error : ReadPendingPairError::DmaOwnerVariant, armed,
+        });
+    };
+    let expected = Some(ReadIrqOwnerBinding::Pending(transaction));
+    let mmc_binding = mmc.read_binding();
+    if mmc_binding != expected {
+        return Err(ReadPendingPairFailure {
+            error : ReadPendingPairError::MmcBinding(mmc_binding), armed,
+        });
+    }
+    let dma_binding = dma.read_binding();
+    if dma_binding != expected {
+        return Err(ReadPendingPairFailure {
+            error : ReadPendingPairError::DmaBinding(dma_binding), armed,
+        });
+    }
+    if mmc.read_pending.is_none() {
+        return Err(ReadPendingPairFailure {
+            error : ReadPendingPairError::MmcReceiptMissing, armed,
+        });
+    }
+    if dma.pending.is_none() {
+        return Err(ReadPendingPairFailure {
+            error : ReadPendingPairError::DmaReceiptMissing, armed,
+        });
+    }
+    let mmc_receipt = mmc.read_pending.take().unwrap();
+    let dma_receipt = dma.pending.take().unwrap();
+    mmc.read_armed = None;
+    dma.armed = None;
+    Ok(ReadyReadIrqPair { mmc : mmc_receipt, dma : dma_receipt })
 }
 
 /// Arm both read IRQ owners as one software transaction. A DMA-side failure
@@ -1079,5 +1237,60 @@ mod tests {
             panic!("swapped owner changed")
         };
         assert_eq!(owner.read_binding(), None);
+    }
+
+    #[test]
+    fn runtime_pair_take_waits_for_both_pending_and_preserves_wrong_generation() {
+        let mmc_irq = GlobalIrq::from_bank_local(0, 31).unwrap();
+        let dma_irq = GlobalIrq::from_bank_local(1, 13).unwrap();
+        let current = transaction(111);
+        let wrong = transaction(112);
+        let mut runtime = owner_runtime(mmc_irq, dma_irq, false);
+        let armed = reserve_read_irq_owners(&mut runtime, mmc_irq, dma_irq, current)
+            .unwrap_or_else(|_| panic!("guard reservation failed"))
+            .commit();
+
+        let dma = runtime.owner_mut(dma_irq).unwrap();
+        assert_eq!(dma.handle(acknowledged(dma_irq)), IrqDisposition::KeepMasked);
+        let failure = take_pending_read_irq_pair(&mut runtime, mmc_irq, dma_irq, armed)
+            .expect_err("DMA-only pending pair was consumed");
+        assert_eq!(failure.error,
+                   ReadPendingPairError::MmcBinding(
+                       Some(ReadIrqOwnerBinding::Armed(current))));
+        let armed = failure.into_armed();
+        let BoardIrqOwner::ApbDmaDeferred(dma) = runtime.owner(dma_irq).unwrap() else {
+            panic!("wrong DMA variant")
+        };
+        assert_eq!(dma.read_binding(), Some(ReadIrqOwnerBinding::Pending(current)));
+
+        let mmc = runtime.owner_mut(mmc_irq).unwrap();
+        let BoardIrqOwner::MmcCommand(mmc) = mmc else { panic!("wrong MMC variant") };
+        mmc.registers.status = COMMAND_SENT | 1;
+        assert_eq!(mmc.handle(acknowledged(mmc_irq)), IrqDisposition::KeepMasked);
+
+        let wrong_armed = ArmedReadIrqs::fixture(wrong);
+        let failure = take_pending_read_irq_pair(&mut runtime,
+                                                 mmc_irq,
+                                                 dma_irq,
+                                                 wrong_armed)
+            .expect_err("wrong generation consumed pending receipts");
+        assert_eq!(failure.error,
+                   ReadPendingPairError::MmcBinding(
+                       Some(ReadIrqOwnerBinding::Pending(current))));
+        assert_eq!(failure.into_armed().transaction(), wrong);
+
+        let pair = take_pending_read_irq_pair(&mut runtime, mmc_irq, dma_irq, armed)
+            .unwrap_or_else(|_| panic!("matching pending pair rejected"));
+        assert_eq!(pair.transaction(), current);
+        assert_eq!(pair.mmc.interrupts, COMMAND_SENT | 1);
+        assert_eq!(pair.dma.acknowledged.irq(), dma_irq);
+        let BoardIrqOwner::MmcCommand(mmc) = runtime.owner(mmc_irq).unwrap() else {
+            panic!("wrong MMC variant")
+        };
+        assert_eq!(mmc.read_binding(), None);
+        let BoardIrqOwner::ApbDmaDeferred(dma) = runtime.owner(dma_irq).unwrap() else {
+            panic!("wrong DMA variant")
+        };
+        assert_eq!(dma.read_binding(), None);
     }
 }

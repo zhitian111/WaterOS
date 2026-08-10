@@ -4763,3 +4763,54 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] bind LS2K1000 IRQ arms to DMA start`
+
+## 2026-08-10：批次 98——原子取得同代双 IRQ receipt 并进入 carrying tracker
+
+### 本批任务与设计
+
+1. 区分 abort drain 与 completion pair take：单路 pending 时不得退役另一侧 Armed owner。
+2. 只有 MMC/APBDMA 两侧都处于同代 Pending 时，才原子取走两份 receipt 并消费 `ArmedReadIrqs`。
+3. generation、slot、owner variant 或 pending 状态任一不匹配时，runtime owner、receipt 和 Published session 全部保持不变。
+4. APBDMA completion 拒绝错误 IRQ source 时必须返回原 `AcknowledgedIrq`，不得只保留 Running session。
+5. test-only Published typestate 消费 runtime pair 后进入 carrying completion tracker；转换失败保留两路 receipt evidence 与 DMA session。
+
+### 已完成
+
+- [x] 新增 must-use `ReadyReadIrqPair`，同时携带同代 `MmcReadIrqReceipt` 与线性 `ApbDmaReadIrqReceipt`。
+- [x] 新增 `take_pending_read_irq_pair`，先双 slot/variant/pending/generation 全量预检，再一次性 take 两份 receipt 并清除 owner binding。
+- [x] MMC-only 或 DMA-only pending 返回精确 `ReadPendingPairError::*Binding`，不清除已到 receipt，也不撤销另一侧 Armed。
+- [x] wrong generation、wrong slot/variant 与内部 receipt invariant 错误均 fail-closed，并通过 `ReadPendingPairFailure` 返回原 armed token。
+- [x] 新增 `IrqSessionFailure`；APBDMA executor 在 UnexpectedIrq/Idle 时返还传入的原 `AcknowledgedIrq`，Running session 同时保持可重试/stop。
+- [x] `ReadDmaIrqFailure` 继续向上携带 acknowledged token，修复旧接口错误路径可能丢失线性 ack evidence 的缺口。
+- [x] test-only `IrqArmedReadDmaSession<Published>::take_pending_pair` 将 runtime pair 与 Published session 原子绑定；失败返回原 session。
+- [x] paired session 成功后消费 DMA receipt 进入 `AcknowledgedReadDmaSession` tracker，同时继续携带 MMC receipt 等待 command/data evidence。
+- [x] paired DMA source 不匹配时保留 MMC receipt、DMA transaction、原 acknowledged token 与 Published Running session，可显式 stop recovery。
+- [x] production publish permit、APBDMA status success decoder、真实 activation 与 IRQ rearm 均保持关闭。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 162 项全部通过；新增 runtime atomic pair 和 paired failure recovery 2 项，并强化既有端到端 generation 测试。
+- DMA-only pending 时 pair take 返回 MMC/Armed(current)；DMA owner 仍为 Pending(current)，Published session 可在 MMC 到达后重试。
+- 两侧 Pending(current) 时用 wrong generation 尝试返回 MMC/Pending(current)，两份 receipt 均未被消费；正确 token 随后成功取得 pair。
+- 正常模型链路覆盖 runtime reserve→DMA start→MMC publish→DMA IRQ→等待 MMC IRQ→原子 pair→DMA ack/status→MMC snapshot→Completed。
+- 完成 evidence 精确为 command response、data finished、DMA finished 三项 true，stop/cache finish 后 mappings 才回到 CPU-owned。
+- executor 预期 IRQ 与 runtime DMA IRQ 不一致时，paired failure 精确保留 MMC generation、DMA generation、原 DMA IRQ ack token 和 Running DMA session。
+- low-level Executor 在 Idle 与 UnexpectedIrq 两条错误路径均返回原 acknowledged token；正确 IRQ 仍可重试完成或显式 stop。
+- production 组件 check、RISC-V `make check` 与 LoongArch64 `make kernel-la` 全部通过；仅有仓库既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过；dtc warning 来自预期畸形输入。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：同代 Pending 仍是纯软件归属；硬件 IRQ 不携带 generation，迟到 IRQ 在未来 rearm 后仍可能误归类。
+- [ ] `UNVERIFIED_ON_HARDWARE`：APBDMA IRQ ack 不证明 channel stopped；production status decoder 仍拒绝把未知 descriptor status 判为成功。
+- [ ] Published/pair/tracker 的整合接口仍受 `#[cfg(test)]` 保护，因为 production `ReadDataPublishPermit` 尚无安全构造入口。
+- [ ] pair 成功后 runtime owner 已退役但 source 仍 masked；tracker 后续失败只能 stop/recover，不能重新放回 owner table。
+- [ ] `PairedAcknowledgedReadDmaSession` 尚未封装 status inspection 与 MMC snapshot application 的全部失败路径；当前端到端测试会显式拆出 tracker。
+- [ ] production diagnostic runtime 仍不构造 APBDMA owner，也没有保存一个跨 trap/worker 生命周期的 read coordinator。
+- [ ] abort 路径继续使用允许 Armed/Pending 混合的 `drain_read_owners`；completion 路径必须使用本批新增的 only-both-pending API，调用层尚未统一封装。
+- [ ] IRQ source rearm 继续关闭；真机确认 MMC condition clear、APBDMA idle 和迟到 IRQ 窗口前不可启用。
+- [ ] 下一批应让 paired acknowledged 状态线性携带 MMC receipt 穿过 descriptor status inspection、status failure retry 和 command snapshot apply，直到 Quiesced/Completed 或显式 stop recovery。
+
+### 提交
+
+- 本批计划提交：`[feat] pair LS2K1000 runtime read IRQ receipts`

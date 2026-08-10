@@ -1669,6 +1669,7 @@ pub(crate) struct QuiescedReadDmaSession<'a, D, P> {
 #[cfg(test)]
 pub(crate) struct ReadDmaIrqFailure<'a, 'e, R, D, P> {
     pub error : apbdma::ExecutorError,
+    pub acknowledged : AcknowledgedIrq,
     pub tracker : ReadCompletionTracker<PublishedReadDmaSession<'a, 'e, R, D, P>>,
 }
 
@@ -1749,6 +1750,7 @@ impl<'a, 'e, R : apbdma::OrderIo, D, P>
             }),
             Err(failure) => Err(ReadDmaIrqFailure {
                 error : failure.error,
+                acknowledged : failure.acknowledged,
                 tracker : ReadCompletionTracker {
                     plan,
                     buffer : PublishedReadDmaSession { read, dma : failure.session },
