@@ -5,6 +5,7 @@
 //! a FIFO window. WaterOS reuses [`dw_mmc::sd`] only as an SD protocol layer.
 
 use crate::{
+    apbdma::{CpuOwnedHandoff, QuiescedHandoff},
     clock::ConsistentClockSnapshot,
     irq_domain::{AcknowledgedIrq, DeviceAckedIrq, GlobalIrq, IrqDisposition},
     mmc_prerequisite::ControllerPrerequisiteProof,
@@ -13,7 +14,7 @@ use crate::{
         SupplyDescription, SupplyProvider,
     },
 };
-use api_v0::{DriverError, MmioRegion};
+use api_v0::{dma::DmaCoherency, DriverError, MmioRegion};
 use core::{marker::PhantomData, mem::ManuallyDrop};
 use core::sync::atomic::{AtomicBool, Ordering};
 use dw_mmc::mmc::MmcError;
@@ -1152,6 +1153,47 @@ pub struct ReadDmaQuiescedEvidence {
     _private : (),
 }
 
+/// Retryable APBDMA synchronizer paired with exactly one DMA-quiesced evidence
+/// token. It owns the handoff until cache sync produces CPU-owned mappings.
+pub struct ReadApbdmaRecoverySync<'a, D, P> {
+    handoff : Option<QuiescedHandoff<'a, D, P>>,
+    cpu_owned : Option<CpuOwnedHandoff<'a, D, P>>,
+}
+
+impl ReadDmaQuiescedEvidence {
+    pub fn bind_apbdma_handoff<'a, D, P>(
+        handoff : QuiescedHandoff<'a, D, P>)
+        -> (Self, ReadApbdmaRecoverySync<'a, D, P>) {
+        (Self { _private : () },
+         ReadApbdmaRecoverySync { handoff : Some(handoff),
+                                  cpu_owned : None })
+    }
+}
+
+impl<'a, D, P> ReadApbdmaRecoverySync<'a, D, P> {
+    pub fn into_cpu_owned(self) -> Option<CpuOwnedHandoff<'a, D, P>> { self.cpu_owned }
+}
+
+impl<B, D : DmaCoherency, P : DmaCoherency> ReadRecoverySync<B>
+    for ReadApbdmaRecoverySync<'_, D, P> {
+    fn sync_for_cpu(&mut self, _buffer : &mut B) -> Result<(), DriverError> {
+        if self.cpu_owned.is_some() {
+            return Err(DriverError::InvalidParam);
+        }
+        let handoff = self.handoff.take().ok_or(DriverError::InvalidParam)?;
+        match handoff.finish() {
+            Ok(cpu_owned) => {
+                self.cpu_owned = Some(cpu_owned);
+                Ok(())
+            },
+            Err(failure) => {
+                self.handoff = Some(failure.session);
+                Err(failure.error)
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 impl ReadDmaQuiescedEvidence {
     fn fixture() -> Self { Self { _private : () } }
@@ -1213,6 +1255,28 @@ impl<B> ReadCombinedRecovery<B> {
                dma_quiesced : false,
                _buffer : recovery._buffer }
     }
+}
+
+#[cfg(test)]
+pub(crate) fn combined_recovery_fixture<B>(buffer : B) -> ReadCombinedRecovery<B> {
+    let request = ReadBlockRequest::new(0, 1, 512, ReadAddressing::Block).unwrap();
+    let plan = DeferredReadPlan {
+        request,
+        setup_writes : [PlannedDataWrite { offset : REG_DCTL,
+                                           value : 1 | DCTL_START | DCTL_EXTERNAL_DMA |
+                                                   DCTL_WIDE_BUS },
+                        PlannedDataWrite { offset : REG_BSIZE, value : 512 },
+                        PlannedDataWrite { offset : REG_TIMER, value : u32::MAX }],
+        data_register_address : 0x1FE2_C040,
+        blockers : [Some(ReadActivationBlocker::ExecutorUnavailable), None, None, None, None],
+    };
+    ReadCombinedRecovery { plan,
+                           completion_failure:
+                               ReadCompletionFailure::Dma(ReadDmaFailure::Completion),
+                           completion_evidence : ReadCompletionEvidence::default(),
+                           mmc_quiesced : false,
+                           dma_quiesced : false,
+                           _buffer : ManuallyDrop::new(buffer) }
 }
 
 impl<B> ReadCombinedRecovery<B> {

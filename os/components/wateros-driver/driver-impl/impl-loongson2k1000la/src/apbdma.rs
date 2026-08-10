@@ -372,6 +372,23 @@ pub struct QuiescedSession<'a, D, P> {
     payload : &'a mut DmaMapping<P>,
 }
 
+/// One-shot handoff proving APBDMA stop confirmation while retaining both
+/// device-owned mappings until explicit cache synchronization.
+#[must_use = "finish or retain a quiesced DMA handoff"]
+pub struct QuiescedHandoff<'a, D, P> {
+    completion : Completion,
+    descriptor : &'a mut DmaMapping<D>,
+    payload : &'a mut DmaMapping<P>,
+}
+
+/// Both mappings have completed their CPU-side synchronization. Consuming this
+/// value is the only handoff path that releases the mutable mapping borrows.
+#[must_use = "release the CPU-owned DMA mappings"]
+pub struct CpuOwnedHandoff<'a, D, P> {
+    descriptor : &'a mut DmaMapping<D>,
+    payload : &'a mut DmaMapping<P>,
+}
+
 impl<'a, D : DmaCoherency, P : DmaCoherency> PreparedSession<'a, D, P> {
     pub fn cancel(self) -> Result<(), SessionFailure<DriverError, Self>> {
         match cancel_prepared(&self.prepared, self.descriptor, self.payload) {
@@ -495,6 +512,30 @@ impl<'a, D : DmaCoherency, P : DmaCoherency> QuiescedSession<'a, D, P> {
             Ok(()) => Ok(()),
             Err(error) => Err(SessionFailure { error, session : self }),
         }
+    }
+
+    pub fn into_handoff(self) -> QuiescedHandoff<'a, D, P> {
+        QuiescedHandoff { completion : self.completion,
+                          descriptor : self.descriptor,
+                          payload : self.payload }
+    }
+}
+
+impl<'a, D : DmaCoherency, P : DmaCoherency> QuiescedHandoff<'a, D, P> {
+    pub fn finish(self)
+                  -> Result<CpuOwnedHandoff<'a, D, P>,
+                            SessionFailure<DriverError, Self>> {
+        match finish_transfer(self.completion, self.descriptor, self.payload) {
+            Ok(()) => Ok(CpuOwnedHandoff { descriptor : self.descriptor,
+                                           payload : self.payload }),
+            Err(error) => Err(SessionFailure { error, session : self }),
+        }
+    }
+}
+
+impl<'a, D, P> CpuOwnedHandoff<'a, D, P> {
+    pub fn into_mappings(self) -> (&'a mut DmaMapping<D>, &'a mut DmaMapping<P>) {
+        (self.descriptor, self.payload)
     }
 }
 
@@ -987,6 +1028,88 @@ mod tests {
         unsafe { completion.reclaim_unverified() }.finish().unwrap();
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
+    }
+
+    #[test]
+    fn quiesced_handoff_returns_only_cpu_owned_mappings() {
+        let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                  Direction::DeviceToMemory).unwrap();
+        let (mut descriptor, mut payload) = mappings(plan);
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+        let handoff = prepare_session(plan, &mut descriptor, &mut payload).unwrap()
+                                                                            .start(&mut executor)
+                                                                            .unwrap()
+                                                                            .stop()
+                                                                            .unwrap()
+                                                                            .into_handoff();
+        let cpu_owned = match handoff.finish() {
+            Ok(cpu_owned) => cpu_owned,
+            Err(_) => panic!("quiesced handoff did not finish"),
+        };
+        let (descriptor_mapping, payload_mapping) = cpu_owned.into_mappings();
+        assert!(descriptor_mapping.is_cpu_owned());
+        assert!(payload_mapping.is_cpu_owned());
+        assert!(descriptor_mapping.cpu_region().is_ok());
+        assert!(payload_mapping.cpu_region().is_ok());
+    }
+
+    #[test]
+    fn mmc_adapter_keeps_same_handoff_across_sync_retry() {
+        let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                  Direction::DeviceToMemory).unwrap();
+        let descriptor_region = DmaRegion::new(0x4000, 0x2000, 64, 32, 64).unwrap();
+        let payload_region = DmaRegion::new(0x8000, 0x3000, 512, 32, 64).unwrap();
+        let mut descriptor = DmaMapping::new(
+            descriptor_region,
+            DmaDirection::Bidirectional,
+            MockCache { fail_cpu_syncs : 1, ..MockCache::default() });
+        let mut payload = DmaMapping::new(payload_region,
+                                          DmaDirection::FromDevice,
+                                          MockCache::default());
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+        let handoff = prepare_session(plan, &mut descriptor, &mut payload).unwrap()
+                                                                            .start(&mut executor)
+                                                                            .unwrap()
+                                                                            .stop()
+                                                                            .unwrap()
+                                                                            .into_handoff();
+        let (evidence, mut synchronizer) =
+            crate::mmc::ReadDmaQuiescedEvidence::bind_apbdma_handoff(handoff);
+        let mut marker = 0u8;
+        let clean = crate::mmc::CommandPostSnapshot { argument : 0,
+                                                       control : 0,
+                                                       command_status : 0,
+                                                       data_status : 0,
+                                                       interrupts : 0 };
+        let recovery = match crate::mmc::combined_recovery_fixture(marker)
+            .record_mmc_quiesced(clean, clean)
+        {
+            Ok(recovery) => recovery,
+            Err(_) => panic!("clean MMC recovery evidence rejected"),
+        };
+        let recovery = match recovery.record_dma_quiesced(evidence) {
+            Ok(recovery) => recovery,
+            Err(_) => panic!("APBDMA handoff evidence rejected"),
+        };
+        let failure = match recovery.sync_for_cpu(&mut synchronizer) {
+            Ok(_) => panic!("fault-injected APBDMA sync succeeded"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error,
+                   crate::mmc::ReadCombinedRecoveryError::SyncForCpu(DriverError::IoError));
+        let recovered = match failure.recovery.sync_for_cpu(&mut synchronizer) {
+            Ok(recovered) => recovered,
+            Err(_) => panic!("APBDMA sync retry failed"),
+        };
+        marker = recovered.into_buffer();
+        assert_eq!(marker, 0);
+        assert_eq!(crate::mmc::ReadRecoverySync::sync_for_cpu(&mut synchronizer,
+                                                              &mut marker),
+                   Err(DriverError::InvalidParam));
+        let cpu_owned = synchronizer.into_cpu_owned().expect("missing CPU-owned handoff");
+        let (descriptor_mapping, payload_mapping) = cpu_owned.into_mappings();
+        assert!(descriptor_mapping.is_cpu_owned());
+        assert!(payload_mapping.is_cpu_owned());
     }
 
     #[test]

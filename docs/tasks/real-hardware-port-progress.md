@@ -4204,3 +4204,63 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - `[feat] isolate LS2K1000 MMC read recovery`
+
+## 2026-08-10：批次 86——APBDMA quiesced handoff 与 MMC recovery adapter
+
+### 任务与设计
+
+1. 让 APBDMA `QuiescedSession` 输出一次性 handoff，而不是 finish 后只返回 `()`。
+2. handoff 在 cache sync 成功后转换为持有 CPU-owned mappings 的 typed result。
+3. MMC adapter 必须从同一个 handoff 同时生成 DMA-quiesced evidence 与 retryable synchronizer。
+4. sync failure 保留原 handoff，不能重新生成 token、丢 mapping borrow 或错误恢复 owner。
+5. 用真实 `DmaMapping<FromDevice>` 和 APBDMA stop typestate 串联组合 recovery。
+
+`QuiescedHandoff` 只能由已确认 stop 的 `QuiescedSession::into_handoff()` 产生。其 `finish()`
+复用现有 `finish_transfer()`：payload/descriptor 仍为 device owner 时执行 sync_for_cpu，部分成功后
+重试只处理仍为 device owner 的 mapping。成功返回 `CpuOwnedHandoff`，消费它才释放两个 mutable borrow。
+
+### 完成内容
+
+- [x] 新增不可 Clone/Copy、字段私有的 `QuiescedHandoff<'a,D,P>`。
+- [x] `QuiescedSession::into_handoff()` 消费 quiesced session，保留 completion 与两份 mapping borrow。
+- [x] 新增 `CpuOwnedHandoff<'a,D,P>`；只有 handoff finish 成功才能构造。
+- [x] `CpuOwnedHandoff::into_mappings()` 返回原 descriptor/payload mutable borrow，此时 owner 均已恢复 CPU。
+- [x] handoff finish failure 返回 `SessionFailure<DriverError,QuiescedHandoff>`，同一 handoff 可重试。
+- [x] 新增 `ReadApbdmaRecoverySync`，内部持有 `Option<QuiescedHandoff>` 或成功后的 `CpuOwnedHandoff`。
+- [x] `ReadDmaQuiescedEvidence::bind_apbdma_handoff()` 一次性、同源地产生 token 与 synchronizer。
+- [x] synchronizer 第一次成功后拒绝重复 sync；失败则把原 handoff 放回，保留 retry 能力。
+- [x] adapter 实现批次 85 的 `ReadRecoverySync<B>`，由 combined recovery 在 MMC/DMA gates 后调用。
+- [x] 增加 test-only combined recovery fixture，生产构建仍无 recovery/tracker 起点。
+- [x] 没有新增 machine init、IRQ runtime、MMC executor 或默认数据路径调用。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 131 项全部通过；新增 2 项 APBDMA handoff/adapter 测试。
+- safe stop fixture 依次执行 prepare→start→stop→handoff→finish，最终两份 mapping 均 `is_cpu_owned()`。
+- mapping 的 `cpu_region()` 只有在 CpuOwnedHandoff 产生后成功。
+- cross-module fixture 从同一 handoff 取得 token/synchronizer，把 token 提交给 MMC combined recovery。
+- descriptor cache backend 第一次 sync_for_cpu 注入 IoError：combined recovery 返回失败，handoff 可重试。
+- 第二次 sync 成功后同时取得 `ReadRecovered` 与 `CpuOwnedHandoff`，descriptor/payload owner 均为 CPU。
+- synchronizer 第三次调用稳定返回 InvalidParam，证明 one-shot sync 不可重复。
+- 既有 APBDMA stop timeout/probe error/partial write/recovery tests 全部继续通过。
+- production 组件 `cargo check` 无新增 warning；全部测试使用内存 OrderIo/DmaMapping，没有物理 DMA。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：APBDMA `confirm_stopped` 的真实可靠性、cache backend 和 MMC 同步时序仍需两板验证。
+- [ ] adapter 尚未由生产 MMC executor 调用；completion/combined recovery 构造器仍限定测试配置。
+- [ ] generic combined resource B 与 APBDMA payload mapping 的同一性目前由未来 executor 负责，尚无不可伪造 identity token。
+- [ ] CpuOwnedHandoff 证明软件 DmaMapping owner 已切回 CPU，不证明物理 cache line 已按板级规则正确失效。
+- [ ] dropping 未完成的 handoff 会释放 Rust borrow，但 mapping 仍保持 Device owner，CPU access API 会拒绝；未来应增加显式 quarantine telemetry。
+- [ ] descriptor 与 payload sync 部分成功后的顺序沿用现有 `finish_transfer`，真机 cache failure 的可恢复性未知。
+- [ ] MMC post cleanup 仍是抽象 snapshot gate，没有实际 W1C/write/readback executor。
+- [ ] 下一批应增加 mapping identity contract：将 deferred read 的 byte length/DATA address 与 APBDMA TransferPlan、payload DmaRegion 做精确匹配，防止错误 buffer/handoff 被组合。
+
+### 参考与许可证
+
+- `docs/references/loongson2-mmc-upstream.md`
+- 本批复用仓库自有 APBDMA/DMA API，未引入第三方代码。
+
+### 提交
+
+- `[feat] hand off quiesced LS2K1000 DMA reads`
