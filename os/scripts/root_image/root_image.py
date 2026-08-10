@@ -186,11 +186,11 @@ def crc32(data: bytes) -> int:
     return (~value) & 0xFFFFFFFF
 
 
-def parse_gpt_image(image: Path) -> list[Partition]:
+def _parse_gpt_at(image: Path, header_lba: int, total_sectors: int,
+                  expected_backup_lba: int) -> list[Partition]:
     image_bytes = image.stat().st_size
-    total_sectors = image_bytes // SECTOR_SIZE
     with image.open("rb") as source:
-        source.seek(SECTOR_SIZE)
+        source.seek(header_lba * SECTOR_SIZE)
         header = source.read(SECTOR_SIZE)
         if header[:8] != GPT_SIGNATURE or len(header) != SECTOR_SIZE:
             raise ImageError("missing GPT header")
@@ -200,7 +200,8 @@ def parse_gpt_image(image: Path) -> list[Partition]:
         entries_lba, entry_count, entry_size, entries_crc = struct.unpack_from(
             "<QIII", header, 72
         )
-        if not 92 <= header_size <= SECTOR_SIZE or current_lba != 1:
+        if (not 92 <= header_size <= SECTOR_SIZE or current_lba != header_lba or
+                backup_lba != expected_backup_lba):
             raise ImageError("invalid GPT header")
         if backup_lba >= total_sectors or first_usable > last_usable >= total_sectors:
             raise ImageError("GPT usable range is invalid")
@@ -240,6 +241,19 @@ def parse_gpt_image(image: Path) -> list[Partition]:
             if left.start_sector <= right.start_sector + right.sectors - 1 and right.start_sector <= left.start_sector + left.sectors - 1:
                 raise ImageError("overlapping GPT partitions")
     return partitions
+
+
+def parse_gpt_image(image: Path) -> list[Partition]:
+    total_sectors = image.stat().st_size // SECTOR_SIZE
+    if total_sectors < 2:
+        raise ImageError("image is too small for GPT")
+    try:
+        return _parse_gpt_at(image, 1, total_sectors, total_sectors - 1)
+    except ImageError as primary_error:
+        try:
+            return _parse_gpt_at(image, total_sectors - 1, total_sectors, 1)
+        except ImageError:
+            raise primary_error
 
 
 def read_partitions(image: Path) -> list[Partition]:

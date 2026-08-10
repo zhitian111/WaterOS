@@ -1498,3 +1498,28 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[feat] build gpt physical root images`
+
+## 2026-08-10：批次 38——Python GPT verifier backup 回退
+
+### 任务与设计
+
+1. 审计发现 Rust block parser 已支持 primary→backup GPT 回退，但 Python root image verifier 仍只校验 LBA1。
+2. 抽取按 header LBA 解析 GPT 的路径，校验 current/backup LBA 互指、header CRC、entry array CRC 和分区范围。
+3. primary 校验失败时最多读取一次末尾 backup header；若两者都失败，保留 primary 错误并拒绝镜像。
+
+### 完成内容
+
+- [x] Python verifier 与 Rust block parser 的 backup header 行为对齐。
+- [x] 测试覆盖正常 GPT、primary 损坏但 backup 成功、primary/backup 均损坏。
+- [x] README 记录 backup fallback 和 `UNVERIFIED_ON_HARDWARE` 边界。
+
+### 验证证据与限制
+
+- `python3 -m unittest discover -s os/scripts/tests -p 'test_root_image.py'`：5 项通过。
+- 临时 16 MiB GPT 镜像构建与 verify：通过。
+- `git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 SD/eMMC backup header、异常掉电、写屏障和控制器读错误恢复仍需实体板验证；verifier 不执行修复写回。
+
+### 提交
+
+- `[fix] recover gpt backup in verifier`

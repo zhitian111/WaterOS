@@ -40,6 +40,8 @@ disabled to keep the image small; WaterOS therefore does not yet promise
 power-loss recovery for writes to this root filesystem.
 
 The builder and verifier validate both MBR and GPT headers/entry arrays, including
-CRC and partition bounds. The image has been exercised with QEMU virtio-blk. SD/eMMC controllers, cache
+CRC and partition bounds. If a GPT primary header is damaged, verification performs
+one bounded read of the backup header at the end of the image, matching the kernel
+block parser's fail-closed recovery behavior. The image has been exercised with QEMU virtio-blk. SD/eMMC controllers, cache
 coherency, write barriers, flush semantics, and power-loss behavior still need
 validation on each physical board.

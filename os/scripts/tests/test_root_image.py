@@ -117,6 +117,15 @@ class RootImageTests(unittest.TestCase):
             self.assertEqual(len(partitions), 1)
             self.assertEqual(partitions[0].table, "gpt")
             self.assertEqual(partitions[0].start_sector, 2048)
+            damaged_primary = root / "primary-damaged.img"
+            damaged = bytearray(output.read_bytes())
+            damaged[512:1024] = b"\0" * 512
+            damaged_primary.write_bytes(damaged)
+            self.assertEqual(len(parse_gpt_image(damaged_primary)), 1)
+            damaged[(-512):] = b"\0" * 512
+            damaged_primary.write_bytes(damaged)
+            with self.assertRaisesRegex(ImageError, "missing GPT header"):
+                parse_gpt_image(damaged_primary)
 
 
 if __name__ == "__main__":
