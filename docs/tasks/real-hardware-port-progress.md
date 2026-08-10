@@ -6915,3 +6915,28 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[fix] reject invalid evdev ioctl direction`
+
+## 2026-08-10：批次 167——补齐绝对坐标设备的 EVIOCGABS 查询
+
+### 本批任务与设计
+
+1. 复查键盘/鼠标/平板用户态 ABI，确认能力 bitmap 已存在，但绝对轴设备缺少读取范围所需的 `EVIOCGABS`。
+2. 复用 `InputDeviceInfo.absolute_x/absolute_y`，实现 24 字节 `input_absinfo` 只读输出；当前值、fuzz、flat、resolution 没有硬件证据时置零。
+3. 只接受 ABS_X/ABS_Y，未知轴、错误方向和错误长度 fail-closed，避免为未探测的轴猜测范围。
+
+### 已完成
+
+- [x] syscall evdev 查询支持 `EVIOCGABS(ABS_X)` 与 `EVIOCGABS(ABS_Y)`。
+- [x] 输出 minimum/maximum 来自设备元数据，其余字段保持明确的零值 placeholder。
+- [x] 增加请求编码边界测试，并保持 VFS/user-copy 分层不变。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path os/components/wateros-driver/driver-input/input-api/api-v0/Cargo.toml`：6 项通过。
+- `make kernel-rv-pre EXTRA_FEATURES='gui,operator-shell'`：通过。
+- `make kernel-la EXTRA_FEATURES='remote-debug-monitor,operator-shell'`：通过。
+- `UNVERIFIED_ON_HARDWARE`：QEMU/实体板真实绝对轴范围、当前值和分辨率尚未从用户态读取验证；非 X/Y 轴及写入型 ioctl 仍不支持。
+
+### 提交
+
+- 待提交：`[feat] support evdev absolute axis queries`

@@ -27,6 +27,7 @@ const RTC_RD_TIME: u32 = 0x8024_7009;
 const RTC_SET_TIME: u32 = 0x4024_700a;
 const EVIOCGVERSION: u32 = 0x8004_4501;
 const EVIOCGID: u32 = 0x8008_4502;
+const EVIOCGABS_X: u32 = 0x8018_4540;
 
 fn evdev_ioc(dir: u32, size: usize, nr: u32) -> u32 {
     (dir << 30) | ((size as u32 & 0x3fff) << 16) | (0x45 << 8) | (nr & 0xff)
@@ -56,6 +57,17 @@ fn evdev_query_ioctl(request: u32, argp: usize, index: usize) -> UserRet {
         let fields = [info.id.bustype, info.id.vendor, info.id.product, info.id.version];
         for (offset, field) in fields.into_iter().enumerate() { output[offset * 2..offset * 2 + 2].copy_from_slice(&field.to_le_bytes()); }
         8
+    } else if (request & 0xff) >= 0x40 && (request & 0xff) < 0x80 {
+        if size != 24 { return UserRet::from_error(ErrNo::EINVAL); }
+        let axis = (request & 0xff) - 0x40;
+        let Some(axis_info) = (match axis {
+            0 => info.absolute_x,
+            1 => info.absolute_y,
+            _ => None,
+        }) else { return UserRet::from_error(ErrNo::ENOTTY); };
+        let fields = [0i32, axis_info.minimum, axis_info.maximum, 0, 0, 0];
+        for (offset, field) in fields.into_iter().enumerate() { output[offset * 4..offset * 4 + 4].copy_from_slice(&field.to_le_bytes()); }
+        24
     } else if (request & 0xff00) == (0x45 << 8) && (request & 0xff) == 0x06 {
         if size == 0 { return UserRet::from_error(ErrNo::EINVAL); }
         let name = info.name.as_bytes();
@@ -392,5 +404,6 @@ mod tests {
         assert_eq!(evdev_request_header(EVIOCGVERSION), Some(4));
         assert_eq!(evdev_request_header(evdev_ioc(1, 4, 1)), None);
         assert_eq!(evdev_request_header((2 << 30) | (4 << 16) | (0x54 << 8) | 1), None);
+        assert_eq!(EVIOCGABS_X, evdev_ioc(2, 24, 0x40));
     }
 }
