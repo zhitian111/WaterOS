@@ -5111,3 +5111,51 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] archive LS2K1000 read recovery atomically`
+
+## 2026-08-10：批次 105——独占认领 Terminal read completion
+
+### 本批任务与设计
+
+1. Terminal coordinator 增加独占 completion service，禁止两个 worker 重复取得同一对 MMC/APBDMA receipts。
+2. completion claim 同时校验 slot transaction、Published session 携带的 armed generation 和 runtime 两个 owner generation。
+3. 只有两路 owner 都为 Pending 才原子取得 receipt pair，并把 slot 从 Terminal 转为 CompletionClaimed。
+4. 错误 slot、owner variant、binding 或 generation 必须返还原 Published session/armed token，slot 仍保持 Terminal 可重试。
+5. 成功链严格保持 pair take→DMA acknowledged/status→MMC receipt→cache finish→coordinator release 的顺序。
+
+### 已完成
+
+- [x] 新增 `ReadCoordinatorPhase/State::CompletionClaimed`，snapshot 可观测一次性 completion ownership 已被取得。
+- [x] 新增 `ReadCoordinatorSlot::service_terminal`，只允许同 generation 的 Terminal 状态进入 SERVICING。
+- [x] 新增 must-use `ReadTerminalService` 与 `ReadTerminalClaimFailure`；session generation 在访问 runtime 前校验，失败返还唯一 armed token。
+- [x] terminal claim 复用 `take_pending_read_irq_pair` 的双槽预校验；成功取得同 generation 的 MMC receipt 和 acknowledged DMA IRQ 后才提交 CompletionClaimed。
+- [x] test-only Published typestate wrapper 接入 terminal service，失败时重建完整 Published session，成功时进入既有 paired tracker 链。
+- [x] 成功集成测试先故意交换 MMC/DMA 槽，确认错误精确、slot 仍 Terminal、同一会话可按正确槽位重试。
+- [x] 成功 claim 后第二个 terminal service 被 WrongPhase(CompletionClaimed) 拒绝，避免 receipt 重复消费。
+- [x] production activation、真实 status decoder、block completion callback 与 IRQ rearm 继续关闭。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 176 项全部通过；paired completion 集成测试升级为 coordinator 独占认领闭环。
+- 模型链路覆盖 owner reserve→DMA start→MMC publish→slot recheck Terminal→paired claim→DMA ack→descriptor CPU sync/status→MMC apply→cache finish→slot release。
+- 交换槽位返回 Pair(MmcOwnerVariant)，Published session 被返还，snapshot 保持 Terminal；正确参数随后成功认领。
+- CompletionClaimed 后再次申请 terminal service 返回 WrongPhase，证明 coordinator 不再暴露第二个 completion lease。
+- production decoder 的 StatusUnverified 仍返还同一 paired session；fixture decoder 重试后仅 DMA evidence 不会提前完成。
+- MMC receipt 应用后 evidence 三项均为 true；descriptor/payload 映射确认 CPU-owned 后才 release，slot 最终为 Empty。
+- production 组件 test/check、RISC-V `make check` 与 LoongArch64 `make kernel-la` 全部通过；完整构建仅有仓库既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过；dtc warning 来自预期畸形输入。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：真实 MMC terminal IRQ 与 APBDMA IRQ 的先后、合并、迟到及 trap/worker 并发尚未在 2K1000LA 验证。
+- [ ] `UNVERIFIED_ON_HARDWARE`：真实 descriptor status 位解码、DMA completion 可见性与 cache maintenance 屏障仍待实机证据。
+- [ ] CompletionClaimed 证明 receipt pair 已被唯一取得，但 slot 类型当前不能证明 cache finish 已完成；release 的调用顺序由线性 session 集成层约束并由模型测试覆盖。
+- [ ] paired Published/status/MMC tracker 目前仍是 test-only 整合外壳；production worker 尚未拥有可放入长期请求对象的 DMA mappings/session。
+- [ ] claim 后若 descriptor status 或 MMC receipt 表示失败，paired tracker 保留 recovery session 和 receipts，但尚未把 CompletionClaimed 原子转换为 RecoveryPending/Recorded。
+- [ ] Terminal service 没有 scheduler wake/deadline/backoff 接口；外部 worker 仍需决定何时检查 DMA owner 是否 Pending。
+- [ ] source 在成功 release 后仍保持 masked；slot Empty 不是 rearm 许可，必须先验证真实 controller condition clear、DMA idle 和下一 generation arm 顺序。
+- [ ] production runtime 仍不构造 APBDMA owner，真实 command publish permit、status decoder、块层完成回调和 rearm 均关闭。
+- [ ] 下一批应把 claimed completion 的 status/MMC 失败原子转入 coordinator recovery，并设计 production-owned read request，使 worker 能持久保存 Published/paired session。
+
+### 提交
+
+- 本批计划提交：`[feat] claim LS2K1000 read completion exclusively`

@@ -356,6 +356,12 @@ pub(crate) struct ReadSessionPendingPairFailure<S> {
 }
 
 #[cfg(test)]
+pub(crate) struct ReadSessionTerminalClaimFailure<S> {
+    pub error : crate::read_coordinator::ReadTerminalClaimError,
+    pub session : IrqArmedReadDmaSession<S>,
+}
+
+#[cfg(test)]
 pub(crate) struct PairedAcknowledgedReadDmaSession<'a, D, P> {
     pub mmc : MmcReadIrqReceipt,
     pub tracker : crate::mmc::ReadCompletionTracker<
@@ -622,6 +628,27 @@ impl<'a, 'e, R : crate::apbdma::OrderIo, D, P>
         match take_pending_read_irq_pair(runtime, mmc_irq, dma_irq, armed) {
             Ok(pair) => Ok(IrqPairedReadDmaSession { pair, session }),
             Err(failure) => Err(ReadSessionPendingPairFailure {
+                error : failure.error,
+                session : Self { armed : failure.into_armed(), session },
+            }),
+        }
+    }
+
+    pub(crate) fn claim_pending_pair<I, O>(
+        self,
+        service : crate::read_coordinator::ReadTerminalService<'_>,
+        runtime : &mut crate::irq_runtime::BoardIrqRuntime<I, BoardIrqOwner<O>>,
+        mmc_irq : GlobalIrq,
+        dma_irq : GlobalIrq)
+        -> Result<IrqPairedReadDmaSession<crate::mmc::PublishedReadDmaSession<'a, 'e, R, D, P>>,
+                  ReadSessionTerminalClaimFailure<
+                      crate::mmc::PublishedReadDmaSession<'a, 'e, R, D, P>>>
+    where I : crate::liointc::RegisterIo
+    {
+        let Self { armed, session } = self;
+        match service.claim_pair(runtime, mmc_irq, dma_irq, armed) {
+            Ok(pair) => Ok(IrqPairedReadDmaSession { pair, session }),
+            Err(failure) => Err(ReadSessionTerminalClaimFailure {
                 error : failure.error,
                 session : Self { armed : failure.into_armed(), session },
             }),

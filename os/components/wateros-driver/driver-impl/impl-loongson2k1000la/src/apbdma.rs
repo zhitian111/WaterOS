@@ -1818,23 +1818,48 @@ mod tests {
             MockMmcRegisters::default(),
             crate::mmc::ReadDataPublishPermit::fixture());
         let published = running.publish(&mut publisher).unwrap();
+        let coordinator = crate::read_coordinator::ReadCoordinatorSlot::new();
+        coordinator.reserve(transaction).unwrap().commit();
+        coordinator.mark_published(transaction, 1).unwrap();
+        coordinator.record_recheck(
+            crate::board_irq_owner::BoundedMmcReadRecheck::new(transaction, 1).unwrap())
+            .unwrap_or_else(|_| panic!("bounded recheck token rejected"));
 
         let dma_owner = runtime.owner_mut(dma_irq()).unwrap();
         assert_eq!(dma_owner.handle(acknowledged_dma_irq()),
                    crate::irq_domain::IrqDisposition::KeepMasked);
-        let failure = match published.take_pending_pair(&mut runtime, mmc_irq, dma_irq()) {
+        assert_eq!(coordinator.service_recheck(transaction).unwrap()
+                              .step(&mut runtime, mmc_irq),
+                   Ok(crate::read_coordinator::ReadCoordinatorStepProgress::Terminal {
+                       transaction, polls_completed : 1,
+                   }));
+        let failure = match published.claim_pending_pair(
+            coordinator.service_terminal(transaction).unwrap(),
+            &mut runtime, dma_irq(), mmc_irq)
+        {
             Err(failure) => failure,
-            Ok(_) => panic!("DMA-only pair advanced session"),
+            Ok(_) => panic!("reversed owner slots claimed completion"),
         };
         assert_eq!(failure.error,
-                   crate::board_irq_owner::ReadPendingPairError::MmcBinding(
-                       Some(crate::board_irq_owner::ReadIrqOwnerBinding::Armed(transaction))));
+                   crate::read_coordinator::ReadTerminalClaimError::Pair(
+                       crate::board_irq_owner::ReadPendingPairError::MmcOwnerVariant));
+        assert_eq!(coordinator.snapshot().unwrap().phase,
+                   crate::read_coordinator::ReadCoordinatorPhase::Terminal);
         let published = failure.session;
-        let mmc_owner = runtime.owner_mut(mmc_irq).unwrap();
-        assert_eq!(mmc_owner.handle(AcknowledgedIrq::after_mask_ack(mmc_irq)),
-                   crate::irq_domain::IrqDisposition::KeepMasked);
-        let paired = published.take_pending_pair(&mut runtime, mmc_irq, dma_irq())
-                              .unwrap_or_else(|_| panic!("matching pair rejected"));
+        let paired = published.claim_pending_pair(
+            coordinator.service_terminal(transaction).unwrap(),
+            &mut runtime, mmc_irq, dma_irq())
+            .unwrap_or_else(|_| panic!("matching pair rejected"));
+        assert_eq!(coordinator.snapshot().unwrap().phase,
+                   crate::read_coordinator::ReadCoordinatorPhase::CompletionClaimed);
+        match coordinator.service_terminal(transaction) {
+            Err(error) => assert_eq!(error,
+                crate::read_coordinator::ReadCoordinatorError::WrongPhase {
+                    expected : crate::read_coordinator::ReadCoordinatorPhase::Terminal,
+                    actual : crate::read_coordinator::ReadCoordinatorPhase::CompletionClaimed,
+                }),
+            Ok(_) => panic!("completion pair was claimed twice"),
+        }
         let paired = paired.acknowledge_dma_irq()
                            .unwrap_or_else(|_| panic!("paired DMA IRQ rejected"));
         assert_eq!(paired.mmc.transaction, transaction);
@@ -1865,6 +1890,9 @@ mod tests {
         completed.into_quiesced_session().finish().unwrap();
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
+        coordinator.release(transaction).unwrap();
+        assert_eq!(coordinator.state(),
+                   crate::diagnostic_slot::DiagnosticSlotState::Empty);
     }
 
     #[test]

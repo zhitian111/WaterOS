@@ -8,10 +8,13 @@
 
 use crate::{board_irq_owner::{BoardIrqOwner, BoundedMmcReadRecheck,
                               BoundedMmcReadRecheckError,
-                              BoundedMmcReadRecheckStep, QuiescedReadIrqs,
+                              BoundedMmcReadRecheckStep, ArmedReadIrqs,
+                              QuiescedReadIrqs, ReadyReadIrqPair,
+                              ReadPendingPairError,
                               ReadRecoveryCause, ReadRecoveryReport,
                               ReadIrqRetireError, ReadTransactionId,
-                              retire_quiesced_read_recovery},
+                              retire_quiesced_read_recovery,
+                              take_pending_read_irq_pair},
             diagnostic_slot::{DiagnosticRuntimeSlot, DiagnosticSlotState,
                               DrainError, RuntimeReservation, RuntimeService, SlotError},
             irq_domain::GlobalIrq,
@@ -23,6 +26,7 @@ pub enum ReadCoordinatorPhase {
     Published,
     Rechecking,
     Terminal,
+    CompletionClaimed,
     RecoveryPending,
     RecoveryRecorded,
 }
@@ -111,6 +115,25 @@ pub struct ReadCoordinatorRecoveryFailure {
     quiesced : QuiescedReadIrqs,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadTerminalClaimError {
+    WrongTransaction {
+        expected : ReadTransactionId,
+        actual : ReadTransactionId,
+    },
+    Pair(ReadPendingPairError),
+}
+
+#[must_use = "recover the armed token and retry the terminal service"]
+pub struct ReadTerminalClaimFailure {
+    pub error : ReadTerminalClaimError,
+    armed : ArmedReadIrqs,
+}
+
+impl ReadTerminalClaimFailure {
+    pub fn into_armed(self) -> ArmedReadIrqs { self.armed }
+}
+
 impl ReadCoordinatorRecoveryFailure {
     pub fn into_quiesced(self) -> QuiescedReadIrqs { self.quiesced }
 }
@@ -132,6 +155,10 @@ enum ReadCoordinatorState {
         transaction : ReadTransactionId,
         polls_completed : u16,
     },
+    #[cfg_attr(not(test), allow(dead_code))]
+    CompletionClaimed {
+        transaction : ReadTransactionId,
+    },
     RecoveryPending {
         transaction : ReadTransactionId,
         cause : ReadRecoveryCause,
@@ -146,6 +173,7 @@ impl ReadCoordinatorState {
             Self::Published { transaction, .. } |
             Self::Rechecking { transaction, .. } |
             Self::Terminal { transaction, .. } |
+            Self::CompletionClaimed { transaction } |
             Self::RecoveryPending { transaction, .. } => *transaction,
             Self::RecoveryRecorded(report) => report.transaction,
         }
@@ -157,6 +185,7 @@ impl ReadCoordinatorState {
             Self::Published { .. } => ReadCoordinatorPhase::Published,
             Self::Rechecking { .. } => ReadCoordinatorPhase::Rechecking,
             Self::Terminal { .. } => ReadCoordinatorPhase::Terminal,
+            Self::CompletionClaimed { .. } => ReadCoordinatorPhase::CompletionClaimed,
             Self::RecoveryPending { .. } => ReadCoordinatorPhase::RecoveryPending,
             Self::RecoveryRecorded(_) => ReadCoordinatorPhase::RecoveryRecorded,
         }
@@ -183,6 +212,7 @@ impl ReadCoordinatorState {
             },
             Self::Terminal { polls_completed, .. } =>
                 snapshot.polls_completed = Some(*polls_completed),
+            Self::CompletionClaimed { .. } => {},
             Self::RecoveryPending { cause, .. } => snapshot.recovery_cause = Some(*cause),
             Self::RecoveryRecorded(report) => {
                 snapshot.recovery_cause = Some(report.cause);
@@ -300,6 +330,24 @@ impl ReadCoordinatorSlot {
             });
         }
         Ok(ReadRecoveryService { service, transaction })
+    }
+
+    pub fn service_terminal(&self,
+                            transaction : ReadTransactionId)
+                            -> Result<ReadTerminalService<'_>, ReadCoordinatorError> {
+        let service = self.inner.service().map_err(ReadCoordinatorError::Slot)?;
+        if service.transaction() != transaction {
+            return Err(ReadCoordinatorError::WrongTransaction {
+                expected : service.transaction(), actual : transaction,
+            });
+        }
+        if service.phase() != ReadCoordinatorPhase::Terminal {
+            return Err(ReadCoordinatorError::WrongPhase {
+                expected : ReadCoordinatorPhase::Terminal,
+                actual : service.phase(),
+            });
+        }
+        Ok(ReadTerminalService { service, transaction })
     }
 
     pub fn record_recovery(&self,
@@ -483,6 +531,53 @@ impl ReadRecheckService<'_> {
                 } else {
                     Err(ReadCoordinatorStepFailure { error })
                 }
+            },
+        }
+    }
+}
+
+#[must_use = "claim the same-generation pair or drop the service to retry later"]
+pub struct ReadTerminalService<'a> {
+    #[cfg_attr(not(test), allow(dead_code))]
+    service : RuntimeService<'a, ReadCoordinatorState>,
+    transaction : ReadTransactionId,
+}
+
+impl ReadTerminalService<'_> {
+    pub const fn transaction(&self) -> ReadTransactionId { self.transaction }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn claim_pair<I, R>(
+        mut self,
+        runtime : &mut crate::irq_runtime::BoardIrqRuntime<I, BoardIrqOwner<R>>,
+        mmc_irq : GlobalIrq,
+        dma_irq : GlobalIrq,
+        armed : ArmedReadIrqs)
+        -> Result<ReadyReadIrqPair, ReadTerminalClaimFailure>
+    where I : crate::liointc::RegisterIo
+    {
+        if armed.transaction() != self.transaction {
+            return Err(ReadTerminalClaimFailure {
+                error : ReadTerminalClaimError::WrongTransaction {
+                    expected : self.transaction,
+                    actual : armed.transaction(),
+                },
+                armed,
+            });
+        }
+        match take_pending_read_irq_pair(runtime, mmc_irq, dma_irq, armed) {
+            Ok(pair) => {
+                *self.service = ReadCoordinatorState::CompletionClaimed {
+                    transaction : self.transaction,
+                };
+                Ok(pair)
+            },
+            Err(failure) => {
+                let error = failure.error;
+                Err(ReadTerminalClaimFailure {
+                    error : ReadTerminalClaimError::Pair(error),
+                    armed : failure.into_armed(),
+                })
             },
         }
     }
