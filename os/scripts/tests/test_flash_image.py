@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "root_image"))
-from flash_image import FlashError, flash, target_capacity_bytes
+from flash_image import FlashError, flash, mounted_block_paths, target_capacity_bytes
 
 
 class FlashImageTests(unittest.TestCase):
@@ -58,6 +58,11 @@ class FlashImageTests(unittest.TestCase):
             target = Path(directory) / "target.img"
             target.write_bytes(b"\0" * 32)
             self.assertEqual(target_capacity_bytes(target, target.stat()), 32)
+
+    def test_mount_parser_is_fail_closed_for_nonempty_mountpoints(self) -> None:
+        def fake_runner(*_args, **_kwargs):
+            return type("Result", (), {"stdout": "/dev/sda /\n/dev/sda1 /boot\n/dev/sda2 -\n", "stderr": ""})()
+        self.assertEqual(mounted_block_paths(Path("/dev/sda"), fake_runner), ["/dev/sda", "/dev/sda1"])
 
 
 if __name__ == "__main__":

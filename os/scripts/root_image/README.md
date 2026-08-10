@@ -101,7 +101,9 @@ python3 ./scripts/root_image/flash_image.py --image ./wateros-root.img \
 
 Only use an explicitly identified whole-disk target after unmounting it. Tests
 use a same-sized regular temporary file with `--allow-regular-file`; this does
-not validate SD/eMMC write barriers or power-loss behavior.
+not validate SD/eMMC write barriers or power-loss behavior. On Linux the helper
+uses `lsblk` and refuses to write when the disk or any partition reports a
+mountpoint; it never unmounts anything automatically.
 
 After building a kernel artifact, the snapshot smoke helper validates the same
 manifest and prints the exact QEMU command without starting a guest:

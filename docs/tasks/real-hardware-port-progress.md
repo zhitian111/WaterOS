@@ -7040,3 +7040,28 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[fix] validate block device capacity before flashing`
+
+## 2026-08-10：批次 172——拒绝写入已挂载的磁盘及分区
+
+### 本批任务与设计
+
+1. 审计 flasher 的最后一道物理部署风险：整盘容量足够并不代表其分区未被系统挂载。
+2. 对 Linux block device 调用 `lsblk -nrpo NAME,MOUNTPOINT`，只要目标或任一分区存在 mountpoint 就 fail-closed。
+3. dry-run 也执行挂载状态检查；脚本不自动卸载、不提升权限。regular-file 测试路径不依赖 `lsblk`。
+
+### 已完成
+
+- [x] 新增 `mounted_block_paths` 解析和 `lsblk` 错误处理。
+- [x] 实际 block-device dry-run/write 共用挂载检查；`-` 空 mountpoint 不误判为已挂载。
+- [x] 增加注入式 host parser 测试并更新部署文档。
+
+### 验证证据与限制
+
+- `python3 -m unittest discover -s os/scripts/tests -p 'test_flash_image.py'`：6 项通过。
+- `python3 -m unittest discover -s os/scripts/tests -p 'test_root_image*.py'`：18 项通过。
+- `py_compile`、`git diff --check`：通过。
+- `UNVERIFIED_ON_HARDWARE`：未对真实 SD/eMMC 写入；`lsblk` 设备树、外部 mount namespace、控制器 flush/掉电行为仍需目标板验证。
+
+### 提交
+
+- 待提交：`[fix] refuse mounted disk flashing`

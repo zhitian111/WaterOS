@@ -9,6 +9,7 @@ import fcntl
 import os
 import shutil
 import stat
+import subprocess
 from pathlib import Path
 
 from root_image import ImageError, verify_image
@@ -35,6 +36,25 @@ def target_capacity_bytes(target: Path, target_stat: os.stat_result) -> int:
     return capacity[0]
 
 
+def mounted_block_paths(target: Path, runner=subprocess.run) -> list[str]:
+    """Return target/partition names with non-empty mountpoints."""
+    try:
+        result = runner(["lsblk", "-nrpo", "NAME,MOUNTPOINT", str(target)],
+                        check=True, text=True, stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE)
+    except FileNotFoundError as error:
+        raise FlashError("lsblk is required to check mounted block devices") from error
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or "").strip()
+        raise FlashError(f"lsblk failed while checking {target}: {detail}") from error
+    mounted: list[str] = []
+    for line in result.stdout.splitlines():
+        fields = line.split(maxsplit=1)
+        if len(fields) == 2 and fields[1].strip() not in ("", "-"):
+            mounted.append(fields[0])
+    return mounted
+
+
 def validate_target(source: Path, target: Path, *, allow_regular_file: bool,
                     confirmed: bool, dry_run: bool) -> int:
     if not source.is_file():
@@ -50,6 +70,10 @@ def validate_target(source: Path, target: Path, *, allow_regular_file: bool,
         raise FlashError("target must be a block device (or an explicitly allowed regular file)")
     if is_block and not confirmed and not dry_run:
         raise FlashError("writing a block device requires --yes-i-really-mean-it")
+    if is_block:
+        mounted = mounted_block_paths(target)
+        if mounted:
+            raise FlashError("target or partition is mounted: " + ", ".join(mounted))
     source_size = source.stat().st_size
     if source_size == 0:
         raise FlashError("source image is empty")
