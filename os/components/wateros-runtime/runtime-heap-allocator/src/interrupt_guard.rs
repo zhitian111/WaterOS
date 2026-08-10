@@ -33,7 +33,10 @@ pub(crate) fn with_allocator_interrupt_guard<R>(f : impl FnOnce() -> R) -> R {
                                                 });
     let state = arch::interrupt::read_global_interrupt_state()
                     .expect("heap guard: read interrupt state");
-    let _ = arch::interrupt::disable_global_interrupt();
+    let was_enabled = state.global_interrupts_enabled();
+    if was_enabled {
+        let _ = arch::interrupt::disable_global_interrupt();
+    }
     let depth = local_depth.fetch_add(1, Ordering::Acquire);
     if depth > 0 {
         local_depth.fetch_sub(1, Ordering::Release);
@@ -44,7 +47,9 @@ pub(crate) fn with_allocator_interrupt_guard<R>(f : impl FnOnce() -> R) -> R {
     }
     let ret = f();
     local_depth.fetch_sub(1, Ordering::Release);
-    let _ = arch::interrupt::restore_global_interrupt_state(state);
+    if was_enabled {
+        let _ = arch::interrupt::restore_global_interrupt_state(state);
+    }
     ret
 }
 

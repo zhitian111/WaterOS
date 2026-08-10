@@ -10,6 +10,24 @@ use crate::time::ArchTimeResult;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ArchInterruptState(pub usize);
 
+impl ArchInterruptState {
+    /// 当前全局中断位是否处于使能状态。
+    ///
+    /// 该状态由各 arch-impl 解释；这里只编码当前两个受支持架构的全局中断位，
+    /// 供 allocator guard 等通用代码在不需要修改 CSR 时跳过 disable/restore。
+    #[inline]
+    pub fn global_interrupts_enabled(&self) -> bool {
+        #[cfg(target_arch = "riscv64")]
+        {
+            (self.0 & (1 << 1)) != 0
+        }
+        #[cfg(target_arch = "loongarch64")]
+        {
+            (self.0 & (1 << 2)) != 0
+        }
+    }
+}
+
 /// 架构层时钟中断开关原语：
 /// - 只负责中断位的开/关
 /// - 不负责编程下一次 timer deadline（该职责在 firmware/platform 层）
