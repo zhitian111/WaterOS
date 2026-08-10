@@ -1307,6 +1307,12 @@ pub struct RunningReadDmaSession<'a, 'e, R, D, P> {
 }
 
 impl<'a, D : DmaCoherency, P : DmaCoherency> PreparedReadDmaSession<'a, D, P> {
+    pub(crate) fn from_start_failure(
+        read : DeferredReadPlan,
+        dma : apbdma::PreparedSession<'a, D, P>) -> Self {
+        Self { read, dma }
+    }
+
     pub fn cancel(self) -> Result<(), apbdma::SessionFailure<DriverError, Self>> {
         match self.dma.cancel() {
             Ok(()) => Ok(()),

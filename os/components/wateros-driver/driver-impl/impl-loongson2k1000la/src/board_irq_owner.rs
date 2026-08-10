@@ -7,6 +7,7 @@
 use crate::{irq_domain::{AcknowledgedIrq, GlobalIrq, IrqDisposition},
             irq_owner::IrqOwner,
             mmc::{MmcIrqAckError, RegisterIo, acknowledge_interrupt_observed}};
+use api_v0::{DriverError, dma::DmaCoherency};
 use core::num::NonZeroU64;
 
 /// Software-only identity for one armed MMC/APBDMA read transaction.
@@ -115,12 +116,212 @@ pub struct DrainedReadIrqs {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+#[must_use = "bind the armed IRQ generation to a read session or retire it"]
 pub struct ArmedReadIrqs {
     transaction : ReadTransactionId,
 }
 
 impl ArmedReadIrqs {
     pub const fn transaction(&self) -> ReadTransactionId { self.transaction }
+
+    pub fn bind_prepared_dma<'a, D, P>(
+        self,
+        session : crate::mmc::PreparedReadDmaSession<'a, D, P>)
+        -> IrqArmedReadDmaSession<crate::mmc::PreparedReadDmaSession<'a, D, P>> {
+        IrqArmedReadDmaSession { armed : self, session }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn fixture(transaction : ReadTransactionId) -> Self {
+        Self { transaction }
+    }
+}
+
+/// A read DMA typestate carrying the linear software IRQ-generation token.
+///
+/// `UNVERIFIED_ON_HARDWARE`: the token proves only owner/session ordering. It
+/// neither tags physical IRQs nor proves that APBDMA observed a start write.
+#[must_use = "advance or explicitly recover the IRQ-armed read DMA session"]
+pub struct IrqArmedReadDmaSession<S> {
+    armed : ArmedReadIrqs,
+    session : S,
+}
+
+impl<S> IrqArmedReadDmaSession<S> {
+    pub const fn transaction(&self) -> ReadTransactionId { self.armed.transaction }
+}
+
+pub enum IrqArmedReadDmaStartFailure<'a, 'e, R, D, P> {
+    Prepared {
+        error : crate::apbdma::ExecutorError,
+        read : crate::mmc::DeferredReadPlan,
+        session : IrqArmedReadDmaSession<crate::mmc::PreparedReadDmaSession<'a, D, P>>,
+    },
+    Recovery {
+        error : crate::apbdma::ExecutorError,
+        read : crate::mmc::DeferredReadPlan,
+        session : IrqArmedReadDmaSession<crate::apbdma::RecoverySession<'a, 'e, R, D, P>>,
+    },
+}
+
+impl<R, D, P> core::fmt::Debug for IrqArmedReadDmaStartFailure<'_, '_, R, D, P> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let (state, error, read, transaction) = match self {
+            Self::Prepared { error, read, session } =>
+                ("Prepared", error, read, session.transaction()),
+            Self::Recovery { error, read, session } =>
+                ("Recovery", error, read, session.transaction()),
+        };
+        formatter.debug_struct("IrqArmedReadDmaStartFailure")
+                 .field("state", &state)
+                 .field("error", error)
+                 .field("read", read)
+                 .field("transaction", &transaction)
+                 .finish()
+    }
+}
+
+impl<R, D, P> IrqArmedReadDmaStartFailure<'_, '_, R, D, P> {
+    pub const fn transaction(&self) -> ReadTransactionId {
+        match self {
+            Self::Prepared { session, .. } => session.transaction(),
+            Self::Recovery { session, .. } => session.transaction(),
+        }
+    }
+}
+
+impl<'a, D : DmaCoherency, P : DmaCoherency>
+    IrqArmedReadDmaSession<crate::mmc::PreparedReadDmaSession<'a, D, P>>
+{
+    pub fn cancel(self)
+        -> Result<ArmedReadIrqs, crate::apbdma::SessionFailure<DriverError, Self>> {
+        match self.session.cancel() {
+            Ok(()) => Ok(self.armed),
+            Err(failure) => Err(crate::apbdma::SessionFailure {
+                error : failure.error,
+                session : Self { armed : self.armed, session : failure.session },
+            }),
+        }
+    }
+
+    pub fn start<'e, R : crate::apbdma::OrderIo>(
+        self,
+        executor : &'e mut crate::apbdma::Executor<R>)
+        -> Result<IrqArmedReadDmaSession<crate::mmc::RunningReadDmaSession<'a, 'e, R, D, P>>,
+                  IrqArmedReadDmaStartFailure<'a, 'e, R, D, P>> {
+        match self.session.start(executor) {
+            Ok(session) => Ok(IrqArmedReadDmaSession { armed : self.armed, session }),
+            Err(failure) => {
+                let crate::mmc::ReadDmaStartFailure { read, failure } = failure;
+                match failure {
+                    crate::apbdma::StartSessionFailure::Prepared(failure) => {
+                        Err(IrqArmedReadDmaStartFailure::Prepared {
+                            error : failure.error,
+                            read,
+                            session : IrqArmedReadDmaSession {
+                                armed : self.armed,
+                                session : crate::mmc::PreparedReadDmaSession::from_start_failure(
+                                    read, failure.session),
+                            },
+                        })
+                    },
+                    crate::apbdma::StartSessionFailure::Recovery(failure) => {
+                        Err(IrqArmedReadDmaStartFailure::Recovery {
+                            error : failure.error,
+                            read,
+                            session : IrqArmedReadDmaSession {
+                                armed : self.armed, session : failure.session,
+                            },
+                        })
+                    },
+                }
+            },
+        }
+    }
+}
+
+impl<'a, 'e, R : crate::apbdma::OrderIo, D, P>
+    IrqArmedReadDmaSession<crate::apbdma::RecoverySession<'a, 'e, R, D, P>>
+{
+    pub fn stop(self)
+        -> Result<IrqArmedReadDmaSession<crate::apbdma::QuiescedSession<'a, D, P>>,
+                  crate::apbdma::SessionFailure<crate::apbdma::ExecutorError, Self>> {
+        match self.session.stop() {
+            Ok(session) => Ok(IrqArmedReadDmaSession { armed : self.armed, session }),
+            Err(failure) => Err(crate::apbdma::SessionFailure {
+                error : failure.error,
+                session : Self { armed : self.armed, session : failure.session },
+            }),
+        }
+    }
+}
+
+impl<'a, 'e, R : crate::apbdma::OrderIo, D, P>
+    IrqArmedReadDmaSession<crate::mmc::RunningReadDmaSession<'a, 'e, R, D, P>>
+{
+    pub const fn plan(&self) -> &crate::mmc::DeferredReadPlan { self.session.plan() }
+
+    pub fn stop(self)
+        -> Result<IrqArmedReadDmaSession<crate::apbdma::QuiescedSession<'a, D, P>>,
+                  crate::apbdma::SessionFailure<crate::apbdma::ExecutorError, Self>> {
+        match self.session.stop() {
+            Ok(session) => Ok(IrqArmedReadDmaSession { armed : self.armed, session }),
+            Err(failure) => Err(crate::apbdma::SessionFailure {
+                error : failure.error,
+                session : Self { armed : self.armed, session : failure.session },
+            }),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn publish<C : crate::mmc::ReadCommandPublisher>(
+        self,
+        publisher : &mut C)
+        -> Result<IrqArmedReadDmaSession<crate::mmc::PublishedReadDmaSession<'a, 'e, R, D, P>>,
+                  crate::mmc::ReadPublishFailure<C::Error, Self>> {
+        match self.session.publish(publisher) {
+            Ok(session) => Ok(IrqArmedReadDmaSession { armed : self.armed, session }),
+            Err(failure) => Err(crate::mmc::ReadPublishFailure {
+                error : failure.error,
+                session : Self { armed : self.armed, session : failure.session },
+            }),
+        }
+    }
+}
+
+impl<'a, D : DmaCoherency, P : DmaCoherency>
+    IrqArmedReadDmaSession<crate::apbdma::QuiescedSession<'a, D, P>>
+{
+    pub fn finish(self)
+        -> Result<ArmedReadIrqs,
+                  crate::apbdma::SessionFailure<DriverError, Self>> {
+        match self.session.finish() {
+            Ok(()) => Ok(self.armed),
+            Err(failure) => Err(crate::apbdma::SessionFailure {
+                error : failure.error,
+                session : Self { armed : self.armed, session : failure.session },
+            }),
+        }
+    }
+}
+
+#[cfg(test)]
+impl<'a, 'e, R : crate::apbdma::OrderIo, D, P>
+    IrqArmedReadDmaSession<crate::mmc::PublishedReadDmaSession<'a, 'e, R, D, P>>
+{
+    pub(crate) const fn plan(&self) -> &crate::mmc::DeferredReadPlan { self.session.plan() }
+
+    pub(crate) fn stop(self)
+        -> Result<IrqArmedReadDmaSession<crate::apbdma::QuiescedSession<'a, D, P>>,
+                  crate::apbdma::SessionFailure<crate::apbdma::ExecutorError, Self>> {
+        match self.session.stop() {
+            Ok(session) => Ok(IrqArmedReadDmaSession { armed : self.armed, session }),
+            Err(failure) => Err(crate::apbdma::SessionFailure {
+                error : failure.error,
+                session : Self { armed : self.armed, session : failure.session },
+            }),
+        }
+    }
 }
 
 /// Exclusive pre-start reservation for both read interrupt owners.
@@ -170,6 +371,24 @@ pub enum ReadIrqReservationError {
     Arm(ReadPairOwnerFailure),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadIrqRetireError {
+    Runtime(crate::irq_runtime::RuntimeError),
+    MmcOwnerVariant,
+    DmaOwnerVariant,
+    Drain(ReadPairOwnerFailure),
+}
+
+#[must_use = "recover the armed generation and retry or keep both IRQs masked"]
+pub struct ReadIrqRetireFailure {
+    pub error : ReadIrqRetireError,
+    armed : ArmedReadIrqs,
+}
+
+impl ReadIrqRetireFailure {
+    pub fn into_armed(self) -> ArmedReadIrqs { self.armed }
+}
+
 /// Reserve two runtime owner slots and arm the expected MMC/APBDMA variants.
 pub fn reserve_read_irq_owners<'a, I, R>(
     runtime : &'a mut crate::irq_runtime::BoardIrqRuntime<I, BoardIrqOwner<R>>,
@@ -189,6 +408,40 @@ where I : crate::liointc::RegisterIo
     };
     ReadIrqArmGuard::arm(mmc, dma, transaction)
         .map_err(ReadIrqReservationError::Arm)
+}
+
+/// Consume an armed generation only after both runtime owner slots validate.
+/// This retires software state only; it never rearms either interrupt source.
+pub fn retire_read_irq_owners<I, R>(
+    runtime : &mut crate::irq_runtime::BoardIrqRuntime<I, BoardIrqOwner<R>>,
+    mmc_irq : GlobalIrq,
+    dma_irq : GlobalIrq,
+    armed : ArmedReadIrqs)
+    -> Result<DrainedReadIrqs, ReadIrqRetireFailure>
+where I : crate::liointc::RegisterIo
+{
+    let transaction = armed.transaction;
+    let (mmc, dma) = match runtime.owners_mut(mmc_irq, dma_irq) {
+        Ok(owners) => owners,
+        Err(error) => {
+            return Err(ReadIrqRetireFailure {
+                error : ReadIrqRetireError::Runtime(error), armed,
+            });
+        },
+    };
+    let BoardIrqOwner::MmcCommand(mmc) = mmc else {
+        return Err(ReadIrqRetireFailure {
+            error : ReadIrqRetireError::MmcOwnerVariant, armed,
+        });
+    };
+    let BoardIrqOwner::ApbDmaDeferred(dma) = dma else {
+        return Err(ReadIrqRetireFailure {
+            error : ReadIrqRetireError::DmaOwnerVariant, armed,
+        });
+    };
+    drain_read_owners(mmc, dma, transaction).map_err(|error| ReadIrqRetireFailure {
+        error : ReadIrqRetireError::Drain(error), armed,
+    })
 }
 
 /// Arm both read IRQ owners as one software transaction. A DMA-side failure
@@ -791,10 +1044,12 @@ mod tests {
             .unwrap_or_else(|_| panic!("guard reservation failed"))
             .commit();
         assert_eq!(armed.transaction(), second);
-        let (mmc, dma) = runtime.owners_mut(mmc_irq, dma_irq).unwrap();
-        let BoardIrqOwner::MmcCommand(mmc) = mmc else { panic!("wrong MMC variant") };
-        let BoardIrqOwner::ApbDmaDeferred(dma) = dma else { panic!("wrong DMA variant") };
-        let drained = drain_read_owners(mmc, dma, second)
+        let failure = retire_read_irq_owners(&mut runtime, dma_irq, mmc_irq, armed)
+            .expect_err("reversed owner variants retired");
+        assert_eq!(failure.error, ReadIrqRetireError::MmcOwnerVariant);
+        let armed = failure.into_armed();
+        assert_eq!(armed.transaction(), second);
+        let drained = retire_read_irq_owners(&mut runtime, mmc_irq, dma_irq, armed)
             .unwrap_or_else(|_| panic!("committed generation did not drain"));
         assert!(drained.mmc.is_none());
         assert!(drained.dma.is_none());

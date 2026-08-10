@@ -4715,3 +4715,51 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] guard LS2K1000 read IRQ arms`
+
+## 2026-08-10：批次 97——将 IRQ generation 线性绑定到读取 DMA 启动状态
+
+### 本批任务与设计
+
+1. 审计 `ArmedReadIrqs`、`PreparedReadDmaSession`、APBDMA start recovery 与 MMC publish 的状态边界。
+2. 已预约的 IRQ generation 必须作为线性 capability 进入 DMA typestate，不能与 Running/Recovery session 任意拆开。
+3. 确定未写入硬件的启动失败走 Prepared cancel；可能写入的失败必须先走 Recovery stop，再归还 token。
+4. MMC publish 失败时保留 Running DMA 与 generation 的绑定，显式 stop/cache finish 后才允许退役 owner。
+5. runtime retire 消费 token，并在两个 slot/variant/generation 全部验证后才同时 drain；失败返回原 token 供重试。
+
+### 已完成
+
+- [x] `ArmedReadIrqs` 标记为 must-use，并新增 `bind_prepared_dma`，把双 owner generation 绑定到真实 `PreparedReadDmaSession`。
+- [x] 新增泛型 `IrqArmedReadDmaSession<S>`，线性携带 token 穿过 Prepared、Running、Recovery、test-only Published 与 Quiesced 状态。
+- [x] 没有提供通用 session/token 拆分接口；只有 Prepared cancel 或 Quiesced cache finish 成功后才返还 `ArmedReadIrqs`。
+- [x] 新增 `IrqArmedReadDmaStartFailure::{Prepared,Recovery}`，精确保留 read plan、错误、对应恢复状态及同一 transaction generation。
+- [x] untouched start write 故障返回 IRQ-armed Prepared session；cancel 同步 mapping 后返还 token。
+- [x] may-have-written start 故障返回 IRQ-armed Recovery session；必须 stop 并完成 CPU cache ownership 恢复后返还 token。
+- [x] test-only MMC publish 成功/失败均保持 token 与 DMA session 绑定；publish 失败不能提前退役 IRQ owners。
+- [x] 新增 `retire_read_irq_owners`；slot/variant/drain 任一失败均返回原 `ArmedReadIrqs`，成功才消费 token 并返回两路可选 receipt。
+- [x] retire 仅改变软件 owner 状态，不产生 source rearm、APBDMA idle、descriptor success 或物理 IRQ generation evidence。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 160 项全部通过；本批强化既有启动顺序、两类 start fault、publish fault 与 runtime guard/retire 测试。
+- 正常模型链路保持 DMA start 先于六次 MMC publish write；generation 101 从 Prepared 一直保留到 stop/cache finish。
+- start 第一次 untouched write 故障被分类为 Prepared，generation 102 只能在 cancel 后取回，两个 mapping 恢复 CPU-owned。
+- start 第二次 may-have-written 故障被分类为 Recovery，generation 103 只能在 stop/finish 后取回，不能误走 cancellable path。
+- MMC 第五次 publish write 故障保留 generation 104 与 Running session；显式 stop/finish 后才取回 token，mapping 才 CPU-owned。
+- runtime 以反向 slot 退役返回 MmcOwnerVariant 和原 token；用正确 slot 重试后同时清除两个同代 Armed owner。
+- production 组件 check、RISC-V `make check` 与 LoongArch64 `make kernel-la` 全部通过；仅有仓库既有 warning。
+- 全部 53 项 Python host 测试、topology/畸形 DTB matrix 与 `git diff --check` 通过；dtc warning 来自预期畸形输入。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：线性 token 只证明软件 owner/session 顺序，不会写入硬件，物理 IRQ 本身仍不携带 generation。
+- [ ] `UNVERIFIED_ON_HARDWARE`：模型对 untouched/may-have-written 的分类依赖 `OrderIo` effect；真实 volatile MMIO 无法可靠报告总线写是否到达设备。
+- [ ] production 的 `ReadDataPublishPermit` 仍无构造入口，Published 状态只在测试中启用；本批没有开放真实 MMC/APBDMA activation。
+- [ ] production diagnostic runtime 仍不构造 APBDMA owner，因此尚未从真实 runtime 取得 token 并调用 DMA start。
+- [ ] IRQ 到达后的 `MmcReadIrqReceipt`/`ApbDmaReadIrqReceipt` 尚未与 IRQ-armed Running/Published session 合并为一个消费接口；当前 model tracker 仍是旁路测试链。
+- [ ] Rust `#[must_use]` 只能产生编译告警，不能禁止调用者显式 `drop` Running/Recovery session；production coordinator 仍需封装并持有整个生命周期。
+- [ ] retire 成功仍不 rearm；真机确认 controller condition cleared、APBDMA stopped 与迟到 IRQ 窗口前必须继续 keep-masked。
+- [ ] 下一批应让 IRQ-armed Published session 原子消费同代 `ReadIrqPair`/runtime drain 结果，再进入 completion tracker；错误 generation、单路 pending 与 stop recovery 都必须保留 session 和线性 receipt。
+
+### 提交
+
+- 本批计划提交：`[feat] bind LS2K1000 IRQ arms to DMA start`

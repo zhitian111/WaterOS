@@ -798,6 +798,10 @@ mod tests {
     fn acknowledged_dma_irq() -> AcknowledgedIrq {
         AcknowledgedIrq::after_mask_ack(dma_irq())
     }
+    fn armed_read_irqs(raw : u64) -> crate::board_irq_owner::ArmedReadIrqs {
+        crate::board_irq_owner::ArmedReadIrqs::fixture(
+            crate::board_irq_owner::ReadTransactionId::new(raw).unwrap())
+    }
 
     #[test]
     fn builds_64_bit_read_descriptor_and_start_order() {
@@ -1286,7 +1290,9 @@ mod tests {
         assert!(payload.is_cpu_owned());
         let prepared = binding.prepare(&mut descriptor, &mut payload).unwrap();
         let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
-        let running = prepared.start(&mut executor).unwrap();
+        let running = armed_read_irqs(101).bind_prepared_dma(prepared)
+                                             .start(&mut executor).unwrap();
+        assert_eq!(running.transaction().raw(), 101);
         assert_eq!(running.plan(), &read);
         let mut publisher = crate::mmc::ReadDataCommandPublisher::new(
             MockMmcRegisters::default(),
@@ -1297,7 +1303,8 @@ mod tests {
                                            .map(|(offset, _)| *offset)
                                            .collect::<Vec<_>>(),
                    [0x2C, 0x28, 0x24, 0x3C, 0x08, 0x0C]);
-        published.stop().unwrap().finish().unwrap();
+        let armed = published.stop().unwrap().finish().unwrap();
+        assert_eq!(armed.transaction().raw(), 101);
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
         assert_eq!(executor.into_inner().writes,
@@ -1336,15 +1343,23 @@ mod tests {
         let registers = FaultOrderIo { failures : vec![(1, WriteEffect::Untouched)],
                                        ..FaultOrderIo::default() };
         let mut executor = Executor::new(registers, dma_irq());
-        let failure = match prepared.start(&mut executor) {
+        let failure = match armed_read_irqs(102).bind_prepared_dma(prepared)
+                                                .start(&mut executor) {
             Ok(_) => panic!("untouched start fault accepted"),
             Err(failure) => failure,
         };
-        assert_eq!(failure.read, read);
-        match failure.failure {
-            StartSessionFailure::Prepared(failure) => failure.session.cancel().unwrap(),
-            StartSessionFailure::Recovery(_) => panic!("untouched write entered recovery"),
-        }
+        assert_eq!(failure.transaction().raw(), 102);
+        let armed = match failure {
+            crate::board_irq_owner::IrqArmedReadDmaStartFailure::Prepared {
+                read : failed_read, session, ..
+            } => {
+                assert_eq!(failed_read, read);
+                session.cancel().unwrap()
+            },
+            crate::board_irq_owner::IrqArmedReadDmaStartFailure::Recovery { .. } =>
+                panic!("untouched write entered recovery"),
+        };
+        assert_eq!(armed.transaction().raw(), 102);
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
 
@@ -1357,16 +1372,19 @@ mod tests {
         let registers = FaultOrderIo { failures : vec![(2, WriteEffect::MayHaveWritten)],
                                        ..FaultOrderIo::default() };
         let mut executor = Executor::new(registers, dma_irq());
-        let failure = match prepared.start(&mut executor) {
+        let failure = match armed_read_irqs(103).bind_prepared_dma(prepared)
+                                                .start(&mut executor) {
             Ok(_) => panic!("uncertain start fault accepted"),
             Err(failure) => failure,
         };
-        match failure.failure {
-            StartSessionFailure::Recovery(failure) => {
-                failure.session.stop().unwrap().finish().unwrap();
-            },
-            StartSessionFailure::Prepared(_) => panic!("uncertain write remained cancellable"),
-        }
+        assert_eq!(failure.transaction().raw(), 103);
+        let armed = match failure {
+            crate::board_irq_owner::IrqArmedReadDmaStartFailure::Recovery { session, .. } =>
+                session.stop().unwrap().finish().unwrap(),
+            crate::board_irq_owner::IrqArmedReadDmaStartFailure::Prepared { .. } =>
+                panic!("uncertain write remained cancellable"),
+        };
+        assert_eq!(armed.transaction().raw(), 103);
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
     }
@@ -1384,7 +1402,8 @@ mod tests {
                                                         &payload).unwrap()
                                                     .prepare(&mut descriptor, &mut payload).unwrap();
         let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
-        let running = prepared.start(&mut executor).unwrap();
+        let running = armed_read_irqs(104).bind_prepared_dma(prepared)
+                                             .start(&mut executor).unwrap();
         let mut publisher = crate::mmc::ReadDataCommandPublisher::new(
             MockMmcRegisters { fail_write : Some(5), ..MockMmcRegisters::default() },
             crate::mmc::ReadDataPublishPermit::fixture());
@@ -1400,7 +1419,8 @@ mod tests {
                        writes_completed : 4,
                    });
         assert_eq!(publisher.into_inner().writes.len(), 5);
-        failure.session.stop().unwrap().finish().unwrap();
+        let armed = failure.session.stop().unwrap().finish().unwrap();
+        assert_eq!(armed.transaction().raw(), 104);
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
     }
