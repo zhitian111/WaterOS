@@ -31,6 +31,8 @@ pub mod dma_memory;
 pub mod gpio;
 mod machine;
 pub mod topology;
+#[cfg(feature = "uart-16550")]
+pub mod uart;
 
 use api_v0::{DriverError, DriverResult};
 use spin::Mutex;
@@ -92,6 +94,13 @@ pub fn init_after_boot() -> DriverResult<()> {
                    plan.bus_width,
                    plan.prerequisites,
                    plan.blockers);
+    }
+    #[cfg(feature = "uart-16550")]
+    {
+        // SAFETY: platform init owns the discovered MMIO map; the actual
+        // register semantics remain UNVERIFIED_ON_HARDWARE.
+        let count = unsafe { uart::register_from_topology(&topology.uarts) }?;
+        log::info!("[driver-ls2k][uart] registered {} DTB UART(s)", count);
     }
     let mut stored_topology = TOPOLOGY.lock();
     let mut stored_layout = IRQ_LAYOUT.lock();

@@ -5679,3 +5679,35 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] bind published dma generation`
+
+## 2026-08-10：批次 121——接入可复用 NS16550 的 2K1000LA UART 注册路径
+
+### 本批任务与设计
+
+1. 审计 2K1000LA DTB：UART 节点已经被解析，但没有进入 character registry，无法形成 `/dev` 字符设备。
+2. 复用仓库已有 `impl-uart-16550`（Byte16550/DW-APB32），不重新引入第三方驱动，避免许可证和实现分叉。
+3. 增加 opt-in feature `uart-16550` 及 aggregate forwarding feature `impl-loongson2k1000la-uart`；默认关闭。
+4. 根据 DTB `reg-shift` 选择布局，未知值 fail-closed；注册函数要求调用者保证 MMIO device mapping 与独占所有权。
+
+### 已完成
+
+- [x] 新增 LA `uart` 模块，将拓扑 UART 转换为共享 NS16550 character device。
+- [x] `init_after_boot` 在显式启用 feature 时注册 DTB UART，后续可由 devfs 枚举字符设备。
+- [x] 支持 `reg-shift=0`（Byte16550）和 `reg-shift=2`（DW-APB32），其他布局返回 `InvalidDtb`。
+- [x] 复用现有实现，未新增外部驱动代码或许可证负担。
+
+### 验证证据
+
+- LA driver crate 启用 `uart-16550` 的布局单测通过。
+- `UNVERIFIED_ON_HARDWARE`：注册函数实际写 IER、UART MMIO 映射、时钟/电气线参数、IRQ 输入和真实 `/dev` 节点仍待目标板验证；host 测试不执行 volatile MMIO。
+- aggregate host `cargo check --features impl-loongson2k1000la-uart` 受当前未选择 LoongArch platform-arch backend 的 host 配置限制失败；目标架构 `make check` 仍作为正式编译门禁。
+
+### 已知限制、未验证与后续测试
+
+- [ ] 默认 feature 仍关闭，需在目标板 bring-up 配置中显式启用并确认 MMIO 映射。
+- [ ] LA init 尚未完成 UART IRQ owner、接收中断和 console/stdin 路由；当前只注册轮询字符端口。
+- [ ] devfs 热插拔/注销尚未覆盖 UART；后续需要与动态 character registry 生命周期对齐。
+
+### 提交
+
+- 本批计划提交：`[feat] register LS2K1000 UART character devices`

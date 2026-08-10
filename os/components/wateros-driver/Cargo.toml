@@ -83,6 +83,7 @@
     ]
     impl-dummy = [  ]
     impl-loongson2k1000la = [ "dep:impl-loongson2k1000la" ]
+    impl-loongson2k1000la-uart = [ "impl-loongson2k1000la", "impl-loongson2k1000la/uart-16550" ]
     impl-qemu-loongarch64-virt = [
         "dep:impl-qemu-loongarch64-virt",
         "block/impl-virtio-pci",

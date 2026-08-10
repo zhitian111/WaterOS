@@ -11,6 +11,10 @@ fdt = "0.1.5"
 log = "0.4.29"
 spin = "0.10.0"
 mm-api = { path = "../../../wateros-mm/mm-api/api-v0", package = "wateros-mm-api-v0" }
+character = { path = "../../driver-character", package = "wateros-driver-character", default-features = false, optional = true, features = [
+    "api-v0",
+    "impl-uart-16550",
+] }
 
 [target.'cfg(target_arch = "loongarch64")'.dependencies]
 platform = { path = "../../../wateros-platform", package = "wateros-platform", default-features = false, features = ["impl-loongson2k1000la"] }
@@ -19,3 +23,4 @@ frame-allocator = { path = "../../../wateros-mm/mm-frame-alloctor", package = "w
 [features]
 api-v0 = []
 default = ["api-v0"]
+uart-16550 = ["dep:character"]
