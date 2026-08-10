@@ -31,6 +31,23 @@ pub struct GmacActivationEvidence {
     pub phy_link_verified : bool,
 }
 
+impl GmacActivationEvidence {
+    /// Complete board evidence after PCI identity/BAR, DMA, IRQ routing and
+    /// PHY link checks have been performed by a platform-specific layer.
+    pub const fn complete() -> Self {
+        Self { pci_identity_verified : true,
+               bar_assigned : true,
+               dma_verified : true,
+               irq_route_verified : true,
+               phy_link_verified : true }
+    }
+
+    pub const fn is_complete(self) -> bool {
+        self.pci_identity_verified && self.bar_assigned && self.dma_verified &&
+        self.irq_route_verified && self.phy_link_verified
+    }
+}
+
 /// Convert read-only PCI evidence into the portion of the GMAC activation
 /// contract that can be proven without touching BARs, DMA or PHY registers.
 ///
@@ -136,11 +153,9 @@ mod tests {
 
     #[test]
     fn complete_evidence_produces_copyable_plan() {
-        let result = evaluate(&description(), GmacActivationEvidence {
-            pci_identity_verified : true,
-            bar_assigned : true, dma_verified : true,
-            irq_route_verified : true, phy_link_verified : true,
-        });
+        let evidence = GmacActivationEvidence::complete();
+        assert!(evidence.is_complete());
+        let result = evaluate(&description(), evidence);
         assert_eq!(result, GmacActivation::Ready(GmacActivationPlan {
             bus : 0, device : 3, function : 0, interrupt_count : 2,
         }));
@@ -201,5 +216,28 @@ mod tests {
         let evidence = evidence_from_pci_snapshot(&snapshot, Some(0x0014), None);
         assert!(!evidence.pci_identity_verified);
         assert!(!evidence.bar_assigned);
+    }
+
+    #[test]
+    fn every_missing_runtime_fact_retains_its_blocker() {
+        let complete = GmacActivationEvidence::complete();
+        let cases = [
+            (GmacActivationEvidence { pci_identity_verified : false, ..complete },
+             GmacBlocker::PciIdentityNotVerified),
+            (GmacActivationEvidence { bar_assigned : false, ..complete },
+             GmacBlocker::BarNotAssigned),
+            (GmacActivationEvidence { dma_verified : false, ..complete },
+             GmacBlocker::DmaNotVerified),
+            (GmacActivationEvidence { irq_route_verified : false, ..complete },
+             GmacBlocker::IrqRouteNotVerified),
+            (GmacActivationEvidence { phy_link_verified : false, ..complete },
+             GmacBlocker::PhyLinkNotVerified),
+        ];
+        for (evidence, blocker) in cases {
+            let GmacActivation::Deferred(blockers) = evaluate(&description(), evidence) else {
+                panic!("incomplete evidence must remain deferred")
+            };
+            assert!(blockers.contains(&blocker));
+        }
     }
 }

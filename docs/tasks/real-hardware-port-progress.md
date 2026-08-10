@@ -7354,3 +7354,26 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - `[ref] tighten ahci evidence contract`
+
+## 2026-08-10：批次 62——Loongson GMAC 证据契约收口
+
+### 任务与设计
+
+1. 复查 GMAC PCI snapshot 与 activation contract，确认 PCI identity/BAR 只能提供发现证据，DMA、IRQ route 和 PHY link 仍必须单独验证。
+2. 增加完整证据构造/判定 API，避免调用者手工漏填任一运行时事实。
+3. 用逐项缺失 fixture 验证每个证据字段都会保留对应 blocker；不执行 MAC/PHY MMIO、DMA descriptor 或 IRQ enable。
+
+### 已完成
+
+- [x] 新增 `GmacActivationEvidence::complete()` / `is_complete()`。
+- [x] `complete_evidence_produces_copyable_plan` 改用统一完整证据构造。
+- [x] 增加 PCI identity、BAR、DMA、IRQ route、PHY link 五项缺失矩阵测试。
+
+### 验证证据与限制
+
+- Loongson 平台 crate 完整 lib 单测：206 项通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 GMAC PCI/ECAM、MAC/PHY 寄存器、DMA/cache、IRQ route、PHY link 和网络收发仍需实体板验证。
+
+### 提交
+
+- `[ref] tighten gmac evidence contract`
