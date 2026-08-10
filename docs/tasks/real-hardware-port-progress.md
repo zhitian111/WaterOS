@@ -7331,3 +7331,26 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - `[fix] require ahci abar size evidence`
+
+## 2026-08-10：批次 57——AHCI 硬件证据契约收口
+
+### 任务与设计
+
+1. 继续保持 PCI/AHCI 发现与真实控制器激活分离，避免未来调用者手工拼接证据字段时漏掉 IRQ 或 link 检查。
+2. 增加可复用的完整证据构造与判定 API，并覆盖 BAR 列表中先出现 I/O BAR、后出现 memory BAR 的合法选择路径。
+3. 不执行 PCI 配置写入、BAR size probing、AHCI MMIO、DMA、IRQ 或端口启动；`can_activate()` 仍固定返回 false。
+
+### 已完成
+
+- [x] 新增 `AhciHardwareEvidence::complete()` 和 `is_complete()`，`evidence_ready()` 统一使用完整性判定。
+- [x] 增加 IO BAR 跳过、memory BAR 选择和完整证据 fixture 测试。
+- [x] 保留 `AbarSizeUnverified`、`DmaUnverified`、`HardwareEvidence` blockers，完整证据不会自动激活设备。
+
+### 验证证据与限制
+
+- Loongson 平台 crate 单测：205 项通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 PCI/ECAM、ABAR 尺寸读取、AHCI reset/port link、DMA/cache、IRQ 和 SATA block registration 仍需实板验证。
+
+### 提交
+
+- `[ref] tighten ahci evidence contract`

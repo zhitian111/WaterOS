@@ -66,6 +66,26 @@ pub struct AhciHardwareEvidence {
     pub link_verified : bool,
 }
 
+impl AhciHardwareEvidence {
+    /// Complete board evidence after BAR, DMA, IRQ and link checks have all
+    /// been performed by a board-specific bring-up layer.
+    ///
+    /// This does not activate AHCI by itself; [`AhciActivationPlan::can_activate`]
+    /// remains a permanent opt-in gate until the real controller sequence is
+    /// implemented and reviewed.
+    pub const fn complete() -> Self {
+        Self { abar_size_verified : true,
+               dma_verified : true,
+               irq_verified : true,
+               link_verified : true }
+    }
+
+    pub const fn is_complete(self) -> bool {
+        self.abar_size_verified && self.dma_verified &&
+        self.irq_verified && self.link_verified
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AhciActivationPlan {
     pub snapshot : AhciSnapshot,
@@ -81,8 +101,7 @@ impl AhciActivationPlan {
         self.blockers.contains(&AhciBlocker::AbarSizeUnverified) &&
         self.blockers.contains(&AhciBlocker::DmaUnverified) &&
         self.blockers.contains(&AhciBlocker::HardwareEvidence) &&
-        evidence.abar_size_verified && evidence.dma_verified && evidence.irq_verified &&
-        evidence.link_verified
+        evidence.is_complete()
     }
 }
 
@@ -154,6 +173,27 @@ mod tests {
     }
 
     #[test]
+    fn pci_snapshot_skips_io_bar_when_memory_bar_follows() {
+        let mut bars = [None; 6];
+        bars[0] = Some(PciBar::Io { index : 0, base : 0x1800 });
+        bars[1] = Some(PciBar::Memory32 { index : 1,
+                                         base : 0x1fe8_0000,
+                                         prefetchable : false });
+        let snapshot = PciConfigSnapshot { identity : PciIdentity { location : PciLocation { bus : 0,
+                                                                                              device : 3,
+                                                                                              function : 0 },
+                                                                      vendor_id : 0x0014,
+                                                                      device_id : 0x1000,
+                                                                      class_code : 0x01,
+                                                                      subclass : 0x06,
+                                                                      prog_if : 0x01 },
+                                             bars,
+                                             bar_error : None };
+        let ahci = snapshot_from_pci(&snapshot, 1, 1, 42).unwrap();
+        assert_eq!(ahci.abar.base, 0x1fe8_0000);
+    }
+
+    #[test]
     fn valid_snapshot_stays_deferred_without_board_evidence() {
         let plan = diagnose(snapshot());
         assert_eq!(plan.blockers,
@@ -162,10 +202,8 @@ mod tests {
                                AhciBlocker::HardwareEvidence]);
         assert!(!plan.can_activate());
         assert!(!plan.evidence_ready(AhciHardwareEvidence::default()));
-        assert!(plan.evidence_ready(AhciHardwareEvidence { abar_size_verified : true,
-                                                           dma_verified : true,
-                                                           irq_verified : true,
-                                                           link_verified : true }));
+        assert!(plan.evidence_ready(AhciHardwareEvidence::complete()));
+        assert!(AhciHardwareEvidence::complete().is_complete());
     }
 
     #[test]
@@ -178,9 +216,6 @@ mod tests {
         assert!(plan.blockers.contains(&AhciBlocker::InvalidVersion));
         assert!(plan.blockers.contains(&AhciBlocker::NoImplementedPorts));
         assert!(plan.blockers.contains(&AhciBlocker::MissingIrq));
-        assert!(!plan.evidence_ready(AhciHardwareEvidence { abar_size_verified : true,
-                                                             dma_verified : true,
-                                                             irq_verified : true,
-                                                             link_verified : true }));
+        assert!(!plan.evidence_ready(AhciHardwareEvidence::complete()));
     }
 }
