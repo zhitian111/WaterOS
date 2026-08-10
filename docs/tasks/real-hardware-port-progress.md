@@ -1884,6 +1884,31 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 
 - `[fix] poll network from remote monitor`
 
+## 2026-08-10：批次 63——QEMU guest virtio-input 枚举
+
+### 任务与设计
+
+1. 使用已有 QEMU 图形设备参数但设置 `WOS_QEMU_DISPLAY=none`，避免显示窗口和大磁盘；guest 仍接收 virtio keyboard/tablet 设备。
+2. 新增独立 guest smoke，检查串口中的 keyboard、tablet、input registry count 和 devfs input count 四类证据。
+3. 不把 QEMU virtio-input 枚举结果等同于 USB HID/物理热插拔完成；真实 IRQ/DMA/cache 与控制器仍需实板验证。
+
+### 完成内容
+
+- [x] 新增 `os/scripts/qemu_input_guest_smoke.py`，复用 16MiB GPT root image，支持缺少产物时 skip。
+- [x] 新增 marker parser/preflight 单测。
+- [x] 带 `EXTRA_FEATURES=gui` 的 RISC-V kernel 在 QEMU 中成功枚举 `virtio-input #0 Keyboard`、`#1 Pointer`，并报告 `input devices registered: count=2`、`devfs ... input=2`。
+
+### 验证证据与限制
+
+- QEMU guest input smoke：通过，devices=2。
+- Python 脚本全量测试：61 项通过。
+- `make kernel-rv-final EXTRA_FEATURES=gui`：通过（仓库既有 warnings）。
+- `UNVERIFIED_ON_HARDWARE`：真实 USB descriptor、HID 协议变体、IRQ/DMA/cache、热插拔和两平台输入控制器仍待 QEMU 深度注入/实体板验证。
+
+### 提交
+
+- `[test] add qemu guest input smoke`
+
 ## 2026-08-10：批次 56——QEMU guest GPT 根盘接通与 virtio 容量修复
 
 ### 任务与设计
