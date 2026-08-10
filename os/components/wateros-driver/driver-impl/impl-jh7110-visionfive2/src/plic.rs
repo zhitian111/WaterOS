@@ -136,10 +136,16 @@ impl PlicMmio {
 
 impl PlicDescription {
     pub fn context_for_hart(&self, hart_id : usize) -> Option<usize> {
-        self.contexts.iter()
-                     .position(|context| {
-                         context.interrupt == 9 && context.hart_id == Some(hart_id)
-                     })
+        let mut found = None;
+        for (index, context) in self.contexts.iter().enumerate() {
+            if context.interrupt == 9 && context.hart_id == Some(hart_id) {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(index);
+            }
+        }
+        found
     }
 }
 
@@ -175,6 +181,28 @@ mod tests {
         assert_eq!(plic.claim_complete_offset(), 0x20_0004);
         assert!(plic.enable_offset(137)
                     .is_err());
+    }
+
+    #[test]
+    fn selects_one_supervisor_context_and_rejects_ambiguity() {
+        let context = |interrupt : u32, hart_id : Option<usize>| ContextInterrupt {
+            interrupt_controller : 1,
+            interrupt,
+            hart_id,
+        };
+        let description = PlicDescription { mmio : MmioRegion { base : 0xC00_0000,
+                                                                  size : 0x40_0000 },
+                                              sources : 64,
+                                              contexts : alloc::vec![context(11, Some(0)),
+                                                                     context(9, Some(1)),
+                                                                     context(9, None)] };
+        assert_eq!(description.context_for_hart(0), None);
+        assert_eq!(description.context_for_hart(1), Some(1));
+        assert_eq!(description.context_for_hart(2), None);
+
+        let mut duplicate = description.clone();
+        duplicate.contexts.push(context(9, Some(1)));
+        assert_eq!(duplicate.context_for_hart(1), None);
     }
     #[test]
     fn exercises_register_io_against_memory() {

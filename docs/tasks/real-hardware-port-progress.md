@@ -1346,3 +1346,21 @@ python3 scripts/remote_debug_qemu_smoke.py \
 - VisionFive 2 driver crate：14 项测试通过。
 - 既有分区注册、PLIC、IRQ lease、MMC 证据门控测试仍全部通过。
 - `UNVERIFIED_ON_HARDWARE`：JH7110 实际时钟频率、FIFO 行为、pinmux、IRQ/DMA/cache 和 SD/eMMC 卡路径仍需上板验证。
+
+## 2026-08-10：批次 76——VisionFive 2 PLIC context 选择收口
+
+### 任务与设计
+
+1. 审计 PLIC context 解析到当前 hart 的选择逻辑。
+2. 只接受唯一的 supervisor external interrupt context（interrupt=9）且 hart 精确匹配；machine/其他 interrupt、缺失映射和重复匹配均 fail-closed。
+3. 仅修改纯数据选择逻辑和测试，不触碰 PLIC MMIO。
+
+### 完成内容
+
+- [x] `context_for_hart` 改为拒绝重复 supervisor context，不再静默选择第一个。
+- [x] 新增多 context、缺失 hart 映射、machine interrupt 和重复 context 测试。
+
+### 验证证据与限制
+
+- VisionFive 2 driver crate：15 项测试通过。
+- `UNVERIFIED_ON_HARDWARE`：实际 PLIC context 编号、S-mode 路由、优先级/claim-complete 行为及 JH7110 外部 IRQ 仍需上板验证。
