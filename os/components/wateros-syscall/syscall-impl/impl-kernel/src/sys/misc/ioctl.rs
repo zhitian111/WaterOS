@@ -32,12 +32,21 @@ fn evdev_ioc(dir: u32, size: usize, nr: u32) -> u32 {
     (dir << 30) | ((size as u32 & 0x3fff) << 16) | (0x45 << 8) | (nr & 0xff)
 }
 
+fn evdev_request_header(request: u32) -> Option<usize> {
+    let direction = request >> 30;
+    let ioctl_type = (request >> 8) & 0xff;
+    if direction != 2 || ioctl_type != 0x45 { return None; }
+    Some(((request >> 16) & 0x3fff) as usize)
+}
+
 fn evdev_query_ioctl(request: u32, argp: usize, index: usize) -> UserRet {
+    let Some(size) = evdev_request_header(request) else {
+        return UserRet::from_error(ErrNo::ENOTTY);
+    };
     if argp == 0 { return UserRet::from_error(ErrNo::EFAULT); }
     let Ok(info) = driver_input::input_device_info(index) else {
         return UserRet::from_error(ErrNo::EINVAL);
     };
-    let size = ((request >> 16) & 0x3fff) as usize;
     let mut output = [0u8; 64];
     let output_len = if request == EVIOCGVERSION {
         if size != 4 { return UserRet::from_error(ErrNo::EINVAL); }
@@ -376,5 +385,12 @@ mod tests {
     fn evdev_zero_arg_is_rejected_before_device_lookup() {
         assert_eq!(EVIOCGVERSION & 0xff, 1);
         assert_eq!(((EVIOCGVERSION >> 16) & 0x3fff), 4);
+    }
+
+    #[test]
+    fn evdev_decoder_rejects_write_and_other_ioctl_types() {
+        assert_eq!(evdev_request_header(EVIOCGVERSION), Some(4));
+        assert_eq!(evdev_request_header(evdev_ioc(1, 4, 1)), None);
+        assert_eq!(evdev_request_header((2 << 30) | (4 << 16) | (0x54 << 8) | 1), None);
     }
 }

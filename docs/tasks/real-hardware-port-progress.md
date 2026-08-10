@@ -6890,3 +6890,28 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 待提交：`[test] lock loongson platform reset contracts`
+
+## 2026-08-10：批次 166——严格校验 evdev ioctl 方向与类型
+
+### 本批任务与设计
+
+1. 复查批次 162 的 evdev 查询路径，发现仅按编号匹配会有接受同编号写入 ioctl 的风险。
+2. 在访问输入设备和用户地址之前解析 Linux `_IOC` 头，只接受 `_IOC_READ`、类型 `'E'` 的查询请求。
+3. 固定结构继续检查精确长度，变长 name/bitmap 保持有界截断；未知方向或类型返回 `ENOTTY`。
+
+### 已完成
+
+- [x] 新增 `evdev_request_header`，拒绝写入方向和非 evdev 类型请求。
+- [x] 增加读方向、写方向、错误类型 ioctl 编码测试。
+- [x] 保持空指针先返回 `EFAULT`、设备索引错误不进入 user-copy 的既有安全顺序。
+
+### 验证证据与限制
+
+- `cargo test --manifest-path os/components/wateros-driver/driver-input/input-api/api-v0/Cargo.toml`：6 项通过。
+- `make kernel-rv-pre EXTRA_FEATURES='gui,operator-shell'`：通过。
+- syscall crate 独立 host test 仍受既有 `platform-arch` host implementation 缺失阻断；本批使用 RISC-V kernel cross-build 作为 syscall 编译门禁。
+- `UNVERIFIED_ON_HARDWARE`：真实用户态 evdev 程序、USB/HID 设备能力和 LoongArch 物理输入仍待实机；当前不支持写入型 evdev ioctl。
+
+### 提交
+
+- 待提交：`[fix] reject invalid evdev ioctl direction`
