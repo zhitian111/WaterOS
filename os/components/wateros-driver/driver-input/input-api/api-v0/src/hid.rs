@@ -158,6 +158,15 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_releases_modifier_and_key_from_previous_state() {
+        let previous = KeyboardState { modifiers : 0x02, keys : [0x04, 0, 0, 0, 0, 0] };
+        let (events, current) = decode_boot_keyboard(&[0; 8], previous).unwrap();
+        assert_eq!(events, vec![RawInputEvent { event_type : EV_KEY, code : 42, value : 0 },
+                                RawInputEvent { event_type : EV_KEY, code : 30, value : 0 }]);
+        assert_eq!(current, KeyboardState::default());
+    }
+
+    #[test]
     fn mouse_decodes_buttons_motion_and_wheel() {
         let (events, buttons) = decode_boot_mouse(&[1, 0xfe, 3, 0xff], 0).unwrap();
         assert_eq!(buttons, 1);

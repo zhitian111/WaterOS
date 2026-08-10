@@ -1761,3 +1761,27 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 ### 提交
 
 - `[feat] add hid boot report decoder`
+
+## 2026-08-10：批次 52——共有硬件适配集成回归
+
+### 任务与设计
+
+1. 对共有分支近期根盘、QEMU monitor/input、remote-debug、devfs 和 HID 变更做一次统一回归，优先发现契约漂移而不是继续添加未接入硬件代码。
+2. 补充 HID modifier/key release 回归断言，验证跨报告状态不会只覆盖按下事件。
+3. 保持测试使用 host fixture、16MiB 临时镜像和已有 RISC-V cargo check，不引入大镜像或真实硬件假设。
+
+### 完成内容
+
+- [x] 新增 HID modifier 与普通键同时释放的状态回归测试。
+- [x] 确认 Python 全套脚本测试、root-image、input API 与 RISC-V `make check` 可共同通过。
+
+### 验证证据与限制
+
+- `python3 -m unittest discover -s os/scripts/tests -p 'test_*.py'`：55 项通过。
+- root-image 测试：5 项通过；input API 测试：6 项通过（新增 release 回归后）。
+- `make check`（RISC-V release profile）：通过；存在仓库既有 unused/dead-code warnings，无新增错误。
+- `UNVERIFIED_ON_HARDWARE`：集成回归不替代 QEMU guest 内 WaterOS 输入读取、真实 USB/HID、SD/eMMC、AHCI、DMA/cache、IRQ 和物理板热插拔验证。
+
+### 提交
+
+- `[test] run shared hardware port regression`
