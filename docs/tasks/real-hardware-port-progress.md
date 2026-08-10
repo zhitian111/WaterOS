@@ -4306,3 +4306,47 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] bind LS2K1000 MMC reads to DMA mappings`
+## 2026-08-10：批次 88——约束 MMC 读事务启动顺序
+
+### 本批任务与设计
+
+1. 审计 deferred read、APBDMA prepared/running session 与 MMC command 发布之间的现有转换路径。
+2. 增加启动前 binding proof，避免只在 DMA stop 后才发现 MMC/DMA 身份不一致。
+3. 以 typestate 固定 `bind→prepare DMA→start DMA→publish MMC` 顺序。
+4. 每个失败阶段保留精确 ownership：未触及硬件可 cancel，可能写入硬件必须 stop/recovery。
+5. publisher 本批保持 test-only，不开启真实 MMC 数据命令或 production activation gate。
+
+### 已完成
+
+- [x] 抽取统一 `validate_read_dma_identity`，启动前 binding 与 stop 后 handoff 共用完全相同的身份规则。
+- [x] 新增 `ReadDmaBinding`；在 mapping 仍 CPU-owned 时绑定 read plan、TransferPlan、descriptor/payload identity。
+- [x] 新增 `PreparedReadDmaSession`、`RunningReadDmaSession` 和 carrying-plan start failure。
+- [x] prepared 状态只能 cancel/start；只有 running 状态在 test 配置下具有 publish 转换。
+- [x] publish 成功产生 `PublishedReadDmaSession`；publish 失败原样返回 running session，不能释放 DMA mapping。
+- [x] start untouched failure 保留 cancellable prepared session；MayHaveWritten failure 保留 APBDMA recovery session。
+- [x] prepare cache-sync failure 验证 descriptor rollback 且两份 mapping 均回到 CPU ownership。
+- [x] 没有实现真实 DCTL/CARG/CCTL 写入，没有接入 machine init、IRQ runtime 或 block device registration。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 135 项全部通过；新增 3 项启动顺序/故障 ownership 聚合测试。
+- 正常 fixture 验证 APBDMA `0→start_order` 写入完成后才调用一次 CMD17 publisher，随后 stop 才归还 mapping。
+- pre-start 错误 DATA 地址在任何 cache sync/order write 前被拒绝，两份 mapping 保持 CPU-owned。
+- prepare fault、untouched start fault、MayHaveWritten start fault 分别走 rollback、cancel、stop/recovery 三条独立路径。
+- fault-injected MMC publish 返回 IoError 和原 running session；显式 stop/finish 后才恢复 CPU ownership。
+- production 组件 `cargo check`、LoongArch64 精确 feature target check 与 `make kernel-la EXTRA_FEATURES=remote-debug-monitor` 通过；仅有既有 warning。
+- 全部 53 项 Python host 测试与 topology/畸形 DTB matrix 通过；dtc warning 来自预期畸形输入。
+- `git diff --check` 通过；测试均为内存 order/cache/publisher 模型，没有物理 MMIO、DMA 或卡片访问。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：目标板实际要求 DMA 先启动还是 MMC DCTL/CCTL 先发布，仍需对照硬件 trace 验证。
+- [ ] `UNVERIFIED_ON_HARDWARE`：APBDMA start order 写入完成不等于 DMA engine 已经取走 descriptor。
+- [ ] test-only publisher 只记录 CMD17，没有执行 DCTL、BSIZE、TIMER、INT、CARG、CCTL 的真实寄存器事务。
+- [ ] Rust `must_use` 只能提示 session 被丢弃，未来 production owner 还需要持久 slot/quarantine 防止逻辑泄漏。
+- [ ] CMD18/CMD12、卡状态、partial block count 和 IRQ completion 并未进入本批启动状态机。
+- [ ] 下一批应实现隔离的 MMC data-command 发布事务：固定 setup/command 写序，覆盖每个 MMIO fault stage，并在任何失败时归还 carrying-running-DMA recovery，而不启用默认读路径。
+
+### 提交
+
+- 本批计划提交：`[feat] order LS2K1000 MMC read startup`

@@ -5,7 +5,8 @@
 //! a FIFO window. WaterOS reuses [`dw_mmc::sd`] only as an SD protocol layer.
 
 use crate::{
-    apbdma::{CpuOwnedHandoff, Direction as ApbDmaDirection, HardwareDescriptor, QuiescedHandoff},
+    apbdma::{self, CpuOwnedHandoff, Direction as ApbDmaDirection, HardwareDescriptor,
+             QuiescedHandoff, TransferPlan},
     clock::ConsistentClockSnapshot,
     irq_domain::{AcknowledgedIrq, DeviceAckedIrq, GlobalIrq, IrqDisposition},
     mmc_prerequisite::ControllerPrerequisiteProof,
@@ -14,7 +15,8 @@ use crate::{
         SupplyDescription, SupplyProvider,
     },
 };
-use api_v0::{dma::DmaCoherency, DriverError, MmioRegion};
+use api_v0::{dma::{DmaCoherency, DmaDirection, DmaMapping, DmaRegion},
+             DriverError, MmioRegion};
 use core::{marker::PhantomData, mem::ManuallyDrop};
 use core::sync::atomic::{AtomicBool, Ordering};
 use dw_mmc::mmc::MmcError;
@@ -1187,6 +1189,198 @@ pub enum ReadDmaIdentityError {
     InvalidatePolicy,
 }
 
+fn validate_read_dma_identity(read : &DeferredReadPlan,
+                              transfer : TransferPlan,
+                              descriptor_region : DmaRegion,
+                              descriptor_direction : DmaDirection,
+                              payload_region : DmaRegion,
+                              payload_direction : DmaDirection)
+                              -> Result<(), ReadDmaIdentityError> {
+    let mismatch = if !read.identity_consistent() {
+        Some(ReadDmaIdentityError::ReadPlanInvalid)
+    } else if transfer.direction != ApbDmaDirection::DeviceToMemory {
+        Some(ReadDmaIdentityError::TransferDirection)
+    } else if transfer.byte_length != read.request.byte_length {
+        Some(ReadDmaIdentityError::ByteLength)
+    } else if u64::from(transfer.descriptor.apb_address) != read.data_register_address {
+        Some(ReadDmaIdentityError::DataRegisterAddress)
+    } else if descriptor_region.physical_address() != transfer.descriptor_physical_address ||
+              descriptor_region.length() < core::mem::size_of::<HardwareDescriptor>() {
+        Some(ReadDmaIdentityError::DescriptorRegion)
+    } else if descriptor_direction != DmaDirection::Bidirectional {
+        Some(ReadDmaIdentityError::DescriptorDirection)
+    } else if payload_region.physical_address() != transfer.memory_physical_address ||
+              payload_region.length() != transfer.byte_length {
+        Some(ReadDmaIdentityError::PayloadRegion)
+    } else if payload_direction != DmaDirection::FromDevice {
+        Some(ReadDmaIdentityError::PayloadDirection)
+    } else if !transfer.invalidate_buffer_after {
+        Some(ReadDmaIdentityError::InvalidatePolicy)
+    } else {
+        None
+    };
+    mismatch.map_or(Ok(()), Err)
+}
+
+/// Pre-start proof that one read plan, APBDMA plan and both mappings describe
+/// the same transfer. It does not transfer ownership or activate hardware.
+///
+/// `UNVERIFIED_ON_HARDWARE`: this proves software identity and ordering only;
+/// it does not prove that either target board observes the published DMA plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadDmaBinding {
+    read : DeferredReadPlan,
+    transfer : TransferPlan,
+}
+
+impl ReadDmaBinding {
+    pub fn bind<D, P>(read : &DeferredReadPlan,
+                      transfer : TransferPlan,
+                      descriptor : &DmaMapping<D>,
+                      payload : &DmaMapping<P>)
+                      -> Result<Self, ReadDmaIdentityError> {
+        validate_read_dma_identity(read,
+                                   transfer,
+                                   descriptor.identity_region(),
+                                   descriptor.identity_direction(),
+                                   payload.identity_region(),
+                                   payload.identity_direction())?;
+        Ok(Self { read : *read, transfer })
+    }
+
+    pub fn prepare<'a, D : DmaCoherency, P : DmaCoherency>(
+        self,
+        descriptor : &'a mut DmaMapping<D>,
+        payload : &'a mut DmaMapping<P>)
+        -> Result<PreparedReadDmaSession<'a, D, P>, DriverError> {
+        let dma = apbdma::prepare_session(self.transfer, descriptor, payload)?;
+        Ok(PreparedReadDmaSession { read : self.read, dma })
+    }
+}
+
+#[must_use = "cancel or start a prepared MMC read DMA session"]
+pub struct PreparedReadDmaSession<'a, D, P> {
+    read : DeferredReadPlan,
+    dma : apbdma::PreparedSession<'a, D, P>,
+}
+
+pub struct ReadDmaStartFailure<'a, 'e, R, D, P> {
+    pub read : DeferredReadPlan,
+    pub failure : apbdma::StartSessionFailure<'a, 'e, R, D, P>,
+}
+
+impl<R, D, P> core::fmt::Debug for ReadDmaStartFailure<'_, '_, R, D, P> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("ReadDmaStartFailure")
+                 .field("read", &self.read)
+                 .field("failure", &self.failure)
+                 .finish()
+    }
+}
+
+#[must_use = "publish the MMC read command or stop the running APBDMA session"]
+pub struct RunningReadDmaSession<'a, 'e, R, D, P> {
+    read : DeferredReadPlan,
+    dma : apbdma::RunningSession<'a, 'e, R, D, P>,
+}
+
+impl<'a, D : DmaCoherency, P : DmaCoherency> PreparedReadDmaSession<'a, D, P> {
+    pub fn cancel(self) -> Result<(), apbdma::SessionFailure<DriverError, Self>> {
+        match self.dma.cancel() {
+            Ok(()) => Ok(()),
+            Err(failure) => Err(apbdma::SessionFailure {
+                error : failure.error,
+                session : Self { read : self.read, dma : failure.session },
+            }),
+        }
+    }
+
+    pub fn start<'e, R : apbdma::OrderIo>(
+        self,
+        executor : &'e mut apbdma::Executor<R>)
+        -> Result<RunningReadDmaSession<'a, 'e, R, D, P>,
+                  ReadDmaStartFailure<'a, 'e, R, D, P>> {
+        match self.dma.start(executor) {
+            Ok(dma) => Ok(RunningReadDmaSession { read : self.read, dma }),
+            Err(failure) => Err(ReadDmaStartFailure { read : self.read, failure }),
+        }
+    }
+}
+
+impl<'a, 'e, R : apbdma::OrderIo, D, P> RunningReadDmaSession<'a, 'e, R, D, P> {
+    pub const fn plan(&self) -> &DeferredReadPlan { &self.read }
+
+    pub fn stop(self)
+                -> Result<apbdma::QuiescedSession<'a, D, P>,
+                          apbdma::SessionFailure<apbdma::ExecutorError, Self>> {
+        match self.dma.stop() {
+            Ok(session) => Ok(session),
+            Err(failure) => Err(apbdma::SessionFailure {
+                error : failure.error,
+                session : Self { read : self.read, dma : failure.session },
+            }),
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) trait ReadCommandPublisher {
+    type Error;
+
+    fn publish(&mut self, read : &DeferredReadPlan) -> Result<(), Self::Error>;
+}
+
+#[cfg(test)]
+pub(crate) struct ReadPublishFailure<E, S> {
+    pub error : E,
+    pub session : S,
+}
+
+#[cfg(test)]
+impl<E : core::fmt::Debug, S> core::fmt::Debug for ReadPublishFailure<E, S> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("ReadPublishFailure")
+                 .field("error", &self.error)
+                 .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct PublishedReadDmaSession<'a, 'e, R, D, P> {
+    read : DeferredReadPlan,
+    dma : apbdma::RunningSession<'a, 'e, R, D, P>,
+}
+
+#[cfg(test)]
+impl<'a, 'e, R : apbdma::OrderIo, D, P> RunningReadDmaSession<'a, 'e, R, D, P> {
+    pub(crate) fn publish<C : ReadCommandPublisher>(
+        self,
+        publisher : &mut C)
+        -> Result<PublishedReadDmaSession<'a, 'e, R, D, P>, ReadPublishFailure<C::Error, Self>> {
+        if let Err(error) = publisher.publish(&self.read) {
+            return Err(ReadPublishFailure { error, session : self });
+        }
+        Ok(PublishedReadDmaSession { read : self.read, dma : self.dma })
+    }
+}
+
+#[cfg(test)]
+impl<'a, 'e, R : apbdma::OrderIo, D, P> PublishedReadDmaSession<'a, 'e, R, D, P> {
+    pub(crate) const fn plan(&self) -> &DeferredReadPlan { &self.read }
+
+    pub(crate) fn stop(self)
+                       -> Result<apbdma::QuiescedSession<'a, D, P>,
+                                 apbdma::SessionFailure<apbdma::ExecutorError, Self>> {
+        match self.dma.stop() {
+            Ok(session) => Ok(session),
+            Err(failure) => Err(apbdma::SessionFailure {
+                error : failure.error,
+                session : Self { read : self.read, dma : failure.session },
+            }),
+        }
+    }
+}
+
 pub struct ReadDmaBindFailure<'a, D, P> {
     pub error : ReadDmaIdentityError,
     pub handoff : QuiescedHandoff<'a, D, P>,
@@ -1205,32 +1399,12 @@ impl ReadDmaQuiescedEvidence {
         handoff : QuiescedHandoff<'a, D, P>)
         -> Result<(Self, ReadApbdmaRecoverySync<'a, D, P>), ReadDmaBindFailure<'a, D, P>> {
         let identity = handoff.identity();
-        let transfer = identity.transfer;
-        let mismatch = if !read.identity_consistent() {
-            Some(ReadDmaIdentityError::ReadPlanInvalid)
-        } else if transfer.direction != ApbDmaDirection::DeviceToMemory {
-            Some(ReadDmaIdentityError::TransferDirection)
-        } else if transfer.byte_length != read.request.byte_length {
-            Some(ReadDmaIdentityError::ByteLength)
-        } else if u64::from(transfer.descriptor.apb_address) != read.data_register_address {
-            Some(ReadDmaIdentityError::DataRegisterAddress)
-        } else if identity.descriptor_region.physical_address() !=
-                  transfer.descriptor_physical_address ||
-                  identity.descriptor_region.length() < core::mem::size_of::<HardwareDescriptor>() {
-            Some(ReadDmaIdentityError::DescriptorRegion)
-        } else if identity.descriptor_direction != api_v0::dma::DmaDirection::Bidirectional {
-            Some(ReadDmaIdentityError::DescriptorDirection)
-        } else if identity.payload_region.physical_address() != transfer.memory_physical_address ||
-                  identity.payload_region.length() != transfer.byte_length {
-            Some(ReadDmaIdentityError::PayloadRegion)
-        } else if identity.payload_direction != api_v0::dma::DmaDirection::FromDevice {
-            Some(ReadDmaIdentityError::PayloadDirection)
-        } else if !transfer.invalidate_buffer_after {
-            Some(ReadDmaIdentityError::InvalidatePolicy)
-        } else {
-            None
-        };
-        if let Some(error) = mismatch {
+        if let Err(error) = validate_read_dma_identity(read,
+                                                       identity.transfer,
+                                                       identity.descriptor_region,
+                                                       identity.descriptor_direction,
+                                                       identity.payload_region,
+                                                       identity.payload_direction) {
             return Err(ReadDmaBindFailure { error, handoff });
         }
         Ok((Self { _private : () },

@@ -876,6 +876,24 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct MockReadPublisher {
+        calls : usize,
+        fail : bool,
+        command_index : Option<u8>,
+    }
+
+    impl crate::mmc::ReadCommandPublisher for MockReadPublisher {
+        type Error = DriverError;
+
+        fn publish(&mut self, read : &crate::mmc::DeferredReadPlan)
+                   -> Result<(), Self::Error> {
+            self.calls += 1;
+            self.command_index = Some(read.request.command_index);
+            if self.fail { Err(DriverError::IoError) } else { Ok(()) }
+        }
+    }
+
+    #[derive(Default)]
     struct FaultOrderIo {
         value : u64,
         writes : Vec<u64>,
@@ -1208,6 +1226,137 @@ mod tests {
         assert_eq!(failure.error, crate::mmc::ReadDmaIdentityError::TransferDirection);
         let cpu_owned = failure.handoff.finish().unwrap();
         let (descriptor, payload) = cpu_owned.into_mappings();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+    }
+
+    #[test]
+    fn mmc_read_start_typestate_orders_dma_before_command_publish() {
+        let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                      Direction::DeviceToMemory).unwrap();
+        let recovery = crate::mmc::combined_recovery_fixture(0u8);
+        let read = *recovery.plan();
+        let (mut descriptor, mut payload) = mappings(transfer);
+        let mut wrong_read = read;
+        wrong_read.data_register_address += 4;
+        assert_eq!(crate::mmc::ReadDmaBinding::bind(&wrong_read,
+                                                    transfer,
+                                                    &descriptor,
+                                                    &payload),
+                   Err(crate::mmc::ReadDmaIdentityError::DataRegisterAddress));
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+        let binding = crate::mmc::ReadDmaBinding::bind(&read,
+                                                       transfer,
+                                                       &descriptor,
+                                                       &payload).unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+        let prepared = binding.prepare(&mut descriptor, &mut payload).unwrap();
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+        let running = prepared.start(&mut executor).unwrap();
+        assert_eq!(running.plan(), &read);
+        let mut publisher = MockReadPublisher::default();
+        let published = running.publish(&mut publisher).unwrap();
+        assert_eq!(published.plan(), &read);
+        assert_eq!(publisher.calls, 1);
+        assert_eq!(publisher.command_index, Some(17));
+        published.stop().unwrap().finish().unwrap();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+        assert_eq!(executor.into_inner().writes,
+                   vec![0,
+                        transfer.start_order,
+                        (transfer.start_order & !ORDER_CONFIG_MASK) | ORDER_64_BIT | ORDER_STOP]);
+    }
+
+    #[test]
+    fn mmc_read_start_failures_preserve_precise_dma_ownership() {
+        let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                      Direction::DeviceToMemory).unwrap();
+        let recovery = crate::mmc::combined_recovery_fixture(0u8);
+        let read = *recovery.plan();
+
+        let (mut descriptor, mut payload) = mappings(transfer);
+        let binding = crate::mmc::ReadDmaBinding::bind(&read,
+                                                       transfer,
+                                                       &descriptor,
+                                                       &payload).unwrap();
+        let payload_region = payload.cpu_region().unwrap();
+        payload = DmaMapping::new(payload_region,
+                                  DmaDirection::FromDevice,
+                                  MockCache { fail_device : true, ..MockCache::default() });
+        assert!(matches!(binding.prepare(&mut descriptor, &mut payload),
+                         Err(DriverError::IoError)));
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+
+        let (mut descriptor, mut payload) = mappings(transfer);
+        let prepared = crate::mmc::ReadDmaBinding::bind(&read,
+                                                        transfer,
+                                                        &descriptor,
+                                                        &payload).unwrap()
+                                                    .prepare(&mut descriptor, &mut payload).unwrap();
+        let registers = FaultOrderIo { failures : vec![(1, WriteEffect::Untouched)],
+                                       ..FaultOrderIo::default() };
+        let mut executor = Executor::new(registers, dma_irq());
+        let failure = match prepared.start(&mut executor) {
+            Ok(_) => panic!("untouched start fault accepted"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.read, read);
+        match failure.failure {
+            StartSessionFailure::Prepared(failure) => failure.session.cancel().unwrap(),
+            StartSessionFailure::Recovery(_) => panic!("untouched write entered recovery"),
+        }
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+
+        let (mut descriptor, mut payload) = mappings(transfer);
+        let prepared = crate::mmc::ReadDmaBinding::bind(&read,
+                                                        transfer,
+                                                        &descriptor,
+                                                        &payload).unwrap()
+                                                    .prepare(&mut descriptor, &mut payload).unwrap();
+        let registers = FaultOrderIo { failures : vec![(2, WriteEffect::MayHaveWritten)],
+                                       ..FaultOrderIo::default() };
+        let mut executor = Executor::new(registers, dma_irq());
+        let failure = match prepared.start(&mut executor) {
+            Ok(_) => panic!("uncertain start fault accepted"),
+            Err(failure) => failure,
+        };
+        match failure.failure {
+            StartSessionFailure::Recovery(failure) => {
+                failure.session.stop().unwrap().finish().unwrap();
+            },
+            StartSessionFailure::Prepared(_) => panic!("uncertain write remained cancellable"),
+        }
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
+    }
+
+    #[test]
+    fn mmc_publish_failure_keeps_running_dma_for_explicit_stop() {
+        let transfer = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                      Direction::DeviceToMemory).unwrap();
+        let recovery = crate::mmc::combined_recovery_fixture(0u8);
+        let read = *recovery.plan();
+        let (mut descriptor, mut payload) = mappings(transfer);
+        let prepared = crate::mmc::ReadDmaBinding::bind(&read,
+                                                        transfer,
+                                                        &descriptor,
+                                                        &payload).unwrap()
+                                                    .prepare(&mut descriptor, &mut payload).unwrap();
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+        let running = prepared.start(&mut executor).unwrap();
+        let mut publisher = MockReadPublisher { fail : true, ..MockReadPublisher::default() };
+        let failure = match running.publish(&mut publisher) {
+            Ok(_) => panic!("fault-injected MMC publish succeeded"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error, DriverError::IoError);
+        assert_eq!(publisher.calls, 1);
+        failure.session.stop().unwrap().finish().unwrap();
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());
     }
