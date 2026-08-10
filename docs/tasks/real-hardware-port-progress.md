@@ -5492,3 +5492,36 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] bind LS2K1000 mmc receipt to dma session`
+
+## 2026-08-10：批次 115——建立 production published completion tracker
+
+### 本批任务与设计
+
+1. 审计 published receipt token 与旧 `ReadCompletionTracker` 的 `cfg(test)` 分界。
+2. 新增 production `PublishedReadCompletionTracker`，持有 published MMC receipt + running DMA session。
+3. 以 command/data/DMA 三项事实累加器替代裸布尔调用；重复事实和 data/error interrupt 必须返回原 tracker。
+4. 三项事实齐全后铸造 `PublishedReadCompletion`；该 proof 仍不代表 cache CPU ownership、硬件 idle 或可 rearm。
+
+### 已完成
+
+- [x] 新增 production tracker/progress/completion/failure 类型。
+- [x] 实现 command response、controller interrupt 和 DMA completion 的多顺序推进及 duplicate/error 拒绝。
+- [x] `PublishedReadCompletion::into_session` 保留原 receipt/running session，之后仍须 stop/quiesce。
+- [x] IRQ-owned published wrapper 可拆出 generation 与 production completion tracker，避免复制 IRQ token。
+- [x] APBDMA/MMC 顺序测试已覆盖新 tracker 的三事实成功路径和最终 quiesce。
+
+### 验证证据
+
+- 驱动完整 host 测试 182 项通过；成功测试断言三项 evidence 全为 true，并在 completion 后显式 stop/finish。
+- 驱动 check、RISC-V `make check`、LoongArch64 `make kernel-la`、Python 53 项测试均通过。
+- `UNVERIFIED_ON_HARDWARE`：真实 IRQ receipt、DMA descriptor status、cache invalidate、MMC error priority 和 controller clear 仍待实机。
+
+### 已知限制、未验证与后续测试
+
+- [ ] production tracker 当前只管理 running session；需要下一步接入 IRQ acknowledgement/status decoder，才能构造真实 completion/recovery evidence。
+- [ ] failure token 尚未统一进入 coordinator RecoveryPending；发生 command/data/DMA failure 后仍需调用既有低层 stop/recovery 服务。
+- [ ] completion proof 不授权 buffer CPU 访问；必须继续经过 quiesce 与 cache sync typestate。
+
+### 提交
+
+- 本批计划提交：`[feat] add LS2K1000 published completion tracker`

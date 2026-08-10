@@ -1390,6 +1390,11 @@ impl<'a, 'e, R, D, P> PublishedReadDmaReceiptSession<'a, 'e, R, D, P> {
 
     pub const fn receipt(&self) -> ReadDataPublishReceipt { self.receipt }
 
+    pub fn into_completion_tracker(self) -> PublishedReadCompletionTracker<'a, 'e, R, D, P> {
+        PublishedReadCompletionTracker { session : self,
+                                         evidence : ReadCompletionEvidence::default() }
+    }
+
     pub fn into_parts(self)
                      -> (DeferredReadPlan,
                          ReadDataPublishReceipt,
@@ -1411,6 +1416,105 @@ impl<'a, 'e, R, D, P> PublishedReadDmaReceiptSession<'a, 'e, R, D, P> {
                                  dma : failure.session },
             }),
         }
+    }
+}
+
+#[must_use = "record the next completion fact or retain the running session"]
+pub struct PublishedReadCompletionTracker<'a, 'e, R, D, P> {
+    session : PublishedReadDmaReceiptSession<'a, 'e, R, D, P>,
+    evidence : ReadCompletionEvidence,
+}
+
+pub struct PublishedReadCompletion<'a, 'e, R, D, P> {
+    session : PublishedReadDmaReceiptSession<'a, 'e, R, D, P>,
+    evidence : ReadCompletionEvidence,
+}
+
+pub struct PublishedReadCompletionFailure<'a, 'e, R, D, P> {
+    pub error : ReadCompletionFailure,
+    pub tracker : PublishedReadCompletionTracker<'a, 'e, R, D, P>,
+}
+
+impl<R, D, P> core::fmt::Debug for PublishedReadCompletionFailure<'_, '_, R, D, P> {
+    fn fmt(&self, formatter : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("PublishedReadCompletionFailure")
+                 .field("error", &self.error)
+                 .finish_non_exhaustive()
+    }
+}
+
+pub enum PublishedReadCompletionProgress<'a, 'e, R, D, P> {
+    Pending(PublishedReadCompletionTracker<'a, 'e, R, D, P>),
+    Completed(PublishedReadCompletion<'a, 'e, R, D, P>),
+}
+
+impl<'a, 'e, R, D, P> PublishedReadCompletionTracker<'a, 'e, R, D, P> {
+    pub const fn evidence(&self) -> ReadCompletionEvidence { self.evidence }
+
+    fn finish(self) -> PublishedReadCompletionProgress<'a, 'e, R, D, P> {
+        if self.evidence.command_response_validated && self.evidence.data_finished &&
+           self.evidence.dma_finished
+        {
+            PublishedReadCompletionProgress::Completed(PublishedReadCompletion {
+                session : self.session, evidence : self.evidence,
+            })
+        } else {
+            PublishedReadCompletionProgress::Pending(self)
+        }
+    }
+
+    fn failure(self, error : ReadCompletionFailure)
+               -> PublishedReadCompletionFailure<'a, 'e, R, D, P> {
+        PublishedReadCompletionFailure { error, tracker : self }
+    }
+
+    pub fn command_validated(mut self)
+                             -> Result<PublishedReadCompletionProgress<'a, 'e, R, D, P>,
+                                       PublishedReadCompletionFailure<'a, 'e, R, D, P>> {
+        if self.evidence.command_response_validated {
+            return Err(self.failure(ReadCompletionFailure::DuplicateCommand));
+        }
+        self.evidence.command_response_validated = true;
+        Ok(self.finish())
+    }
+
+    pub fn controller_interrupt(mut self,
+                                interrupts : u32)
+                                -> Result<PublishedReadCompletionProgress<'a, 'e, R, D, P>,
+                                          PublishedReadCompletionFailure<'a, 'e, R, D, P>> {
+        if self.evidence.data_finished {
+            return Err(self.failure(ReadCompletionFailure::DuplicateData));
+        }
+        for (bit, failure) in
+            [(INT_DATA_TIMEOUT, ReadCompletionFailure::DataTimeout),
+             (INT_RECEIVE_CRC, ReadCompletionFailure::ReceiveCrc),
+             (INT_TRANSMIT_CRC, ReadCompletionFailure::TransmitCrc),
+             (INT_PROGRAM_ERROR, ReadCompletionFailure::ProgramError)]
+        {
+            if interrupts & bit != 0 { return Err(self.failure(failure)); }
+        }
+        let unknown = interrupts & !INT_CLEAR;
+        if unknown != 0 { return Err(self.failure(ReadCompletionFailure::UnknownInterrupt(unknown))); }
+        self.evidence.data_finished = true;
+        Ok(self.finish())
+    }
+
+    pub fn dma_completed(mut self)
+                         -> Result<PublishedReadCompletionProgress<'a, 'e, R, D, P>,
+                                   PublishedReadCompletionFailure<'a, 'e, R, D, P>> {
+        if self.evidence.dma_finished {
+            return Err(self.failure(ReadCompletionFailure::DuplicateDma));
+        }
+        self.evidence.dma_finished = true;
+        Ok(self.finish())
+    }
+}
+
+impl<'a, 'e, R, D, P> PublishedReadCompletion<'a, 'e, R, D, P> {
+    pub const fn evidence(&self) -> ReadCompletionEvidence { self.evidence }
+
+    pub fn into_session(self) -> PublishedReadDmaReceiptSession<'a, 'e, R, D, P> {
+        self.session
     }
 }
 

@@ -1367,9 +1367,27 @@ mod tests {
                                            .map(|(offset, _)| *offset)
                                            .collect::<Vec<_>>(),
                    [0x2C, 0x28, 0x24, 0x3C, 0x08, 0x0C]);
-        let (receipt, quiesced) = published.stop().unwrap();
+        let (armed, tracker) = published.into_completion_tracker();
+        let tracker = match tracker.command_validated().unwrap() {
+            crate::mmc::PublishedReadCompletionProgress::Pending(tracker) => tracker,
+            _ => panic!("command fact completed read too early"),
+        };
+        let tracker = match tracker.controller_interrupt(1).unwrap() {
+            crate::mmc::PublishedReadCompletionProgress::Pending(tracker) => tracker,
+            _ => panic!("data fact completed read too early"),
+        };
+        let completed = match tracker.dma_completed().unwrap() {
+            crate::mmc::PublishedReadCompletionProgress::Completed(completed) => completed,
+            _ => panic!("all completion facts did not complete read"),
+        };
+        assert_eq!(completed.evidence(), crate::mmc::ReadCompletionEvidence {
+            command_response_validated : true,
+            data_finished : true,
+            dma_finished : true,
+        });
+        let (receipt, quiesced) = completed.into_session().stop().unwrap();
         assert_eq!(receipt.command_index, read.request.command_index);
-        let armed = quiesced.finish().unwrap();
+        quiesced.finish().unwrap();
         assert_eq!(armed.transaction().raw(), 101);
         assert!(descriptor.is_cpu_owned());
         assert!(payload.is_cpu_owned());

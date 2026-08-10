@@ -810,6 +810,13 @@ impl<'a, 'e, R : crate::apbdma::OrderIo, D, P>
         self.session.receipt()
     }
 
+    pub fn into_completion_tracker(
+        self)
+        -> (ArmedReadIrqs,
+            crate::mmc::PublishedReadCompletionTracker<'a, 'e, R, D, P>) {
+        (self.armed, self.session.into_completion_tracker())
+    }
+
     pub fn stop(self)
         -> Result<(crate::mmc::ReadDataPublishReceipt,
                    IrqArmedReadDmaSession<crate::apbdma::QuiescedSession<'a, D, P>>),
