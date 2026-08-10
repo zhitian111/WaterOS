@@ -16,6 +16,11 @@ make physical-root-image ROOT_IMAGE=./wateros-root.img
 make verify-physical-root-image ROOT_IMAGE=./wateros-root.img
 # GPT layout (the default remains MBR for compatibility)
 make physical-root-image ROOT_IMAGE=./wateros-gpt.img ROOT_PARTITION_TABLE=gpt
+# inject a generated architecture root tree through the Make wrapper
+make physical-root-image ROOT_IMAGE=./visionfive2-root.img \
+  ROOT_PARTITION_TABLE=gpt ROOT_SOURCE_ROOT=./visionfive2-rootfs
+make verify-physical-root-image ROOT_IMAGE=./visionfive2-root.img \
+  ROOT_SOURCE_ROOT=./visionfive2-rootfs
 ```
 
 The build requires `sfdisk`, `mkfs.ext4`, `e2fsck`, `dumpe2fs`, and `debugfs`.

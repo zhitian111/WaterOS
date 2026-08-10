@@ -2058,6 +2058,26 @@ topology、ownership 和 executor 分层：DTB 只描述资源；lease 管理 pr
 - 16 MiB GPT QEMU image smoke：通过。
 - `UNVERIFIED_ON_HARDWARE`：架构用户态 ABI、真实 SD 写入、掉电一致性和实体板根盘启动仍待验证。
 
+## 2026-08-10：批次 73——Makefile 根盘 staging 集成
+
+### 任务与设计
+
+1. 复查 `make physical-root-image` 与 `make verify-physical-root-image`，确认上一批 `--source-root` 能力尚未从 Make 入口暴露。
+2. 增加可选 `ROOT_SOURCE_ROOT` 变量；为空时保持原命令，非空时同时传给 build/verify 的 Python builder。
+3. 使用 32 MiB 临时 GPT 镜像验证 Make wrapper，不把生成物留在仓库。
+
+### 完成内容
+
+- [x] Makefile 新增 `ROOT_SOURCE_ROOT`。
+- [x] build/verify 目标均支持架构 rootfs staging 目录。
+- [x] README 增加 Make wrapper 示例。
+
+### 验证证据与限制
+
+- `make -n` 已确认空变量不传参数、非空变量正确传递。
+- 实际 Make build/verify：32 MiB GPT 镜像通过，生成物已移至临时目录。
+- `UNVERIFIED_ON_HARDWARE`：实际架构 init ABI、SD/eMMC 写入、掉电行为和实体板根盘启动仍待验证。
+
 ## 2026-08-10：批次 65——稳定 QMP 输入注入诊断
 
 ### 任务与设计
