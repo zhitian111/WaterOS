@@ -50,6 +50,7 @@ class RemoteDebugClientTests(unittest.TestCase):
                     b"ls2k-mmc\n": (
                         b"ERR unsupported: ls2k-mmc requires loongson2k1000la\r\nwos> "
                     ),
+                    b"reboot\n": b"unknown command; type 'help'\r\nwos> ",
                     b"quit\n": b"bye\r\n",
                 }
                 for expected, response in responses.items():
@@ -62,7 +63,7 @@ class RemoteDebugClientTests(unittest.TestCase):
         try:
             results = run_smoke(client)
             self.assertEqual([result.command for result in results],
-                             ["ping", "status", "version", "devfs", "ls2k-mmc", "quit"])
+                             ["ping", "status", "version", "devfs", "ls2k-mmc", "reboot", "quit"])
         finally:
             client.close()
             thread.join(timeout=2)
@@ -77,6 +78,8 @@ class RemoteDebugClientTests(unittest.TestCase):
                 client.receive_banner()
             with self.assertRaises(ValueError):
                 client.command("ping\nstatus")
+            with self.assertRaisesRegex(ValueError, "128-byte"):
+                client.command("x" * 129)
             client.close()
 
     def test_readiness_reconnects_when_forwarder_accepts_before_guest(self) -> None:

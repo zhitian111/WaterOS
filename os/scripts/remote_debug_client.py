@@ -21,6 +21,7 @@ from typing import Any
 
 PROMPT = b"wos> "
 MAX_RESPONSE = 64 * 1024
+MAX_COMMAND_LEN = 128
 BOARD_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
@@ -81,7 +82,10 @@ class MonitorClient:
     def command(self, command: str) -> CommandResult:
         if "\n" in command or "\r" in command:
             raise ValueError("one monitor command must fit on one line")
-        self._connection.sendall(command.encode("utf-8") + b"\n")
+        encoded = command.encode("utf-8")
+        if len(encoded) > MAX_COMMAND_LEN:
+            raise ValueError("monitor command exceeds 128-byte limit")
+        self._connection.sendall(encoded + b"\n")
         response = self._receive_until(PROMPT)
         return CommandResult(command, response.decode("utf-8", errors="strict"))
 
@@ -118,6 +122,7 @@ def run_smoke(client: MonitorClient) -> list[CommandResult]:
         client.command("version"),
         client.command("devfs"),
         client.command("ls2k-mmc"),
+        client.command("reboot"),
     ]
     if results[0].response != "pong\r\n":
         raise MonitorProtocolError(f"ping failed: {results[0].response!r}")
@@ -136,6 +141,8 @@ def run_smoke(client: MonitorClient) -> list[CommandResult]:
     )
     if not results[4].response.startswith(mmc_prefixes):
         raise MonitorProtocolError(f"invalid ls2k-mmc response: {results[4].response!r}")
+    if results[5].response != "unknown command; type 'help'\r\n":
+        raise MonitorProtocolError(f"unknown-command guard failed: {results[5].response!r}")
     results.append(client.quit())
     return results
 

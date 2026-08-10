@@ -6216,3 +6216,29 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - 本批计划提交：`[feat] expose dev node metadata`
+
+## 2026-08-10：批次 139——收紧远程调试监控契约并完成 QEMU smoke
+
+### 本批任务与设计
+
+1. 审计远程监控、Python 客户端和 QEMU 转发链路，确认它仍是仅限开发环境的只读诊断协议，不引入 sshd、shell、认证或写操作。
+2. 将客户端命令长度限制与内核 128 字节行缓冲对齐，增加超长命令、未知命令和 `reboot` 拒绝测试。
+3. 修正 QEMU user-net hostfwd，显式指向 WaterOS 静态 guest 地址 `10.0.2.15:2323`，避免不同 QEMU/slirp 版本对隐式目标地址处理不一致。
+4. 用 `operator-shell` 保持 QEMU 生命周期，运行真实 RISC-V virtio-net 端到端 smoke；LoongArch 和真实板网卡继续列为未验证项。
+
+### 已完成
+
+- [x] `MonitorClient` 拒绝超过 128 字节的 UTF-8 命令；host fake-server 覆盖 banner、命令顺序、未知命令和响应上限。
+- [x] QEMU 转发仅绑定 `127.0.0.1`，guest 目标固定为 `10.0.2.15:2323`；rv/la launch 单测通过。
+- [x] RISC-V QEMU smoke 通过：`ping`、`status`、`version`、`devfs`、`ls2k-mmc` unsupported 响应、`reboot` unknown-command 拒绝、`quit` 均完成。
+- [x] `make check EXTRA_FEATURES=remote-debug-monitor`、`make kernel-la`、两个 devfs host 测试和远程客户端/QEMU Python 测试通过。
+
+### 验证证据与限制
+
+- smoke 使用临时 16 MiB GPT 根镜像和 `operator-shell` 内核；串口日志确认 virtio-net、静态地址 `10.0.2.15/24`、监控监听和根文件系统挂载。
+- `final`/默认 Auto operator 在缺少 workload 的临时镜像上会快速 shutdown，因此 smoke 必须使用保持运行的 operator-shell 内核；这属于测试生命周期前提，不是协议行为。
+- `UNVERIFIED_ON_HARDWARE`：LoongArch QEMU 监控路径、两块真实板卡的 PHY/网卡驱动、真实 UART/网络链路和任何认证方案仍未验证；当前监控仍禁止用于生产或不可信网络。
+
+### 提交
+
+- 本批计划提交：`[test] harden remote debug smoke`

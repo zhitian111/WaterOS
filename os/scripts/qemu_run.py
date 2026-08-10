@@ -159,7 +159,7 @@ def build_qemu_launch(
                 raise QemuConfigError(
                     f"WOS_REMOTE_DEBUG_PORT 必须是 1..65535: {remote_debug_port_number}"
                 )
-            netdev += f",hostfwd=tcp:127.0.0.1:{remote_debug_port_number}-:2323"
+            netdev += f",hostfwd=tcp:127.0.0.1:{remote_debug_port_number}-10.0.2.15:2323"
         argv = [
             "qemu-system-riscv64", "-machine", "virt", "-kernel", str(kernel),
             "-m", memory, *console_args, "-smp", smp, "-bios", "default",
@@ -188,7 +188,7 @@ def build_qemu_launch(
                 raise QemuConfigError(
                     f"WOS_REMOTE_DEBUG_PORT 必须是 1..65535: {remote_debug_port_number}"
                 )
-            netdev += f",hostfwd=tcp:127.0.0.1:{remote_debug_port_number}-:2323"
+            netdev += f",hostfwd=tcp:127.0.0.1:{remote_debug_port_number}-10.0.2.15:2323"
         argv = [
             "qemu-system-loongarch64", "-kernel", str(kernel), "-m", memory,
             *console_args, "-smp", smp,

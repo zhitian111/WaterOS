@@ -163,7 +163,7 @@ class QemuRunTests(unittest.TestCase):
                 )
                 self.assertTrue(
                     any(
-                        "hostfwd=tcp:127.0.0.1:22323-:2323" in item
+                        "hostfwd=tcp:127.0.0.1:22323-10.0.2.15:2323" in item
                         for item in launch.argv
                     )
                 )
