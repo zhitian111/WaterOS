@@ -10,7 +10,7 @@ use crate::irq_domain::{AcknowledgedIrq, GlobalIrq};
 use crate::dma_memory::OwnedDmaBuffer;
 use alloc::vec::Vec;
 use api_v0::{DriverError, DriverResult,
-             dma::{DmaCoherency, DmaDirection, DmaMapping}};
+             dma::{DmaCoherency, DmaDirection, DmaMapping, DmaRegion}};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -238,7 +238,7 @@ pub trait OrderIo {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Completion {
-    invalidate_buffer_after : bool,
+    plan : TransferPlan,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -293,7 +293,9 @@ impl DescriptorStatusReader for VolatileDescriptorStatusReader {
 }
 
 impl Completion {
-    pub const fn requires_buffer_invalidate(self) -> bool { self.invalidate_buffer_after }
+    pub const fn requires_buffer_invalidate(self) -> bool { self.plan.invalidate_buffer_after }
+
+    pub const fn plan(self) -> TransferPlan { self.plan }
 }
 
 /// A failed state transition that returns the original session for retry or
@@ -379,6 +381,15 @@ pub struct QuiescedHandoff<'a, D, P> {
     completion : Completion,
     descriptor : &'a mut DmaMapping<D>,
     payload : &'a mut DmaMapping<P>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuiescedHandoffIdentity {
+    pub transfer : TransferPlan,
+    pub descriptor_region : DmaRegion,
+    pub descriptor_direction : DmaDirection,
+    pub payload_region : DmaRegion,
+    pub payload_direction : DmaDirection,
 }
 
 /// Both mappings have completed their CPU-side synchronization. Consuming this
@@ -522,6 +533,14 @@ impl<'a, D : DmaCoherency, P : DmaCoherency> QuiescedSession<'a, D, P> {
 }
 
 impl<'a, D : DmaCoherency, P : DmaCoherency> QuiescedHandoff<'a, D, P> {
+    pub fn identity(&self) -> QuiescedHandoffIdentity {
+        QuiescedHandoffIdentity { transfer : self.completion.plan(),
+                                  descriptor_region : self.descriptor.identity_region(),
+                                  descriptor_direction : self.descriptor.identity_direction(),
+                                  payload_region : self.payload.identity_region(),
+                                  payload_direction : self.payload.identity_direction() }
+    }
+
     pub fn finish(self)
                   -> Result<CpuOwnedHandoff<'a, D, P>,
                             SessionFailure<DriverError, Self>> {
@@ -553,6 +572,22 @@ pub(crate) fn prepare_transfer<D : DmaCoherency, P : DmaCoherency>(
     descriptor : &mut DmaMapping<D>,
     payload : &mut DmaMapping<P>)
     -> DriverResult<PreparedTransfer> {
+    let words = plan.byte_length / 4;
+    let descriptor_words = (plan.descriptor.length_words as usize)
+                                .checked_mul(plan.descriptor.step_times as usize);
+    let expected_command = COMMAND_INTERRUPT |
+        if plan.direction == Direction::MemoryToDevice { COMMAND_MEMORY_TO_DEVICE } else { 0 };
+    if plan.byte_length == 0 || plan.byte_length % 4 != 0 ||
+       plan.descriptor.memory_address_low != plan.memory_physical_address as u32 ||
+       plan.descriptor.memory_address_high != (plan.memory_physical_address >> 32) as u32 ||
+       plan.descriptor.command != expected_command ||
+       plan.invalidate_buffer_after != (plan.direction == Direction::DeviceToMemory) ||
+       !plan.clean_descriptor_before ||
+       plan.start_order != plan.descriptor_physical_address | ORDER_64_BIT | ORDER_START ||
+       descriptor_words.is_none_or(|encoded| encoded < words)
+    {
+        return Err(DriverError::InvalidParam);
+    }
     let descriptor_region = descriptor.cpu_region()?;
     let payload_region = payload.cpu_region()?;
     if descriptor.direction() != DmaDirection::Bidirectional ||
@@ -681,7 +716,7 @@ impl<R : OrderIo> Executor<R> {
             return Err(ExecutorError::UnexpectedIrq);
         }
         let plan = self.running.take().ok_or(ExecutorError::Idle)?;
-        Ok(Completion { invalidate_buffer_after : plan.invalidate_buffer_after })
+        Ok(Completion { plan })
     }
 
     pub(crate) fn stop(&mut self) -> Result<Completion, ExecutorError> {
@@ -692,9 +727,7 @@ impl<R : OrderIo> Executor<R> {
         for _ in 0..self.stop_poll_limit {
             if self.registers.confirm_stopped()? {
                 self.running = None;
-                return Ok(Completion {
-                    invalidate_buffer_after : plan.invalidate_buffer_after,
-                });
+                return Ok(Completion { plan });
             }
         }
         Err(ExecutorError::StopTimeout)
@@ -964,6 +997,7 @@ mod tests {
         assert!(completion.requires_buffer_invalidate());
         finish_transfer(completion, &mut descriptor, &mut payload).unwrap();
         assert!(descriptor.cpu_region().is_ok());
+
         assert!(payload.cpu_region().is_ok());
         assert_eq!(executor.complete_irq(acknowledged_dma_irq()), Err(ExecutorError::Idle));
         let io = executor.into_inner();
@@ -1002,6 +1036,13 @@ mod tests {
         assert!(matches!(prepare_transfer(plan, &mut descriptor, &mut wrong_payload),
                          Err(DriverError::InvalidParam)));
         assert!(descriptor.cpu_region().is_ok());
+
+        let mut malformed = plan;
+        malformed.descriptor.memory_address_low ^= 1;
+        assert!(matches!(prepare_transfer(malformed, &mut descriptor, &mut wrong_payload),
+                         Err(DriverError::InvalidParam)));
+        assert!(descriptor.is_cpu_owned());
+        assert!(wrong_payload.is_cpu_owned());
 
         let payload_region = payload.cpu_region().unwrap();
         payload = DmaMapping::new(payload_region,
@@ -1073,17 +1114,50 @@ mod tests {
                                                                             .stop()
                                                                             .unwrap()
                                                                             .into_handoff();
+        let recovery = crate::mmc::combined_recovery_fixture(0u8);
+        let read_plan = *recovery.plan();
+        let mut invalid_plan = read_plan;
+        invalid_plan.request.byte_length += 4;
+        let failure = match crate::mmc::ReadDmaQuiescedEvidence::bind_apbdma_handoff(
+            &invalid_plan, handoff)
+        {
+            Ok(_) => panic!("internally inconsistent MMC read plan accepted"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error, crate::mmc::ReadDmaIdentityError::ReadPlanInvalid);
+        let mut wrong_length = read_plan;
+        wrong_length.request = crate::mmc::ReadBlockRequest::new(
+            0, 2, 512, crate::mmc::ReadAddressing::Block).unwrap();
+        wrong_length.setup_writes[0].value = (read_plan.setup_writes[0].value & !0xFFF) | 2;
+        let failure = match crate::mmc::ReadDmaQuiescedEvidence::bind_apbdma_handoff(
+            &wrong_length, failure.handoff)
+        {
+            Ok(_) => panic!("valid MMC plan with wrong DMA byte length accepted"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error, crate::mmc::ReadDmaIdentityError::ByteLength);
+        let mut wrong_data = read_plan;
+        wrong_data.data_register_address += 4;
+        let failure = match crate::mmc::ReadDmaQuiescedEvidence::bind_apbdma_handoff(
+            &wrong_data, failure.handoff)
+        {
+            Ok(_) => panic!("wrong MMC DATA address accepted"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error, crate::mmc::ReadDmaIdentityError::DataRegisterAddress);
         let (evidence, mut synchronizer) =
-            crate::mmc::ReadDmaQuiescedEvidence::bind_apbdma_handoff(handoff);
-        let mut marker = 0u8;
+            match crate::mmc::ReadDmaQuiescedEvidence::bind_apbdma_handoff(
+                &read_plan, failure.handoff)
+            {
+                Ok(parts) => parts,
+                Err(_) => panic!("matching APBDMA handoff rejected"),
+            };
         let clean = crate::mmc::CommandPostSnapshot { argument : 0,
                                                        control : 0,
                                                        command_status : 0,
                                                        data_status : 0,
                                                        interrupts : 0 };
-        let recovery = match crate::mmc::combined_recovery_fixture(marker)
-            .record_mmc_quiesced(clean, clean)
-        {
+        let recovery = match recovery.record_mmc_quiesced(clean, clean) {
             Ok(recovery) => recovery,
             Err(_) => panic!("clean MMC recovery evidence rejected"),
         };
@@ -1101,7 +1175,7 @@ mod tests {
             Ok(recovered) => recovered,
             Err(_) => panic!("APBDMA sync retry failed"),
         };
-        marker = recovered.into_buffer();
+        let mut marker = recovered.into_buffer();
         assert_eq!(marker, 0);
         assert_eq!(crate::mmc::ReadRecoverySync::sync_for_cpu(&mut synchronizer,
                                                               &mut marker),
@@ -1110,6 +1184,32 @@ mod tests {
         let (descriptor_mapping, payload_mapping) = cpu_owned.into_mappings();
         assert!(descriptor_mapping.is_cpu_owned());
         assert!(payload_mapping.is_cpu_owned());
+    }
+
+    #[test]
+    fn mmc_adapter_rejects_memory_to_device_handoff_without_losing_it() {
+        let plan = build_transfer(0x2000, 0x3000, 0x1fe2_c040, 512, 16,
+                                  Direction::MemoryToDevice).unwrap();
+        let (mut descriptor, mut payload) = mappings(plan);
+        let mut executor = Executor::new(MockOrderIo::default(), dma_irq());
+        let handoff = prepare_session(plan, &mut descriptor, &mut payload).unwrap()
+                                                                            .start(&mut executor)
+                                                                            .unwrap()
+                                                                            .stop()
+                                                                            .unwrap()
+                                                                            .into_handoff();
+        let recovery = crate::mmc::combined_recovery_fixture(0u8);
+        let failure = match crate::mmc::ReadDmaQuiescedEvidence::bind_apbdma_handoff(
+            recovery.plan(), handoff)
+        {
+            Ok(_) => panic!("memory-to-device handoff accepted as MMC read"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error, crate::mmc::ReadDmaIdentityError::TransferDirection);
+        let cpu_owned = failure.handoff.finish().unwrap();
+        let (descriptor, payload) = cpu_owned.into_mappings();
+        assert!(descriptor.is_cpu_owned());
+        assert!(payload.is_cpu_owned());
     }
 
     #[test]

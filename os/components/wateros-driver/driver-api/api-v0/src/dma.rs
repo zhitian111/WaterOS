@@ -81,6 +81,12 @@ impl<C> DmaMapping<C> {
     /// Whether CPU ownership has been restored and the backing allocation may
     /// be safely accessed or released.
     pub const fn is_cpu_owned(&self) -> bool { matches!(self.owner, Owner::Cpu) }
+
+    /// Stable mapping identity for orchestration checks. This does not grant
+    /// CPU access to device-owned bytes.
+    pub const fn identity_region(&self) -> DmaRegion { self.region }
+
+    pub const fn identity_direction(&self) -> DmaDirection { self.direction }
 }
 
 impl<C : DmaCoherency> DmaMapping<C> {
@@ -162,6 +168,8 @@ mod tests {
         assert_eq!(mapping.complete_from_device(), Err(DriverError::InvalidParam));
         assert_eq!(mapping.prepare_for_device(), Ok(region));
         assert!(!mapping.is_cpu_owned());
+        assert_eq!(mapping.identity_region(), region);
+        assert_eq!(mapping.identity_direction(), DmaDirection::FromDevice);
         assert_eq!(mapping.cpu_region(), Err(DriverError::InvalidParam));
         assert_eq!(mapping.prepare_for_device(), Err(DriverError::InvalidParam));
         assert_eq!(mapping.complete_from_device(), Ok(region));

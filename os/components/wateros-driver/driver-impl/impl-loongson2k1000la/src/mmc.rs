@@ -5,7 +5,7 @@
 //! a FIFO window. WaterOS reuses [`dw_mmc::sd`] only as an SD protocol layer.
 
 use crate::{
-    apbdma::{CpuOwnedHandoff, QuiescedHandoff},
+    apbdma::{CpuOwnedHandoff, Direction as ApbDmaDirection, HardwareDescriptor, QuiescedHandoff},
     clock::ConsistentClockSnapshot,
     irq_domain::{AcknowledgedIrq, DeviceAckedIrq, GlobalIrq, IrqDisposition},
     mmc_prerequisite::ControllerPrerequisiteProof,
@@ -1055,6 +1055,27 @@ impl DeferredReadPlan {
     pub fn blocker_count(&self) -> usize {
         self.blockers.iter().filter(|blocker| blocker.is_some()).count()
     }
+
+    fn identity_consistent(&self) -> bool {
+        let request = self.request;
+        let byte_length = usize::from(request.block_count)
+                                .checked_mul(usize::from(request.block_size));
+        let command_index = if request.block_count == 1 { 17 } else { 18 };
+        let base_control = u32::from(request.block_count) | DCTL_START | DCTL_EXTERNAL_DMA;
+        let control = self.setup_writes[0].value;
+        request.block_count != 0 && u32::from(request.block_count) <= DCTL_BLOCK_COUNT_MASK &&
+        request.block_size != 0 && u32::from(request.block_size) <= 0xFFF &&
+        request.block_size % 4 == 0 && byte_length == Some(request.byte_length) &&
+        request.command_index == command_index && request.response == ResponseType::Short &&
+        request.response_validation == ResponseValidation::Crc &&
+        self.setup_writes[0].offset == REG_DCTL &&
+        [base_control, base_control | DCTL_WIDE_BUS,
+         base_control | DCTL_8_BIT_BUS].contains(&control) &&
+        self.setup_writes[1] == (PlannedDataWrite { offset : REG_BSIZE,
+                                                   value : u32::from(request.block_size) }) &&
+        self.setup_writes[2] == (PlannedDataWrite { offset : REG_TIMER,
+                                                   value : u32::MAX })
+    }
 }
 
 /// Exclusive CPU borrow retained while a read is deferred. No method exposes
@@ -1153,6 +1174,24 @@ pub struct ReadDmaQuiescedEvidence {
     _private : (),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadDmaIdentityError {
+    ReadPlanInvalid,
+    TransferDirection,
+    ByteLength,
+    DataRegisterAddress,
+    DescriptorRegion,
+    DescriptorDirection,
+    PayloadRegion,
+    PayloadDirection,
+    InvalidatePolicy,
+}
+
+pub struct ReadDmaBindFailure<'a, D, P> {
+    pub error : ReadDmaIdentityError,
+    pub handoff : QuiescedHandoff<'a, D, P>,
+}
+
 /// Retryable APBDMA synchronizer paired with exactly one DMA-quiesced evidence
 /// token. It owns the handoff until cache sync produces CPU-owned mappings.
 pub struct ReadApbdmaRecoverySync<'a, D, P> {
@@ -1161,12 +1200,41 @@ pub struct ReadApbdmaRecoverySync<'a, D, P> {
 }
 
 impl ReadDmaQuiescedEvidence {
-    pub fn bind_apbdma_handoff<'a, D, P>(
+    pub fn bind_apbdma_handoff<'a, D : DmaCoherency, P : DmaCoherency>(
+        read : &DeferredReadPlan,
         handoff : QuiescedHandoff<'a, D, P>)
-        -> (Self, ReadApbdmaRecoverySync<'a, D, P>) {
-        (Self { _private : () },
-         ReadApbdmaRecoverySync { handoff : Some(handoff),
-                                  cpu_owned : None })
+        -> Result<(Self, ReadApbdmaRecoverySync<'a, D, P>), ReadDmaBindFailure<'a, D, P>> {
+        let identity = handoff.identity();
+        let transfer = identity.transfer;
+        let mismatch = if !read.identity_consistent() {
+            Some(ReadDmaIdentityError::ReadPlanInvalid)
+        } else if transfer.direction != ApbDmaDirection::DeviceToMemory {
+            Some(ReadDmaIdentityError::TransferDirection)
+        } else if transfer.byte_length != read.request.byte_length {
+            Some(ReadDmaIdentityError::ByteLength)
+        } else if u64::from(transfer.descriptor.apb_address) != read.data_register_address {
+            Some(ReadDmaIdentityError::DataRegisterAddress)
+        } else if identity.descriptor_region.physical_address() !=
+                  transfer.descriptor_physical_address ||
+                  identity.descriptor_region.length() < core::mem::size_of::<HardwareDescriptor>() {
+            Some(ReadDmaIdentityError::DescriptorRegion)
+        } else if identity.descriptor_direction != api_v0::dma::DmaDirection::Bidirectional {
+            Some(ReadDmaIdentityError::DescriptorDirection)
+        } else if identity.payload_region.physical_address() != transfer.memory_physical_address ||
+                  identity.payload_region.length() != transfer.byte_length {
+            Some(ReadDmaIdentityError::PayloadRegion)
+        } else if identity.payload_direction != api_v0::dma::DmaDirection::FromDevice {
+            Some(ReadDmaIdentityError::PayloadDirection)
+        } else if !transfer.invalidate_buffer_after {
+            Some(ReadDmaIdentityError::InvalidatePolicy)
+        } else {
+            None
+        };
+        if let Some(error) = mismatch {
+            return Err(ReadDmaBindFailure { error, handoff });
+        }
+        Ok((Self { _private : () },
+            ReadApbdmaRecoverySync { handoff : Some(handoff), cpu_owned : None }))
     }
 }
 
@@ -1280,6 +1348,8 @@ pub(crate) fn combined_recovery_fixture<B>(buffer : B) -> ReadCombinedRecovery<B
 }
 
 impl<B> ReadCombinedRecovery<B> {
+    pub const fn plan(&self) -> &DeferredReadPlan { &self.plan }
+
     pub const fn mmc_quiesced(&self) -> bool { self.mmc_quiesced }
 
     pub const fn dma_quiesced(&self) -> bool { self.dma_quiesced }

@@ -4264,3 +4264,45 @@ mapping 当作 CPU-owned 自动释放。仅 `#[cfg(test)]` fixture 可构造 tra
 ### 提交
 
 - `[feat] hand off quiesced LS2K1000 DMA reads`
+## 2026-08-10：批次 87——绑定 MMC 读计划与 APBDMA 交接身份
+
+### 本批任务与设计
+
+1. 审计 `TransferPlan`、`Completion`、`QuiescedHandoff` 是否保留同一次传输的完整身份。
+2. 将 MMC 读计划与 APBDMA 的方向、长度、DATA 寄存器、descriptor/payload mapping 和 cache 策略逐项绑定。
+3. 绑定失败必须归还原始 handoff，禁止用布尔 evidence 丢失 DMA mapping ownership。
+4. 在进入 device ownership 前拒绝内部编码与 mapping 不一致的 APBDMA plan。
+5. 本批只闭合纯软件身份链，不启用生产 MMC executor 或真实读路径。
+
+### 已完成
+
+- [x] `DmaMapping` 新增只读 identity region/direction；device-owned 时仍不能通过 `cpu_region()` 取得 CPU 访问权。
+- [x] `Completion` 保留完整 `TransferPlan`，stop/IRQ completion 不再把身份压缩成单一 invalidate 布尔值。
+- [x] `QuiescedHandoff::identity()` 同时暴露 transfer、descriptor mapping 与 payload mapping 的稳定身份。
+- [x] `prepare_transfer` 在任何 ownership 转移前校验 descriptor 内存地址、方向 command、长度覆盖、start order、clean/invalidate policy。
+- [x] MMC adapter 校验合法读计划、DeviceToMemory、精确字节数、MMC DATA 地址、两份 mapping 的物理区间和方向。
+- [x] 新增细分 `ReadDmaIdentityError`；任何 mismatch 都返回原始 `QuiescedHandoff`，可重试或安全 finish。
+- [x] 测试覆盖损坏读计划、有效但长度不同的读计划、DATA 地址不同、MemoryToDevice 方向和 mapping/descriptor 编码不一致。
+- [x] 没有接入 machine init、IRQ runtime、真实 cache backend 或 MMC activation gate。
+
+### 验证证据
+
+- 2K1000 驱动 host 单测 132 项全部通过；handoff 聚焦 3 项和 mapping mismatch 聚焦 1 项通过。
+- 绑定失败链连续复用同一个 handoff：`ReadPlanInvalid`→`ByteLength`→`DataRegisterAddress`→正确绑定，随后 fault-injected cache sync 可重试成功。
+- MemoryToDevice handoff 被拒绝后仍可 finish，并归还两份 CPU-owned mapping。
+- production 组件 `cargo check`、LoongArch64 精确 feature target check 与 `make kernel-la` 通过；仅有仓库既有 warning。
+- 全部 53 项 Python host 测试与 topology/畸形 DTB matrix 通过；dtc warning 均来自预期畸形输入。
+- `git diff --check` 通过；全部新增测试使用内存模型，没有物理 MMIO、DMA 或卡片访问。
+
+### 已知限制、未验证与后续测试
+
+- [ ] `UNVERIFIED_ON_HARDWARE`：两块目标板的 MMC DATA/APBDMA 物理地址、DMA 可见地址与 cache coherency 仍需逐板确认。
+- [ ] `UNVERIFIED_ON_HARDWARE`：软件保存的 `TransferPlan` 与 handoff identity 不证明控制器实际取走并执行了同一 descriptor。
+- [ ] identity metadata 不授予 CPU 数据访问，但物理 cache line 的 clean/invalidate 正确性仍取决于未来板级 backend。
+- [ ] production MMC executor 仍未启用；本批 adapter 只为未来 executor 建立不可丢失 ownership 的绑定边界。
+- [ ] CMD18 的 stop/CMD12、卡状态与 partial block count 尚未纳入恢复契约。
+- [ ] 下一批应实现测试限定的读事务启动顺序：先绑定合法 read/DMA plan，再 prepare APBDMA，最后才允许发布 MMC command，并覆盖每个部分失败的 rollback/recovery ownership。
+
+### 提交
+
+- 本批计划提交：`[feat] bind LS2K1000 MMC reads to DMA mappings`
