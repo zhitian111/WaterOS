@@ -201,6 +201,30 @@ pub fn with_user_aspace_mut_and_flush<R>(handle : usize,
     result
 }
 
+/// Run `f` and invalidate the address space only when it reports a PTE change.
+/// Errors retain the old conservative flush because `f` may have changed an
+/// earlier PTE before discovering an invalid page later in the range.
+pub fn with_user_aspace_mut_and_flush_if_changed<R>(
+    handle : usize,
+    f : impl FnOnce(&mut LoongArch64AddressSpace) -> MmResult<(R, bool)>)
+    -> MmResult<R> {
+    match with_user_aspace_mut(handle, f) {
+        Ok((value, false)) => Ok(value),
+        Ok((value, true)) => {
+            platform::arch::paging::flush_tlb_local(
+                platform::arch::paging::TlbFlushRange::All);
+            request_tlb_shootdown(handle);
+            Ok(value)
+        }
+        Err(error) => {
+            platform::arch::paging::flush_tlb_local(
+                platform::arch::paging::TlbFlushRange::All);
+            request_tlb_shootdown(handle);
+            Err(error)
+        }
+    }
+}
+
 /// Run `f`, then invalidate one user page locally and on CPUs that cached this
 /// address space only when `f` reports that a PTE changed.
 pub fn with_user_aspace_mut_and_page_flush<R>(handle : usize,

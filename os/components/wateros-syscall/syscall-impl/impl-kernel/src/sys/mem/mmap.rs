@@ -290,8 +290,9 @@ pub(crate) fn sys_mprotect(args : SyscallArgs) -> UserRet {
     let len = args.arg(1);
     let prot = args.arg(2) as i32;
     let perm = linux_mmap_prot_to_perm(prot);
-    match mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
-              MmapOps::mprotect(aspace, VirtAddr(addr), len, perm)
+    match mm::user_aspace::with_user_aspace_mut_and_flush_if_changed(handle, |aspace| {
+              let changed = MmapOps::mprotect(aspace, VirtAddr(addr), len, perm)?;
+              Ok(((), changed))
           }) {
         Ok(()) => UserRet::from_success(0),
         Err(e) => UserRet::from_error(mm_err_to_errno(e)),
