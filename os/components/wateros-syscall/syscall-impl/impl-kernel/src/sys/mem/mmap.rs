@@ -145,11 +145,11 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
         None
     };
 
-    let (kind, file_fd, file_size) = if linux_mmap_is_anonymous(flags) {
+    let (kind, file_fd, file_size, executable_file) = if linux_mmap_is_anonymous(flags) {
         if !mf.contains(MapFlags::PRIVATE) && !mf.contains(MapFlags::SHARED) {
             return UserRet::from_error(ErrNo::EINVAL);
         }
-        (MmapKind::Anonymous, None, 0usize)
+        (MmapKind::Anonymous, None, 0usize, false)
     } else {
         if !mf.contains(MapFlags::SHARED) && !mf.contains(MapFlags::PRIVATE) {
             return UserRet::from_error(ErrNo::EINVAL);
@@ -172,14 +172,15 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
         if accmode & O_ACCMODE == O_WRONLY {
             return UserRet::from_error(ErrNo::EACCES);
         }
-        let size = match file_size_for_mmap(fd as usize) {
-            Ok(size) => size,
+        let (size, executable_file) = match file_size_and_exec_mode_for_mmap(fd as usize) {
+            Ok(metadata) => metadata,
             Err(e) => return UserRet::from_error(e),
         };
         (MmapKind::File { fd : fd as usize,
                           offset },
          Some(fd as usize),
-         size)
+         size,
+         executable_file)
     };
 
     let req = MmapRequest { addr_hint,
@@ -202,8 +203,8 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
         },
         Some(fd) => {
             let allow_readonly_sharing = mf.contains(MapFlags::PRIVATE) &&
-                                         perm.executable() &&
-                                         !perm.writable();
+                                         !perm.writable() &&
+                                         (perm.executable() || executable_file);
             let loader = match mmap_page_loader(fd, file_size, allow_readonly_sharing) {
                 Ok(loader) => loader,
                 Err(e) => return UserRet::from_error(e),
@@ -243,7 +244,7 @@ fn mmap_page_loader(fd : usize,
                                      content_identity }))
 }
 
-fn file_size_for_mmap(fd : usize) -> Result<usize, ErrNo> {
+fn file_size_and_exec_mode_for_mmap(fd : usize) -> Result<(usize, bool), ErrNo> {
     let meta = vfs::fd::with_current_io(fd, |handle| {
                    let meta = handle.metadata()?;
                    if meta.node_type != VfsNodeType::File {
@@ -251,7 +252,8 @@ fn file_size_for_mmap(fd : usize) -> Result<usize, ErrNo> {
                    }
                    Ok(meta)
                }).map_err(vfs_error_to_errno)?;
-    usize::try_from(meta.size).map_err(|_| ErrNo::EINVAL)
+    let size = usize::try_from(meta.size).map_err(|_| ErrNo::EINVAL)?;
+    Ok((size, meta.mode & 0o111 != 0))
 }
 
 // 本方法代码由AI完成
