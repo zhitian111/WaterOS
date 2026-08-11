@@ -43,6 +43,8 @@ static SCHEDULER_READY : AtomicBool = AtomicBool::new(false);
 const NO_CURRENT_TASK : usize = usize::MAX;
 static CURRENT_TASK_IDS : [AtomicUsize; MAX_CPUS] =
     [const { AtomicUsize::new(NO_CURRENT_TASK) }; MAX_CPUS];
+static CURRENT_ASPACE_PTRS : [AtomicUsize; MAX_CPUS] =
+    [const { AtomicUsize::new(0) }; MAX_CPUS];
 static CURRENT_TICK : AtomicU64 = AtomicU64::new(0);
 // ── scheduler cell 访问 ────────────────────────────────────────────
 #[inline(never)]
@@ -96,6 +98,8 @@ fn with_scheduler<R>(f : impl FnOnce(&mut MultiClassScheduler) -> R) -> R {
     let current_task_id = scheduler.current_task_id(cpu_id)
                                    .unwrap_or(NO_CURRENT_TASK);
     CURRENT_TASK_IDS[cpu_id.raw()].store(current_task_id, Ordering::Release);
+    CURRENT_ASPACE_PTRS[cpu_id.raw()].store(scheduler.current_aspace(cpu_id),
+                                            Ordering::Release);
     CURRENT_TICK.store(scheduler.current_tick(),
                        Ordering::Release);
     let diagnostic_snapshot = if debug::ENABLED {
@@ -991,6 +995,14 @@ pub fn current_task_id() -> Option<TaskId> {
     let _guard = InterruptGuard::new();
     let task_id = CURRENT_TASK_IDS[cpu::current_cpu_id().raw()].load(Ordering::Acquire);
     (task_id != NO_CURRENT_TASK).then_some(task_id)
+}
+
+/// 当前运行任务的用户地址空间指针；内核任务或尚未发布时返回 0。
+///
+/// 只读取 scheduler 统一发布的 per-CPU 镜像，不构造完整 `TaskSnapshot`。
+pub fn current_task_user_aspace_ptr() -> usize {
+    let _guard = InterruptGuard::new();
+    CURRENT_ASPACE_PTRS[cpu::current_cpu_id().raw()].load(Ordering::Acquire)
 }
 
 /// 当前运行任务的稳定快照（语义层，不含内核栈指针等实现细节）。

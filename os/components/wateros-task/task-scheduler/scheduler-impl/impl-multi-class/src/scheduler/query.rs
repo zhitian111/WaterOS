@@ -23,6 +23,10 @@ impl MultiClassScheduler {
         Some(snapshot)
     }
 
+    pub fn current_aspace(&self, cpu_id : CpuId) -> usize {
+        self.cpu_states[cpu_id.raw()].current_aspace()
+    }
+
     pub fn task_snapshot(&self, task_id : TaskId) -> TaskSnapshot {
         self.registry
             .task_snapshot(task_id)

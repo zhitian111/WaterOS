@@ -131,5 +131,5 @@ pub fn current_tick() -> TaskTick { scheduler::current_tick() }
 
 /// 当前运行任务的用户地址空间指针（内核任务为 0）；基于 `current_task_snapshot` 的单字段便捷封装。
 pub fn current_task_user_aspace_ptr() -> usize {
-    scheduler::current_task_snapshot().map_or(0, |snap| snap.user_aspace_ptr)
+    scheduler::current_task_user_aspace_ptr()
 }
