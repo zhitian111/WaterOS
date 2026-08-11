@@ -22,6 +22,8 @@ compile_error!("enable `impl-tlsf` (default) or `impl-linked-list-allocator`");
 mod backend_linked_list;
 #[cfg(feature = "impl-tlsf")]
 mod backend_tlsf;
+#[cfg(feature = "impl-tlsf")]
+mod small_pool;
 
 #[cfg(feature = "impl-linked-list-allocator")]
 use backend_linked_list as backend;

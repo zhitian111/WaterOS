@@ -3,7 +3,7 @@
 //! **不变量**：分配路径与 [`crate::interrupt_guard`] 一致；`pool_len` 在 `init` 后不变。
 
 use core::alloc::{GlobalAlloc, Layout};
-use core::ptr::{self, addr_of_mut, NonNull};
+use core::ptr::{self, NonNull};
 #[cfg(not(feature = "tlsf-diagnostics"))]
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -13,8 +13,8 @@ use rlsf::Tlsf;
 use spin::Mutex;
 
 use crate::interrupt_guard::{maybe_warn_high_water, with_allocator_interrupt_guard};
+use crate::small_pool;
 use crate::HeapMemStats;
-use crate::HEAP_SPACE;
 
 /// TLSF 位图参数：`FLLEN=22` 使最大块 ≥ 128 MiB（64-bit GRANULARITY=32）。
 type KernelTlsf = Tlsf<'static, u32, u32, 22, 32>;
@@ -29,9 +29,9 @@ pub(crate) struct InterruptSafeTlsfHeap {
 /// pointers that violate the supplied layout alignment.  This deliberately
 /// cannot prove that `ptr` is an allocation start and is not a double-free
 /// detector; those require allocator metadata instrumentation.
-fn dealloc_pointer_in_heap(ptr : *mut u8, layout : Layout) -> bool {
-    let heap_start = addr_of_mut!(HEAP_SPACE) as usize;
-    let heap_end = heap_start.checked_add(KERNEL_HEAP_SIZE)
+fn dealloc_pointer_in_tlsf(ptr : *mut u8, layout : Layout) -> bool {
+    let heap_start = small_pool::tlsf_start() as usize;
+    let heap_end = heap_start.checked_add(small_pool::tlsf_len())
                              .unwrap_or(usize::MAX);
     let ptr_value = ptr as usize;
     ptr_value >= heap_start &&
@@ -66,11 +66,14 @@ impl InterruptSafeTlsfHeap {
     }
 
     pub(crate) fn mem_stats(&self) -> HeapMemStats {
-        let used = self.used_estimate
-                       .load(Ordering::Relaxed);
+        let tlsf_used = self.used_estimate
+                            .load(Ordering::Relaxed);
         let pool_len = self.pool_len
                            .load(Ordering::Acquire);
-        let free = pool_len.saturating_sub(used);
+        let small_used = small_pool::allocated_bytes();
+        let used = tlsf_used.saturating_add(small_used);
+        let free = pool_len.saturating_sub(tlsf_used)
+                           .saturating_add(small_pool::POOL_SIZE.saturating_sub(small_used));
         HeapMemStats { used,
                        free,
                        capacity : KERNEL_HEAP_SIZE }
@@ -94,9 +97,10 @@ impl InterruptSafeTlsfHeap {
 
     pub(crate) unsafe fn init(&self) {
         with_allocator_interrupt_guard(|| unsafe {
-            let block = NonNull::new_unchecked(addr_of_mut!(HEAP_SPACE) as *mut u8);
+            small_pool::init();
+            let block = NonNull::new_unchecked(small_pool::tlsf_start());
             let block_slice = NonNull::new(ptr::slice_from_raw_parts_mut(block.as_ptr(),
-                                                                          KERNEL_HEAP_SIZE))
+                                                                          small_pool::tlsf_len()))
                                   .expect("heap slice");
             let pool_len = self.inner
                                .lock()
@@ -114,7 +118,16 @@ impl InterruptSafeTlsfHeap {
 unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
     unsafe fn alloc(&self, layout : Layout) -> *mut u8 {
         let (ptr, stats) = with_allocator_interrupt_guard(|| {
-            let stats = self.mem_stats();
+            let tlsf_used = self.used_estimate
+                                .load(Ordering::Relaxed);
+            let used = tlsf_used.saturating_add(small_pool::reserved_bytes());
+            let stats = HeapMemStats { used,
+                                       free : KERNEL_HEAP_SIZE.saturating_sub(used),
+                                       capacity : KERNEL_HEAP_SIZE };
+            let small_ptr = unsafe { small_pool::allocate(layout) };
+            if !small_ptr.is_null() {
+                return (small_ptr, stats);
+            }
             let mut tlsf = self.inner.lock();
             let ptr = match tlsf.allocate(layout) {
                 Some(ptr) => {
@@ -133,7 +146,15 @@ unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
         if ptr.is_null() {
             return;
         }
-        if !dealloc_pointer_in_heap(ptr, layout) {
+        if small_pool::contains(ptr) {
+            if !small_pool::valid_pointer(ptr, layout) {
+                reject_invalid_pointer("dealloc", ptr, layout);
+                return;
+            }
+            with_allocator_interrupt_guard(|| unsafe { small_pool::deallocate(ptr) });
+            return;
+        }
+        if !dealloc_pointer_in_tlsf(ptr, layout) {
             reject_invalid_pointer("dealloc", ptr, layout);
             return;
         }
@@ -147,24 +168,43 @@ unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
     }
 
     unsafe fn realloc(&self, ptr : *mut u8, layout : Layout, new_size : usize) -> *mut u8 {
-        if !ptr.is_null() && !dealloc_pointer_in_heap(ptr, layout) {
+        if ptr.is_null() {
+            let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
+                return ptr::null_mut();
+            };
+            return unsafe { self.alloc(new_layout) };
+        }
+        if small_pool::contains(ptr) {
+            if !small_pool::valid_pointer(ptr, layout) {
+                reject_invalid_pointer("realloc", ptr, layout);
+                return ptr::null_mut();
+            }
+            if new_size == 0 {
+                unsafe { self.dealloc(ptr, layout) };
+                return ptr::null_mut();
+            }
+            let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
+                return ptr::null_mut();
+            };
+            if small_pool::eligible(new_layout) {
+                return ptr;
+            }
+            let new_ptr = unsafe { self.alloc(new_layout) };
+            if new_ptr.is_null() {
+                return ptr::null_mut();
+            }
+            unsafe {
+                ptr::copy_nonoverlapping(ptr, new_ptr, layout.size().min(new_size));
+                self.dealloc(ptr, layout);
+            }
+            return new_ptr;
+        }
+        if !dealloc_pointer_in_tlsf(ptr, layout) {
             reject_invalid_pointer("realloc", ptr, layout);
             return ptr::null_mut();
         }
         with_allocator_interrupt_guard(|| unsafe {
             let mut tlsf = self.inner.lock();
-            if ptr.is_null() {
-                let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
-                    return ptr::null_mut();
-                };
-                return match tlsf.allocate(new_layout) {
-                    Some(p) => {
-                        self.estimate_add(new_layout.size());
-                        p.as_ptr()
-                    }
-                    None => ptr::null_mut(),
-                };
-            }
             if new_size == 0 {
                 self.estimate_sub(layout.size());
                 tlsf.deallocate(NonNull::new_unchecked(ptr),
