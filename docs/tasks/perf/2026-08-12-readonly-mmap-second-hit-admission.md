@@ -53,3 +53,28 @@ Run one matched full RISC-V BuildStorm sample. The accepted baseline is
 534.26 s. Accept only a successful result clearly more than roughly 10 s faster,
 with no timeout, stall, panic, or SIGSEGV. A clear first-run win is sufficient;
 a regression or noise-sized result is rejected without a second run or merge.
+
+## Result
+
+The first and only matched sample passed but did not reach the acceptance line:
+
+| item | result |
+| --- | ---: |
+| accepted RX-only baseline | 534.26 s |
+| readonly second-hit candidate | 529.26 s |
+| difference | -5.00 s / -0.94% |
+| host wall time | 552.016 s |
+| output artifact | 1,681,000 bytes |
+
+Normal and diagnostics checks, RV/LA builds, and all BuildStorm markers passed.
+There was no timeout, stall, panic, or SIGSEGV. The candidate kernel SHA-256
+was `146fcd952390a85a3964729198cd7e6bcdc9fd2b7b765220c15db31f6e126d26`;
+the fixed image SHA-256 remained
+`ca5987d2791f83781762f531557f40fadd0a2ce0068fd9be58c2014465db7f58`.
+The structured result is
+`/tmp/wateros-buildstorm-fixed/readonly-mmap-second-hit-a1/result.json`.
+
+The 5.00 s improvement is below the declared roughly 10 s noise threshold.
+Do not run a second sample and do not merge the implementation. Together with
+the executable-mode rodata regression, this shows that non-RX mmap sharing is
+not the next major wall-clock axis even with scan-resistant admission.
