@@ -25,6 +25,7 @@
         "dep:fs",
         "dep:impl_fd_session",
         "dep:impl_page_cache",
+        "impl_page_cache/physical-pages",
     ]
     cache-layer-diagnostics = [ "impl_page_cache/diagnostics" ]
     default = [ "api-v0", "bridge-fs-api" ]

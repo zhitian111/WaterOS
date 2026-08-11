@@ -27,6 +27,8 @@ use core::hash::{Hash, Hasher};
 use core::sync::atomic::{AtomicU64, Ordering};
 use spin::{Mutex, RwLock};
 use wateros_base_config::fs::{FILE_PAGE_CACHE_CAPACITY, FILE_PAGE_SIZE, FILE_READ_AHEAD_STRIDE};
+#[cfg(feature = "physical-pages")]
+use wateros_mm_frame_alloctor::OwnedPhysPage;
 
 // 本变量代码由AI完成
 const FLUSH_RUN_MAX_PAGES : usize = 64;
@@ -166,8 +168,12 @@ enum LruClass {
 // 本结构代码由AI完成
 struct GlobalCacheState {
     capacity : usize,
-    /// 所有页帧 payload 共用连续池，避免每槽一次 4 KiB 堆分配放大 TLSF 锁竞争与碎片。
+    /// Host tests do not have the kernel frame allocator, so retain a compact
+    /// heap backing there. Kernel builds keep payload outside the TLSF heap.
+    #[cfg(not(feature = "physical-pages"))]
     data : Vec<u8>,
+    #[cfg(feature = "physical-pages")]
+    data : Vec<OwnedPhysPage>,
     frames : Vec<PageFrame>,
     index : BTreeMap<(FileCacheKey, u64), usize>,
     clean_lru_head : Option<usize>,
@@ -187,7 +193,18 @@ impl GlobalCacheState {
     fn with_capacity(cap : usize) -> Self {
         let mut frames = Vec::new();
         let mut free = Vec::new();
+        #[cfg(not(feature = "physical-pages"))]
         let data = vec![0u8; cap.checked_mul(FILE_PAGE_SIZE).unwrap_or(usize::MAX)];
+        #[cfg(feature = "physical-pages")]
+        let data = {
+            let mut pages = Vec::new();
+            pages.reserve_exact(cap);
+            for _ in 0..cap {
+                pages.push(OwnedPhysPage::alloc_zeroed()
+                               .expect("allocate physical file page-cache payload"));
+            }
+            pages
+        };
         if cap > 0 {
             frames.reserve_exact(cap);
             for _ in 0..cap {
@@ -274,14 +291,24 @@ impl GlobalCacheState {
 
     #[inline]
     fn page_data(&self, idx : usize) -> &[u8] {
-        let start = idx * FILE_PAGE_SIZE;
-        &self.data[start..start + FILE_PAGE_SIZE]
+        #[cfg(not(feature = "physical-pages"))]
+        {
+            let start = idx * FILE_PAGE_SIZE;
+            return &self.data[start..start + FILE_PAGE_SIZE];
+        }
+        #[cfg(feature = "physical-pages")]
+        self.data[idx].as_bytes()
     }
 
     #[inline]
     fn page_data_mut(&mut self, idx : usize) -> &mut [u8] {
-        let start = idx * FILE_PAGE_SIZE;
-        &mut self.data[start..start + FILE_PAGE_SIZE]
+        #[cfg(not(feature = "physical-pages"))]
+        {
+            let start = idx * FILE_PAGE_SIZE;
+            return &mut self.data[start..start + FILE_PAGE_SIZE];
+        }
+        #[cfg(feature = "physical-pages")]
+        self.data[idx].as_bytes_mut()
     }
 
     fn lru_ends(&self, class : LruClass) -> (Option<usize>, Option<usize>) {
