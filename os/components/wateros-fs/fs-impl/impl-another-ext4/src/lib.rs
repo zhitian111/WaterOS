@@ -30,6 +30,8 @@ use spin::Mutex;
 const EXT4_SUPER_MAGIC : u16 = 0xEF53;
 const SUPERBLOCK_MAGIC_OFFSET : u64 = 1024 + 0x38;
 const LOOKUP_CACHE_CAPACITY : usize = 4096;
+const LOOKUP_CACHE_WAYS : usize = 4;
+const LOOKUP_CACHE_BUCKETS : usize = LOOKUP_CACHE_CAPACITY / LOOKUP_CACHE_WAYS;
 const NEGATIVE_CACHE_CAPACITY : usize = 4096;
 const NEGATIVE_CACHE_WAYS : usize = 4;
 const NEGATIVE_CACHE_BUCKETS : usize = NEGATIVE_CACHE_CAPACITY / NEGATIVE_CACHE_WAYS;
@@ -172,12 +174,89 @@ fn parent_name(path : &str) -> FsResult<(&str, &str)> {
 const FNV1A_OFFSET : u64 = 0xcbf2_9ce4_8422_2325;
 const FNV1A_PRIME : u64 = 0x0000_0100_0000_01b3;
 
-fn negative_path_hash(path : &str) -> u64 {
+fn path_hash(path : &str) -> u64 {
     path.as_bytes()
         .iter()
         .fold(FNV1A_OFFSET, |hash, byte| {
             (hash ^ u64::from(*byte)).wrapping_mul(FNV1A_PRIME)
         })
+}
+
+struct PositiveDentry {
+    hash : u64,
+    path : String,
+    inode : u32,
+}
+
+/// Four-way fixed-capacity positive lookup cache. Hash collisions are always
+/// verified with the complete path and can therefore only cause cache misses.
+struct PositiveDentryCache {
+    slots : Vec<Option<PositiveDentry>>,
+    next_victim : Vec<u8>,
+}
+
+impl PositiveDentryCache {
+    fn new() -> Self {
+        let mut slots = Vec::with_capacity(LOOKUP_CACHE_CAPACITY);
+        slots.resize_with(LOOKUP_CACHE_CAPACITY, || None);
+        Self { slots,
+               next_victim : vec![0; LOOKUP_CACHE_BUCKETS] }
+    }
+
+    fn bucket(hash : u64) -> usize { hash as usize % LOOKUP_CACHE_BUCKETS }
+
+    fn get(&self, path : &str) -> Option<&u32> {
+        let hash = path_hash(path);
+        let first = Self::bucket(hash) * LOOKUP_CACHE_WAYS;
+        self.slots[first..first + LOOKUP_CACHE_WAYS]
+            .iter()
+            .flatten()
+            .find(|entry| entry.hash == hash && entry.path == path)
+            .map(|entry| &entry.inode)
+    }
+
+    fn contains_key(&self, path : &str) -> bool { self.get(path).is_some() }
+
+    fn insert(&mut self, path : String, inode : u32) -> Option<u32> {
+        let hash = path_hash(path.as_str());
+        let bucket = Self::bucket(hash);
+        let first = bucket * LOOKUP_CACHE_WAYS;
+        let ways = &mut self.slots[first..first + LOOKUP_CACHE_WAYS];
+        if let Some(entry) = ways.iter_mut()
+                                 .flatten()
+                                 .find(|entry| entry.hash == hash && entry.path == path)
+        {
+            return Some(core::mem::replace(&mut entry.inode, inode));
+        }
+        let way = ways.iter()
+                      .position(Option::is_none)
+                      .unwrap_or_else(|| {
+                          let way = usize::from(self.next_victim[bucket]);
+                          self.next_victim[bucket] =
+                              ((way + 1) % LOOKUP_CACHE_WAYS) as u8;
+                          way
+                      });
+        ways[way]
+            .replace(PositiveDentry { hash, path, inode })
+            .map(|entry| entry.inode)
+    }
+
+    fn retain(&mut self, mut keep : impl FnMut(&String, &mut u32) -> bool) {
+        for slot in self.slots.iter_mut() {
+            let keep_slot = slot.as_mut()
+                                .is_none_or(|entry| keep(&entry.path, &mut entry.inode));
+            if !keep_slot {
+                *slot = None;
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        for slot in self.slots.iter_mut() {
+            *slot = None;
+        }
+        self.next_victim.fill(0);
+    }
 }
 
 struct NegativeDentry {
@@ -201,7 +280,7 @@ impl NegativeDentryCache {
     fn bucket(hash : u64) -> usize { hash as usize % NEGATIVE_CACHE_BUCKETS }
 
     fn contains(&self, path : &str) -> bool {
-        let hash = negative_path_hash(path);
+        let hash = path_hash(path);
         let first = Self::bucket(hash) * NEGATIVE_CACHE_WAYS;
         self.slots[first..first + NEGATIVE_CACHE_WAYS]
             .iter()
@@ -210,7 +289,7 @@ impl NegativeDentryCache {
     }
 
     fn insert(&mut self, path : &str) {
-        let hash = negative_path_hash(path);
+        let hash = path_hash(path);
         let bucket = Self::bucket(hash);
         let first = bucket * NEGATIVE_CACHE_WAYS;
         let ways = &mut self.slots[first..first + NEGATIVE_CACHE_WAYS];
@@ -233,7 +312,7 @@ impl NegativeDentryCache {
     }
 
     fn remove_exact(&mut self, path : &str) -> usize {
-        let hash = negative_path_hash(path);
+        let hash = path_hash(path);
         let first = Self::bucket(hash) * NEGATIVE_CACHE_WAYS;
         for slot in self.slots[first..first + NEGATIVE_CACHE_WAYS].iter_mut() {
             if slot.as_ref()
@@ -318,11 +397,6 @@ macro_rules! lookup_diag_event {
     };
 }
 
-fn lookup_diag_positive_clear() {
-    #[cfg(feature = "lookup-diagnostics")]
-    LOOKUP_DIAGNOSTICS.positive_clear.fetch_add(1, Ordering::Relaxed);
-}
-
 fn lookup_diag_negative_invalidate(removed : usize) {
     #[cfg(feature = "lookup-diagnostics")]
     LOOKUP_DIAGNOSTICS.negative_invalidate.fetch_add(removed as u64, Ordering::Relaxed);
@@ -333,7 +407,7 @@ fn lookup_diag_negative_invalidate(removed : usize) {
 pub struct AnotherExt4Fs {
     fs : Option<Ext4>,
     io_error_state : Option<Arc<AtomicBool>>,
-    lookup_cache : Mutex<BTreeMap<String, u32>>,
+    lookup_cache : Mutex<PositiveDentryCache>,
     negative_cache : Mutex<Option<Box<NegativeDentryCache>>>,
     open_nodes : BTreeMap<u32, usize>,
     orphan_nodes : BTreeMap<u32, String>,
@@ -341,10 +415,10 @@ pub struct AnotherExt4Fs {
 }
 
 impl AnotherExt4Fs {
-    const fn new() -> Self {
+    fn new() -> Self {
         Self { fs : None,
                io_error_state : None,
-               lookup_cache : Mutex::new(BTreeMap::new()),
+               lookup_cache : Mutex::new(PositiveDentryCache::new()),
                negative_cache : Mutex::new(None),
                open_nodes : BTreeMap::new(),
                orphan_nodes : BTreeMap::new(),
@@ -399,10 +473,6 @@ impl AnotherExt4Fs {
 
     fn cache_insert(&self, path : &str, inode : u32) {
         let mut cache = self.lookup_cache.lock();
-        if cache.len() >= LOOKUP_CACHE_CAPACITY && !cache.contains_key(path) {
-            cache.clear();
-            lookup_diag_positive_clear();
-        }
         cache.insert(String::from(path), inode);
         drop(cache);
         self.negative_cache_remove_exact(path);
@@ -1038,16 +1108,45 @@ mod tests {
     }
 
     #[test]
+    fn positive_cache_keeps_four_collisions_and_evicts_within_bucket() {
+        let seed = "/positive/collision/seed";
+        let bucket = super::PositiveDentryCache::bucket(super::path_hash(seed));
+        let paths : alloc::vec::Vec<_> = (0..100_000)
+            .map(|index| alloc::format!("/positive/collision/{index}"))
+            .filter(|path| {
+                super::PositiveDentryCache::bucket(super::path_hash(path.as_str())) == bucket
+            })
+            .take(super::LOOKUP_CACHE_WAYS + 1)
+            .collect();
+        assert_eq!(paths.len(), super::LOOKUP_CACHE_WAYS + 1);
+
+        let mut cache = super::PositiveDentryCache::new();
+        for (index, path) in paths[..super::LOOKUP_CACHE_WAYS].iter().enumerate() {
+            cache.insert(path.clone(), index as u32);
+        }
+        for (index, path) in paths[..super::LOOKUP_CACHE_WAYS].iter().enumerate() {
+            assert_eq!(cache.get(path), Some(&(index as u32)));
+        }
+
+        cache.insert(paths[super::LOOKUP_CACHE_WAYS].clone(), 99);
+        assert_eq!(cache.get(&paths[0]), None);
+        for (index, path) in paths[1..super::LOOKUP_CACHE_WAYS].iter().enumerate() {
+            assert_eq!(cache.get(path), Some(&((index + 1) as u32)));
+        }
+        assert_eq!(cache.get(&paths[super::LOOKUP_CACHE_WAYS]), Some(&99));
+    }
+
+    #[test]
     fn negative_cache_requires_full_path_match_and_removes_exact_entry() {
         let mut cache = super::NegativeDentryCache::new();
         let original = "/missing/a";
-        let bucket = super::NegativeDentryCache::bucket(super::negative_path_hash(original));
+        let bucket = super::NegativeDentryCache::bucket(super::path_hash(original));
         let collision = (0..10_000)
                             .map(|index| alloc::format!("/collision/{index}"))
                             .find(|path| {
                                 path != original &&
                                 super::NegativeDentryCache::bucket(
-                                    super::negative_path_hash(path.as_str()),
+                                    super::path_hash(path.as_str()),
                                 ) == bucket
                             })
                             .expect("find another path in the same cache bucket");
