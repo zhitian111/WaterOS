@@ -119,6 +119,40 @@ impl BlockCache {
         }
     }
 
+    /// Read a physically contiguous run with one lower-device request while
+    /// preserving cached (including dirty) blocks as the authoritative view.
+    pub fn read_blocks(&self, start_block: PBlockId, buf: &mut [u8]) {
+        assert_eq!(buf.len() % BLOCK_SIZE, 0);
+        if buf.is_empty() {
+            return;
+        }
+
+        // Do not hold the cache lock across device I/O. Existing cache hits
+        // are overlaid below, so dirty write-back data cannot be exposed as
+        // stale disk content.
+        self.block_dev.read_blocks(start_block, buf);
+
+        let mut cache = self.cache.lock();
+        for (index, chunk) in buf.chunks_exact_mut(BLOCK_SIZE).enumerate() {
+            let block_id = start_block + index as PBlockId;
+            let set_id = block_id as usize % CACHE_SIZE;
+            let slot_id = cache[set_id].access(block_id) as usize;
+            let slot = &mut cache[set_id].slots[slot_id];
+            if slot.valid && slot.block.id == block_id {
+                chunk.copy_from_slice(slot.block.data());
+                continue;
+            }
+            if slot.valid && slot.dirty {
+                self.block_dev.write_block(&slot.block);
+            }
+            let mut data = Box::new([0u8; BLOCK_SIZE]);
+            data.copy_from_slice(chunk);
+            slot.block = Block::new(block_id, data);
+            slot.valid = true;
+            slot.dirty = false;
+        }
+    }
+
     /// Write a block. (Write-Allocate)
     pub fn write_block(&self, block: &Block) {
         debug!("Writing block {}", block.id);
@@ -180,6 +214,7 @@ mod tests {
 
     struct MemoryDevice {
         reads: AtomicUsize,
+        bulk_reads: AtomicUsize,
         writes: Mutex<Vec<Block>>,
     }
 
@@ -191,6 +226,13 @@ mod tests {
             Block::new(block_id, data)
         }
 
+        fn read_blocks(&self, start_block: PBlockId, buf: &mut [u8]) {
+            self.bulk_reads.fetch_add(1, Ordering::Relaxed);
+            for (index, chunk) in buf.chunks_exact_mut(BLOCK_SIZE).enumerate() {
+                chunk.fill((start_block + index as PBlockId) as u8);
+            }
+        }
+
         fn write_block(&self, block: &Block) {
             self.writes.lock().push(block.clone());
         }
@@ -200,6 +242,7 @@ mod tests {
     fn cache_hit_shares_data_and_write_uses_copy_on_write() {
         let device = Arc::new(MemoryDevice {
             reads: AtomicUsize::new(0),
+            bulk_reads: AtomicUsize::new(0),
             writes: Mutex::new(Vec::new()),
         });
         let cache = BlockCache::new(device.clone());
@@ -219,5 +262,26 @@ mod tests {
         let writes = device.writes.lock();
         assert_eq!(writes.len(), 1);
         assert_eq!(writes[0].data()[0], 99);
+    }
+
+    #[test]
+    fn contiguous_bulk_read_uses_one_backend_call_and_overlays_dirty_hit() {
+        let device = Arc::new(MemoryDevice {
+            reads: AtomicUsize::new(0),
+            bulk_reads: AtomicUsize::new(0),
+            writes: Mutex::new(Vec::new()),
+        });
+        let cache = BlockCache::new(device.clone());
+        let mut dirty = cache.read_block(8);
+        dirty.data_mut().fill(99);
+        cache.write_block(&dirty);
+
+        let mut data = vec![0u8; BLOCK_SIZE * 3];
+        cache.read_blocks(7, &mut data);
+
+        assert_eq!(device.bulk_reads.load(Ordering::Relaxed), 1);
+        assert_eq!(data[0], 7);
+        assert_eq!(data[BLOCK_SIZE], 99);
+        assert_eq!(data[BLOCK_SIZE * 2], 9);
     }
 }

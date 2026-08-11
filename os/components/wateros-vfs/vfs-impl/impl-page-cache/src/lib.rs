@@ -868,6 +868,20 @@ impl GlobalFilePageCache {
             }
         }
 
+        self.install_loaded_page(io, key, page_idx, &page_buf, source, map_err)
+    }
+
+// 本方法代码由AI完成
+    fn install_loaded_page<Io, E>(&self,
+                                  io : &mut Io,
+                                  key : &FileCacheKey,
+                                  page_idx : u64,
+                                  page_buf : &[u8; FILE_PAGE_SIZE],
+                                  source : InstallSource,
+                                  map_err : fn(Io::Error) -> E)
+                                  -> Result<(), E>
+        where Io : PageCacheIo
+    {
         // 第二次检查：锁外读盘期间可能已有其他路径装入该页。
         let mut cache = self.state.lock();
         if cache.capacity == 0 {
@@ -946,7 +960,7 @@ impl GlobalFilePageCache {
                 return Ok(());
             }
             cache.page_data_mut(idx)
-                 .copy_from_slice(&page_buf);
+                 .copy_from_slice(page_buf);
             cache.frames[idx].dirty = false;
             cache.frames[idx].version = 0;
             cache.frames[idx].key = Some((key.clone(), page_idx));
@@ -957,6 +971,70 @@ impl GlobalFilePageCache {
             cache.touch_lru(idx);
             return Ok(());
         }
+    }
+
+// 本方法代码由AI完成
+    fn prefetch_pages<Io, E>(&self,
+                             io : &mut Io,
+                             key : &FileCacheKey,
+                             start_page : u64,
+                             file_size : u64,
+                             map_err : fn(Io::Error) -> E)
+                             -> Result<(), E>
+        where Io : PageCacheIo
+    {
+        let start = start_page.saturating_mul(FILE_PAGE_SIZE as u64);
+        if start >= file_size || FILE_READ_AHEAD_STRIDE == 0 {
+            return Ok(());
+        }
+        let available = usize::try_from(file_size - start).unwrap_or(usize::MAX);
+        let page_count = FILE_READ_AHEAD_STRIDE.min(available.div_ceil(FILE_PAGE_SIZE));
+        let mut missing = Vec::with_capacity(page_count);
+        {
+            let mut cache = self.state.lock();
+            if cache.capacity == 0 {
+                return Ok(());
+            }
+            for ahead in 0..page_count {
+                let page_idx = start_page + ahead as u64;
+                let existing = cache.index
+                                    .get(&(key.clone(), page_idx))
+                                    .copied();
+                #[cfg(feature = "diagnostics")]
+                cache.note_lookup(existing, InstallSource::Prefetch);
+                if let Some(idx) = existing {
+                    cache.touch_lru(idx);
+                } else {
+                    missing.push(page_idx);
+                }
+            }
+        }
+        if missing.is_empty() {
+            return Ok(());
+        }
+
+        let read_len = page_count.checked_mul(FILE_PAGE_SIZE).unwrap_or(0)
+                                 .min(available);
+        let mut run = vec![0u8; page_count * FILE_PAGE_SIZE];
+        let n = io.read_range(key.path.as_ref(), start, &mut run[..read_len])
+                  .map_err(map_err)?;
+        if n < read_len {
+            run[n..read_len].fill(0);
+        }
+        for page_idx in missing {
+            let ahead = usize::try_from(page_idx - start_page).unwrap_or(0);
+            let page_start = ahead * FILE_PAGE_SIZE;
+            let page : &[u8; FILE_PAGE_SIZE] = run[page_start..page_start + FILE_PAGE_SIZE]
+                                                    .try_into()
+                                                    .expect("prefetch page slice");
+            self.install_loaded_page(io,
+                                     key,
+                                     page_idx,
+                                     page,
+                                     InstallSource::Prefetch,
+                                     map_err)?;
+        }
+        Ok(())
     }
 
 // 本方法代码由AI完成
@@ -1134,23 +1212,20 @@ impl GlobalFilePageCache {
             done += chunk;
             pos += chunk as u64;
         }
-        if done > 0 {
+        let end_page = if done > 0 {
             let end_page = (offset + done as u64 - 1) / FILE_PAGE_SIZE as u64;
             entry.write().last_read_end_page = Some(end_page);
-        }
+            Some(end_page)
+        } else {
+            None
+        };
         if sequential && FILE_READ_AHEAD_STRIDE > 0 {
-            let prefetch_start = offset / FILE_PAGE_SIZE as u64 + 1;
-            for ahead in 0..FILE_READ_AHEAD_STRIDE {
-                let pi = prefetch_start + ahead as u64;
-                if pi * FILE_PAGE_SIZE as u64 >= file_size {
-                    break;
-                }
-                let _ = self.install_page(io,
-                                          key,
-                                          pi,
-                                          file_size,
-                                          InstallSource::Prefetch,
-                                          map_err);
+            if let Some(end_page) = end_page {
+                let _ = self.prefetch_pages(io,
+                                            key,
+                                            end_page.saturating_add(1),
+                                            file_size,
+                                            map_err);
             }
         }
         Ok(done)
@@ -1666,6 +1741,43 @@ mod tests {
             }
             self.data[start..end].copy_from_slice(data);
             Ok(data.len())
+        }
+    }
+
+    #[test]
+    fn sequential_readahead_uses_one_lower_range_read() {
+        let cache = GlobalFilePageCache::new(7);
+        let mut io = CountingIo::new();
+        io.data = (0..FILE_PAGE_SIZE * 10).map(|index| (index / FILE_PAGE_SIZE) as u8)
+                                                .collect();
+        let file_size = io.data.len() as u64;
+        let mut first = vec![0u8; FILE_PAGE_SIZE];
+        let mut second = vec![0u8; FILE_PAGE_SIZE];
+
+        assert_eq!(cache.read(&mut io,
+                              "/tmp/sequential",
+                              file_size,
+                              0,
+                              &mut first,
+                              |e| e)
+                        .unwrap(),
+                   FILE_PAGE_SIZE);
+        assert_eq!(cache.read(&mut io,
+                              "/tmp/sequential",
+                              file_size,
+                              FILE_PAGE_SIZE as u64,
+                              &mut second,
+                              |e| e)
+                        .unwrap(),
+                   FILE_PAGE_SIZE);
+
+        assert_eq!(first[0], 0);
+        assert_eq!(second[0], 1);
+        assert_eq!(io.reads.get(), 3,
+                   "two demand reads plus one eight-page read-ahead range");
+        let state = cache.state.lock();
+        for page in 2..10u64 {
+            assert!(state.index.contains_key(&(cache.file_key("/tmp/sequential"), page)));
         }
     }
 
