@@ -80,3 +80,25 @@ current-best 783.00s 回退 149.23s（19.06%）。结果文件：
 修订候选只允许 `MAP_PRIVATE && executable && !writable`，聚焦动态库 text；普通只读数据映射
 完全回到原路径。缓存满后不再 O(n) 淘汰，而是保留已建立热点集，让新 miss 仅使用本次已加载
 frame、跳过 admission。首轮是明确失败，按规则只再运行这一轮基于根因收缩的候选。
+
+## 可执行页收缩候选结果
+
+修订版同时通过普通 RISC-V check 和 `cache-layer-diagnostics` feature check，随后通过 RV/LA
+`make all`。默认别名与 Final 一致且均保留脚本正文 marker：
+
+- RV Final SHA-256：`5c1298412706eeae6bd0e44891b43c08353ab87f3ca317c76402562355ca19f4`；
+- LA Final SHA-256：`0496904a2791dbb0cc2b8e145363f7a9aa2bfc777aec02c7d8fc53185f4ac63a`。
+
+同一镜像、runner 和 CPU 条件下，完整 BuildStorm 结果：
+
+| 内核 | elapsed_s | 相对 current-best 783.00s |
+| --- | ---: | ---: |
+| readonly executable private mmap cache | 640.95 | -142.05s（-18.14%） |
+
+候选通过 toolchain、minibuild、compile marker 和 judge，产物 1,681,000 字节；无 timeout、
+stall、panic 或 SIGSEGV。judge 的 compile-time 项得分 47.7。结果文件：
+`/tmp/wateros-buildstorm-fixed/readonly-exec-mmap-physical-page-cache-a1/result.json`。
+
+18.14% 明显越过噪声和预设接受线，也与“动态库 text 高复用、普通只读数据接近一次性”的收缩
+假设一致。按照首次明确有效即停止的验收规则，不运行第二轮性能样本，接受并合入 main。后续
+diagnostics 只用于记录 RX cache 命中/驻留量，不改变本次墙钟结论。
