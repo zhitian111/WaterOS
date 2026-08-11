@@ -8,6 +8,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 
 use api_v0::addr::{PhysPageNum, VirtAddr, VirtPageNum, PAGE_SIZE};
@@ -69,6 +70,67 @@ pub struct ElfSegmentLoadParams {
     pub filesz : usize,
     pub vma_start : usize,
     pub vma_file_origin : usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ElfReadonlyPageProfileKey {
+    path_hash : u64,
+    vbase : usize,
+    p_offset : usize,
+    filesz : usize,
+    vma_start : usize,
+    file_offset : usize,
+}
+
+struct ElfReadonlyPageProfile {
+    seen : BTreeSet<ElfReadonlyPageProfileKey>,
+    cacheable : u64,
+    repeated : u64,
+}
+
+static ELF_READONLY_PAGE_PROFILE : spin::Mutex<Option<ElfReadonlyPageProfile>> =
+    spin::Mutex::new(None);
+
+/// Temporary BuildStorm diagnostic: count repeated immutable ELF segment pages.
+/// This changes no mapping or page contents and is removed after the profile run.
+pub fn profile_elf_readonly_page(path : &str,
+                                 params : &ElfSegmentLoadParams,
+                                 file_offset : usize) {
+    let mut path_hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in path.as_bytes() {
+        path_hash ^= u64::from(*byte);
+        path_hash = path_hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let key = ElfReadonlyPageProfileKey { path_hash,
+                                          vbase : params.vbase,
+                                          p_offset : params.p_offset,
+                                          filesz : params.filesz,
+                                          vma_start : params.vma_start,
+                                          file_offset };
+    let mut guard = ELF_READONLY_PAGE_PROFILE.lock();
+    let profile = guard.get_or_insert_with(|| ElfReadonlyPageProfile {
+                            seen : BTreeSet::new(),
+                            cacheable : 0,
+                            repeated : 0,
+                        });
+    profile.cacheable = profile.cacheable.saturating_add(1);
+    if !profile.seen.insert(key) {
+        profile.repeated = profile.repeated.saturating_add(1);
+    }
+    if profile.cacheable % 8192 == 0 {
+        let unique = profile.seen.len() as u64;
+        let repeat_pct_x100 = profile.repeated
+                                        .saturating_mul(10_000)
+                                        .checked_div(profile.cacheable)
+                                        .unwrap_or(0);
+        runtime::logging::info!("[elf-page-profile] cacheable={} unique={} repeated={} \
+                                 repeat_pct_x100={} avoid_copy_bytes={}",
+                                profile.cacheable,
+                                unique,
+                                profile.repeated,
+                                repeat_pct_x100,
+                                profile.repeated.saturating_mul(PAGE_SIZE as u64));
+    }
 }
 
 impl ElfSegmentLoadParams {

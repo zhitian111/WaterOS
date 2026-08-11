@@ -408,6 +408,7 @@ fn map_segment<A : AddressSpaceOps>(aspace : &mut A,
 struct ElfPathSegmentLoader {
     path : String,
     params : ElfSegmentLoadParams,
+    shareable : bool,
 }
 
 impl ElfPathSegmentLoader {
@@ -416,7 +417,8 @@ impl ElfPathSegmentLoader {
            vbase : usize,
            p_offset : usize,
            filesz : usize,
-           vma_start : usize)
+           vma_start : usize,
+           shareable : bool)
            -> Self {
         let vma_file_origin = p_offset.saturating_sub(vbase.saturating_sub(vma_start));
         Self { path : String::from(path),
@@ -424,7 +426,8 @@ impl ElfPathSegmentLoader {
                                                p_offset,
                                                filesz,
                                                vma_start,
-                                               vma_file_origin } }
+                                               vma_file_origin },
+               shareable }
     }
 }
 
@@ -433,14 +436,20 @@ impl DemandPageLoader for ElfPathSegmentLoader {
         Ok(Box::new(Self { path : self.path
                                       .clone(),
                            params:
-                               self.params.clone() }))
+                               self.params.clone(),
+                           shareable : self.shareable }))
     }
 
     fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()> {
-        self.params
-            .fill_page(file_offset, dst, |pos, buf| {
-                read_path_exact(&self.path, pos as u64, buf).map_err(|_| MmError::AccessViolation)
-            })
+        let result = self.params
+                         .fill_page(file_offset, dst, |pos, buf| {
+                             read_path_exact(&self.path, pos as u64, buf)
+                                 .map_err(|_| MmError::AccessViolation)
+                         });
+        if result.is_ok() && self.shareable {
+            impl_common::profile_elf_readonly_page(&self.path, &self.params, file_offset);
+        }
+        result
     }
 }
 
@@ -462,7 +471,8 @@ fn register_lazy_segment_run(aspace : &mut LoongArch64AddressSpace,
                                                     vbase,
                                                     p_offset,
                                                     filesz,
-                                                    run_start.0));
+                                                    run_start.0,
+                                                    !perm.writable()));
     aspace.register_lazy_file_vma(run_start,
                                   run_end,
                                   perm,
