@@ -160,6 +160,7 @@ struct PageFrame {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LruClass {
     Clean,
+    CleanActive,
     Dirty,
 }
 
@@ -172,6 +173,9 @@ struct GlobalCacheState {
     index : BTreeMap<(FileCacheKey, u64), usize>,
     clean_lru_head : Option<usize>,
     clean_lru_tail : Option<usize>,
+    active_lru_head : Option<usize>,
+    active_lru_tail : Option<usize>,
+    active_count : usize,
     dirty_lru_head : Option<usize>,
     dirty_lru_tail : Option<usize>,
     free : Vec<usize>,
@@ -210,6 +214,9 @@ impl GlobalCacheState {
                index : BTreeMap::new(),
                clean_lru_head : None,
                clean_lru_tail : None,
+               active_lru_head : None,
+               active_lru_tail : None,
+               active_count : 0,
                dirty_lru_head : None,
                dirty_lru_tail : None,
                free,
@@ -287,6 +294,7 @@ impl GlobalCacheState {
     fn lru_ends(&self, class : LruClass) -> (Option<usize>, Option<usize>) {
         match class {
             LruClass::Clean => (self.clean_lru_head, self.clean_lru_tail),
+            LruClass::CleanActive => (self.active_lru_head, self.active_lru_tail),
             LruClass::Dirty => (self.dirty_lru_head, self.dirty_lru_tail),
         }
     }
@@ -294,6 +302,7 @@ impl GlobalCacheState {
     fn set_lru_head(&mut self, class : LruClass, head : Option<usize>) {
         match class {
             LruClass::Clean => self.clean_lru_head = head,
+            LruClass::CleanActive => self.active_lru_head = head,
             LruClass::Dirty => self.dirty_lru_head = head,
         }
     }
@@ -301,6 +310,7 @@ impl GlobalCacheState {
     fn set_lru_tail(&mut self, class : LruClass, tail : Option<usize>) {
         match class {
             LruClass::Clean => self.clean_lru_tail = tail,
+            LruClass::CleanActive => self.active_lru_tail = tail,
             LruClass::Dirty => self.dirty_lru_tail = tail,
         }
     }
@@ -315,6 +325,9 @@ impl GlobalCacheState {
             let next = frame.lru_next.take();
             (class, prev, next)
         };
+        if class == LruClass::CleanActive {
+            self.active_count = self.active_count.saturating_sub(1);
+        }
         if let Some(prev) = prev {
             self.frames[prev].lru_next = next;
         } else {
@@ -333,6 +346,9 @@ impl GlobalCacheState {
         self.frames[idx].lru_prev = tail;
         self.frames[idx].lru_next = None;
         self.frames[idx].lru_class = Some(class);
+        if class == LruClass::CleanActive {
+            self.active_count += 1;
+        }
         if let Some(tail) = tail {
             self.frames[tail].lru_next = Some(idx);
         } else {
@@ -343,18 +359,44 @@ impl GlobalCacheState {
 
 // 本方法代码由AI完成
     fn touch_lru(&mut self, idx : usize) {
-        let class = if self.frames[idx].dirty {
-            LruClass::Dirty
-        } else {
-            LruClass::Clean
-        };
-        if self.frames[idx].lru_class == Some(class) &&
-           self.lru_ends(class).1 == Some(idx)
-        {
+        if self.frames[idx].dirty {
+            if self.frames[idx].lru_class == Some(LruClass::Dirty) &&
+               self.dirty_lru_tail == Some(idx)
+            {
+                return;
+            }
+            self.remove_from_lru(idx);
+            self.push_lru_back(idx, LruClass::Dirty);
             return;
         }
-        self.remove_from_lru(idx);
-        self.push_lru_back(idx, class);
+        match self.frames[idx].lru_class {
+            Some(LruClass::CleanActive) if self.active_lru_tail == Some(idx) => return,
+            Some(LruClass::CleanActive) => {
+                self.remove_from_lru(idx);
+                self.push_lru_back(idx, LruClass::CleanActive);
+            }
+            Some(LruClass::Clean) => {
+                self.remove_from_lru(idx);
+                self.push_lru_back(idx, LruClass::CleanActive);
+                self.balance_active_lru();
+            }
+            Some(LruClass::Dirty) => {
+                debug_assert!(false, "clean frame is linked on dirty LRU");
+                self.remove_from_lru(idx);
+                self.push_lru_back(idx, LruClass::Clean);
+            }
+            None => self.push_lru_back(idx, LruClass::Clean),
+        }
+    }
+
+    fn balance_active_lru(&mut self) {
+        let limit = self.capacity / 2;
+        while self.active_count > limit {
+            let Some(idx) = self.pop_lru_front(LruClass::CleanActive) else {
+                break;
+            };
+            self.push_lru_back(idx, LruClass::Clean);
+        }
     }
 
     fn pop_lru_front(&mut self, class : LruClass) -> Option<usize> {
@@ -374,6 +416,9 @@ impl GlobalCacheState {
         // discard the oldest clean page in O(1) without making an unrelated
         // temporary-file writeback part of an executable-page read.
         if let Some(idx) = self.pop_lru_front(LruClass::Clean) {
+            return Some(idx);
+        }
+        if let Some(idx) = self.pop_lru_front(LruClass::CleanActive) {
             return Some(idx);
         }
         if let Some(idx) = self.pop_lru_front(LruClass::Dirty) {
@@ -477,6 +522,9 @@ impl GlobalCacheState {
             .clear();
         self.clean_lru_head = None;
         self.clean_lru_tail = None;
+        self.active_lru_head = None;
+        self.active_lru_tail = None;
+        self.active_count = 0;
         self.dirty_lru_head = None;
         self.dirty_lru_tail = None;
         self.free
@@ -488,7 +536,8 @@ impl GlobalCacheState {
     #[cfg(test)]
     fn assert_lru_invariants(&self) {
         let mut seen = vec![false; self.capacity];
-        for class in [LruClass::Clean, LruClass::Dirty] {
+        let mut active_count = 0usize;
+        for class in [LruClass::Clean, LruClass::CleanActive, LruClass::Dirty] {
             let (head, tail) = self.lru_ends(class);
             let mut cursor = head;
             let mut previous = None;
@@ -501,6 +550,9 @@ impl GlobalCacheState {
                 assert_eq!(frame.lru_class, Some(class));
                 assert_eq!(frame.lru_prev, previous);
                 assert_eq!(frame.dirty, class == LruClass::Dirty);
+                if class == LruClass::CleanActive {
+                    active_count += 1;
+                }
                 assert!(frame.key.is_some());
                 previous = Some(idx);
                 cursor = frame.lru_next;
@@ -510,6 +562,8 @@ impl GlobalCacheState {
             assert_eq!(previous, tail);
             assert_eq!(head.is_none(), tail.is_none());
         }
+        assert_eq!(self.active_count, active_count);
+        assert!(self.active_count <= self.capacity / 2);
 
         let mut free_seen = vec![false; self.capacity];
         for &idx in &self.free {
@@ -1993,7 +2047,9 @@ mod tests {
         state.touch_lru(0);
         state.assert_lru_invariants();
         assert_eq!(state.clean_lru_head, Some(1));
-        assert_eq!(state.clean_lru_tail, Some(0));
+        assert_eq!(state.clean_lru_tail, Some(2));
+        assert_eq!(state.active_lru_head, Some(0));
+        assert_eq!(state.active_lru_tail, Some(0));
 
         state.mark_dirty(1);
         state.assert_lru_invariants();
@@ -2004,6 +2060,39 @@ mod tests {
         state.assert_lru_invariants();
         assert_eq!(state.clean_lru_tail, Some(1));
         assert_eq!(state.dirty_lru_head, None);
+    }
+
+    #[test]
+    fn repeated_page_is_protected_from_inactive_scan() {
+        let mut state = GlobalCacheState::with_capacity(4);
+        activate_test_frame(&mut state, 0, 0, false);
+        activate_test_frame(&mut state, 1, 1, false);
+        activate_test_frame(&mut state, 2, 2, false);
+        activate_test_frame(&mut state, 3, 3, false);
+
+        state.touch_lru(0);
+        state.assert_lru_invariants();
+        assert_eq!(state.frames[0].lru_class, Some(LruClass::CleanActive));
+        assert_eq!(state.pop_free_or_lru_index(), Some(1));
+        assert_eq!(state.frames[0].lru_class, Some(LruClass::CleanActive));
+    }
+
+    #[test]
+    fn active_limit_demotes_oldest_reused_page() {
+        let mut state = GlobalCacheState::with_capacity(4);
+        activate_test_frame(&mut state, 0, 0, false);
+        activate_test_frame(&mut state, 1, 1, false);
+        activate_test_frame(&mut state, 2, 2, false);
+        activate_test_frame(&mut state, 3, 3, false);
+
+        state.touch_lru(0);
+        state.touch_lru(1);
+        state.touch_lru(2);
+        state.assert_lru_invariants();
+        assert_eq!(state.active_count, 2);
+        assert_eq!(state.frames[0].lru_class, Some(LruClass::Clean));
+        assert_eq!(state.active_lru_head, Some(1));
+        assert_eq!(state.active_lru_tail, Some(2));
     }
 
     #[test]
