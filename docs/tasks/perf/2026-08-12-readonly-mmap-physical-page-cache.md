@@ -102,3 +102,19 @@ stall、panic 或 SIGSEGV。judge 的 compile-time 项得分 47.7。结果文件
 18.14% 明显越过噪声和预设接受线，也与“动态库 text 高复用、普通只读数据接近一次性”的收缩
 假设一致。按照首次明确有效即停止的验收规则，不运行第二轮性能样本，接受并合入 main。后续
 diagnostics 只用于记录 RX cache 命中/驻留量，不改变本次墙钟结论。
+
+## 300 秒 diagnostics 核验
+
+合入后使用独立 worktree 的 `cache-layer-diagnostics` 内核运行固定 300 秒窗口。该轮按预期在
+compile marker 前由 runner timeout，只作画像；toolchain/minibuild 已通过，无 stall、panic
+或 SIGSEGV。最后一组累计值：
+
+| 缓存 | lookups | hit / 命中率 | miss | resident / 满容量 bypass |
+| --- | ---: | ---: | ---: | ---: |
+| readonly executable mmap | 344,064 | 277,389 / 80.62% | 66,675 | 16,384 / 50,123 |
+| exec ELF readonly | 32,768 | 25,647 / 78.27% | 7,121 | 6,877 / 0 eviction |
+
+RX mmap cache 的高命中率证明动态库代码页确实被大量跨进程复用；同时 50,123 次 miss 因容量
+已满而绕过 admission，说明 64 MiB 并未覆盖完整 RX 工作集。诊断结果文件：
+`/tmp/wateros-buildstorm-fixed/readonly-exec-mmap-cache-diag-300s/result.json`。下一项容量实验可
+独立验证 128 MiB 是否继续减少缺页/I/O；不能把该诊断轮当作新的墙钟成绩。
