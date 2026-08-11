@@ -69,3 +69,21 @@ free=29,560,551，TLSF 仍无法满足连续大块并触发 OOM。结果文件�
 候选因此收缩为 4 MiB（262,144 槽），TLSF 从 112 MiB 恢复到 124 MiB。固定池不再试图容纳
 画像中的全部瞬时净分配，只服务可以在各 CPU freelist 上反复周转的短命小对象；池满后的新对象
 继续回退 TLSF。这个改动保留绕过通用分配路径的假设，同时把永久隔离量降到总堆的 3.125%。
+
+## 4 MiB Candidate 结果
+
+收缩候选重新通过 RV/LA `make all`，默认别名与 Final 一致且保留脚本正文 marker。RV Final
+SHA-256 为 `cf886c502b5491da632745bf590ea26de37c5308ef7f452d0f0e350b22cf2a23`，LA Final
+SHA-256 为 `7754e72de608a4f89ec6471c680175f745ae79ed45e7ec1223095aeda55883f0`。
+
+同镜像完整 BuildStorm 通过全部 toolchain、minibuild、compile marker，无 panic、stall、SIGSEGV：
+
+| 内核 | elapsed_s | 相对 current-best 783.00s |
+| --- | ---: | ---: |
+| 4 MiB fixed-16 pool | 779.14 | -3.86s（-0.49%） |
+
+结果文件为
+`/tmp/wateros-buildstorm-fixed/tlsf-small16-fixed-pool-4m-a1/result.json`。0.49% 远低于近期
+约 10--13 秒的自然抖动，也没有达到本实验预先声明的接受条件。为这点不确定收益永久隔离 4 MiB
+通用堆不合理，因此判定性能目标未达成，不运行第二轮、不合入 main。后续 allocator 实验应直接
+减少所有 TLSF 操作共有的记账/采样成本，而不是继续扩大固定尺寸池。
