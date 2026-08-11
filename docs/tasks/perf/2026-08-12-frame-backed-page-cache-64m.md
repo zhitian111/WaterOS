@@ -50,3 +50,28 @@ win is sufficient and is not repeated. Reject a regression or noise-sized
 change without a second performance run. If frame allocation or boot ordering
 fails, revert this candidate rather than weakening allocator ownership rules.
 
+## Result
+
+The first and only matched sample passed all toolchain, minibuild, compile, and
+judge markers. It produced the expected 1,681,000-byte artifact and exited
+without timeout, stall, panic, or SIGSEGV.
+
+| item | result |
+| --- | ---: |
+| accepted 32 MiB baseline | 534.26 s |
+| frame-backed 64 MiB candidate | 526.55 s |
+| improvement | 7.71 s / 1.44% |
+| host wall time | 549.418 s |
+
+The candidate kernel SHA-256 was
+`32da8526a68a3ec7dc33602fa224e8d38431577976da9424ce32d2732c1b7fbb`;
+the fixed image SHA-256 remained
+`ca5987d2791f83781762f531557f40fadd0a2ce0068fd9be58c2014465db7f58`.
+The structured result is
+`/tmp/wateros-buildstorm-fixed/frame-backed-page-cache-64m-a1/result.json`.
+
+The 7.71 s change is below the predeclared 10 s acceptance threshold. The
+experiment proves that physical-frame backing boots and completes correctly,
+but does not show a sufficiently large wall-clock benefit from doubling this
+cache. Per the stop rule, do not run a second sample and do not merge the
+implementation to main. Preserve this branch as the performance-failed record.
