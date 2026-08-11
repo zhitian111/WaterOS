@@ -15,7 +15,7 @@ use config::task::MAX_CPUS;
 use crate::HEAP_SPACE;
 
 pub(crate) const SLOT_SIZE : usize = 16;
-pub(crate) const POOL_SIZE : usize = 16 * 1024 * 1024;
+pub(crate) const POOL_SIZE : usize = 4 * 1024 * 1024;
 const SLOT_COUNT : usize = POOL_SIZE / SLOT_SIZE;
 const BATCH_SLOTS : usize = 64;
 

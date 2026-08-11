@@ -58,3 +58,14 @@ Linux 的 per-CPU slab 快路径通过 CPU-local freelist 避免通用页分配�
 候选必须通过所有 BuildStorm marker、无 panic/stall，并给出超出近期约 10--13 秒自然抖动的明确
 改善，才可合入 main。即使指令画像显示 TLSF 热点下降，只要墙钟没有达到这一条件也判定失败。
 
+## 首轮长程失败与方案收缩
+
+16 MiB 候选通过双架构构建、toolchain 和 minibuild，但在 BuildStorm 239.44s 时失败。rustc 在写
+`lib.rmeta` 时需要一块 3,670,016 字节、8 字节对齐的分配；当时统计为 used=104,657,177、
+free=29,560,551，TLSF 仍无法满足连续大块并触发 OOM。结果文件为
+`/tmp/wateros-buildstorm-fixed/tlsf-small16-fixed-pool-a1/result.json`。这证明总空闲量足够并不代表
+把 16 MiB 永久隔离后仍有足够的 TLSF 连续空间，首轮不能作为性能结果。
+
+候选因此收缩为 4 MiB（262,144 槽），TLSF 从 112 MiB 恢复到 124 MiB。固定池不再试图容纳
+画像中的全部瞬时净分配，只服务可以在各 CPU freelist 上反复周转的短命小对象；池满后的新对象
+继续回退 TLSF。这个改动保留绕过通用分配路径的假设，同时把永久隔离量降到总堆的 3.125%。
