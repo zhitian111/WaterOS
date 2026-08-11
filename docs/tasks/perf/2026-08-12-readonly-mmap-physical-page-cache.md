@@ -21,7 +21,8 @@ PT_LOAD 页按稳定文件身份跨进程共享；300 秒画像中该缓存命�
 
 在双架构共用的 `mm-impl/common` 新增独立的只读 mmap 物理页缓存：
 
-- key：mount generation、mount id、stable node id、content version、页对齐 file offset；
+- key：mount generation、mount id、stable node id、content version、页对齐 file offset，以及
+  mmap 建立时捕获的 file size（避免 grow 后旧 loader 的 EOF 快照污染新 mapping）；
 - value：物理页号、LRU tick，以及持有 version token 的文件身份；
 - 容量：16,384 页（64 MiB），和 exec ELF cache 分离，避免普通 mmap 淘汰已证明有效的 ELF
   工作集；
@@ -62,4 +63,3 @@ rmap 和 writeback 协议。若该方向有明显收益，后续再统一 VFS pa
 - 所有 marker 通过，无 stale 内容、COW、frame ref、OOM、panic 或 stall 回归；
 - 相对 current-best 783.00s 至少给出超过近期约 10--13 秒抖动的明确改善；
 - 若 cache 命中低、BTree/LRU 开销抵消收益或只落在噪声内，不合入 main，仅保留实验文档。
-

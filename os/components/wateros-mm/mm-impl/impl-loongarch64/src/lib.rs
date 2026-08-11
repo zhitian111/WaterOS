@@ -11,12 +11,11 @@ extern crate alloc;
 use alloc::boxed::Box;
 use api_v0::addr::{PhysPageNum, VirtAddr, VirtPageNum, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
-use api_v0::error::MmError;
-use api_v0::mmap::{MmapOps, PageFaultAccess};
+use api_v0::error::{MmError, MmResult};
+use api_v0::mmap::{DemandPageLoader, MmapOps, PageFaultAccess};
 use api_v0::perm::PagePerm;
 
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result, GlobalPhysFrameAllocator};
-use impl_common::ZeroAnonLoader;
 mod asid;
 mod pagetable;
 
@@ -26,6 +25,23 @@ mod kernel_global;
 pub mod user_access;
 pub mod user_aspace;
 mod user_heap_mmap;
+
+struct WritableFaultTestLoader;
+
+impl DemandPageLoader for WritableFaultTestLoader {
+    fn duplicate_box(&self) -> MmResult<Box<dyn DemandPageLoader>> {
+        Ok(Box::new(WritableFaultTestLoader))
+    }
+
+    fn load_page(&mut self, _file_offset : usize, dst : &mut [u8]) -> MmResult<()> {
+        dst[0] = 0x5a;
+        Ok(())
+    }
+
+    fn load_shared_page(&mut self, _file_offset : usize) -> MmResult<Option<PhysPageNum>> {
+        panic!("writable lazy fault must not request an immutable shared page")
+    }
+}
 
 /// LoongArch64 三级页表 walk、映射/解映射/权限与翻译的自测；
 /// 依赖已初始化的全局帧分配器（区间语义同 bring-up）。
@@ -91,7 +107,7 @@ pub fn test_with_range(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
                                   PagePerm::R | PagePerm::U,
                                   0,
                                   0,
-                                  Box::new(ZeroAnonLoader))
+                                  Box::new(WritableFaultTestLoader))
           .expect("register lazy page");
     let lazy_changed = MmapOps::mprotect(&mut aspace,
                                          lazy_start,
@@ -113,6 +129,7 @@ pub fn test_with_range(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
                           .expect("lazy test page should be resident");
     frame_dealloc_result(lazy_ppn).expect("dealloc lazy test frame");
     impl_common::test_readonly_elf_page_cache();
+    impl_common::test_readonly_mmap_page_cache();
     user_access::test_copy_to_user_progress();
 
     log::trace!("[mm-impl::loongarch64] test end");
