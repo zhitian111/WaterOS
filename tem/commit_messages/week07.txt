@@ -1,7 +1,0 @@
-feat(os): ELF 用户程序、syscall 扩展、pipe 与 VFS/syscall 架构重构
-
-支持将 ELF 载入用户任务并对接比赛测试用例所用文件系统布局；扩展基础
-syscall 集并修正 mm 在多架构下的隔离问题。修复 trap 返回链路与 syscall
-过程中 SPP（上一特权级）判断错误。引入 pipe 与父子进程关系、进程级 fd
-表；按既定架构重构 ipc-pipe、vfs、syscall，将 fd registry 迁入 vfs 并
-调整 mm 相关 syscall 封装。重构 waitqueue，统一阻塞与唤醒语义。

@@ -1,16 +1,39 @@
+# 文件系统垃圾
 .DS_Store
 **/.DS_Store
+
+# 项目工具/IDE 配置文件
+.codegraph/
+.idea/
+.vscode/
+
+# python 运行垃圾
 __pycache__/
 *.py[cod]
 *.pyc
+
+# 项目编译期配置文件
 feature-tree.txt
+
+# 成员个人使用目录
 /todo_docs/
 2025a-rcore-kasss233/
 old/
-test_case/
 tem/
+
+# 测试用例目录
+test_case/
+final_test_case/
 testsuits-for-oskernel
+
+# 非公用文档
 rust_docs.md
 smp.md
 prediction.md
 todo.md
+
+# AGENT 辅助文件
+AGENTS.md
+AGENT.md
+SKILL.md
+
