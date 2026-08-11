@@ -11,6 +11,7 @@
     vfs-api = { path = "../../../wateros-vfs/vfs-api/api-v0", package = "wateros-vfs-api-v0", default-features = true }
 
 [features]
+    cache-layer-diagnostics = [  ]
     default = [  ]
 
 [profile.dev]

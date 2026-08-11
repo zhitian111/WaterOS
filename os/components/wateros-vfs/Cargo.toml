@@ -30,6 +30,7 @@
         "dep:impl_fs_bridge",
         "impl_fs_bridge/bridge-fs-api",
     ]
+    cache-layer-diagnostics = [ "impl_fs_bridge/cache-layer-diagnostics" ]
     default = [ "api-v0", "bridge-fs-api", "impl-fd-session" ]
     impl-dummy = [  ]
     impl-fd-session = [

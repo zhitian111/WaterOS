@@ -42,6 +42,69 @@ struct LbaIndex {
 
 const LBA_INDEX_WAYS : usize = 8;
 
+#[cfg(feature = "diagnostics")]
+const GHOST_INDEX_WAYS : usize = 4;
+#[cfg(feature = "diagnostics")]
+const DIAGNOSTIC_REPORT_BLOCKS : u64 = 1 << 20;
+
+#[cfg(feature = "diagnostics")]
+struct GhostIndex {
+    buckets : Vec<[Option<Lba>; GHOST_INDEX_WAYS]>,
+    next : Vec<u8>,
+}
+
+#[cfg(feature = "diagnostics")]
+impl GhostIndex {
+    fn new(capacity : usize) -> Self {
+        let bucket_count = capacity.div_ceil(GHOST_INDEX_WAYS).max(1);
+        Self { buckets : vec![[None; GHOST_INDEX_WAYS]; bucket_count],
+               next : vec![0; bucket_count] }
+    }
+
+    fn bucket(&self, lba : Lba) -> usize { (lba.0 as usize) % self.buckets.len() }
+
+    fn take(&mut self, lba : Lba) -> bool {
+        let bucket = self.bucket(lba);
+        for entry in &mut self.buckets[bucket] {
+            if *entry == Some(lba) {
+                *entry = None;
+                return true;
+            }
+        }
+        false
+    }
+
+    fn insert(&mut self, lba : Lba) {
+        let bucket = self.bucket(lba);
+        if self.buckets[bucket].iter().any(|entry| *entry == Some(lba)) {
+            return;
+        }
+        if let Some(entry) = self.buckets[bucket].iter_mut().find(|entry| entry.is_none()) {
+            *entry = Some(lba);
+            return;
+        }
+        let way = self.next[bucket] as usize;
+        self.buckets[bucket][way] = Some(lba);
+        self.next[bucket] = ((way + 1) % GHOST_INDEX_WAYS) as u8;
+    }
+}
+
+#[cfg(feature = "diagnostics")]
+#[derive(Default)]
+struct BlockCacheDiagnostics {
+    read_blocks : u64,
+    hit_blocks : u64,
+    miss_blocks : u64,
+    backend_read_calls : u64,
+    backend_read_blocks : u64,
+    write_blocks : u64,
+    write_allocations : u64,
+    capacity_evictions : u64,
+    index_conflict_evictions : u64,
+    ghost_hits : u64,
+    next_report : u64,
+}
+
 impl LbaIndex {
     fn new(capacity : usize) -> Self {
         let bucket_count = capacity
@@ -115,6 +178,10 @@ pub struct CachingBlockDevice {
     /// 已占用槽组成的双向链表；头部最久未使用，尾部最近使用。
     lru_head: Option<usize>,
     lru_tail: Option<usize>,
+    #[cfg(feature = "diagnostics")]
+    ghost: GhostIndex,
+    #[cfg(feature = "diagnostics")]
+    diagnostics: BlockCacheDiagnostics,
 }
 
 impl CachingBlockDevice {
@@ -146,6 +213,11 @@ impl CachingBlockDevice {
             free,
             lru_head: None,
             lru_tail: None,
+            #[cfg(feature = "diagnostics")]
+            ghost: GhostIndex::new(capacity),
+            #[cfg(feature = "diagnostics")]
+            diagnostics: BlockCacheDiagnostics { next_report : DIAGNOSTIC_REPORT_BLOCKS,
+                                                 ..BlockCacheDiagnostics::default() },
         }
     }
 
@@ -227,7 +299,49 @@ impl CachingBlockDevice {
             return Err(DriverError::IoError);
         };
         self.map.remove(lba);
+        #[cfg(feature = "diagnostics")]
+        {
+            self.ghost.insert(lba);
+            self.diagnostics.capacity_evictions += 1;
+        }
         Ok(idx)
+    }
+
+    #[cfg(feature = "diagnostics")]
+    fn note_index_conflict(&mut self, lba : Lba) {
+        self.ghost.insert(lba);
+        self.diagnostics.index_conflict_evictions += 1;
+    }
+
+    #[cfg(feature = "diagnostics")]
+    fn note_miss(&mut self, lba : Lba) {
+        self.diagnostics.miss_blocks += 1;
+        if self.ghost.take(lba) {
+            self.diagnostics.ghost_hits += 1;
+        }
+    }
+
+    #[cfg(feature = "diagnostics")]
+    fn maybe_report_diagnostics(&mut self) {
+        let total = self.diagnostics.read_blocks + self.diagnostics.write_blocks;
+        if total < self.diagnostics.next_report {
+            return;
+        }
+        self.diagnostics.next_report = total.saturating_add(DIAGNOSTIC_REPORT_BLOCKS);
+        log::error!("[cache-diag:block] read_blocks={} hit={} miss={} backend_calls={} \
+                     backend_blocks={} write_blocks={} write_alloc={} capacity_evict={} \
+                     index_evict={} ghost_hit={} resident={}",
+                    self.diagnostics.read_blocks,
+                    self.diagnostics.hit_blocks,
+                    self.diagnostics.miss_blocks,
+                    self.diagnostics.backend_read_calls,
+                    self.diagnostics.backend_read_blocks,
+                    self.diagnostics.write_blocks,
+                    self.diagnostics.write_allocations,
+                    self.diagnostics.capacity_evictions,
+                    self.diagnostics.index_conflict_evictions,
+                    self.diagnostics.ghost_hits,
+                    self.capacity.saturating_sub(self.free.len()));
     }
 
     fn reset_cache_invariant(&mut self) {
@@ -262,6 +376,8 @@ impl CachingBlockDevice {
                 self.detach_lru(old_idx);
                 self.slots[old_idx].lba = None;
                 self.free.push(old_idx);
+                #[cfg(feature = "diagnostics")]
+                self.note_index_conflict(old_lba);
             }
         }
         self.push_lru_back(idx);
@@ -282,6 +398,8 @@ impl CachingBlockDevice {
                 self.detach_lru(old_idx);
                 self.slots[old_idx].lba = None;
                 self.free.push(old_idx);
+                #[cfg(feature = "diagnostics")]
+                self.note_index_conflict(old_lba);
             }
         }
         self.push_lru_back(idx);
@@ -308,6 +426,10 @@ impl BlockDevice for CachingBlockDevice {
         }
 
         let nblocks = buf.len() / bs;
+        #[cfg(feature = "diagnostics")]
+        {
+            self.diagnostics.read_blocks += nblocks as u64;
+        }
         let base = start_block.0;
         let mut i = 0usize;
         while i < nblocks {
@@ -320,6 +442,10 @@ impl BlockDevice for CachingBlockDevice {
                 };
                 buf[hit_end * bs..(hit_end + 1) * bs]
                     .copy_from_slice(self.slot_data(idx));
+                #[cfg(feature = "diagnostics")]
+                {
+                    self.diagnostics.hit_blocks += 1;
+                }
                 last_hit_idx = Some(idx);
                 hit_end += 1;
             }
@@ -331,14 +457,23 @@ impl BlockDevice for CachingBlockDevice {
                 continue;
             }
             let mut j = i + 1;
+            #[cfg(feature = "diagnostics")]
+            self.note_miss(Lba(base + i as u64));
             while j < nblocks {
                 let lbaj = Lba(base + j as u64);
                 if self.map.get(lbaj).is_some() {
                     break;
                 }
+                #[cfg(feature = "diagnostics")]
+                self.note_miss(lbaj);
                 j += 1;
             }
             let run_bytes = (j - i) * bs;
+            #[cfg(feature = "diagnostics")]
+            {
+                self.diagnostics.backend_read_calls += 1;
+                self.diagnostics.backend_read_blocks += (j - i) as u64;
+            }
             self.inner.read_blocks(Lba(base + i as u64), &mut buf[i * bs..i * bs + run_bytes])?;
             for k in i..j {
                 let lk = Lba(base + k as u64);
@@ -346,6 +481,8 @@ impl BlockDevice for CachingBlockDevice {
             }
             i = j;
         }
+        #[cfg(feature = "diagnostics")]
+        self.maybe_report_diagnostics();
         Ok(())
     }
 
@@ -359,10 +496,20 @@ impl BlockDevice for CachingBlockDevice {
             return Ok(());
         }
         let nblocks = buf.len() / bs;
+        #[cfg(feature = "diagnostics")]
+        {
+            self.diagnostics.write_blocks += nblocks as u64;
+        }
         for i in 0..nblocks {
             let lba = Lba(start_block.0 + i as u64);
+            #[cfg(feature = "diagnostics")]
+            if self.map.get(lba).is_none() {
+                self.diagnostics.write_allocations += 1;
+            }
             self.cache_put(lba, &buf[i * bs..(i + 1) * bs]);
         }
+        #[cfg(feature = "diagnostics")]
+        self.maybe_report_diagnostics();
         Ok(())
     }
 }

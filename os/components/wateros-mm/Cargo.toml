@@ -24,6 +24,7 @@
 [features]
     api-v0 = [ "impl-dummy/api-v0" ]
     default = [ "api-v0" ]
+    cache-layer-diagnostics = [ "impl-common/cache-layer-diagnostics" ]
     impl-dummy = [  ]
     impl-loongarch64 = [ "api-v0", "impl-loongarch64/api-v0" ]
     impl-sv39 = [ "api-v0", "impl-sv39/api-v0", "impl-sv39/impl-riscv64" ]

@@ -77,6 +77,8 @@ pub struct ElfSegmentLoadParams {
 }
 
 const ELF_READONLY_PAGE_CACHE_CAPACITY : usize = 16_384;
+#[cfg(feature = "cache-layer-diagnostics")]
+const ELF_CACHE_DIAGNOSTIC_REPORT_LOOKUPS : u64 = 1 << 14;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct ElfReadonlyPageKey {
@@ -100,6 +102,60 @@ struct ElfReadonlyPageEntry {
 struct ElfReadonlyPageCache {
     entries : BTreeMap<ElfReadonlyPageKey, ElfReadonlyPageEntry>,
     tick : u64,
+    #[cfg(feature = "cache-layer-diagnostics")]
+    hits : u64,
+    #[cfg(feature = "cache-layer-diagnostics")]
+    misses : u64,
+    #[cfg(feature = "cache-layer-diagnostics")]
+    installs : u64,
+    #[cfg(feature = "cache-layer-diagnostics")]
+    duplicate_loads : u64,
+    #[cfg(feature = "cache-layer-diagnostics")]
+    evictions : u64,
+    #[cfg(feature = "cache-layer-diagnostics")]
+    next_report : u64,
+}
+
+impl ElfReadonlyPageCache {
+    fn new() -> Self {
+        Self { entries : BTreeMap::new(),
+               tick : 0,
+               #[cfg(feature = "cache-layer-diagnostics")]
+               hits : 0,
+               #[cfg(feature = "cache-layer-diagnostics")]
+               misses : 0,
+               #[cfg(feature = "cache-layer-diagnostics")]
+               installs : 0,
+               #[cfg(feature = "cache-layer-diagnostics")]
+               duplicate_loads : 0,
+               #[cfg(feature = "cache-layer-diagnostics")]
+               evictions : 0,
+               #[cfg(feature = "cache-layer-diagnostics")]
+               next_report : ELF_CACHE_DIAGNOSTIC_REPORT_LOOKUPS }
+    }
+
+    #[cfg(feature = "cache-layer-diagnostics")]
+    fn note_lookup(&mut self, hit : bool) {
+        if hit {
+            self.hits += 1;
+        } else {
+            self.misses += 1;
+        }
+        let total = self.hits + self.misses;
+        if total < self.next_report {
+            return;
+        }
+        self.next_report = total.saturating_add(ELF_CACHE_DIAGNOSTIC_REPORT_LOOKUPS);
+        runtime::logging::error!("[cache-diag:elf] lookups={} hit={} miss={} installs={} \
+                                  duplicate_load={} evict={} resident={}",
+                                 total,
+                                 self.hits,
+                                 self.misses,
+                                 self.installs,
+                                 self.duplicate_loads,
+                                 self.evictions,
+                                 self.entries.len());
+    }
 }
 
 static ELF_READONLY_PAGE_CACHE : spin::Mutex<Option<ElfReadonlyPageCache>> =
@@ -137,12 +193,14 @@ pub fn load_or_get_readonly_elf_page<F>(identity : &VfsFileContentIdentity,
         let key = readonly_page_key(identity, content_version, params, file_offset);
         let cached = {
             let mut guard = ELF_READONLY_PAGE_CACHE.lock();
-            let cache = guard.get_or_insert_with(|| ElfReadonlyPageCache {
-                                  entries : BTreeMap::new(),
-                                  tick : 0,
-                              });
+            let cache = guard.get_or_insert_with(ElfReadonlyPageCache::new);
             cache.tick = cache.tick.wrapping_add(1);
             let tick = cache.tick;
+            #[cfg(feature = "cache-layer-diagnostics")]
+            {
+                let hit = cache.entries.contains_key(&key);
+                cache.note_lookup(hit);
+            }
             if let Some(entry) = cache.entries.get_mut(&key) {
                 frame_inc_ref(entry.ppn).map_err(MmError::from)?;
                 entry.last_used = tick;
@@ -176,16 +234,17 @@ pub fn load_or_get_readonly_elf_page<F>(identity : &VfsFileContentIdentity,
         let mut evicted = None;
         {
             let mut guard = ELF_READONLY_PAGE_CACHE.lock();
-            let cache = guard.get_or_insert_with(|| ElfReadonlyPageCache {
-                                  entries : BTreeMap::new(),
-                                  tick : 0,
-                              });
+            let cache = guard.get_or_insert_with(ElfReadonlyPageCache::new);
             cache.tick = cache.tick.wrapping_add(1);
             let tick = cache.tick;
             if let Some(entry) = cache.entries.get_mut(&key) {
                 frame_inc_ref(entry.ppn).map_err(MmError::from)?;
                 entry.last_used = tick;
                 duplicate = Some(entry.ppn);
+                #[cfg(feature = "cache-layer-diagnostics")]
+                {
+                    cache.duplicate_loads += 1;
+                }
             } else {
                 if cache.entries.len() >= ELF_READONLY_PAGE_CACHE_CAPACITY {
                     let victim = cache.entries
@@ -194,6 +253,10 @@ pub fn load_or_get_readonly_elf_page<F>(identity : &VfsFileContentIdentity,
                                       .map(|(key, _)| *key);
                     if let Some(victim) = victim {
                         evicted = cache.entries.remove(&victim).map(|entry| entry.ppn);
+                        #[cfg(feature = "cache-layer-diagnostics")]
+                        if evicted.is_some() {
+                            cache.evictions += 1;
+                        }
                     }
                 }
                 cache.entries.insert(key,
@@ -201,6 +264,10 @@ pub fn load_or_get_readonly_elf_page<F>(identity : &VfsFileContentIdentity,
                                                             last_used : tick,
                                                             _identity : identity.clone() });
                 frame_inc_ref(loaded_ppn).map_err(MmError::from)?;
+                #[cfg(feature = "cache-layer-diagnostics")]
+                {
+                    cache.installs += 1;
+                }
             }
         }
         if let Some(ppn) = evicted {

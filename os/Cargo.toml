@@ -112,6 +112,12 @@
     bringup-stats = [ "syscall/bringup-stats" ]
     # another-ext4 pathname/negative-dentry 累计画像；普通 Final 不启用。
     ext4-lookup-diagnostics = [ "fs/ext4-lookup-diagnostics" ]
+    # BuildStorm 三层缓存复用/淘汰画像；普通 Final 不启用。
+    cache-layer-diagnostics = [
+        "driver/block-cache-diagnostics",
+        "mm/cache-layer-diagnostics",
+        "vfs/cache-layer-diagnostics",
+    ]
     # 热路径 syscall/trap 参数跟踪（默认关闭；见 trap_handler hot_syscall_trace!）
     qemu-riscv64-opensbi = [
         "dep:cred",

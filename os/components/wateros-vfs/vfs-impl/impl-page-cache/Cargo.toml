@@ -9,4 +9,5 @@
     wateros-base-config = { path = "../../../wateros-base/base-config", package = "wateros-base-config" }
 
 [features]
+    diagnostics = [  ]
     default = [  ]
