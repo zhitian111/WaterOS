@@ -23,13 +23,14 @@ PT_LOAD 页按稳定文件身份跨进程共享；300 秒画像中该缓存命�
 
 - key：mount generation、mount id、stable node id、content version、页对齐 file offset，以及
   mmap 建立时捕获的 file size（避免 grow 后旧 loader 的 EOF 快照污染新 mapping）；
-- value：物理页号、LRU tick，以及持有 version token 的文件身份；
+- value：物理页号、最近访问 tick，以及持有 version token 的文件身份；
 - 容量：16,384 页（64 MiB），和 exec ELF cache 分离，避免普通 mmap 淘汰已证明有效的 ELF
   工作集；
 - miss I/O 在 cache lock 外完成；竞争 miss 只发布赢家；cache 与每个 PTE 各持有一个 frame
-  ref，eviction 只释放 cache ref。
+  ref；容量满后的新 miss 绕过 admission，不执行线性 victim 扫描。
 
-`VfsMmapPageLoader` 在创建时记录 `allow_readonly_sharing = MAP_PRIVATE && !perm.writable()` 和
+`VfsMmapPageLoader` 在创建时记录
+`allow_readonly_sharing = MAP_PRIVATE && perm.executable() && !perm.writable()` 和
 稳定内容身份。`load_shared_page` 仅在该条件成立且 identity 可用时查缓存；其余映射沿用原来的
 分配/复制路径。
 
@@ -50,7 +51,7 @@ rmap 和 writeback 协议。若该方向有明显收益，后续再统一 VFS pa
 
 ## 实施与验证
 
-1. 在 `mm-impl/common` 实现普通 readonly mmap cache、版本重检、竞争发布和安全 eviction。
+1. 在 `mm-impl/common` 实现普通 readonly mmap cache、版本重检、竞争发布和满容量 bypass。
 2. 在 mm 聚合层只转发这一内部服务；不修改 `api-v0` 的 `DemandPageLoader` 合约。
 3. 扩展 `VfsMmapPageLoader` 的 duplicate/load_shared_page，并把映射 flags/perm 传入创建路径。
 4. 定向自检覆盖同 identity+offset 复用、offset 隔离、version 变化 miss、frame ref 生命周期。
@@ -63,3 +64,19 @@ rmap 和 writeback 协议。若该方向有明显收益，后续再统一 VFS pa
 - 所有 marker 通过，无 stale 内容、COW、frame ref、OOM、panic 或 stall 回归；
 - 相对 current-best 783.00s 至少给出超过近期约 10--13 秒抖动的明确改善；
 - 若 cache 命中低、BTree/LRU 开销抵消收益或只落在噪声内，不合入 main，仅保留实验文档。
+
+## 首轮全只读映射结果与收缩
+
+首轮实现覆盖所有初始不可写的 `MAP_PRIVATE` file mmap。候选通过 RV/LA 构建、全部
+BuildStorm marker 和 judge，无 panic、stall 或 SIGSEGV，但编译时间为 932.23s，相对
+current-best 783.00s 回退 149.23s（19.06%）。结果文件：
+`/tmp/wateros-buildstorm-fixed/readonly-mmap-physical-page-cache-a1/result.json`。
+
+从实现结构可确定两个高风险放大器：普通只读 mmap 同时覆盖大量一次性的 rmeta、archive 和
+中间产物，16,384 页容量到顶后，每次新页都线性扫描全部 BTree entry 选择 LRU victim；此外，
+被 cache 持有的只读数据页若稍后 `mprotect(W)`，现有私有化逻辑会因额外 frame ref 复制整页。
+这两项都不属于共享动态库代码页的目标收益。
+
+修订候选只允许 `MAP_PRIVATE && executable && !writable`，聚焦动态库 text；普通只读数据映射
+完全回到原路径。缓存满后不再 O(n) 淘汰，而是保留已建立热点集，让新 miss 仅使用本次已加载
+frame、跳过 admission。首轮是明确失败，按规则只再运行这一轮基于根因收缩的候选。

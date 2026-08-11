@@ -201,7 +201,9 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
             }
         },
         Some(fd) => {
-            let allow_readonly_sharing = mf.contains(MapFlags::PRIVATE) && !perm.writable();
+            let allow_readonly_sharing = mf.contains(MapFlags::PRIVATE) &&
+                                         perm.executable() &&
+                                         !perm.writable();
             let loader = match mmap_page_loader(fd, file_size, allow_readonly_sharing) {
                 Ok(loader) => loader,
                 Err(e) => return UserRet::from_error(e),

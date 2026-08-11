@@ -361,7 +361,7 @@ struct MmapReadonlyPageCache {
     #[cfg(feature = "cache-layer-diagnostics")]
     duplicate_loads : u64,
     #[cfg(feature = "cache-layer-diagnostics")]
-    evictions : u64,
+    full_bypasses : u64,
     #[cfg(feature = "cache-layer-diagnostics")]
     next_report : u64,
 }
@@ -379,7 +379,7 @@ impl MmapReadonlyPageCache {
                #[cfg(feature = "cache-layer-diagnostics")]
                duplicate_loads : 0,
                #[cfg(feature = "cache-layer-diagnostics")]
-               evictions : 0,
+               full_bypasses : 0,
                #[cfg(feature = "cache-layer-diagnostics")]
                next_report : MMAP_CACHE_DIAGNOSTIC_REPORT_LOOKUPS }
     }
@@ -397,13 +397,13 @@ impl MmapReadonlyPageCache {
         }
         self.next_report = total.saturating_add(MMAP_CACHE_DIAGNOSTIC_REPORT_LOOKUPS);
         runtime::logging::error!("[cache-diag:mmap-ro] lookups={} hit={} miss={} installs={} \
-                                  duplicate_load={} evict={} resident={}",
+                                  duplicate_load={} full_bypass={} resident={}",
                                  total,
                                  self.hits,
                                  self.misses,
                                  self.installs,
                                  self.duplicate_loads,
-                                 self.evictions,
+                                 self.full_bypasses,
                                  self.entries.len());
     }
 }
@@ -481,7 +481,6 @@ pub fn load_or_get_readonly_mmap_page<F>(identity : &VfsFileContentIdentity,
         }
 
         let mut duplicate = None;
-        let mut evicted = None;
         {
             let mut guard = MMAP_READONLY_PAGE_CACHE.lock();
             let cache = guard.get_or_insert_with(MmapReadonlyPageCache::new);
@@ -497,31 +496,26 @@ pub fn load_or_get_readonly_mmap_page<F>(identity : &VfsFileContentIdentity,
                 }
             } else {
                 if cache.entries.len() >= MMAP_READONLY_PAGE_CACHE_CAPACITY {
-                    let victim = cache.entries
-                                      .iter()
-                                      .min_by_key(|(_, entry)| entry.last_used)
-                                      .map(|(key, _)| *key);
-                    if let Some(victim) = victim {
-                        evicted = cache.entries.remove(&victim).map(|entry| entry.ppn);
-                        #[cfg(feature = "cache-layer-diagnostics")]
-                        if evicted.is_some() {
-                            cache.evictions += 1;
-                        }
+                    // Keep the established hot set and return the freshly loaded
+                    // frame only to this mapping. Generic file mmap streams can
+                    // contain millions of one-shot pages; an O(n) LRU victim scan
+                    // on every miss is worse than bypassing admission.
+                    #[cfg(feature = "cache-layer-diagnostics")]
+                    {
+                        cache.full_bypasses += 1;
+                    }
+                } else {
+                    cache.entries.insert(key,
+                                         MmapReadonlyPageEntry { ppn : loaded_ppn,
+                                                                 last_used : tick,
+                                                                 _identity : identity.clone() });
+                    frame_inc_ref(loaded_ppn).map_err(MmError::from)?;
+                    #[cfg(feature = "cache-layer-diagnostics")]
+                    {
+                        cache.installs += 1;
                     }
                 }
-                cache.entries.insert(key,
-                                     MmapReadonlyPageEntry { ppn : loaded_ppn,
-                                                             last_used : tick,
-                                                             _identity : identity.clone() });
-                frame_inc_ref(loaded_ppn).map_err(MmError::from)?;
-                #[cfg(feature = "cache-layer-diagnostics")]
-                {
-                    cache.installs += 1;
-                }
             }
-        }
-        if let Some(ppn) = evicted {
-            let _ = frame_dealloc_result(ppn);
         }
         let result_ppn = if let Some(ppn) = duplicate {
             let _ = frame_dealloc_result(loaded_ppn);
