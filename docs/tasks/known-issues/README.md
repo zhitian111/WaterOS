@@ -12,8 +12,8 @@
 - **已实现待复验**：先跑指定测试；只有仍失败才改代码。
 - **测量后候选**：没有阶段 1 数据不得合入策略性优化。
 
-所有任务必须先读 `docs/prompts/general.md`、`docs/prompts/structure.md`、
-`docs/prompts/coding.md` 和 `docs/prompts/architecture.md`。公共契约放 `api-v0`，
+所有任务必须先读 `docs/agents/prompts/general.md`、`docs/agents/prompts/structure.md`、
+`docs/agents/prompts/coding.md` 和 `docs/agents/prompts/architecture.md`。公共契约放 `api-v0`，
 机制放 `impl-*`，平台特殊逻辑留在 `platform-impl`，架构通用 trap/启动逻辑留在
 `platform-arch`。不得顺手修改 `os/vendor/`。
 
@@ -30,128 +30,128 @@
   且支持批量收包；ELF lazy map 和 TLSF 可选后端也已存在。这些任务从测量开始。
 - ramfs 已支持稀疏文件，但已写入数据页仍是 `BTreeMap<u64, Vec<u8>>`，
   bootstrap `/tmp` 也没有容量上限。大量临时文件会消耗 128 MiB 全局内核堆；
-  这是 [`K-05D`](./05d-ramfs-physical-pages.md) 的资源正确性问题，不等待 K-04 性能排名。
+  这是 [`K-05D`](./05d-ramfs-physical-pages/task.md) 的资源正确性问题，不等待 K-04 性能排名。
 
 ## 最近已验证闭环（2026-08-08）
 
-- [`generic ABI epoll_pwait 修复`](./results/generic-abi-epoll-pwait-20260808.md)：
+- [`generic ABI epoll_pwait 修复`](./closed-fixes/history/generic-abi-epoll-pwait-20260808.md)：
   RISC-V/LoongArch 的 `__NR_epoll_pwait` 修正为 22，`epoll_pwait04` 正确返回
   `EFAULT`，`epoll_wait01/02` 同步通过。
-- [`epoll ctl/wait 语义修复`](./results/epoll-semantics-ctl-wait-20260808.md)：
+- [`epoll ctl/wait 语义修复`](./closed-fixes/history/epoll-semantics-ctl-wait-20260808.md)：
   `epoll_ctl02/03`、`epoll_wait03`、`EPOLLRDHUP`、`EPOLLET` 与
   `EPOLLONESHOT` 定向用例全部通过。
-- [`generic syscall 号与 siginfo_t 布局修复`](./results/generic-syscall-waitid-siginfo-20260808.md)：
+- [`generic syscall 号与 siginfo_t 布局修复`](./closed-fixes/history/generic-syscall-waitid-siginfo-20260808.md)：
   `waitid` 修正为 95，`poll` 不再占用 271；RISC-V `siginfo_t` pad 补齐后
   `waitid05/06` 通过。
-- [`socketpair 未对齐指针校验`](./results/socketpair-unaligned-pointer-20260808.md)：
+- [`socketpair 未对齐指针校验`](./closed-fixes/history/socketpair-unaligned-pointer-20260808.md)：
   `socketpair01` 的未对齐 `sv` 指针正确返回 `EFAULT`，定向用例全部通过。
-- [`rmdir 错误语义修复`](./results/rmdir-enotempty-symlink-mount-20260808.md)：
+- [`rmdir 错误语义修复`](./closed-fixes/history/rmdir-enotempty-symlink-mount-20260808.md)：
   `rmdir02` 的 `ENOTEMPTY`、`ELOOP`、`EBUSY`、`EINVAL` 路径全部通过。
-- [`listen UDP EOPNOTSUPP`](./results/listen-udp-eopnotsupp-20260808.md)：
+- [`listen UDP EOPNOTSUPP`](./closed-fixes/history/listen-udp-eopnotsupp-20260808.md)：
   `listen01` 对 UDP socket 正确返回 `EOPNOTSUPP`。
-- [`user-copy 无效地址 EFAULT`](./results/user-copy-invalid-address-efault-20260808.md)：
+- [`user-copy 无效地址 EFAULT`](./closed-fixes/history/user-copy-invalid-address-efault-20260808.md)：
   坏指针路径不再误映射为 `EINVAL`，`statfs02/statfs02_64` 通过。
-- [`readlink 父目录搜索权限`](./results/readlink-parent-search-permission-20260808.md)：
+- [`readlink 父目录搜索权限`](./closed-fixes/history/readlink-parent-search-permission-20260808.md)：
   `readlink03` 的 `EACCES` 路径正确返回，8 项全部通过。
-- [`utimensat NULL pathname 与只读挂载`](./results/utimens-efault-20260808.md)：
+- [`utimensat NULL pathname 与只读挂载`](./closed-fixes/history/utimens-efault-20260808.md)：
   `utimes01` 的 `EFAULT` 与 `EROFS` 路径全部通过。
-- [`select/pselect 无效 fd EBADF`](./results/pselect-invalid-fd-ebadf-20260808.md)：
+- [`select/pselect 无效 fd EBADF`](./closed-fixes/history/pselect-invalid-fd-ebadf-20260808.md)：
   `pselect02/02_64` 的已关闭 fd 正确返回 `EBADF`。
-- [`stat/statx 父目录搜索权限`](./results/stat-parent-search-permission-20260808.md)：
+- [`stat/statx 父目录搜索权限`](./closed-fixes/history/stat-parent-search-permission-20260808.md)：
   `stat03/03_64` 的 `EACCES` 路径正确返回。
-- [`mkdirat/mknodat 符号链接循环`](./results/mkdirat-symlink-loop-20260808.md)：
+- [`mkdirat/mknodat 符号链接循环`](./closed-fixes/history/mkdirat-symlink-loop-20260808.md)：
   `mkdirat02` 的 `ELOOP` 路径正确返回。
-- [`statfs 父目录权限顺序`](./results/statfs-parent-search-order-20260808.md)：
+- [`statfs 父目录权限顺序`](./closed-fixes/history/statfs-parent-search-order-20260808.md)：
   `pathconf02` 的 `EACCES` 路径正确返回。
-- [`madvise 未实现 advice`](./results/madvise-unsupported-advice-20260808.md)：
+- [`madvise 未实现 advice`](./closed-fixes/history/madvise-unsupported-advice-20260808.md)：
   `madvise02` 的未实现 advice 正确返回 `EINVAL`，失败数从 10 降到 5。
-- [`madvise VMA/映射范围检查`](./results/madvise-vma-range-check-20260808.md)：
+- [`madvise VMA/映射范围检查`](./closed-fixes/history/madvise-vma-range-check-20260808.md)：
   `madvise02` 的 `ENOMEM`/`EINVAL` 路径全部通过。
-- [`waitpid 无效进程组 ESRCH`](./results/waitpid-invalid-pgid-esrch-20260808.md)：
+- [`waitpid 无效进程组 ESRCH`](./closed-fixes/history/waitpid-invalid-pgid-esrch-20260808.md)：
   `waitpid04` 的 `INT_MIN` 进程组正确返回 `ESRCH`。
-- [`sched_setaffinity 空 mask`](./results/sched-setaffinity-empty-mask-20260808.md)：
+- [`sched_setaffinity 空 mask`](./closed-fixes/history/sched-setaffinity-empty-mask-20260808.md)：
   `sched_setaffinity01` 的空 CPU mask 正确返回 `EINVAL`。
-- [`sched_setaffinity EPERM`](./results/sched-setaffinity-eperm-20260808.md)：
+- [`sched_setaffinity EPERM`](./closed-fixes/history/sched-setaffinity-eperm-20260808.md)：
   `sched_setaffinity01` 的降权调用正确返回 `EPERM`，四项错误语义全部通过。
-- [`epoll_pwait2 syscall`](./results/epoll-pwait2-20260808.md)：
+- [`epoll_pwait2 syscall`](./closed-fixes/history/epoll-pwait2-20260808.md)：
   `__NR_epoll_pwait2=441` 已实现，`epoll_pwait02..05` 的 pwait2 变体通过。
-- [`双架构完整 Final 复验`](./results/final-after-epoll-20260808.md)：
+- [`双架构完整 Final 复验`](./closed-fixes/history/final-after-epoll-20260808.md)：
   RISC-V `elapsed_s=1144.48`，LoongArch `elapsed_s=1083.76`。
-- [`prctl05 procfs comm`](./results/prctl05-procfs-comm-20260809.md)：
+- [`prctl05 procfs comm`](./closed-fixes/history/prctl05-procfs-comm-20260809.md)：
   `/proc/<pid>/comm` 与 `/proc/<pid>/task/<tid>/comm` 已实现，RV/LA 定向用例通过。
-- [`getsid syscall`](./results/getsid-20260809.md)：
+- [`getsid syscall`](./closed-fixes/history/getsid-20260809.md)：
   `__NR_getsid=156` 已实现，LTP `getsid01/02` 在 RV/LA 均通过。
-- [`sched_rr_get_interval syscall`](./results/sched-rr-get-interval-20260809.md)：
+- [`sched_rr_get_interval syscall`](./closed-fixes/history/sched-rr-get-interval-20260809.md)：
   `__NR_sched_rr_get_interval=127` 已实现，RR/FIFO/错误路径在 RV/LA 均通过。
-- [`rlimit 语义与 prlimit64`](./results/rlimit-semantics-20260809.md)：
+- [`rlimit 语义与 prlimit64`](./closed-fixes/history/rlimit-semantics-20260809.md)：
   非法 resource、`cur > max`、`NOFILE > NR_OPEN` 均按 Linux 返回，`prlimit64`
   支持目标 pid。
-- [`prctl 错误语义`](./results/prctl-pdeathsig-20260809.md)：
+- [`prctl 错误语义`](./closed-fixes/history/prctl-pdeathsig-20260809.md)：
   `prctl02` 的未实现 option 语义已补齐；首次回归定位到 `dc2a7d76`，并已用
   “托孤前通知 + 跳过 Exiting 子进程”的保守版本重新实现，RV 定向压力通过。
-- [`PR_SET/GET_TIMERSLACK`](./results/prctl-timerslack-20260809.md)：
+- [`PR_SET/GET_TIMERSLACK`](./closed-fixes/history/prctl-timerslack-20260809.md)：
   per-task timer slack 与 fork/clone 继承已实现，`prctl09` 定时采样通过。
-- [`prctl03 child subreaper`](./results/prctl03-subreaper-20260809.md)：
+- [`prctl03 child subreaper`](./closed-fixes/history/prctl03-subreaper-20260809.md)：
   SET/GET opcode、GET 写回和孤儿托孤语义已修复；静态回归通过，完整 LTP
   暂留排除名单。
-- [`K-05D ramfs 物理页复验`](./results/k05d-ramfs-physical-pages-20260809.md)：
+- [`K-05D ramfs 物理页复验`](./05d-ramfs-physical-pages/history/k05d-ramfs-physical-pages-20260809.md)：
   `/tmp` payload 使用 `OwnedPhysPage`，128 MiB 实写对应帧占用、删除可回收，
   600 MiB 写入稳定返回 `ENOSPC`。
-- [`sched_setparam Blocking/Sleeping 目标`](./results/sched-setparam-blocked-target-20260808.md)：
+- [`sched_setparam Blocking/Sleeping 目标`](./closed-fixes/history/sched-setparam-blocked-target-20260808.md)：
   `sched_setparam03` 不再对阻塞父进程错误返回 `ESRCH`，调度相关 LTP 全部通过。
-- [`mmap O_WRONLY fd`](./results/mmap-wronly-fd-eacces-20260808.md)：
+- [`mmap O_WRONLY fd`](./closed-fixes/history/mmap-wronly-fd-eacces-20260808.md)：
   `mmap06` 的 O_WRONLY fd 映射正确返回 `EACCES`。
-- [`MAP_SHARED_VALIDATE flag`](./results/mmap-shared-validate-flags-20260808.md)：
+- [`MAP_SHARED_VALIDATE flag`](./closed-fixes/history/mmap-shared-validate-flags-20260808.md)：
   `mmap20` 的非法 `MAP_SHARED_VALIDATE` flag 正确返回 `EOPNOTSUPP`。
-- [`pwrite O_APPEND`](./results/pwrite-oappend-20260808.md)：
+- [`pwrite O_APPEND`](./closed-fixes/history/pwrite-oappend-20260808.md)：
   `pwrite04/04_64` 的 O_APPEND 追加语义正确。
 
-- [`RISC-V sscratch 切换修复`](./results/riscv64-sscratch-switch-20260808.md)：
+- [`RISC-V sscratch 切换修复`](./closed-fixes/history/riscv64-sscratch-switch-20260808.md)：
   协作式上下文切换进入内核/idle 任务时清理 `sscratch`，消除“内核任务被误判为用户态
   trap”导致的 restore 失败。
-- [`RISC-V scheduler 负载均衡修复`](./results/riscv64-scheduler-load-balance-mismatch-20260808.md)：
+- [`RISC-V scheduler 负载均衡修复`](./closed-fixes/history/riscv64-scheduler-load-balance-mismatch-20260808.md)：
   禁用空闲偷取与亲和性放宽，恢复本地 runqueue 选择；完整 RISC-V Final BuildStorm
   重新输出 `BUILDSTORM_COMPILE ok=true`。
 
-- [`K-25`](./results/k25-sched-getaffinity-cpusetsize-20260806.md)：
+- [`K-25`](./closed-fixes/history/k25-sched-getaffinity-cpusetsize-20260806.md)：
   `sched_getaffinity` 接受大 `cpusetsize`，guest `nproc` 从 1 恢复为 8。
-- [`K-26`](./results/k26-exit-group-exiting-trap-boundary-20260806.md)：
+- [`K-26`](./closed-fixes/history/k26-exit-group-exiting-trap-boundary-20260806.md)：
   trap 返回用户态前处理 `ProcessState::Exiting`，修复多线程 `exit_group`
   后父进程 wait 永久等待，完整 Final 正常输出结果。
-- [`K-27`](./results/k27-rust-parallelism-evidence-20260806.md)：
+- [`K-27`](./closed-fixes/history/k27-rust-parallelism-evidence-20260806.md)：
   Rust `available_parallelism()` 实测为 8，确认不是 Cargo job 数量被限制。
-- [`K-28`](./results/k28-fd-registry-free-list-20260806.md)：
+- [`K-28`](./closed-fixes/history/k28-fd-registry-free-list-20260806.md)：
   fd registry 使用空闲集合与增量 open 计数，消除 O(N²) 路径。
-- [`K-29`](./results/k29-unix-sock-owner-range-20260806.md)：
+- [`K-29`](./closed-fixes/history/k29-unix-sock-owner-range-20260806.md)：
   AF_UNIX fork/exit 清理按 owner range 查询，不再扫描全局表。
-- [`K-30`](./results/k30-block-cache-set-associative-index-20260806.md)：
+- [`K-30`](./closed-fixes/history/k30-block-cache-set-associative-index-20260806.md)：
   block cache 使用 8 路组相联 LBA 索引，完整 Final 记录 `1365.70s`。
-- [`K-31`](./results/k31-block-cache-hit-run-lru-20260806.md)：
+- [`K-31`](./closed-fixes/history/k31-block-cache-hit-run-lru-20260806.md)：
   block cache 连续命中区间批量拷贝并只刷新一次 LRU，完整 Final 可跑通。
-- [`K-32`](./results/k32-block-cache-miss-run-insert-20260807.md)：
+- [`K-32`](./closed-fixes/history/k32-block-cache-miss-run-insert-20260807.md)：
   block cache 连续 miss 区间直接插入，避免二次索引查找，完整 Final 可跑通。
-- [`K-33`](./results/k33-paged-handle-size-cache-20260807.md)：
+- [`K-33`](./closed-fixes/history/k33-paged-handle-size-cache-20260807.md)：
   PagedFileHandle 读路径不再逐次锁 ext4 metadata，完整 Final `1873.87s`。
-- [`K-35`](./results/k35-page-cache-key-reuse-20260807.md)：
+- [`K-35`](./closed-fixes/history/k35-page-cache-key-reuse-20260807.md)：
   页缓存 read/write 复用 FileCacheKey，降低 TLSF 分配热路径，完整 Final 通过。
-- [`K-36`](./results/k36-page-cache-close-no-purge-20260807.md)：
+- [`K-36`](./closed-fixes/history/k36-page-cache-close-no-purge-20260807.md)：
   最后 close 不再立即 purge 页缓存，`purge_closed_file` 热点大幅下降。
-- [`K-37`](./results/k37-pcore-affinity-20260807.md)：
+- [`K-37`](./closed-fixes/history/k37-pcore-affinity-20260807.md)：
   Final 运行默认绑定 P-core，完整 Final `elapsed_s=1348.86`。
-- [`K-38`](./results/k38-page-cache-capacity-32mib-20260807.md)：
+- [`K-38`](./closed-fixes/history/k38-page-cache-capacity-32mib-20260807.md)：
   页缓存扩容到 32MiB，完整 Final `elapsed_s=1282.12`。
-- [`K-50`](./results/k50-procfs-read-range-20260807.md)：
+- [`K-50`](./closed-fixes/history/k50-procfs-read-range-20260807.md)：
   procfs 增加 range 读取，完整 Final `elapsed_s=1281.26`。
-- [`回归汇总`](./results/regression-known-issues-20260807.md)：
+- [`回归汇总`](./closed-fixes/history/regression-known-issues-20260807.md)：
   已知问题回归：RV Final/Pre、read-family、iozone、并行探针通过；LA Final 仍受
   `cargo xtask` 偶发竞态影响，重跑已通过。
 
 ## 2026-08-07 wait-hot 采样后新增任务
 
-- [`K-53..K-58`](./11-buildstorm-performance-analysis.md)：修复 `cargo xtask` 返回
+- [`K-53..K-58`](./11-buildstorm-performance-analysis/task.md)：修复 `cargo xtask` 返回
   竞态，并验证 `mprotect`、调度负载均衡、内存拷贝、VirtIO/block、TLSF 热点。
   完整分析见
-  [`waithot-full-analysis-20260807.md`](../perf/waithot-full-analysis-20260807.md)。
+  [`waithot-full-analysis-20260807.md`](../perf/baseline/history/waithot-full-analysis-20260807.md)。
 
 以上组合完整 Final 可跑通。当前最优 `elapsed_s=1281.26`；K-31 完整轮在宿主高负载
 下为 `1941.42`，K-32 低负载完整轮为 `1957.45`，K-33 为 `1873.87`，K-35 为
@@ -184,27 +184,24 @@ K-01 内的 `fsync`、page-cache writeback、unlink/rename 失效和 another-ext
 
 | 状态 | 任务 | 类型 | 交付 |
 |---|---|---|---|
-| [ ] | [`K-01`](./01-buildstorm-fs-durability.md) | 确认未闭环 | BuildStorm、fsync、时间戳、写回一致性 |
 | [ ] | [`RIO-01..10`](../read-family/README.md) | 确认未闭环 | read/readv/pread、MM copy、OFD、读取源 |
-| [ ] | [`K-02`](./02-smp-loongarch-validation.md) | 待复验 | RV/LA 8 核、IPI、LA-musl LTP |
-| [ ] | [`K-03`](./03-functional-zero-scores.md) | 待复验 | regex、Pagefaults、busybox 0 分项 |
-| [ ] | [`K-04`](./04-baseline-and-instrumentation.md) | 确认未完成 | Linux/WaterOS 三轮基线与 Top 3 |
-| [ ] | [`K-05`](./05-fs-vfs-performance.md) | 混合 | dcache、页缓存 LRU、读写放大、ramfs 物理页 |
-| [ ] | [`K-06`](./06-task-scheduler-futex.md) | 测量后候选 | ctx、队列、futex、退出生命周期 |
-| [ ] | [`K-07`](./07-mm-exec-fork-heap.md) | 测量后候选 | lazy ELF、fork/COW、回收、allocator |
-| [ ] | [`K-08`](./08-network-throughput.md) | 测量后候选 | poll、锁、收发批处理、缓冲 |
-| [ ] | [`K-09`](./09-trap-tlb-hotpath.md) | 高风险候选 | trap、TLB/ASID、user-copy walk |
-| [ ] | [`K-10`](./10-final-regression-delivery.md) | 最终门禁 | 双架构功能、性能、镜像与文档 |
+| [ ] | [`K-02`](./02-smp-loongarch-validation/task.md) | 待复验 | RV/LA 8 核、IPI、LA-musl LTP |
+| [ ] | [`K-04`](./04-baseline-and-instrumentation/task.md) | 确认未完成 | Linux/WaterOS 三轮基线与 Top 3 |
+| [ ] | [`K-05`](./05-fs-vfs-performance/task.md) | 混合 | dcache、页缓存 LRU、读写放大、ramfs 物理页 |
+| [ ] | [`K-06`](./06-task-scheduler-futex/task.md) | 测量后候选 | ctx、队列、futex、退出生命周期 |
+| [ ] | [`K-07`](./07-mm-exec-fork-heap/task.md) | 测量后候选 | lazy ELF、fork/COW、回收、allocator |
+| [ ] | [`K-08`](./08-network-throughput/task.md) | 测量后候选 | poll、锁、收发批处理、缓冲 |
+| [ ] | [`K-09`](./09-trap-tlb-hotpath/task.md) | 高风险候选 | trap、TLB/ASID、user-copy walk |
+| [ ] | [`K-10`](./10-final-regression-delivery/task.md) | 最终门禁 | 双架构功能、性能、镜像与文档 |
 
 K-02、K-03、K-05、K-06、K-07 是共享契约和合并门禁，实际分派使用下列可并行 leaf：
 
 | 并行组 | 独立任务文件 |
 |---|---|
-| K-02 | [`02A SMP/IPI`](./02a-smp-ipi-runtime.md)、[`02B LA-musl`](./02b-loongarch-musl-ltp.md) |
-| K-03 | [`03A regex`](./03a-regex-zero-score.md)、[`03B Pagefaults`](./03b-musl-rv-pagefault.md)、[`03C busybox`](./03c-busybox-kill-mv-rmdir.md) |
-| K-05 | [`05A inode/dcache`](./05a-inode-dentry-cache.md)、[`05B page LRU`](./05b-page-cache-lru.md)、[`05C I/O/prefetch`](./05c-io-merge-prefetch.md)、[`05D ramfs 物理页`](./05d-ramfs-physical-pages.md) |
-| K-06 | [`06A scheduler`](./06a-scheduler-ctx.md)、[`06B futex`](./06b-futex-waitqueue.md)、[`06C reap`](./06c-process-reap-lifecycle.md) |
-| K-07 | [`07A lazy ELF`](./07a-elf-lazy-map.md)、[`07B fork/page table`](./07b-fork-pagetable-lifecycle.md)、[`07C heap`](./07c-kernel-heap-backend.md) |
+| K-02 | [`02A SMP/IPI`](./02a-smp-ipi-runtime/task.md)、[`02B LA-musl`](./02b-loongarch-musl-ltp/task.md) |
+| K-05 | [`05A inode/dcache`](./05a-inode-dentry-cache/task.md)、[`05B page LRU`](./05b-page-cache-lru/task.md)、[`05C I/O/prefetch`](./05c-io-merge-prefetch/task.md)、[`05D ramfs 物理页`](./05d-ramfs-physical-pages/task.md) |
+| K-06 | [`06A scheduler`](./06a-scheduler-ctx/task.md)、[`06B futex`](./06b-futex-waitqueue/task.md)、[`06C reap`](./06c-process-reap-lifecycle/task.md) |
+| K-07 | [`07A lazy ELF`](./07a-elf-lazy-map/task.md)、[`07B fork/page table`](./07b-fork-pagetable-lifecycle/task.md) |
 
 K-07B 依赖 K-06C 的 retired-process 接口，不能同时修改生命周期 API；K-05A 与 K-05B
 可并行，但必须先冻结 file identity/cache key。其余同一行 leaf 可使用独立 worktree

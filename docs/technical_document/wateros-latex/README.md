@@ -69,4 +69,4 @@ wateros-latex/
 ## 事实来源
 
 - `docs/technical_document/test.tex`（当前正文母本）
-- `docs/exports/`、`os/feature-tree.txt`
+- 当前仓库源码、`os/feature-tree.txt`

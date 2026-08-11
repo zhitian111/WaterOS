@@ -13,8 +13,8 @@
 - `docs/technical_document/prompts/README.md`
 - `docs/prompts/general.md`（构建与运行）
 - `docs/prompts/coding.md` §6（若存在 Makefile 约定）
-- `docs/tasks/run_testsuits_qemu.md`
-- `docs/tasks/analyze_kernel_log.md`
+- `docs/prompts/tasks/run_testsuits_qemu.md`
+- `docs/prompts/tasks/analyze_kernel_log.md`
 - `os/Makefile`、根目录 `Makefile`
 
 ## 章节结构
