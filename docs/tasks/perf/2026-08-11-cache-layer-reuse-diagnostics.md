@@ -85,3 +85,29 @@ nested QEMU 之后，导致 runner 在 1200 秒总门槛处停止并把该轮标
 先由单测验证查找、删除和冲突 victim；再跑普通 Final candidate。新镜像把成功 compile
 marker 放在后置 QEMU smoke 之前，性能 runner 只按编译 `elapsed_s` 判定；QEMU 兼容性另作
 可用性门槛，不把 nested TCG 时间计入优化成绩。
+
+## 第一候选 A/B 与结论
+
+脚本正文输出最初只去掉 CR/LF，runner 仍会从整段串口命中正文中的
+`BUILDSTORM_COMPILE` 和 `Segmentation fault`，该 2.42 秒启动轮无效。随后 main 与 candidate
+同时改为在正文每个字节之间插入 `|`，既可还原脚本，又不会形成连续评分 marker；以下两轮
+均通过正式判题：
+
+| 构建 | 内核 SHA-256 | 编译时间 | 结果 |
+| --- | --- | ---: | --- |
+| candidate（50% 索引装载 + round-robin victim） | `c4c7c888c1b5b70974febea46d32aa52971cb8a70b5e602b405f8f345222d07c` | 784.61s | passed |
+| matched main | `72cb5fb5dc0bdc284160b77e34debc3342a9dd371e27686501c06f47df371507` | 798.93s | passed |
+
+两轮镜像均为
+`ca5987d2791f83781762f531557f40fadd0a2ce0068fd9be58c2014465db7f58`，CPU affinity 均为
+`0-31`。candidate 改善 `14.32s`，即 `1.79%`。按“一组 matched A/B 首次明确有效即可保留”
+的口径，接受并合入 main，不运行第二组。
+
+结果文件：
+
+- `/tmp/wateros-buildstorm-fixed/block-index-candidate-new-image-valid-a1/result.json`
+- `/tmp/wateros-buildstorm-fixed/block-index-main-new-image-b1/result.json`
+
+该结果同时说明：修正索引冲突可取得真实收益，但距离 Linux baseline 约 400 秒仍很远。
+下一阶段不继续盲目扩大块缓存，而应按 Linux 分层检查 file page cache 的 scan resistance，
+并减少普通文件数据在 file page cache 与 LBA cache 中的重复驻留。
