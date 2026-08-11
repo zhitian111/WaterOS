@@ -39,3 +39,28 @@ larger than recent roughly 10 s run noise, with compile success and no timeout,
 stall, panic, or SIGSEGV. Per the project rule, a clearly successful first run
 is sufficient and will not be repeated. Reject a regression or noise-sized
 change and record the result without merging the implementation.
+
+## Result
+
+The first and only matched sample passed:
+
+| item | result |
+| --- | ---: |
+| accepted 64 MiB baseline | 640.95 s |
+| 128 MiB candidate | 534.26 s |
+| improvement | 106.69 s / 16.65% |
+| host wall time | 556.985 s |
+| output artifact | 1,681,000 bytes |
+
+All toolchain, minibuild, compile, and judge markers passed. The runner reported
+no timeout, stall, panic, or SIGSEGV, and the QEMU process exited successfully.
+The candidate kernel SHA-256 was
+`9e8b698702477268e5c12de2f247d2ff7302818f33b0c07b19887eefa432fee6`;
+the fixed image SHA-256 remained
+`ca5987d2791f83781762f531557f40fadd0a2ce0068fd9be58c2014465db7f58`.
+The structured result is
+`/tmp/wateros-buildstorm-fixed/readonly-exec-mmap-cache-128m-a1/result.json`.
+
+The 106.69 s reduction is far beyond the acceptance threshold and supports the
+diagnostics-based capacity hypothesis. Per the one-clear-run rule, no second
+performance sample was run. Accept the 128 MiB capacity and merge it to main.
