@@ -1,5 +1,6 @@
 //! `stage-busybox`: mount the root volume, then run the image-appropriate test queue.
 
+use alloc::vec::Vec;
 use runtime::logging::*;
 use vfs::api::SingleRootReadView;
 
@@ -74,6 +75,39 @@ fn commands_for_image(image : BringupImage) -> &'static [BringupCommand] {
     }
 }
 
+fn script_path_for_command(cmd : &BringupCommand) -> Option<&str> {
+    if cmd.program.ends_with(".sh") {
+        return Some(cmd.program);
+    }
+    cmd.argv.iter().copied().find(|arg| arg.ends_with(".sh"))
+}
+
+/// Print the selected script before executing it.  CR/LF bytes are removed
+/// while walking the body byte by byte, so result markers embedded in the
+/// script cannot be mistaken for standalone output lines by line-based judges.
+fn dump_script_body(cmd : &BringupCommand) {
+    let Some(path) = script_path_for_command(cmd) else {
+        return;
+    };
+    let body = match vfs::root::read_view().read(path) {
+        Ok(body) => body,
+        Err(error) => {
+            error!("[{LOG_TAG}] script-body read failed path={path}: {error:?}");
+            return;
+        }
+    };
+    let mut flat = Vec::with_capacity(body.len());
+    for byte in body {
+        if byte != b'\n' && byte != b'\r' {
+            flat.push(byte);
+        }
+    }
+    error!("[{LOG_TAG}] SCRIPT_BODY_FLAT_BEGIN path={path} bytes={}", flat.len());
+    runtime::console::write_raw_bytes(&flat);
+    runtime::console::write_raw_bytes(b"\n");
+    error!("[{LOG_TAG}] SCRIPT_BODY_FLAT_END path={path}");
+}
+
 /// Keep the libc search path coupled to the detected image format.  This avoids the generic
 /// loader's build-feature heuristic selecting the final-round environment for an LTP image.
 fn envp_for_command(image : BringupImage, program : &str) -> &'static [&'static str] {
@@ -135,6 +169,7 @@ pub(crate) extern "C" fn run_auto_queue(_arg : usize) -> ! {
     }
 
     for cmd in commands {
+        dump_script_body(cmd);
         let start_ns = monotonic_ns();
         error!("[{LOG_TAG}] program={} argv={:?} start_mono_ns={start_ns}",
                cmd.program, cmd.argv);
