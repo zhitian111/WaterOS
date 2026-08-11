@@ -54,3 +54,19 @@ dirty writeback 语义：
 - 小文件只读一次不会晋升，符合画像中的 scan-resistant 目标；若真实工作集复用间隔超过
   inactive 容量，本方案仍可能来不及晋升，需要后续 ghost/refault 机制。
 - 若链表维护成本抵消 I/O 收益，完整回退 active LRU，仅保留本文与 A/B 结果。
+
+## A/B 结果与结论
+
+测试使用同一磁盘镜像、同一 runner 和 CPU 0-31，且均通过编译完成 marker：
+
+| 内核 | commit / SHA-256 | elapsed_s |
+| --- | --- | ---: |
+| active/inactive candidate | `700875db` / `13ba8034745fc09173676c09673650ae3d15b613acd1024153326621977048e5` | 792.92 |
+| current main | `c1faa317` / `c4c7c888c1b5b70974febea46d32aa52971cb8a70b5e602b405f8f345222d07c` | 797.21 |
+
+候选仅快 4.29s（0.54%）。同一 current-main 内核此前测得 784.61s，两次 main 相差
+12.60s；候选 792.92s 完全落在这个波动区间内，无法把变化归因于 active/inactive 回收。
+按照一次补充对照、不得继续重复消耗整轮 BuildStorm 的约束，本实验到此停止。
+
+结论：该机制在语义和单测上成立，但当前证据不能证明性能收益，因此不合入 main，保留实验
+分支供以后结合 refault/访问距离诊断再评估。main 继续保持 `c1faa317` 的已验证最佳内核。
