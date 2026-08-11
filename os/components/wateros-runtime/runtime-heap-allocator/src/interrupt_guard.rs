@@ -3,18 +3,30 @@
 //! **不变量**：同一调用栈上不得嵌套进入 `GlobalAlloc`；高水位告警每个引导周期至多一次。
 
 use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use base::cpu::CpuLocal;
 use config::mm::KERNEL_HEAP_SIZE;
 use config::task::MAX_CPUS;
 
-/// 每 CPU 的 allocator 进入深度。
+/// 每 CPU 的 allocator 进入深度；cache-line 隔离避免相邻 CPU 误共享。
 ///
 /// ALLOC_SYNC: 关中断后增加深度，以捕获 logger/allocator 等同步路径上的递归分配；
 /// 它不是全局锁，跨 CPU 互斥由具体 allocator backend 的锁负责。
-static HEAP_GUARD_DEPTH : CpuLocal<AtomicUsize, MAX_CPUS> =
-    CpuLocal::from_cells([const { UnsafeCell::new(AtomicUsize::new(0)) }; MAX_CPUS]);
+#[repr(align(64))]
+struct HeapGuardDepth(UnsafeCell<usize>);
+
+impl HeapGuardDepth {
+    const fn new() -> Self { Self(UnsafeCell::new(0)) }
+}
+
+// Each slot is only written by its owning CPU after local interrupts are disabled.
+unsafe impl Sync for HeapGuardDepth {}
+
+const _: () = assert!(core::mem::align_of::<HeapGuardDepth>() == 64);
+
+static HEAP_GUARD_DEPTH : CpuLocal<HeapGuardDepth, MAX_CPUS> =
+    CpuLocal::from_cells([const { UnsafeCell::new(HeapGuardDepth::new()) }; MAX_CPUS]);
 /// 高水位日志只打印一次，避免 OOM 前的每次 alloc 都放大串口输出压力。
 static HEAP_HIGH_WATER_WARNED : AtomicBool = AtomicBool::new(false);
 
@@ -34,16 +46,18 @@ pub(crate) fn with_allocator_interrupt_guard<R>(f : impl FnOnce() -> R) -> R {
     let state = arch::interrupt::read_global_interrupt_state()
                     .expect("heap guard: read interrupt state");
     let _ = arch::interrupt::disable_global_interrupt();
-    let depth = local_depth.fetch_add(1, Ordering::Acquire);
+    // ALLOC_SYNC: no interrupt or scheduler path can re-enter this CPU-local
+    // slot until `f` returns, so cross-CPU atomic RMW is unnecessary.
+    let depth = unsafe { *local_depth.0.get() };
     if depth > 0 {
-        local_depth.fetch_sub(1, Ordering::Release);
         let _ = arch::interrupt::restore_global_interrupt_state(state);
         panic!("recursive heap allocation detected (cpu={} depth={})",
                cpu.raw(),
                depth + 1);
     }
+    unsafe { *local_depth.0.get() = 1 };
     let ret = f();
-    local_depth.fetch_sub(1, Ordering::Release);
+    unsafe { *local_depth.0.get() = 0 };
     let _ = arch::interrupt::restore_global_interrupt_state(state);
     ret
 }
