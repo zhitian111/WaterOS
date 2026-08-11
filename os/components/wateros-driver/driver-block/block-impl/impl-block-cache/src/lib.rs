@@ -1,6 +1,7 @@
 //! 块设备写穿（write-through）LRU 缓存：包装任意 [`BlockDevice`]，对上仍实现同一 trait。
 //!
-//! 连续未命中区间合并为单次底层 [`BlockDevice::read_blocks`]，减少 VirtIO 等后端往返。
+//! 连续未命中区间合并为单次底层 [`BlockDevice::read_blocks`]，减少 VirtIO 等后端往返；
+//! 读数据采用二次命中准入，避免顺序扫描把一次性块复制进数据缓存。
 
 #![no_std]
 extern crate alloc;
@@ -43,22 +44,28 @@ struct LbaIndex {
 
 const LBA_INDEX_WAYS : usize = 8;
 
-#[cfg(feature = "diagnostics")]
-const GHOST_INDEX_WAYS : usize = 4;
+const RECENT_INDEX_WAYS : usize = 4;
 #[cfg(feature = "diagnostics")]
 const DIAGNOSTIC_REPORT_BLOCKS : u64 = 1 << 20;
 
-#[cfg(feature = "diagnostics")]
-struct GhostIndex {
-    buckets : Vec<[Option<Lba>; GHOST_INDEX_WAYS]>,
+/// Approximate recent-miss/refault history used for two-hit read admission.
+///
+/// The table deliberately stores no data and tolerates replacement: a false
+/// negative only delays admission until another read, while false positives
+/// are impossible because the complete LBA is compared.
+struct RecentIndex {
+    buckets : Vec<[Option<Lba>; RECENT_INDEX_WAYS]>,
     next : Vec<u8>,
 }
 
-#[cfg(feature = "diagnostics")]
-impl GhostIndex {
+impl RecentIndex {
     fn new(capacity : usize) -> Self {
-        let bucket_count = capacity.div_ceil(GHOST_INDEX_WAYS).max(1);
-        Self { buckets : vec![[None; GHOST_INDEX_WAYS]; bucket_count],
+        // Keep at most 50% occupancy when the history contains twice as many
+        // entries as data slots. This avoids recreating the old full-table
+        // conflict problem in the admission index.
+        let bucket_count = capacity.div_ceil(RECENT_INDEX_WAYS / 2)
+                                   .max(1);
+        Self { buckets : vec![[None; RECENT_INDEX_WAYS]; bucket_count],
                next : vec![0; bucket_count] }
     }
 
@@ -77,16 +84,20 @@ impl GhostIndex {
 
     fn insert(&mut self, lba : Lba) {
         let bucket = self.bucket(lba);
-        if self.buckets[bucket].iter().any(|entry| *entry == Some(lba)) {
+        if self.buckets[bucket].iter()
+                               .any(|entry| *entry == Some(lba))
+        {
             return;
         }
-        if let Some(entry) = self.buckets[bucket].iter_mut().find(|entry| entry.is_none()) {
+        if let Some(entry) = self.buckets[bucket].iter_mut()
+                                                 .find(|entry| entry.is_none())
+        {
             *entry = Some(lba);
             return;
         }
         let way = self.next[bucket] as usize;
         self.buckets[bucket][way] = Some(lba);
-        self.next[bucket] = ((way + 1) % GHOST_INDEX_WAYS) as u8;
+        self.next[bucket] = ((way + 1) % RECENT_INDEX_WAYS) as u8;
     }
 }
 
@@ -172,7 +183,8 @@ struct Slot {
     next: Option<usize>,
 }
 
-/// 写穿块缓存装饰器：[`read_blocks`] 命中则避免访问 `inner`；未命中合并读入并填入 LRU。
+/// 写穿块缓存装饰器：[`read_blocks`] 命中则避免访问 `inner`；未命中合并读取，并在近期
+/// 第二次访问时填入 LRU。写入维持 write-through + write-allocate。
 pub struct CachingBlockDevice {
     inner: Box<dyn BlockDevice + Send>,
     block_size: usize,
@@ -185,8 +197,9 @@ pub struct CachingBlockDevice {
     /// 已占用槽组成的双向链表；头部最久未使用，尾部最近使用。
     lru_head: Option<usize>,
     lru_tail: Option<usize>,
-    #[cfg(feature = "diagnostics")]
-    ghost: GhostIndex,
+    /// LBAs seen recently but not currently resident. A second read admits
+    /// the block; evicted residents are also remembered for fast refault.
+    recent: RecentIndex,
     #[cfg(feature = "diagnostics")]
     diagnostics: BlockCacheDiagnostics,
 }
@@ -220,8 +233,7 @@ impl CachingBlockDevice {
             free,
             lru_head: None,
             lru_tail: None,
-            #[cfg(feature = "diagnostics")]
-            ghost: GhostIndex::new(capacity),
+            recent: RecentIndex::new(capacity),
             #[cfg(feature = "diagnostics")]
             diagnostics: BlockCacheDiagnostics { next_report : DIAGNOSTIC_REPORT_BLOCKS,
                                                  ..BlockCacheDiagnostics::default() },
@@ -306,25 +318,35 @@ impl CachingBlockDevice {
             return Err(DriverError::IoError);
         };
         self.map.remove(lba);
+        self.recent.insert(lba);
         #[cfg(feature = "diagnostics")]
         {
-            self.ghost.insert(lba);
             self.diagnostics.capacity_evictions += 1;
         }
         Ok(idx)
     }
 
     #[cfg(feature = "diagnostics")]
-    fn note_index_conflict(&mut self, lba : Lba) {
-        self.ghost.insert(lba);
+    fn note_index_conflict(&mut self) {
         self.diagnostics.index_conflict_evictions += 1;
     }
 
     #[cfg(feature = "diagnostics")]
-    fn note_miss(&mut self, lba : Lba) {
+    fn note_miss(&mut self) {
         self.diagnostics.miss_blocks += 1;
-        if self.ghost.take(lba) {
-            self.diagnostics.ghost_hits += 1;
+    }
+
+    /// Install a read-missed block only after the LBA has been observed in
+    /// the recent history. First-touch streaming data bypasses the data cache.
+    fn admit_read_miss(&mut self, lba: Lba, block: &[u8]) {
+        if self.recent.take(lba) {
+            #[cfg(feature = "diagnostics")]
+            {
+                self.diagnostics.ghost_hits += 1;
+            }
+            self.cache_put_new(lba, block);
+        } else {
+            self.recent.insert(lba);
         }
     }
 
@@ -353,6 +375,7 @@ impl CachingBlockDevice {
 
     fn reset_cache_invariant(&mut self) {
         self.map = LbaIndex::new(self.capacity);
+        self.recent = RecentIndex::new(self.capacity);
         self.lru_head = None;
         self.lru_tail = None;
         self.free.clear();
@@ -371,11 +394,13 @@ impl CachingBlockDevice {
         }
         debug_assert_eq!(block.len(), self.block_size);
         if let Some(idx) = self.map.get(lba) {
+            self.recent.take(lba);
             self.slot_data_mut(idx).copy_from_slice(block);
             self.touch_lru(idx);
             return;
         }
         let idx = self.alloc_slot();
+        self.recent.take(lba);
         self.slots[idx].lba = Some(lba);
         self.slot_data_mut(idx).copy_from_slice(block);
         if let Some((old_lba, old_idx)) = self.map.insert(lba, idx) {
@@ -383,8 +408,9 @@ impl CachingBlockDevice {
                 self.detach_lru(old_idx);
                 self.slots[old_idx].lba = None;
                 self.free.push(old_idx);
+                self.recent.insert(old_lba);
                 #[cfg(feature = "diagnostics")]
-                self.note_index_conflict(old_lba);
+                self.note_index_conflict();
             }
         }
         self.push_lru_back(idx);
@@ -398,6 +424,7 @@ impl CachingBlockDevice {
         }
         debug_assert_eq!(block.len(), self.block_size);
         let idx = self.alloc_slot();
+        self.recent.take(lba);
         self.slots[idx].lba = Some(lba);
         self.slot_data_mut(idx).copy_from_slice(block);
         if let Some((old_lba, old_idx)) = self.map.insert(lba, idx) {
@@ -405,8 +432,9 @@ impl CachingBlockDevice {
                 self.detach_lru(old_idx);
                 self.slots[old_idx].lba = None;
                 self.free.push(old_idx);
+                self.recent.insert(old_lba);
                 #[cfg(feature = "diagnostics")]
-                self.note_index_conflict(old_lba);
+                self.note_index_conflict();
             }
         }
         self.push_lru_back(idx);
@@ -465,14 +493,14 @@ impl BlockDevice for CachingBlockDevice {
             }
             let mut j = i + 1;
             #[cfg(feature = "diagnostics")]
-            self.note_miss(Lba(base + i as u64));
+            self.note_miss();
             while j < nblocks {
                 let lbaj = Lba(base + j as u64);
                 if self.map.get(lbaj).is_some() {
                     break;
                 }
                 #[cfg(feature = "diagnostics")]
-                self.note_miss(lbaj);
+                self.note_miss();
                 j += 1;
             }
             let run_bytes = (j - i) * bs;
@@ -484,7 +512,7 @@ impl BlockDevice for CachingBlockDevice {
             self.inner.read_blocks(Lba(base + i as u64), &mut buf[i * bs..i * bs + run_bytes])?;
             for k in i..j {
                 let lk = Lba(base + k as u64);
-                self.cache_put_new(lk, &buf[k * bs..(k + 1) * bs]);
+                self.admit_read_miss(lk, &buf[k * bs..(k + 1) * bs]);
             }
             i = j;
         }
@@ -574,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn repeated_read_same_block_uses_one_backend_read() {
+    fn repeated_read_admits_on_second_miss_then_hits() {
         let reads = Arc::new(Mutex::new(0));
         let writes = Arc::new(Mutex::new(0));
         let inner = Box::new(CountingMem::new(4, reads.clone(), writes.clone()));
@@ -585,9 +613,13 @@ mod tests {
         let bs = cache.block_size();
         let mut a = vec![0u8; bs];
         let mut b = vec![0u8; bs];
+        let mut c = vec![0u8; bs];
         cache.read_blocks(Lba(1), &mut a).unwrap();
         cache.read_blocks(Lba(1), &mut b).unwrap();
-        assert_eq!(*reads.lock().unwrap(), 1);
+        cache.read_blocks(Lba(1), &mut c).unwrap();
+        assert_eq!(*reads.lock().unwrap(), 2);
+        assert_eq!(a, b);
+        assert_eq!(b, c);
         assert_eq!(*writes.lock().unwrap(), 0);
     }
 
@@ -604,6 +636,8 @@ mod tests {
         let mut buf = vec![0u8; bs * 3];
         cache.read_blocks(Lba(2), &mut buf).unwrap();
         assert_eq!(*reads.lock().unwrap(), 1);
+        assert_eq!(cache.free.len(), cache.capacity,
+                   "first-touch scan must not consume data slots");
     }
 
     #[test]
@@ -624,7 +658,11 @@ mod tests {
         let mut second = vec![0u8; bs * 2];
         cache.read_blocks(Lba(0), &mut second).unwrap();
         assert_eq!(second, first);
-        assert_eq!(*reads.lock().unwrap(), before);
+        assert_eq!(*reads.lock().unwrap(), before + 1);
+
+        let before_hit = *reads.lock().unwrap();
+        cache.read_blocks(Lba(0), &mut second).unwrap();
+        assert_eq!(*reads.lock().unwrap(), before_hit);
     }
 
     #[test]
@@ -638,15 +676,24 @@ mod tests {
         );
         let mut buf = vec![0u8; cache.block_size()];
 
+        for _ in 0..2 {
+            cache.read_blocks(Lba(0), &mut buf).unwrap();
+        }
+        for _ in 0..2 {
+            cache.read_blocks(Lba(1), &mut buf).unwrap();
+        }
         cache.read_blocks(Lba(0), &mut buf).unwrap();
-        cache.read_blocks(Lba(1), &mut buf).unwrap();
+        for _ in 0..2 {
+            cache.read_blocks(Lba(2), &mut buf).unwrap();
+        }
         cache.read_blocks(Lba(0), &mut buf).unwrap();
-        cache.read_blocks(Lba(2), &mut buf).unwrap();
-        cache.read_blocks(Lba(0), &mut buf).unwrap();
-        assert_eq!(*reads.lock().unwrap(), 3);
+        assert_eq!(*reads.lock().unwrap(), 6);
 
         cache.read_blocks(Lba(1), &mut buf).unwrap();
-        assert_eq!(*reads.lock().unwrap(), 4);
+        assert_eq!(*reads.lock().unwrap(), 7);
+        cache.read_blocks(Lba(1), &mut buf).unwrap();
+        assert_eq!(*reads.lock().unwrap(), 7,
+                   "an evicted resident must be readmitted on its first refault");
     }
 
     #[test]
