@@ -17,7 +17,8 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use api_v0::{
-    ProcessId, ProcessResult, ProcessSnapshot, ProcessTaskSnapshot, TaskClearTid, TaskId, ThreadId,
+    ProcessId, ProcessResult, ProcessSnapshot, ProcessTaskSnapshot, TaskClearTid, TaskExitCode,
+    TaskId, ThreadId,
 };
 use arch::interrupt::ArchInterruptState;
 use base::sync::MultiprocessorSafeCell;
@@ -113,6 +114,11 @@ pub fn process_snapshot(pid : ProcessId) -> Option<ProcessSnapshot> {
 /// 按调度实体查询进程内任务快照。
 pub fn process_task_snapshot(task_id : TaskId) -> Option<ProcessTaskSnapshot> {
     with_process_registry(|registry| registry.process_task_snapshot(task_id))
+}
+
+/// Query only the process-wide `Exiting` code for a scheduler task.
+pub fn process_exiting_code_for_task(task_id : TaskId) -> Option<TaskExitCode> {
+    with_process_registry(|registry| registry.process_exiting_code_for_task(task_id))
 }
 
 /// 按调度实体查询进程及其父进程标识，避免为标识类 syscall 构造完整快照。

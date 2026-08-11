@@ -23,7 +23,7 @@ pub use lifecycle::{
 pub use process::{
     all_process_pids, collect_child_pids, collect_exited_process_pids, consume_continued_wait,
     consume_stop_wait, continue_process_tasks, continued_child_ready_for_wait,
-    create_session_for_process, current_process_identity, current_process_snapshot,
+    create_session_for_process, current_process_exiting_code, current_process_identity, current_process_snapshot,
     current_process_task_snapshot, current_thread_id, find_continued_child_process,
     find_continued_child_process_in_pgid, find_exited_child_process,
     find_exited_child_process_in_pgid, find_stopped_child_process,

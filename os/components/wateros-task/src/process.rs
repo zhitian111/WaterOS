@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use crate::{
     active_impl, scheduler, ExitedTask, ProcessId, ProcessSnapshot, ProcessState,
-    ProcessResult, ProcessTaskSnapshot, ResourceLimit, TaskClearTid, TaskId, TaskState,
+    ProcessResult, ProcessTaskSnapshot, ResourceLimit, TaskClearTid, TaskExitCode, TaskId, TaskState,
     TaskWaitTarget, ThreadId,
 };
 
@@ -43,6 +43,12 @@ pub fn task_id_for_thread(tid : ThreadId) -> Option<TaskId> {
 pub fn current_process_task_snapshot() -> Option<ProcessTaskSnapshot> {
     let task_id = crate::schedule::current_task_id()?;
     process_task_snapshot(task_id)
+}
+
+/// 当前任务所属进程正在 `exit_group` 时返回退出码；普通运行态不构造快照。
+pub fn current_process_exiting_code() -> Option<TaskExitCode> {
+    let task_id = crate::schedule::current_task_id()?;
+    active_impl::process_exiting_code_for_task(task_id)
 }
 
 /// 当前运行任务所属进程及其父进程标识。

@@ -53,10 +53,8 @@ macro_rules! hot_syscall_trace {
 
 #[inline]
 fn exit_current_if_process_exiting() {
-    if let Some(process) = task::current_process_snapshot() {
-        if let task::ProcessState::Exiting(exit_code) = process.state {
-            task::exit_group_current(exit_code);
-        }
+    if let Some(exit_code) = task::current_process_exiting_code() {
+        task::exit_group_current(exit_code);
     }
 }
 

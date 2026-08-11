@@ -784,6 +784,21 @@ impl ProcessRegistry {
             .ptask_snapshot(task_id)
     }
 
+    /// Return the process-wide exit code observed by a still-running member.
+    /// The common running path avoids constructing either task or process
+    /// snapshots and does not walk the process's task map.
+    pub fn process_exiting_code_for_task(&self, task_id : TaskId) -> Option<TaskExitCode> {
+        let pid = self.pid_for_task
+                      .get(&task_id)?;
+        match self.processes
+                  .get(pid)?
+                  .state
+        {
+            ProcessState::Exiting(exit_code) => Some(exit_code),
+            _ => None,
+        }
+    }
+
     pub fn process_identity_for_task(&self,
                                      task_id : TaskId)
                                      -> Option<(ProcessId, Option<ProcessId>)> {
@@ -1300,6 +1315,19 @@ mod tests {
                         .is_some());
         assert!(registry.detach_exited_process(pid)
                         .is_none());
+    }
+
+    #[test]
+    fn queries_only_exiting_state_directly_from_task() {
+        let mut registry = ProcessRegistry::new();
+        let pid = registry.create_process_for_task(10, None, None)
+                          .expect("create process");
+        assert_eq!(registry.process_exiting_code_for_task(10), None);
+        assert_eq!(registry.process_exiting_code_for_task(99), None);
+
+        registry.mark_process_exited(pid, 9)
+                .expect("start process exit");
+        assert_eq!(registry.process_exiting_code_for_task(10), Some(9));
     }
 
     #[test]
