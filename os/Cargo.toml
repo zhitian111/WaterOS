@@ -110,6 +110,8 @@
     bringup-ltp-musl-only = [  ]
     # 低扰动 bring-up 计数器；默认关闭，性能测量时显式启用。
     bringup-stats = [ "syscall/bringup-stats" ]
+    # another-ext4 pathname/negative-dentry 累计画像；普通 Final 不启用。
+    ext4-lookup-diagnostics = [ "fs/ext4-lookup-diagnostics" ]
     # 热路径 syscall/trap 参数跟踪（默认关闭；见 trap_handler hot_syscall_trace!）
     qemu-riscv64-opensbi = [
         "dep:cred",

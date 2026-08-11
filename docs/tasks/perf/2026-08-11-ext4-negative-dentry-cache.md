@@ -91,4 +91,62 @@
 
 ## 实现与结果
 
-待完成后补充。
+### 实现
+
+- 新增 4-way set-associative、总容量 4,096 的独立 negative cache；槽保存 FNV-1a hash
+  和完整路径，碰撞必须再比较路径。
+- 正缓存命中路径完全不进入负缓存；正 miss 才检查负项，真实 `NotFound` 才发布负项。
+- 正项发布移除同路径负项；rename 清除目标子树负项；mount 清空；内部 orphan 目录/链接
+  创建也同步发布正项，避免隐藏路径留下陈旧负项。
+- `lookup-diagnostics` 通过 another-ext4 → fs aggregate → kernel root feature 显式转发；普通
+  Final 编译已确认不包含 `BUILDSTORM_FS_META_COUNTERS` 字符串。
+- 定向测试覆盖同 bucket 碰撞的完整路径校验、exact 失效、子树边界、rename 目标负项失效
+  与正项发布失效。
+
+### 300 秒画像
+
+固定镜像 SHA-256：
+`4e6d6536096178b88cfab801743f1f634fb3755b3af5ca69bb998e798fba57f1`；诊断内核
+SHA-256：`a9cfe80d9f406dbddba28ba9e4c072b96a1f84116eabfd489d1bcb3d5c2ef3b2`。
+运行通过 toolchain/minibuild 并进入正式编译。最后一个累计快照：
+
+| 计数 | 数值 | 占全部 lookup |
+| --- | ---: | ---: |
+| total | 1,048,576 | 100% |
+| positive hit | 1,003,250 | 95.68% |
+| lookup success after miss | 23,723 | 2.26% |
+| real ext4 `NotFound` | 6,231 | 0.59% |
+| negative hit | 15,372 | 1.47% |
+| positive full clear | 5 | — |
+| invalidated negative entries | 490 | — |
+
+在全部不存在结果中，negative hit 率为
+`15,372 / (15,372 + 6,231) = 71.16%`。约七成重复不存在路径已绕过真实 ext4 查找，
+达到进入普通 Final 完整 A/B 的条件。
+
+### 验证进度
+
+- another-ext4 普通与 diagnostic host tests：通过。
+- RISC-V/LoongArch Final check：通过。
+- RISC-V diagnostic Final check/build：通过。
+- 普通 RISC-V Final build：通过，候选 SHA-256：
+  `13c7a69800f930d1ce6ab74575480fa13328319676d715165c8624e26edba7a0`。
+- 180 秒 smoke：通过 toolchain/minibuild，进入正式编译；无 panic、SIGSEGV 或 stall。
+- current main（含已合并 ELF 共享页）基线内核 SHA-256：
+  `4e09fc3f2dadc3af45fc0d7ba7cb74bbf8db9b9eac5b0b97f554dac6f6bdd86e`。
+
+### 完整 A/B 与合入决定
+
+固定条件：同一 BuildStorm 镜像、CPU `0-15`、`TMPDIR=/tmp`、QEMU snapshot；两次均通过
+toolchain、minibuild 和正式 compile 判定，无 panic、SIGSEGV 或 stall。
+
+| 顺序 | 内核 | guest compile | host wall | SHA-256 |
+| --- | --- | ---: | ---: | --- |
+| A1 | negative dentry candidate | 787.76s | 818.726s | `13c7a69800f930d1ce6ab74575480fa13328319676d715165c8624e26edba7a0` |
+| B1 | current main（含 ELF 共享页） | 807.11s | 837.776s | `4e09fc3f2dadc3af45fc0d7ba7cb74bbf8db9b9eac5b0b97f554dac6f6bdd86e` |
+
+同一交错对照中候选快 `19.35s`，即 `2.40%`。A2 已以同一候选内核启动，但因
+LoongArch BuildStorm 出现 `TCG: unaligned access support required`、导致该架构直接无分，
+按更高优先级主动停止，避免继续占用约十分钟测试时间。结合 71.16% 的重复 `NotFound`
+命中率、完整 A1/B1 的正收益以及用户明确确认，本项纳入 main；未把中止的 A2 当作性能
+样本，也不宣称已经取得多轮统计稳定性。
