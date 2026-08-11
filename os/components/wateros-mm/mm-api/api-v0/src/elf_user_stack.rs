@@ -1,4 +1,4 @@
-//! RISC-V 用户态初始栈布局（argc / argv / envp / auxv），供 `execve` 与带 argv 的
+//! 用户态初始栈布局（argc / argv / envp / auxv），供 `execve` 与带 argv 的
 //! 用户任务 spawn 共用。
 
 extern crate alloc;
@@ -25,6 +25,14 @@ const AT_SECURE : usize = 23;
 const AT_RANDOM : usize = 25;
 
 const PAGE_SIZE : usize = 4096;
+
+#[cfg(any(target_arch = "loongarch64", test))]
+const HWCAP_LOONGARCH_UAL : usize = 1 << 2;
+#[cfg(any(target_arch = "loongarch64", test))]
+const HWCAP_LOONGARCH_FPU : usize = 1 << 3;
+
+#[cfg(any(target_arch = "loongarch64", test))]
+const fn loongarch_elf_hwcap() -> usize { HWCAP_LOONGARCH_UAL | HWCAP_LOONGARCH_FPU }
 
 fn push_to_user_stack<Ops : UserMemoryOps>(ops : &Ops,
                                            sp : &mut usize,
@@ -94,9 +102,10 @@ fn elf_hwcap() -> usize {
     {
         // LoongArch HWCAP uses different bit assignments from RISC-V. Keep the
         // advertised set conservative so glibc does not select LSX/LASX paths
-        // before the kernel saves/restores those extension registers.
-        const HWCAP_LOONGARCH_FPU : usize = 1 << 3;
-        HWCAP_LOONGARCH_FPU
+        // before the kernel saves/restores those extension registers. QEMU's
+        // la464 model exposes CPUCFG1.UAL, and its native LoongArch TCG backend
+        // refuses to start unless the host ELF auxv advertises that capability.
+        loongarch_elf_hwcap()
     }
     #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
     {
@@ -180,4 +189,18 @@ pub fn prepare_elf_user_stack<Ops : UserMemoryOps>(ops : &Ops,
     push_user_word(ops, &mut sp, argv.len())?;
 
     Ok(sp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loongarch_hwcap_advertises_tcg_host_requirements() {
+        let hwcap = loongarch_elf_hwcap();
+        assert_ne!(hwcap & HWCAP_LOONGARCH_UAL, 0);
+        assert_ne!(hwcap & HWCAP_LOONGARCH_FPU, 0);
+        assert_eq!(hwcap & !((1 << 2) | (1 << 3)), 0,
+                   "do not advertise unsaved LSX/LASX or unrelated extensions");
+    }
 }
