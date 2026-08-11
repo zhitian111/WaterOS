@@ -41,3 +41,31 @@ WaterOS 不适合一步照搬完整 blk-mq。本阶段先量化忙等是否仍�
 - 首次明确有效即停止；不明确最多补一次 matched 对照。
 - 只有 RV/LA `make all` 均通过、脚本正文打印仍在、BuildStorm marker 完整且性能明确改善才合入 main。
 
+## 300s PC-hot 结果
+
+current-best 内核 SHA-256 为
+`06d877cbaeb841a539d12b3aa96df47a4a46a9adaffe4bec90b4c5ee5717010d`，镜像 SHA-256 为
+`ca5987d2791f83781762f531557f40fadd0a2ce0068fd9be58c2014465db7f58`。300s 窗口按预期超时，
+toolchain/minibuild 已通过，无 panic、SIGSEGV 或 stall。总采样指令为 33,311,294,491。
+
+| 路径 | 指令数 | 总占比 | 排名 |
+| --- | ---: | ---: | ---: |
+| VirtQueue `add_notify_wait_pop` | 1,046,657,151 | 3.14% | 6 |
+| allocator 相关符号合计 | 3,945,795,184 | 11.84% | 分散于 5/7/8/11/19/28/43 等 |
+| `normalize_absolute_path` | 617,764,886 | 1.85% | 9 |
+| block-cache `read_blocks` | 55,143,159 | 0.17% | 57 |
+| block-cache `RecentIndex::insert` | 26,411,639 | 0.08% | 89 |
+
+结果证明 VirtIO 完成忙等是单一显著热点，IRQ/异步完成方向成立；同时也证明刚合入的 read
+admission 没有把维护成本搬到 `RecentIndex`，其占比仅 0.08%。不过 allocator 合计约为忙等的
+3.77 倍，而已有诊断表明 TLSF 编译阶段锁竞争率仅 2.3%，所以不能把 per-CPU cache 当作单纯
+“消除锁竞争”问题。
+
+结论：保留该分支与架构计划，但不在没有 sleeping block mutex/请求生命周期框架时直接修改
+IRQ。下一步先利用既有 TLSF size histogram 核对旧 slab 为何只降低很少 TLSF 调用；如果不能
+提出结构上不同的方案，再回到这里实现完整的非阻塞提交和 completion wait queue。
+
+结果文件：
+
+- `/tmp/wateros-buildstorm-fixed/current-best-virtio-wait-pchot-300/result.json`
+- `/tmp/wateros-buildstorm-fixed/current-best-virtio-wait-pchot-300/pc-hot.txt`
