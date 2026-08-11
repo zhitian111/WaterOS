@@ -85,6 +85,33 @@ impl BlockDevice for BlockAdapter {
         Block::new(block_id, data)
     }
 
+    fn read_blocks(&self, start_block : u64, buf : &mut [u8]) {
+        if buf.is_empty() {
+            return;
+        }
+        if buf.len() % BLOCK_SIZE != 0 {
+            self.io_error.store(true, Ordering::Release);
+            buf.fill(0);
+            return;
+        }
+        let mut guard = self.device.lock();
+        let block_size = guard.block_size();
+        if block_size == 0 || BLOCK_SIZE % block_size != 0 {
+            self.io_error.store(true, Ordering::Release);
+            buf.fill(0);
+            return;
+        }
+        let lba_count = BLOCK_SIZE / block_size;
+        if let Err(error) = guard.read_blocks(Lba(start_block * lba_count as u64), buf) {
+            self.io_error.store(true, Ordering::Release);
+            buf.fill(0);
+            log::error!("[fs::another-ext4] failed to read blocks start={} bytes={}: {:?}",
+                        start_block,
+                        buf.len(),
+                        error);
+        }
+    }
+
     fn write_block(&self, block : &Block) {
         let mut guard = self.device.lock();
         let block_size = guard.block_size();

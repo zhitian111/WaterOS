@@ -208,22 +208,46 @@ impl Ext4 {
             cursor += read_len;
             iblock += 1;
         }
-        // Continue with full block reads
-        while cursor < read_size {
-            let read_len = min(BLOCK_SIZE, read_size - cursor);
-            let _fblock = match self.extent_query(&file, iblock) {
-                Ok(fblock) => {
-                    // normal
-                    let block = self.read_block(fblock);
-                    buf[cursor..cursor + read_len].copy_from_slice(block.read_offset(0, read_len));
+        // Continue with full blocks. Adjacent logical blocks in the same
+        // physical extent are submitted as one lower-device request.
+        while cursor + BLOCK_SIZE <= read_size {
+            match self.extent_query(&file, iblock) {
+                Ok(first_fblock) => {
+                    let max_blocks = (read_size - cursor) / BLOCK_SIZE;
+                    let mut run_blocks = 1usize;
+                    while run_blocks < max_blocks {
+                        let next_iblock = iblock + run_blocks as LBlockId;
+                        match self.extent_query(&file, next_iblock) {
+                            Ok(next_fblock)
+                                if next_fblock == first_fblock + run_blocks as PBlockId =>
+                            {
+                                run_blocks += 1;
+                            }
+                            _ => break,
+                        }
+                    }
+                    let run_len = run_blocks * BLOCK_SIZE;
+                    self.read_blocks(first_fblock, &mut buf[cursor..cursor + run_len]);
+                    cursor += run_len;
+                    iblock += run_blocks as LBlockId;
                 }
                 Err(_) => {
-                    // hole
-                    buf[cursor..cursor + read_len].fill(0);
+                    buf[cursor..cursor + BLOCK_SIZE].fill(0);
+                    cursor += BLOCK_SIZE;
+                    iblock += 1;
                 }
-            };
+            }
+        }
+        // Final partial block, if any.
+        if cursor < read_size {
+            let read_len = read_size - cursor;
+            if let Ok(fblock) = self.extent_query(&file, iblock) {
+                let block = self.read_block(fblock);
+                buf[cursor..cursor + read_len].copy_from_slice(block.read_offset(0, read_len));
+            } else {
+                buf[cursor..cursor + read_len].fill(0);
+            }
             cursor += read_len;
-            iblock += 1;
         }
 
         Ok(cursor)

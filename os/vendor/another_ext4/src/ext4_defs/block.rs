@@ -91,6 +91,17 @@ impl Block {
 pub trait BlockDevice: Send + Sync + Any {
     /// Read a block from disk.
     fn read_block(&self, block_id: PBlockId) -> Block;
+    /// Read physically contiguous blocks into `buf`.
+    ///
+    /// Backends may override this to issue one device request. The default
+    /// preserves compatibility with block-at-a-time implementations.
+    fn read_blocks(&self, start_block: PBlockId, buf: &mut [u8]) {
+        assert_eq!(buf.len() % BLOCK_SIZE, 0);
+        for (index, chunk) in buf.chunks_exact_mut(BLOCK_SIZE).enumerate() {
+            let block = self.read_block(start_block + index as PBlockId);
+            chunk.copy_from_slice(block.data());
+        }
+    }
     /// Write a block to disk.
     fn write_block(&self, block: &Block);
 }

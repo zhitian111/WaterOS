@@ -28,6 +28,19 @@ impl Ext4 {
         }
     }
 
+    /// Read a physically contiguous block run, retaining the selected cache
+    /// backend's coherency rules.
+    pub(super) fn read_blocks(&self, start_block: PBlockId, buf: &mut [u8]) {
+        #[cfg(feature = "block_cache")]
+        {
+            self.block_cache.read_blocks(start_block, buf)
+        }
+        #[cfg(not(feature = "block_cache"))]
+        {
+            self.block_device.read_blocks(start_block, buf)
+        }
+    }
+
     /// Write a block to block device
     pub(super) fn write_block(&self, block: &Block) {
         #[cfg(feature = "block_cache")]
