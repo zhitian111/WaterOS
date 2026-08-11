@@ -7,7 +7,9 @@
     log = "0.4"
     spin = "0.10.0"
     wateros-base-config = { path = "../../../wateros-base/base-config", package = "wateros-base-config" }
+    wateros-mm-frame-alloctor = { path = "../../../wateros-mm/mm-frame-alloctor", package = "wateros-mm-frame-alloctor", optional = true }
 
 [features]
     diagnostics = [  ]
     default = [  ]
+    physical-pages = [ "dep:wateros-mm-frame-alloctor" ]
