@@ -38,6 +38,7 @@ struct LbaIndexEntry {
 
 struct LbaIndex {
     buckets : Vec<[Option<LbaIndexEntry>; LBA_INDEX_WAYS]>,
+    next_victim : Vec<u8>,
 }
 
 const LBA_INDEX_WAYS : usize = 8;
@@ -107,10 +108,14 @@ struct BlockCacheDiagnostics {
 
 impl LbaIndex {
     fn new(capacity : usize) -> Self {
+        // Keep index occupancy at or below 50% when all data slots are live.
+        // The old 100%-full table turned ordinary hash imbalance into millions
+        // of conflict evictions even though the data cache itself had room.
         let bucket_count = capacity
-                               .div_ceil(LBA_INDEX_WAYS)
+                               .div_ceil(LBA_INDEX_WAYS / 2)
                                .max(1);
-        Self { buckets : vec![[None; LBA_INDEX_WAYS]; bucket_count] }
+        Self { buckets : vec![[None; LBA_INDEX_WAYS]; bucket_count],
+               next_victim : vec![0; bucket_count] }
     }
 
     fn bucket(&self, lba : Lba) -> usize {
@@ -142,8 +147,10 @@ impl LbaIndex {
                 return None;
             }
         }
-        let old = entries[0].take();
-        entries[0] = Some(LbaIndexEntry { lba, idx });
+        let victim = self.next_victim[bucket] as usize;
+        self.next_victim[bucket] = ((victim + 1) % LBA_INDEX_WAYS) as u8;
+        let old = entries[victim].take();
+        entries[victim] = Some(LbaIndexEntry { lba, idx });
         old.map(|entry| (entry.lba, entry.idx))
     }
 
@@ -707,5 +714,28 @@ mod tests {
         assert_eq!(index.get(Lba(7)), Some(5));
         assert_eq!(index.remove(Lba(7)), Some(5));
         assert_eq!(index.get(Lba(7)), None);
+    }
+
+    #[test]
+    fn lba_index_half_load_absorbs_common_modulo_imbalance() {
+        let mut index = LbaIndex::new(16);
+        for i in 0..16usize {
+            assert_eq!(index.insert(Lba((i * 2) as u64), i), None);
+        }
+        for i in 0..16usize {
+            assert_eq!(index.get(Lba((i * 2) as u64)), Some(i));
+        }
+    }
+
+    #[test]
+    fn lba_index_rotates_victim_on_extreme_collision() {
+        let mut index = LbaIndex::new(16);
+        for i in 0..LBA_INDEX_WAYS {
+            assert_eq!(index.insert(Lba((i * 4) as u64), i), None);
+        }
+        assert_eq!(index.insert(Lba(32), 32), Some((Lba(0), 0)));
+        assert_eq!(index.insert(Lba(36), 36), Some((Lba(4), 1)));
+        assert_eq!(index.get(Lba(32)), Some(32));
+        assert_eq!(index.get(Lba(36)), Some(36));
     }
 }
