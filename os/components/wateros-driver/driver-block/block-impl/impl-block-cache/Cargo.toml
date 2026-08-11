@@ -11,4 +11,5 @@
 
 [features]
     api-v0 = [  ]
+    diagnostics = [  ]
     default = [ "api-v0" ]

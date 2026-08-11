@@ -64,6 +64,7 @@
         "network/api-v0",
     ]
     default = [ "api-v0" ]
+    block-cache-diagnostics = [ "block/block-cache-diagnostics" ]
     display = [
         "impl-qemu-loongarch64-virt?/display",
         "impl-qemu-riscv64-virt?/display",

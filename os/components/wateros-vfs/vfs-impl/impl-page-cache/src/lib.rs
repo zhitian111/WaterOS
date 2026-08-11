@@ -30,6 +30,31 @@ use wateros_base_config::fs::{FILE_PAGE_CACHE_CAPACITY, FILE_PAGE_SIZE, FILE_REA
 
 // 本变量代码由AI完成
 const FLUSH_RUN_MAX_PAGES : usize = 64;
+#[cfg(feature = "diagnostics")]
+const DIAGNOSTIC_REPORT_LOOKUPS : u64 = 1 << 18;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InstallSource {
+    Demand,
+    Prefetch,
+}
+
+#[cfg(feature = "diagnostics")]
+#[derive(Default)]
+struct PageCacheDiagnostics {
+    demand_lookups : u64,
+    prefetch_lookups : u64,
+    hits : u64,
+    misses : u64,
+    installs : u64,
+    duplicate_loads : u64,
+    clean_evictions : u64,
+    dirty_evictions : u64,
+    unused_evictions : u64,
+    prefetch_installs : u64,
+    prefetch_uses : u64,
+    next_report : u64,
+}
 
 /// 区间读写下层（通常由 `FsBridge` 委托 `ReadOnlyFs` / `ReadWriteFs`）。
 pub trait PageCacheIo {
@@ -126,6 +151,10 @@ struct PageFrame {
     lru_prev : Option<usize>,
     lru_next : Option<usize>,
     lru_class : Option<LruClass>,
+    #[cfg(feature = "diagnostics")]
+    referenced : bool,
+    #[cfg(feature = "diagnostics")]
+    prefetched : bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,6 +176,8 @@ struct GlobalCacheState {
     dirty_lru_tail : Option<usize>,
     free : Vec<usize>,
     next_version : u64,
+    #[cfg(feature = "diagnostics")]
+    diagnostics : PageCacheDiagnostics,
 }
 
 impl GlobalCacheState {
@@ -165,7 +196,11 @@ impl GlobalCacheState {
                                         version : 0,
                                         lru_prev : None,
                                         lru_next : None,
-                                        lru_class : None });
+                                        lru_class : None,
+                                        #[cfg(feature = "diagnostics")]
+                                        referenced : false,
+                                        #[cfg(feature = "diagnostics")]
+                                        prefetched : false });
             }
             free.extend((0..cap).rev());
         }
@@ -178,7 +213,63 @@ impl GlobalCacheState {
                dirty_lru_head : None,
                dirty_lru_tail : None,
                free,
-               next_version : 0 }
+               next_version : 0,
+               #[cfg(feature = "diagnostics")]
+               diagnostics : PageCacheDiagnostics { next_report : DIAGNOSTIC_REPORT_LOOKUPS,
+                                                    ..PageCacheDiagnostics::default() } }
+    }
+
+    #[cfg(feature = "diagnostics")]
+    fn note_lookup(&mut self, idx : Option<usize>, source : InstallSource) {
+        match source {
+            InstallSource::Demand => self.diagnostics.demand_lookups += 1,
+            InstallSource::Prefetch => self.diagnostics.prefetch_lookups += 1,
+        }
+        if let Some(idx) = idx {
+            self.diagnostics.hits += 1;
+            self.frames[idx].referenced = true;
+            if source == InstallSource::Demand && self.frames[idx].prefetched {
+                self.frames[idx].prefetched = false;
+                self.diagnostics.prefetch_uses += 1;
+            }
+        } else {
+            self.diagnostics.misses += 1;
+        }
+        self.maybe_report_diagnostics();
+    }
+
+    #[cfg(feature = "diagnostics")]
+    fn note_install(&mut self, idx : usize, source : InstallSource) {
+        self.diagnostics.installs += 1;
+        if source == InstallSource::Prefetch {
+            self.diagnostics.prefetch_installs += 1;
+        }
+        self.frames[idx].referenced = false;
+        self.frames[idx].prefetched = source == InstallSource::Prefetch;
+    }
+
+    #[cfg(feature = "diagnostics")]
+    fn maybe_report_diagnostics(&mut self) {
+        let total = self.diagnostics.demand_lookups + self.diagnostics.prefetch_lookups;
+        if total < self.diagnostics.next_report {
+            return;
+        }
+        self.diagnostics.next_report = total.saturating_add(DIAGNOSTIC_REPORT_LOOKUPS);
+        log::error!("[cache-diag:page] demand={} prefetch={} hit={} miss={} installs={} \
+                     duplicate_load={} clean_evict={} dirty_evict={} unused_evict={} \
+                     prefetch_install={} prefetch_use={} resident={}",
+                    self.diagnostics.demand_lookups,
+                    self.diagnostics.prefetch_lookups,
+                    self.diagnostics.hits,
+                    self.diagnostics.misses,
+                    self.diagnostics.installs,
+                    self.diagnostics.duplicate_loads,
+                    self.diagnostics.clean_evictions,
+                    self.diagnostics.dirty_evictions,
+                    self.diagnostics.unused_evictions,
+                    self.diagnostics.prefetch_installs,
+                    self.diagnostics.prefetch_uses,
+                    self.index.len());
     }
 
     #[inline]
@@ -295,8 +386,20 @@ impl GlobalCacheState {
 
 // 本方法代码由AI完成
     fn detach_slot_for_reuse(&mut self,
-                             idx : usize)
+                             idx : usize,
+                             was_dirty : bool)
                              -> Option<((FileCacheKey, u64), Vec<u8>, u64)> {
+        #[cfg(feature = "diagnostics")]
+        if self.frames[idx].key.is_some() {
+            if was_dirty {
+                self.diagnostics.dirty_evictions += 1;
+            } else {
+                self.diagnostics.clean_evictions += 1;
+            }
+            if !self.frames[idx].referenced {
+                self.diagnostics.unused_evictions += 1;
+            }
+        }
         let old = self.frames[idx].key.take();
         if let Some(ref key) = old {
             self.index.remove(key);
@@ -309,6 +412,11 @@ impl GlobalCacheState {
             None
         };
         self.frames[idx].dirty = false;
+        #[cfg(feature = "diagnostics")]
+        {
+            self.frames[idx].referenced = false;
+            self.frames[idx].prefetched = false;
+        }
         dirty_data
     }
 
@@ -359,6 +467,11 @@ impl GlobalCacheState {
             frame.lru_prev = None;
             frame.lru_next = None;
             frame.lru_class = None;
+            #[cfg(feature = "diagnostics")]
+            {
+                frame.referenced = false;
+                frame.prefetched = false;
+            }
         }
         self.index
             .clear();
@@ -639,7 +752,12 @@ impl GlobalFilePageCache {
                      .copied()
             };
             if slot.is_none() && off < logical_size {
-                self.install_page(io, key, page_idx, logical_size, map_err)?;
+                self.install_page(io,
+                                  key,
+                                  page_idx,
+                                  logical_size,
+                                  InstallSource::Demand,
+                                  map_err)?;
                 slot = self.state.lock()
                                  .index
                                  .get(&(key.clone(), page_idx))
@@ -714,6 +832,7 @@ impl GlobalFilePageCache {
                            key : &FileCacheKey,
                            page_idx : u64,
                            file_size : u64,
+                           source : InstallSource,
                            map_err : fn(Io::Error) -> E)
                            -> Result<(), E>
         where Io : PageCacheIo
@@ -723,9 +842,12 @@ impl GlobalFilePageCache {
             if cache.capacity == 0 {
                 return Ok(());
             }
-            if let Some(&idx) = cache.index
-                                     .get(&(key.clone(), page_idx))
-            {
+            let existing = cache.index
+                                .get(&(key.clone(), page_idx))
+                                .copied();
+            #[cfg(feature = "diagnostics")]
+            cache.note_lookup(existing, source);
+            if let Some(idx) = existing {
                 cache.touch_lru(idx);
                 return Ok(());
             }
@@ -754,6 +876,10 @@ impl GlobalFilePageCache {
         if let Some(&idx) = cache.index
                                  .get(&(key.clone(), page_idx))
         {
+            #[cfg(feature = "diagnostics")]
+            {
+                cache.diagnostics.duplicate_loads += 1;
+            }
             cache.touch_lru(idx);
             return Ok(());
         }
@@ -769,6 +895,7 @@ impl GlobalFilePageCache {
                 }
                 continue;
             };
+            let victim_was_dirty = cache.frames[idx].dirty;
             let dirty_victim = if cache.frames[idx].dirty {
                 cache.frames[idx].key.clone().map(|(victim_key, victim_page)| {
                     (victim_key,
@@ -812,7 +939,7 @@ impl GlobalFilePageCache {
                 }
                 cache.mark_clean(idx);
             }
-            let _ = cache.detach_slot_for_reuse(idx);
+            let _ = cache.detach_slot_for_reuse(idx, victim_was_dirty);
             if let Some(&existing) = cache.index.get(&(key.clone(), page_idx)) {
                 cache.return_detached_slot(idx);
                 cache.touch_lru(existing);
@@ -825,6 +952,8 @@ impl GlobalFilePageCache {
             cache.frames[idx].key = Some((key.clone(), page_idx));
             cache.index
                  .insert((key.clone(), page_idx), idx);
+            #[cfg(feature = "diagnostics")]
+            cache.note_install(idx, source);
             cache.touch_lru(idx);
             return Ok(());
         }
@@ -844,9 +973,12 @@ impl GlobalFilePageCache {
             if cache.capacity == 0 {
                 return Ok(());
             }
-            if let Some(&idx) = cache.index
-                                     .get(&(key.clone(), page_idx))
-            {
+            let existing = cache.index
+                                .get(&(key.clone(), page_idx))
+                                .copied();
+            #[cfg(feature = "diagnostics")]
+            cache.note_lookup(existing, InstallSource::Demand);
+            if let Some(idx) = existing {
                 cache.touch_lru(idx);
                 return Ok(());
             }
@@ -874,6 +1006,7 @@ impl GlobalFilePageCache {
                 }
                 continue;
             };
+            let victim_was_dirty = cache.frames[idx].dirty;
             let dirty_victim = if cache.frames[idx].dirty {
                 cache.frames[idx].key.clone().map(|(victim_key, victim_page)| {
                     (victim_key,
@@ -917,7 +1050,7 @@ impl GlobalFilePageCache {
                 }
                 cache.mark_clean(idx);
             }
-            let _ = cache.detach_slot_for_reuse(idx);
+            let _ = cache.detach_slot_for_reuse(idx, victim_was_dirty);
             if let Some(&existing) = cache.index.get(&(key.clone(), page_idx)) {
                 cache.return_detached_slot(idx);
                 cache.touch_lru(existing);
@@ -930,6 +1063,8 @@ impl GlobalFilePageCache {
             cache.frames[idx].key = Some((key.clone(), page_idx));
             cache.index
                  .insert((key.clone(), page_idx), idx);
+            #[cfg(feature = "diagnostics")]
+            cache.note_install(idx, InstallSource::Demand);
             cache.touch_lru(idx);
             return Ok(());
         }
@@ -978,7 +1113,12 @@ impl GlobalFilePageCache {
             let page_off = (pos % FILE_PAGE_SIZE as u64) as usize;
             let chunk = (FILE_PAGE_SIZE - page_off).min(max - done);
             loop {
-                self.install_page(io, key, page_idx, file_size, map_err)?;
+                self.install_page(io,
+                                  key,
+                                  page_idx,
+                                  file_size,
+                                  InstallSource::Demand,
+                                  map_err)?;
                 let cache = self.state.lock();
                 let Some(&idx) = cache.index
                                       .get(&(key.clone(), page_idx))
@@ -1005,7 +1145,12 @@ impl GlobalFilePageCache {
                 if pi * FILE_PAGE_SIZE as u64 >= file_size {
                     break;
                 }
-                let _ = self.install_page(io, key, pi, file_size, map_err);
+                let _ = self.install_page(io,
+                                          key,
+                                          pi,
+                                          file_size,
+                                          InstallSource::Prefetch,
+                                          map_err);
             }
         }
         Ok(done)
@@ -1060,6 +1205,7 @@ impl GlobalFilePageCache {
                                       key,
                                       page_idx,
                                       logical_size,
+                                      InstallSource::Demand,
                                       map_err)?;
                 }
                 // Publish frame data and file metadata together so eviction
@@ -1868,7 +2014,7 @@ mod tests {
         state.assert_lru_invariants();
 
         assert_eq!(state.pop_free_or_lru_index(), Some(1));
-        let evicted = state.detach_slot_for_reuse(1);
+        let evicted = state.detach_slot_for_reuse(1, false);
         assert!(evicted.is_none());
         state.return_detached_slot(1);
         state.assert_lru_invariants();
