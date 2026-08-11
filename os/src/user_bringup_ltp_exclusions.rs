@@ -1,4 +1,4 @@
-//! 初赛 bringup 不适配的 LTP 测例 basename 清单。
+//! Bringup 不适配的 LTP 测例 basename 清单。
 //!
 //! 清单严格按字典序维护，仅供根卷布局阶段删除不参与提交的测例。通用 syscall 实现
 //! 不得根据该清单、可执行文件名或 argv 改变行为。
