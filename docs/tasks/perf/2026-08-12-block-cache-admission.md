@@ -62,3 +62,25 @@ marker，诊断时间 793.51s（不作为普通 Final 成绩）。最后一组�
 同一 LBA 在有界窗口内第二次 miss 才安装；write-through 仍沿用原有 write-allocate/update 行为。
 被容量或索引淘汰的 LBA 进入近期历史，因此有价值的已缓存块在第一次 refault 即可重新准入。
 这样先消除约 1530 万次 miss 上的数据复制、LRU 淘汰和主索引更新，同时保留 ext4 写后读行为。
+
+## Candidate A/B 结果
+
+候选已通过普通与 diagnostics 定向单测、`make check` 和 `make all`。`make all` 生成的别名与
+Final 产物一致：RV SHA-256
+`06d877cbaeb841a539d12b3aa96df47a4a46a9adaffe4bec90b4c5ee5717010d`，LA SHA-256
+`eac047c0e2942cda14f609040e4b0b65bb7d37fcf8972912cc46fa768f5094c1`。
+
+性能使用同一镜像、runner 和 CPU 0-31；两者均通过 toolchain、minibuild 与 compile marker：
+
+| 内核 | commit / SHA-256 | elapsed_s |
+| --- | --- | ---: |
+| second-hit admission candidate | `213ec0b2` / `06d877cbaeb841a539d12b3aa96df47a4a46a9adaffe4bec90b4c5ee5717010d` | 783.00 |
+| current main | `c1faa317` / `c4c7c888c1b5b70974febea46d32aa52971cb8a70b5e602b405f8f345222d07c` | 797.21 |
+
+候选改善 14.21s（1.78%）。该幅度与已经接受的块索引优化 14.32s（1.79%）相当，并且与修复
+索引后的低命中/低 refault 画像相符。按照首次有效即停止的验收规则，接受候选，不运行第二轮。
+
+结果文件：
+
+- `/tmp/wateros-buildstorm-fixed/block-cache-second-hit-admission-a1/result.json`
+- `/tmp/wateros-buildstorm-fixed/page-cache-active-inactive-main-b1/result.json`（current-main 对照）
