@@ -37,3 +37,29 @@ set-associative 表：
    范围或退化，不追加多轮，回退代码并只保留实验记录。
 5. 接受后合入 main，并重新确认 `make all` 默认产物和 `SCRIPT_BODY_FLAT_BEGIN` 标记。
 
+## 实现与结果
+
+实现了总容量 4,096、4-way/1,024 bucket 的正路径缓存，完整路径校验、局部
+round-robin 淘汰以及 mount/rename/remove 失效语义均保留。定向测试新增同 bucket 四项
+共存和第五项局部淘汰覆盖。
+
+验证结果：
+
+- another-ext4 host tests：通过；
+- RISC-V/LoongArch Final check：通过；
+- `make all`：通过，RV/LA 默认产物均等于 Final，且包含 `SCRIPT_BODY_FLAT_BEGIN`；
+- candidate 内核 SHA-256：
+  `2fa6dd1017c09f88fa915a45a73236e8ee37d03c8a53f128f01ae011fcb2dd49`；
+- 镜像 SHA-256：
+  `ca5987d2791f83781762f531557f40fadd0a2ce0068fd9be58c2014465db7f58`；
+- 完整 BuildStorm：全部 marker/judge 通过，无 timeout、stall、panic 或 SIGSEGV，正式编译
+  `783.57s`，runner 总墙钟 `813.804s`。
+
+最近 current-best 同口径为 `783.00s`。候选慢 `0.57s`（约 0.07%），远小于已观测的
+约 12.6s 同内核波动范围。按一次有效 A/B 规则判定为无可验收收益，不追加第二轮、不合入
+main。该结果也再次说明降低通用 `memcmp`/路径比较指令数不能直接推导出 BuildStorm 墙钟
+收益；下一步应优先减少跨层复制或更高层调用次数。
+
+结果文件：
+
+- `/tmp/wateros-buildstorm-fixed/ext4-positive-set-assoc-a1/result.json`
