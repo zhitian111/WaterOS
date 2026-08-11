@@ -54,3 +54,29 @@ regression or noise-sized change without a second performance run. Any dirty
 cache coherency ambiguity, short-read bug, or non-contiguous extent error stops
 the candidate before performance testing.
 
+## Result
+
+The first and only matched sample passed all toolchain, minibuild, compile, and
+judge markers. It produced the expected 1,681,000-byte artifact and exited
+without timeout, stall, panic, or SIGSEGV.
+
+| item | result |
+| --- | ---: |
+| accepted baseline | 534.26 s |
+| batched read-ahead candidate | 530.31 s |
+| improvement | 3.95 s / 0.74% |
+| host wall time | 553.625 s |
+
+The candidate kernel SHA-256 was
+`99fb84acccbde63ae10dfbc99a79a4c5458086d64d17f6484a64f1fdd7a10e9b`;
+the fixed image SHA-256 remained
+`ca5987d2791f83781762f531557f40fadd0a2ce0068fd9be58c2014465db7f58`.
+The structured result is
+`/tmp/wateros-buildstorm-fixed/ext4-batched-readahead-a1/result.json`.
+
+The request pipeline is functionally valid and does combine the lower calls,
+but the 3.95 s change is far below the predeclared 10 s acceptance threshold.
+The remaining synchronous VirtIO instructions are therefore not a sufficient
+wall-clock proxy for this candidate. Per the stop rule, do not run a second
+sample and do not merge the implementation to main. Preserve this branch as a
+performance-failed record.
