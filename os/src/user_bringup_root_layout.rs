@@ -197,7 +197,7 @@ CONFIG_EVENTFD=y
 ///
 /// `ltp_testcode.sh` 用 `for file in "$target_dir"/*` 顺序跑测；删文件比 exec 后 fast-exit
 /// 更省时（不 fork/exec/wait），并避免在通用 syscall 路径中识别测试程序。
-#[cfg(all(feature = "pre", feature = "vfs-bridge"))]
+#[cfg(feature = "vfs-bridge")]
 pub fn prune_ltp_excluded_testcases() {
     use vfs::api::{VfsError, VfsFsKind};
 
@@ -248,7 +248,7 @@ pub fn prune_ltp_excluded_testcases() {
           musl_basenames.len());
 }
 
-#[cfg(all(feature = "pre", not(feature = "vfs-bridge")))]
+#[cfg(not(feature = "vfs-bridge"))]
 pub fn prune_ltp_excluded_testcases() {
     warn!("[{LOG_TAG}] vfs-bridge off: skip LTP testcase prune");
 }
