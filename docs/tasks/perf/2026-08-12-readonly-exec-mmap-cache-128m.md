@@ -73,3 +73,20 @@ This is not a performance sample. Record the last readonly executable mmap
 cache counters and use them only to answer whether the cache reaches 32,768
 resident pages and still bypasses substantial misses. Do not test 256 MiB if
 the 128 MiB cache is not saturated or the remaining bypass count is small.
+
+## Follow-up saturation diagnostics result
+
+The fixed 300 s diagnostics window ended at the expected runner timeout after
+toolchain and minibuild passed. There was no stall, panic, or SIGSEGV. The last
+readonly executable mmap counter line was:
+
+```text
+lookups=344064 hit=316455 miss=27609 installs=27585 duplicate_load=24 full_bypass=0 resident=27585
+```
+
+This is a 91.97% hit rate with 27,585 resident pages (about 107.8 MiB). The
+32,768-page cache did not fill and no miss bypassed admission. The structured
+result is
+`/tmp/wateros-buildstorm-fixed/readonly-exec-mmap-cache-128m-diag-300s/result.json`.
+The predeclared condition for a 256 MiB experiment is therefore not met; stop
+capacity scaling at 128 MiB and investigate a different source of work.
