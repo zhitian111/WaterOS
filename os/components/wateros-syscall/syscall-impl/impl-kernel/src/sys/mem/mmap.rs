@@ -24,6 +24,7 @@ struct VfsMmapPageLoader {
     handle : Box<dyn VfsIoHandle>,
     file_size : usize,
     allow_readonly_sharing : bool,
+    second_hit_admission : bool,
     content_identity : Option<VfsFileContentIdentity>,
 }
 
@@ -35,6 +36,7 @@ impl DemandPageLoader for VfsMmapPageLoader {
         Ok(Box::new(Self { handle,
                            file_size : self.file_size,
                            allow_readonly_sharing : self.allow_readonly_sharing,
+                           second_hit_admission : self.second_hit_admission,
                            content_identity : self.content_identity.clone() }))
     }
 
@@ -68,12 +70,21 @@ impl DemandPageLoader for VfsMmapPageLoader {
         let Some(identity) = self.content_identity.clone() else {
             return Ok(None);
         };
-        let ppn = mm::load_or_get_readonly_mmap_page(&identity,
-                                                     file_offset,
-                                                     self.file_size,
-                                                     |dst| {
-                                                         self.load_page(file_offset, dst)
-                                                     })?;
+        let ppn = if self.second_hit_admission {
+            mm::load_or_get_second_hit_readonly_mmap_page(&identity,
+                                                          file_offset,
+                                                          self.file_size,
+                                                          |dst| {
+                                                              self.load_page(file_offset, dst)
+                                                          })?
+        } else {
+            mm::load_or_get_readonly_mmap_page(&identity,
+                                               file_offset,
+                                               self.file_size,
+                                               |dst| {
+                                                   self.load_page(file_offset, dst)
+                                               })?
+        };
         Ok(Some(ppn))
     }
 
@@ -201,10 +212,12 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
             }
         },
         Some(fd) => {
-            let allow_readonly_sharing = mf.contains(MapFlags::PRIVATE) &&
-                                         perm.executable() &&
-                                         !perm.writable();
-            let loader = match mmap_page_loader(fd, file_size, allow_readonly_sharing) {
+            let allow_readonly_sharing = mf.contains(MapFlags::PRIVATE) && !perm.writable();
+            let second_hit_admission = allow_readonly_sharing && !perm.executable();
+            let loader = match mmap_page_loader(fd,
+                                                file_size,
+                                                allow_readonly_sharing,
+                                                second_hit_admission) {
                 Ok(loader) => loader,
                 Err(e) => return UserRet::from_error(e),
             };
@@ -232,7 +245,8 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
 
 fn mmap_page_loader(fd : usize,
                     file_size : usize,
-                    allow_readonly_sharing : bool)
+                    allow_readonly_sharing : bool,
+                    second_hit_admission : bool)
                     -> Result<Box<dyn DemandPageLoader>, ErrNo> {
     let handle = vfs::fd::with_current_io(fd, |handle| handle.duplicate())
         .map_err(vfs_error_to_errno)?;
@@ -240,6 +254,7 @@ fn mmap_page_loader(fd : usize,
     Ok(Box::new(VfsMmapPageLoader { handle,
                                      file_size,
                                      allow_readonly_sharing,
+                                     second_hit_admission,
                                      content_identity }))
 }
 

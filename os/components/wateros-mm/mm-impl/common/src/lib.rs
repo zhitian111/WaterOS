@@ -329,7 +329,9 @@ pub fn test_readonly_elf_page_cache() {
     frame_dealloc_result(changed).expect("release changed mapping ref");
 }
 
-const MMAP_READONLY_PAGE_CACHE_CAPACITY : usize = 32_768;
+const MMAP_EXEC_READONLY_PAGE_CACHE_CAPACITY : usize = 32_768;
+const MMAP_SECOND_HIT_PAGE_CACHE_CAPACITY : usize = 16_384;
+const MMAP_SECOND_HIT_HISTORY_SLOTS : usize = 16_384;
 #[cfg(feature = "cache-layer-diagnostics")]
 const MMAP_CACHE_DIAGNOSTIC_REPORT_LOOKUPS : u64 = 1 << 14;
 
@@ -351,6 +353,8 @@ struct MmapReadonlyPageEntry {
 
 struct MmapReadonlyPageCache {
     entries : BTreeMap<MmapReadonlyPageKey, MmapReadonlyPageEntry>,
+    recent_misses : Option<Box<[u64]>>,
+    second_hit_admission : bool,
     tick : u64,
     #[cfg(feature = "cache-layer-diagnostics")]
     hits : u64,
@@ -363,12 +367,18 @@ struct MmapReadonlyPageCache {
     #[cfg(feature = "cache-layer-diagnostics")]
     full_bypasses : u64,
     #[cfg(feature = "cache-layer-diagnostics")]
+    admission_skips : u64,
+    #[cfg(feature = "cache-layer-diagnostics")]
     next_report : u64,
 }
 
 impl MmapReadonlyPageCache {
-    fn new() -> Self {
+    fn new(second_hit_admission : bool) -> Self {
         Self { entries : BTreeMap::new(),
+               recent_misses : second_hit_admission.then(|| {
+                   alloc::vec![0u64; MMAP_SECOND_HIT_HISTORY_SLOTS].into_boxed_slice()
+               }),
+               second_hit_admission,
                tick : 0,
                #[cfg(feature = "cache-layer-diagnostics")]
                hits : 0,
@@ -381,7 +391,24 @@ impl MmapReadonlyPageCache {
                #[cfg(feature = "cache-layer-diagnostics")]
                full_bypasses : 0,
                #[cfg(feature = "cache-layer-diagnostics")]
+               admission_skips : 0,
+               #[cfg(feature = "cache-layer-diagnostics")]
                next_report : MMAP_CACHE_DIAGNOSTIC_REPORT_LOOKUPS }
+    }
+
+    fn should_admit_miss(&mut self, key : &MmapReadonlyPageKey) -> bool {
+        let Some(history) = self.recent_misses.as_mut() else {
+            return true;
+        };
+        let fingerprint = mmap_readonly_page_fingerprint(key);
+        let index = fingerprint as usize & (history.len() - 1);
+        let seen = history[index] == fingerprint;
+        history[index] = fingerprint;
+        #[cfg(feature = "cache-layer-diagnostics")]
+        if !seen {
+            self.admission_skips += 1;
+        }
+        seen
     }
 
     #[cfg(feature = "cache-layer-diagnostics")]
@@ -396,20 +423,40 @@ impl MmapReadonlyPageCache {
             return;
         }
         self.next_report = total.saturating_add(MMAP_CACHE_DIAGNOSTIC_REPORT_LOOKUPS);
-        runtime::logging::error!("[cache-diag:mmap-ro] lookups={} hit={} miss={} installs={} \
-                                  duplicate_load={} full_bypass={} resident={}",
+        let name = if self.second_hit_admission { "mmap-ro-second" } else { "mmap-ro" };
+        runtime::logging::error!("[cache-diag:{}] lookups={} hit={} miss={} installs={} \
+                                  duplicate_load={} full_bypass={} admission_skip={} resident={}",
+                                 name,
                                  total,
                                  self.hits,
                                  self.misses,
                                  self.installs,
                                  self.duplicate_loads,
                                  self.full_bypasses,
+                                 self.admission_skips,
                                  self.entries.len());
     }
 }
 
-static MMAP_READONLY_PAGE_CACHE : spin::Mutex<Option<MmapReadonlyPageCache>> =
+static MMAP_EXEC_READONLY_PAGE_CACHE : spin::Mutex<Option<MmapReadonlyPageCache>> =
     spin::Mutex::new(None);
+static MMAP_SECOND_HIT_PAGE_CACHE : spin::Mutex<Option<MmapReadonlyPageCache>> =
+    spin::Mutex::new(None);
+
+fn mmap_readonly_page_fingerprint(key : &MmapReadonlyPageKey) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for value in [key.mount_generation,
+                  key.mount_id,
+                  key.node_id,
+                  key.content_version,
+                  key.file_offset as u64,
+                  key.mapping_file_size as u64]
+    {
+        hash ^= value;
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    hash | 1
+}
 
 fn mmap_readonly_page_key(identity : &VfsFileContentIdentity,
                           content_version : u64,
@@ -430,8 +477,45 @@ fn mmap_readonly_page_key(identity : &VfsFileContentIdentity,
 pub fn load_or_get_readonly_mmap_page<F>(identity : &VfsFileContentIdentity,
                                          file_offset : usize,
                                          mapping_file_size : usize,
-                                         mut load : F)
+                                         load : F)
                                          -> MmResult<PhysPageNum>
+    where F : FnMut(&mut [u8]) -> MmResult<()>
+{
+    load_or_get_readonly_mmap_page_inner(identity,
+                                         file_offset,
+                                         mapping_file_size,
+                                         &MMAP_EXEC_READONLY_PAGE_CACHE,
+                                         MMAP_EXEC_READONLY_PAGE_CACHE_CAPACITY,
+                                         false,
+                                         load)
+}
+
+/// Load or reuse a non-executable readonly mmap page, admitting persistent
+/// cache state only after the exact content key has missed recently once.
+pub fn load_or_get_second_hit_readonly_mmap_page<F>(identity : &VfsFileContentIdentity,
+                                                    file_offset : usize,
+                                                    mapping_file_size : usize,
+                                                    load : F)
+                                                    -> MmResult<PhysPageNum>
+    where F : FnMut(&mut [u8]) -> MmResult<()>
+{
+    load_or_get_readonly_mmap_page_inner(identity,
+                                         file_offset,
+                                         mapping_file_size,
+                                         &MMAP_SECOND_HIT_PAGE_CACHE,
+                                         MMAP_SECOND_HIT_PAGE_CACHE_CAPACITY,
+                                         true,
+                                         load)
+}
+
+fn load_or_get_readonly_mmap_page_inner<F>(identity : &VfsFileContentIdentity,
+                                           file_offset : usize,
+                                           mapping_file_size : usize,
+                                           cache_slot : &'static spin::Mutex<Option<MmapReadonlyPageCache>>,
+                                           capacity : usize,
+                                           second_hit_admission : bool,
+                                           mut load : F)
+                                           -> MmResult<PhysPageNum>
     where F : FnMut(&mut [u8]) -> MmResult<()>
 {
     debug_assert_eq!(file_offset % PAGE_SIZE, 0);
@@ -441,9 +525,11 @@ pub fn load_or_get_readonly_mmap_page<F>(identity : &VfsFileContentIdentity,
                                          content_version,
                                          file_offset,
                                          mapping_file_size);
-        let cached = {
-            let mut guard = MMAP_READONLY_PAGE_CACHE.lock();
-            let cache = guard.get_or_insert_with(MmapReadonlyPageCache::new);
+        let (cached, admit_miss) = {
+            let mut guard = cache_slot.lock();
+            let cache = guard.get_or_insert_with(|| {
+                                  MmapReadonlyPageCache::new(second_hit_admission)
+                              });
             cache.tick = cache.tick.wrapping_add(1);
             let tick = cache.tick;
             #[cfg(feature = "cache-layer-diagnostics")]
@@ -454,9 +540,10 @@ pub fn load_or_get_readonly_mmap_page<F>(identity : &VfsFileContentIdentity,
             if let Some(entry) = cache.entries.get_mut(&key) {
                 frame_inc_ref(entry.ppn).map_err(MmError::from)?;
                 entry.last_used = tick;
-                Some(entry.ppn)
+                (Some(entry.ppn), true)
             } else {
-                None
+                let admit = cache.should_admit_miss(&key);
+                (None, admit)
             }
         };
         if let Some(ppn) = cached {
@@ -482,8 +569,10 @@ pub fn load_or_get_readonly_mmap_page<F>(identity : &VfsFileContentIdentity,
 
         let mut duplicate = None;
         {
-            let mut guard = MMAP_READONLY_PAGE_CACHE.lock();
-            let cache = guard.get_or_insert_with(MmapReadonlyPageCache::new);
+            let mut guard = cache_slot.lock();
+            let cache = guard.get_or_insert_with(|| {
+                                  MmapReadonlyPageCache::new(second_hit_admission)
+                              });
             cache.tick = cache.tick.wrapping_add(1);
             let tick = cache.tick;
             if let Some(entry) = cache.entries.get_mut(&key) {
@@ -494,8 +583,8 @@ pub fn load_or_get_readonly_mmap_page<F>(identity : &VfsFileContentIdentity,
                 {
                     cache.duplicate_loads += 1;
                 }
-            } else {
-                if cache.entries.len() >= MMAP_READONLY_PAGE_CACHE_CAPACITY {
+            } else if admit_miss {
+                if cache.entries.len() >= capacity {
                     // Keep the established hot set and return the freshly loaded
                     // frame only to this mapping. Generic file mmap streams can
                     // contain millions of one-shot pages; an O(n) LRU victim scan
@@ -587,6 +676,47 @@ pub fn test_readonly_mmap_page_cache() {
     assert_ne!(changed, first);
     assert_eq!(loads, 4, "content change must reload a private mmap page");
     frame_dealloc_result(changed).expect("release changed mmap mapping ref");
+
+    let second_hit_identity = VfsFileContentIdentity::new(usize::MAX as u64 - 3,
+                                                          u64::MAX - 4,
+                                                          u64::MAX - 3,
+                                                          Arc::new(AtomicU64::new(1)));
+    let mut second_hit_loads = 0usize;
+    let private_first = load_or_get_second_hit_readonly_mmap_page(&second_hit_identity,
+                                                                  0,
+                                                                  PAGE_SIZE,
+                                                                  |dst| {
+        second_hit_loads += 1;
+        dst[0] = 0x41;
+        Ok(())
+    }).expect("first second-hit cache observation");
+    assert_eq!(frame_ref_count(private_first).expect("private first frame refcount"),
+               1,
+               "first observation must not retain a cache reference");
+    let admitted_second = load_or_get_second_hit_readonly_mmap_page(&second_hit_identity,
+                                                                    0,
+                                                                    PAGE_SIZE,
+                                                                    |dst| {
+        second_hit_loads += 1;
+        dst[0] = 0x42;
+        Ok(())
+    }).expect("second observation installs readonly page");
+    let shared_third = load_or_get_second_hit_readonly_mmap_page(&second_hit_identity,
+                                                                 0,
+                                                                 PAGE_SIZE,
+                                                                 |_| {
+        second_hit_loads += 1;
+        Ok(())
+    }).expect("third observation reuses readonly page");
+    assert_ne!(private_first, admitted_second);
+    assert_eq!(admitted_second, shared_third);
+    assert_eq!(second_hit_loads, 2, "third observation must avoid file I/O");
+    assert_eq!(frame_ref_count(admitted_second).expect("admitted frame refcount"),
+               3,
+               "cache plus second and third mapping references");
+    frame_dealloc_result(private_first).expect("release private first observation");
+    frame_dealloc_result(admitted_second).expect("release admitted second observation");
+    frame_dealloc_result(shared_third).expect("release shared third observation");
 }
 
 impl ElfSegmentLoadParams {
