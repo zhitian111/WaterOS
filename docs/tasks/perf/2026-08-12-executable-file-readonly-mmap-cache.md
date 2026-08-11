@@ -47,3 +47,29 @@ The accepted baseline is 534.26 s. Accept only an improvement clearly larger
 than the recent roughly 10 s system noise. A clear first-run win is final and
 must not be repeated. A regression or noise-sized result is rejected and
 documented without merging the implementation.
+
+## Result
+
+The first and only matched sample passed all functional gates but regressed:
+
+| item | result |
+| --- | ---: |
+| accepted RX-only baseline | 534.26 s |
+| executable-file readonly candidate | 548.33 s |
+| regression | 14.07 s / 2.63% |
+| host wall time | 570.922 s |
+| output artifact | 1,681,000 bytes |
+
+Toolchain, minibuild, compile, and judge markers passed. There was no timeout,
+stall, panic, or SIGSEGV. The candidate kernel SHA-256 was
+`d0f5d52883343f5793627534ef431fca0bac771b6d9e24dcbe161e61ca59b147`;
+the fixed image SHA-256 remained
+`ca5987d2791f83781762f531557f40fadd0a2ce0068fd9be58c2014465db7f58`.
+The structured result is
+`/tmp/wateros-buildstorm-fixed/executable-file-readonly-mmap-cache-a1/result.json`.
+
+The guest and host regressions agree and exceed the declared noise threshold.
+Executable mode is still too broad a proxy: it can admit readonly pages from
+one-shot produced binaries and pages whose later permission transitions force
+private copies. Reject the implementation without a second performance run and
+do not merge it to main.
