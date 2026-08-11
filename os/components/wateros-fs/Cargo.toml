@@ -57,6 +57,7 @@
     impl-ext4-rs = [ "dep:impl-ext4-rs" ]
     impl-another-ext4 = [ "dep:impl-another-ext4" ]
     impl-ramfs = [ "dep:impl-ramfs" ]
+    ext4-lookup-diagnostics = [ "impl-another-ext4/lookup-diagnostics" ]
 
 [profile.dev]
     panic = "abort"
