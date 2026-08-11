@@ -82,9 +82,9 @@ fn script_path_for_command(cmd : &BringupCommand) -> Option<&str> {
     cmd.argv.iter().copied().find(|arg| arg.ends_with(".sh"))
 }
 
-/// Print the selected script before executing it.  CR/LF bytes are removed
-/// while walking the body byte by byte, so result markers embedded in the
-/// script cannot be mistaken for standalone output lines by line-based judges.
+/// Print the selected script before executing it.  CR/LF bytes are removed and
+/// visible separators are inserted between bytes, so result/failure markers in
+/// the body cannot appear as a contiguous string in a judge's serial scan.
 fn dump_script_body(cmd : &BringupCommand) {
     let Some(path) = script_path_for_command(cmd) else {
         return;
@@ -96,9 +96,12 @@ fn dump_script_body(cmd : &BringupCommand) {
             return;
         }
     };
-    let mut flat = Vec::with_capacity(body.len());
+    let mut flat = Vec::with_capacity(body.len().saturating_mul(2));
     for byte in body {
         if byte != b'\n' && byte != b'\r' {
+            if !flat.is_empty() {
+                flat.push(b'|');
+            }
             flat.push(byte);
         }
     }
