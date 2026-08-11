@@ -69,3 +69,28 @@ WaterOS 的 LoongArch ELF auxv 只宣告 `HWCAP_LOONGARCH_FPU = 1 << 3`。项目
 完整 `Hello, world!` 验证将追加到 RV/LA 性能镜像的 BuildStorm 脚本：正式编译计时结束后
 复用刚生成的产物执行 `cargo xtask arceos qemu`，成功后再发布最终 compile 结果。这样每次
 性能测试同时覆盖线上额外运行步骤，不另做一次长编译。
+
+## 性能镜像脚本接线
+
+已直接更新两个本地性能镜像的 `/glibc/buildstorm_testcode.sh`，没有复制或备份大镜像：
+
+| 架构 | 修改前镜像 SHA-256 | 修改后镜像 SHA-256 |
+| --- | --- | --- |
+| RISC-V | `4e6d6536096178b88cfab801743f1f634fb3755b3af5ca69bb998e798fba57f1` | `88e22cd5d3ba89aacecc1e16b77f1e38cbf952246902b280df4d87b88ee9ff78` |
+| LoongArch | `bf4ffe125052e3d5608c0705e7364c4bf87dc5dc1f7c48365425f0886a9887d0` | `7957779256dcc21507ca32f9b0e78c0a8ebc09bc2e142568d64fe44241963775` |
+
+原脚本只备份为镜像旁的小文件：
+
+- `os/sdcard-rv-pub.img.buildstorm_testcode.sh.bak-20260811`；
+- `os/sdcard-la-pub.img.buildstorm_testcode.sh.bak-20260811`。
+
+两份原脚本 SHA-256 均为
+`5bfbaa5bd99bec595ccd980fff0ebc002d42c0ce0a7e28af266f0ddad69b7189`。更新后两镜像内脚本
+SHA-256 均为 `914b38966173e11cc282b1dab073b63b2a714c0a239518b941ced3052e24b99d`，权限为
+`0755`，并通过 `sh -n`。
+
+脚本先记录 `T1` 和 `ELAPSED`，再执行最多 300 秒的 untimed
+`cargo xtask arceos qemu -p arceos-helloworld --arch "$AXARCH"`。只有命令返回 0 且
+`buildstorm.run.out` 包含 `Hello, world!`，才输出 `BUILDSTORM_RUN ok` 和最终
+`BUILDSTORM_COMPILE ... ok=true`。本地 `/opt/qemu-{rv,la}64/lib` 仅在 run 阶段加入
+`LD_LIBRARY_PATH`，不会改变正式 Rust 编译的动态库环境或计时。
