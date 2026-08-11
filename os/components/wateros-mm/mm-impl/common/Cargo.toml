@@ -5,7 +5,10 @@
 
 [dependencies]
     api-v0 = { path = "../../mm-api/api-v0/", package = "wateros-mm-api-v0", default-features = true }
+    frame-alloctor = { path = "../../mm-frame-alloctor", package = "wateros-mm-frame-alloctor", default-features = true, features = [ "impl-stack" ] }
     runtime = { package = "wateros-runtime", path = "../../../wateros-runtime", default-features = true }
+    spin = { version = "0.10.0", default-features = false, features = [ "mutex", "spin_mutex" ] }
+    vfs-api = { path = "../../../wateros-vfs/vfs-api/api-v0", package = "wateros-vfs-api-v0", default-features = true }
 
 [features]
     default = [  ]

@@ -1021,14 +1021,25 @@ impl LoongArch64AddressSpace {
                 platform::arch::paging::TlbFlushRange::Page { addr : page.0 });
             return Ok(true);
         }
-        let ppn = allocator.alloc_frame()?;
-        let pa = ppn.0 * PAGE_SIZE;
-        let dst = unsafe { core::slice::from_raw_parts_mut(pa as *mut u8, PAGE_SIZE) };
-        dst.fill(0);
         let file_offset = {
             let vma = &self.lazy_file_vmas[index];
             vma.file_offset + (page.0 - vma.start.0)
         };
+        if let Some(ppn) = self.lazy_file_vmas[index].loader
+                                                        .load_shared_page(file_offset)?
+        {
+            if let Err(error) = self.map_page_to_ppn(page.floor_page(), ppn, perm) {
+                let _ = frame_dealloc_result(ppn);
+                return Err(error);
+            }
+            platform::arch::paging::flush_tlb_local(
+                platform::arch::paging::TlbFlushRange::Page { addr : page.0 });
+            return Ok(true);
+        }
+        let ppn = allocator.alloc_frame()?;
+        let pa = ppn.0 * PAGE_SIZE;
+        let dst = unsafe { core::slice::from_raw_parts_mut(pa as *mut u8, PAGE_SIZE) };
+        dst.fill(0);
         if let Err(e) = self.lazy_file_vmas[index].loader
                                                   .load_page(file_offset, dst)
         {

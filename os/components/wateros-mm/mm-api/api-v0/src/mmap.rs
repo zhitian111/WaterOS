@@ -51,6 +51,14 @@ pub trait DemandPageLoader {
     /// 将文件偏移 `file_offset` 对应的一页加载到已清零的 `dst`。
     fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()>;
 
+    /// Optionally return an immutable physical page already populated for this
+    /// file offset. A returned PPN owns one reference for the caller's mapping;
+    /// the caller must release it if page-table installation fails. Writable
+    /// loaders and loaders without a shared cache retain the default `None`.
+    fn load_shared_page(&mut self, _file_offset : usize) -> MmResult<Option<PhysPageNum>> {
+        Ok(None)
+    }
+
     /// 将共享映射页写回文件后备。只读 loader 可保留默认的不支持实现。
     fn write_page(&mut self, _file_offset : usize, _src : &[u8]) -> MmResult<()> {
         Err(crate::error::MmError::Unsupported)
