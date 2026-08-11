@@ -43,3 +43,31 @@ baseline by more than 10 s. A clear first-run win is sufficient and is not
 repeated. Reject a regression or noise-sized change without a second
 performance run.
 
+## Result
+
+The first and only matched sample passed all toolchain, minibuild, compile, and
+judge markers. It produced the expected 1,681,000-byte artifact and exited
+without timeout, stall, panic, or SIGSEGV.
+
+| item | result |
+| --- | ---: |
+| accepted baseline | 534.26 s |
+| direct exit-state query | 538.35 s |
+| change | +4.09 s / +0.77% |
+| host wall time | 560.893 s |
+
+The candidate kernel SHA-256 was
+`ef3c311128129d29e9f9b20462f770d03d32205a831ff6c3673264faeff21a39`;
+the fixed image SHA-256 remained
+`ca5987d2791f83781762f531557f40fadd0a2ce0068fd9be58c2014465db7f58`.
+The structured result is
+`/tmp/wateros-buildstorm-fixed/process-exit-state-query-a1/result.json`.
+
+The narrow query is semantically correct but the wall clock regressed by
+4.09 s, so the profiled snapshot instructions were not a sufficient predictor
+of BuildStorm completion time. Per the stop rule, do not run a second sample
+and do not merge the implementation to main. Preserve this branch as the
+performance-failed record. The standalone host unit-test command was also
+blocked before this crate by the repository's existing no-architecture
+`ArchPagingImpl` configuration; normal kernel check and both architecture
+builds passed.
