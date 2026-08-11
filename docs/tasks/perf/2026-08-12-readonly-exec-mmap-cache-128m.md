@@ -64,3 +64,12 @@ The structured result is
 The 106.69 s reduction is far beyond the acceptance threshold and supports the
 diagnostics-based capacity hypothesis. Per the one-clear-run rule, no second
 performance sample was run. Accept the 128 MiB capacity and merge it to main.
+
+## Follow-up saturation diagnostics plan
+
+Before considering another capacity increase, run the accepted 128 MiB kernel
+with `cache-layer-diagnostics` for a fixed 300 s window in a separate worktree.
+This is not a performance sample. Record the last readonly executable mmap
+cache counters and use them only to answer whether the cache reaches 32,768
+resident pages and still bypasses substantial misses. Do not test 256 MiB if
+the 128 MiB cache is not saturated or the remaining bypass count is small.
