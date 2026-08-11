@@ -502,9 +502,9 @@ impl MmapOps for LoongArch64AddressSpace {
                                       .start_addr())
     }
 
-    fn mprotect(&mut self, addr : VirtAddr, len : usize, perm : PagePerm) -> MmResult<()> {
+    fn mprotect(&mut self, addr : VirtAddr, len : usize, perm : PagePerm) -> MmResult<bool> {
         if len == 0 {
-            return Ok(());
+            return Ok(false);
         }
         if perm == PagePerm::empty() {
             return Err(MmError::InvalidAddress);
@@ -523,6 +523,7 @@ impl MmapOps for LoongArch64AddressSpace {
                                     perm_u)?;
         let mut vpn = addr.floor_page();
         let vpn_end = end.ceil_page();
+        let mut ptes_changed = false;
         while vpn.0 < vpn_end.0 {
             if self.translate_addr(vpn.start_addr())?
                    .is_none()
@@ -534,11 +535,15 @@ impl MmapOps for LoongArch64AddressSpace {
                 }
                 return Err(MmError::NotMapped);
             }
-            self.protect_page(vpn, perm_u)?;
+            let old_perm = self.leaf_page_perm(vpn)?
+                               .ok_or(MmError::NotMapped)?;
+            if old_perm != perm_u {
+                self.protect_page(vpn, perm_u)?;
+                ptes_changed = true;
+            }
             vpn = VirtPageNum(vpn.0 + 1);
         }
-        fence_user_ptes();
-        Ok(())
+        Ok(ptes_changed)
     }
 
     fn mremap<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,

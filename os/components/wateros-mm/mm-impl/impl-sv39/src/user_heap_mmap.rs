@@ -469,9 +469,9 @@ impl MmapOps for Sv39AddressSpace {
                                    end.ceil_page().start_addr())
     }
 
-    fn mprotect(&mut self, addr : VirtAddr, len : usize, perm : PagePerm) -> MmResult<()> {
+    fn mprotect(&mut self, addr : VirtAddr, len : usize, perm : PagePerm) -> MmResult<bool> {
         if len == 0 {
-            return Ok(());
+            return Ok(false);
         }
         let end = VirtAddr(addr.0
                                .checked_add(len)
@@ -489,25 +489,33 @@ impl MmapOps for Sv39AddressSpace {
                                     perm_u)?;
         let mut vpn = addr.floor_page();
         let vpn_end = end.ceil_page();
+        let mut ptes_changed = false;
         while vpn.0 < vpn_end.0 {
-            if self.translate_addr(vpn.start_addr())?
-                   .is_none()
-            {
+            let Some(old_pa) = self.translate_addr(vpn.start_addr())? else {
                 let page_end = VirtPageNum(vpn.0 + 1).start_addr();
                 if self.lazy_vma_overlaps(vpn.start_addr(), page_end) {
                     vpn = VirtPageNum(vpn.0 + 1);
                     continue;
                 }
                 return Err(MmError::NotMapped);
+            };
+            let old_perm = self.leaf_page_perm(vpn)?
+                               .ok_or(MmError::NotMapped)?;
+            if perm_u.writable() {
+                if !self.ensure_private_for_write(vpn)? {
+                    return Err(MmError::NotMapped);
+                }
+                let new_pa = self.translate_addr(vpn.start_addr())?
+                                 .ok_or(MmError::NotMapped)?;
+                ptes_changed |= new_pa.floor_page() != old_pa.floor_page();
             }
-            if perm_u.writable() && !self.ensure_private_for_write(vpn)? {
-                return Err(MmError::NotMapped);
+            if old_perm != perm_u {
+                self.protect_page(vpn, perm_u)?;
+                ptes_changed = true;
             }
-            self.protect_page(vpn, perm_u)?;
             vpn = VirtPageNum(vpn.0 + 1);
         }
-        fence_user_ptes();
-        Ok(())
+        Ok(ptes_changed)
     }
 
     fn mremap<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,

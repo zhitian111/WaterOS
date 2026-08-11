@@ -108,7 +108,10 @@ pub trait MmapOps: AddressSpaceOps {
     fn msync(&mut self, addr : VirtAddr, len : usize) -> MmResult<()>;
 
     /// 将 `[addr, addr+len)` 内已映射的叶子页权限更新为 `perm`（按页对齐到边界）。
-    fn mprotect(&mut self, addr : VirtAddr, len : usize, perm : PagePerm) -> MmResult<()>;
+    ///
+    /// 返回值表示是否至少有一个驻留叶 PTE（含其 PPN）实际发生变化；只更新 lazy VMA
+    /// 元数据时返回 `false`，供调用方避免不必要的 TLB shootdown。
+    fn mprotect(&mut self, addr : VirtAddr, len : usize, perm : PagePerm) -> MmResult<bool>;
 
     /// 调整已有映射大小或地址（Linux `mremap(2)` 语义子集）。
     fn mremap<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,

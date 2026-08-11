@@ -8,12 +8,15 @@
 
 extern crate alloc;
 
+use alloc::boxed::Box;
 use api_v0::addr::{PhysPageNum, VirtAddr, VirtPageNum, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::MmError;
+use api_v0::mmap::{MmapOps, PageFaultAccess};
 use api_v0::perm::PagePerm;
 
-use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
+use frame_alloctor::{frame_alloc_result, frame_dealloc_result, GlobalPhysFrameAllocator};
+use impl_common::ZeroAnonLoader;
 mod asid;
 mod pagetable;
 
@@ -51,8 +54,18 @@ pub fn test_with_range(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
                    .expect("should map");
     assert_eq!(pa.0, ppn.0 * PAGE_SIZE + 0x123);
 
-    aspace.protect_page(vpn, PagePerm::R | PagePerm::U)
-          .expect("protect should succeed");
+    let changed = MmapOps::mprotect(&mut aspace,
+                                    vpn.start_addr(),
+                                    PAGE_SIZE,
+                                    PagePerm::R)
+                      .expect("mprotect should succeed");
+    assert!(changed, "resident permission change must require a flush");
+    let unchanged = MmapOps::mprotect(&mut aspace,
+                                      vpn.start_addr(),
+                                      PAGE_SIZE,
+                                      PagePerm::R)
+                        .expect("same-permission mprotect should succeed");
+    assert!(!unchanged, "same resident permission must not require a flush");
     let pa2 = aspace.translate_addr(va)
                     .unwrap()
                     .unwrap();
@@ -71,6 +84,36 @@ pub fn test_with_range(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
     assert!(second_unmap.is_none());
 
     frame_dealloc_result(ppn).expect("dealloc test frame");
+
+    let lazy_vpn = VirtPageNum(0x400);
+    let lazy_start = lazy_vpn.start_addr();
+    let lazy_end = VirtPageNum(lazy_vpn.0 + 1).start_addr();
+    aspace.register_lazy_file_vma(lazy_start,
+                                  lazy_end,
+                                  PagePerm::R | PagePerm::U,
+                                  0,
+                                  0,
+                                  Box::new(ZeroAnonLoader))
+          .expect("register lazy page");
+    let lazy_changed = MmapOps::mprotect(&mut aspace,
+                                         lazy_start,
+                                         PAGE_SIZE,
+                                         PagePerm::R | PagePerm::W)
+                           .expect("protect lazy page");
+    assert!(!lazy_changed, "lazy VMA-only change must not require a flush");
+    assert!(aspace.leaf_page_perm(lazy_vpn).unwrap().is_none());
+    let mut allocator = GlobalPhysFrameAllocator;
+    assert!(MmapOps::handle_page_fault(&mut aspace,
+                                       &mut allocator,
+                                       lazy_start,
+                                       PageFaultAccess::Write)
+            .expect("fault protected lazy page"));
+    assert_eq!(aspace.leaf_page_perm(lazy_vpn).unwrap(),
+               Some(PagePerm::R | PagePerm::W | PagePerm::U));
+    let lazy_ppn = aspace.unmap_page_to_ppn(lazy_vpn)
+                          .expect("unmap lazy test page")
+                          .expect("lazy test page should be resident");
+    frame_dealloc_result(lazy_ppn).expect("dealloc lazy test frame");
     user_access::test_copy_to_user_progress();
 
     log::trace!("[mm-impl::sv39] test end");
