@@ -44,3 +44,28 @@ The accepted baseline is 534.26 s. Accept only a successful result clearly more
 than roughly 10 s faster, with no timeout, stall, panic, or SIGSEGV. A clear
 first-run win is final and will not be repeated. A regression or noise-sized
 change is rejected and documented without merging the implementation.
+
+## Result
+
+The first and only matched sample passed but produced only a noise-sized gain:
+
+| item | result |
+| --- | ---: |
+| accepted baseline | 534.26 s |
+| borrowed path candidate | 530.42 s |
+| difference | -3.84 s / -0.72% |
+| host wall time | 552.695 s |
+| output artifact | 1,681,000 bytes |
+
+Vendor tests with the real `block_cache` feature, kernel check, RV/LA builds,
+and all BuildStorm markers passed. There was no timeout, stall, panic, or
+SIGSEGV. The candidate kernel SHA-256 was
+`adba9d8c9b327b2da87754ebc5aa02be40f05edda83f4eb378507313443fd065`;
+the fixed image SHA-256 remained
+`ca5987d2791f83781762f531557f40fadd0a2ce0068fd9be58c2014465db7f58`.
+The structured result is
+`/tmp/wateros-buildstorm-fixed/ext4-borrowed-path-components-a1/result.json`.
+
+The 3.84 s difference is well below the declared acceptance threshold. Do not
+run a second performance sample and do not merge this intentional vendor change
+to main.
