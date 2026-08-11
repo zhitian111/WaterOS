@@ -13,6 +13,20 @@ use crate::ext4_defs::*;
 use crate::prelude::*;
 use crate::return_error;
 
+fn path_components(path: &str) -> impl Iterator<Item = &str> {
+    let path = path.trim_start_matches('/');
+    let is_root = path.is_empty();
+    path.split('/').filter(move |_| !is_root)
+}
+
+fn parent_and_name(path: &str) -> Option<(&str, &str)> {
+    let path = path.trim_start_matches('/');
+    if path.is_empty() {
+        return None;
+    }
+    Some(path.rsplit_once('/').unwrap_or(("", path)))
+}
+
 impl Ext4 {
     /// Look up an object in the filesystem recursively.
     ///
@@ -33,10 +47,9 @@ impl Ext4 {
         trace!("generic_lookup({}, {})", root, path);
         // Search from the given parent inode
         let mut cur = root;
-        let search_path = Self::split_path(path);
         // Search recursively
-        for path in search_path.iter() {
-            cur = self.lookup(cur, path)?;
+        for component in path_components(path) {
+            cur = self.lookup(cur, component)?;
         }
         Ok(cur)
     }
@@ -63,17 +76,23 @@ impl Ext4 {
     pub fn generic_create(&self, root: InodeId, path: &str, mode: InodeMode) -> Result<InodeId> {
         // Search from the given parent inode
         let mut cur = self.read_inode(root);
-        let search_path = Self::split_path(path);
+        let mut search_path = path_components(path).peekable();
         // Search recursively
-        for (i, path) in search_path.iter().enumerate() {
+        while let Some(component) = search_path.next() {
+            let is_last = search_path.peek().is_none();
             if !cur.inode.is_dir() {
                 return_error!(ErrCode::ENOTDIR, "Parent {} is not a directory", cur.id);
             }
-            match self.dir_find_entry(&cur, path) {
+            match self.dir_find_entry(&cur, component) {
                 Ok(id) => {
-                    if i == search_path.len() - 1 {
+                    if is_last {
                         // Reach the object and it already exists
-                        return_error!(ErrCode::EEXIST, "Object {}/{} already exists", root, path);
+                        return_error!(
+                            ErrCode::EEXIST,
+                            "Object {}/{} already exists",
+                            root,
+                            component
+                        );
                     }
                     cur = self.read_inode(id);
                 }
@@ -81,14 +100,14 @@ impl Ext4 {
                     if e.code() != ErrCode::ENOENT {
                         return_error!(e.code(), "Unexpected error: {:?}", e);
                     }
-                    let child_id = if i == search_path.len() - 1 {
+                    let child_id = if is_last {
                         if mode.file_type() == FileType::Directory {
-                            self.mkdir(cur.id, path, mode)?
+                            self.mkdir(cur.id, component, mode)?
                         } else {
-                            self.create(cur.id, path, mode)?
+                            self.create(cur.id, component, mode)?
                         }
                     } else {
-                        self.mkdir(cur.id, path, InodeMode::ALL_RWX)?
+                        self.mkdir(cur.id, component, InodeMode::ALL_RWX)?
                     };
                     cur = self.read_inode(child_id);
                 }
@@ -110,11 +129,11 @@ impl Ext4 {
     /// * `ENOTEMPTY` - The object is a non-empty directory.
     pub fn generic_remove(&self, root: InodeId, path: &str) -> Result<()> {
         // Get the parent directory path and the file name
-        let mut search_path = Self::split_path(path);
-        let file_name = &search_path.split_off(search_path.len() - 1)[0];
-        let parent_path = search_path.join("/");
+        let Some((parent_path, file_name)) = parent_and_name(path) else {
+            return_error!(ErrCode::EINVAL, "Cannot remove the lookup root");
+        };
         // Get the parent directory inode
-        let parent_id = self.generic_lookup(root, &parent_path)?;
+        let parent_id = self.generic_lookup(root, parent_path)?;
         // Get the child inode
         let child_id = self.lookup(parent_id, file_name)?;
         let mut parent = self.read_inode(parent_id);
@@ -142,25 +161,41 @@ impl Ext4 {
     /// * `EEXIST` - The destination object already exists.
     pub fn generic_rename(&self, root: InodeId, src: &str, dst: &str) -> Result<()> {
         // Parse the directories and file names
-        let mut src_path = Self::split_path(src);
-        let src_file_name = &src_path.split_off(src_path.len() - 1)[0];
-        let src_parent_path = src_path.join("/");
-        let mut dst_path = Self::split_path(dst);
-        let dst_file_name = &dst_path.split_off(dst_path.len() - 1)[0];
-        let dst_parent_path = dst_path.join("/");
+        let Some((src_parent_path, src_file_name)) = parent_and_name(src) else {
+            return_error!(ErrCode::EINVAL, "Cannot rename the lookup root");
+        };
+        let Some((dst_parent_path, dst_file_name)) = parent_and_name(dst) else {
+            return_error!(ErrCode::EINVAL, "Cannot replace the lookup root");
+        };
         // Get source and des inodes
-        let src_parent_id = self.generic_lookup(root, &src_parent_path)?;
-        let dst_parent_id = self.generic_lookup(root, &dst_parent_path)?;
+        let src_parent_id = self.generic_lookup(root, src_parent_path)?;
+        let dst_parent_id = self.generic_lookup(root, dst_parent_path)?;
         // Move the file
         self.rename(src_parent_id, src_file_name, dst_parent_id, dst_file_name)
     }
+}
 
-    /// A helper function to split a path by '/'
-    fn split_path(path: &str) -> Vec<String> {
-        let path = path.trim_start_matches("/");
-        if path.is_empty() {
-            return vec![]; // root
-        }
-        path.split("/").map(|s| s.to_string()).collect()
+#[cfg(test)]
+mod tests {
+    use super::{parent_and_name, path_components};
+    use crate::prelude::*;
+
+    #[test]
+    fn borrowed_components_preserve_existing_split_semantics() {
+        assert_eq!(path_components("").collect::<Vec<_>>(), Vec::<&str>::new());
+        assert_eq!(path_components("///").collect::<Vec<_>>(), Vec::<&str>::new());
+        assert_eq!(path_components("/a/b").collect::<Vec<_>>(), vec!["a", "b"]);
+        assert_eq!(path_components("a//b/").collect::<Vec<_>>(),
+                   vec!["a", "", "b", ""]);
+    }
+
+    #[test]
+    fn borrowed_parent_and_name_handles_nested_paths() {
+        assert_eq!(parent_and_name(""), None);
+        assert_eq!(parent_and_name("///"), None);
+        assert_eq!(parent_and_name("/name"), Some(("", "name")));
+        assert_eq!(parent_and_name("/a/b"), Some(("a", "b")));
+        assert_eq!(parent_and_name("a//b"), Some(("a/", "b")));
+        assert_eq!(parent_and_name("a/"), Some(("a", "")));
     }
 }
