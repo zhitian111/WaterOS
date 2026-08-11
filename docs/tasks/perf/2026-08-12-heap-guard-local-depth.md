@@ -38,3 +38,23 @@ TLSF 全局锁，最终 1800s 超时。复盘已确认严重退化来自扩大�
 - 一次 current main/candidate BuildStorm A/B；首次明确改善即停止，不明确最多补一次对照。
 - 只有功能完整且收益超过现有约 12.6s 的同内核运行波动，才合入 main。
 
+## 结果与结论
+
+普通/diagnostics 相关代码均未启用额外计数。RV/LA `make check`、`make all` 通过，且别名与
+Final 产物一致。反汇编确认 guard 深度读写已由普通 `ld/sd` 完成，TLSF 锁的 `amoor` 和
+`used_estimate` 的 `lr/sc` 保持不变。
+
+| 内核 | commit / SHA-256 | elapsed_s |
+| --- | --- | ---: |
+| local-depth candidate | `bbe95971` / `11bfb26fbdc2137be05f9d1e5e21691f05791dc52c6097fb015f4ed982f83345` | 787.48 |
+| current main | `86162c22` / `06d877cbaeb841a539d12b3aa96df47a4a46a9adaffe4bec90b4c5ee5717010d` | 783.00 |
+
+候选慢 4.48s（0.57%），且差异完全落在同内核已知波动内，不能证明收益。按照一次 candidate
+即可否定且不重复消耗整轮的规则，停止实验，不合入 main。结果文件：
+
+- `/tmp/wateros-buildstorm-fixed/heap-guard-local-depth-a1/result.json`
+- `/tmp/wateros-buildstorm-fixed/block-cache-second-hit-admission-a1/result.json`（current-main 基线）
+
+该结果进一步说明 allocator 热点主要是调用次数与 TLSF 算法本身，而不是递归深度 AMO。后续
+不继续堆叠 guard/统计微调；若重启 allocator 工作，必须采用结构上不同的单一 size-class 固定池，
+并先解决旧 slab 命中率低和额外 CPU/header 维护的问题。
