@@ -3,12 +3,53 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use core::any::Any;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use spin::Mutex;
 
 use crate::error::{VfsError, VfsResult};
 use crate::meta::VfsMetadata;
+
+/// Stable identity and live content generation for an opened regular file.
+///
+/// Backends advance the shared version token after content-changing operations.
+/// Consumers may include [`Self::version`] in cache keys; the token's `Arc`
+/// keeps the generation stable across close/reopen while cached consumers exist.
+#[derive(Clone)]
+pub struct VfsFileContentIdentity {
+    mount_generation : u64,
+    mount_id : u64,
+    node_id : u64,
+    version : Arc<AtomicU64>,
+}
+
+impl VfsFileContentIdentity {
+    pub fn new(mount_generation : u64,
+               mount_id : u64,
+               node_id : u64,
+               version : Arc<AtomicU64>)
+               -> Self {
+        Self { mount_generation,
+               mount_id,
+               node_id,
+               version }
+    }
+
+    pub const fn mount_generation(&self) -> u64 { self.mount_generation }
+
+    pub const fn mount_id(&self) -> u64 { self.mount_id }
+
+    pub const fn node_id(&self) -> u64 { self.node_id }
+
+    pub fn version(&self) -> u64 { self.version.load(Ordering::Acquire) }
+
+    pub fn mark_changed(&self) -> u64 {
+        self.version.fetch_add(1, Ordering::AcqRel).wrapping_add(1)
+    }
+
+    pub fn version_token(&self) -> Arc<AtomicU64> { self.version.clone() }
+}
 
 /// One Linux open-file-description's shared seek position and status flags.
 ///
@@ -289,6 +330,11 @@ pub trait VfsIoHandle: Send + VfsHandleAny {
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         Err(VfsError::Unsupported)
     }
+
+    /// Stable file identity for content-addressed consumers such as the ELF
+    /// readonly physical-page cache. Non-regular or unstable handles return
+    /// `None`.
+    fn file_content_identity(&self) -> Option<VfsFileContentIdentity> { None }
 
     fn seek(&mut self, _offset: i64, _whence: VfsSeekWhence) -> VfsResult<u64> {
         Err(VfsError::Unsupported)

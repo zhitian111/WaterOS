@@ -26,9 +26,10 @@
 
 ### 1. 持久只读 VFS handle
 
-`from_elf_path` 对 resolved path 只打开一次只读 `VfsIoHandle`，ELF header、program
-headers 和后续 segment fault 都使用该 handle 的 `read_at`。segment loader 和 fork 副本
-共享 handle 所有权，避免每个 4 KiB fault 重新做绝对路径规范化和逐组件 ext4 lookup。
+每个 lazy ELF segment 在注册时打开一个持久只读 `VfsIoHandle`，后续 segment fault 都使用
+该 handle 的 `read_at`；fork 产生的 loader 副本共享 handle 所有权。ELF header/program
+header 的现有读取路径保持不变。这样避免每个 4 KiB fault 重新打开路径，同时避免不同
+segment 共用一个 handle 锁而扩大竞争。
 
 ### 2. 稳定文件身份与内容代次
 
@@ -93,4 +94,67 @@ content version、ELF segment 布局与 loader file offset；值为 PPN 和 LRU 
 
 ## 实现与结果
 
-待完成后补充。
+### 实现
+
+- VFS handle 新增稳定的 `(mount generation, mount id, node id, content version)` 内容身份；
+  fs-bridge 对同一稳定节点共享 version token，并在 write/pwrite/truncate/unlink 路径推进版本。
+- `DemandPageLoader` 新增默认返回 `None` 的可选 shared-page 合约；普通 mmap/匿名 loader 不变。
+- RISC-V 与 LoongArch ELF loader 对只读 segment 使用共享 PPN，可写 data/BSS 保持独立帧。
+- `mm-impl/common` 增加 16,384 项有界缓存；miss I/O 在锁外完成，竞争发布只保留赢家，
+  eviction 只释放 cache ref，不影响已存在映射。
+- 定向 MM 自检覆盖同键只加载一次、相同 PPN、cache/mapping 引用计数以及内容版本变化 miss。
+
+### 正确性与构建验证
+
+- RISC-V Final check：通过。
+- LoongArch Final check：通过。
+- RISC-V Final kernel build：通过，候选内核 SHA-256：
+  `4e09fc3f2dadc3af45fc0d7ba7cb74bbf8db9b9eac5b0b97f554dac6f6bdd86e`。
+- 180 秒 smoke：通过 toolchain/minibuild，进入正式编译；无 panic、SIGSEGV 或 stall。
+- 两轮完整候选均通过 toolchain、minibuild、compile marker 和 judge。
+
+### 完整 BuildStorm A/B
+
+全部样本使用固定镜像
+`4e6d6536096178b88cfab801743f1f634fb3755b3af5ca69bb998e798fba57f1`、CPU `0-15`、
+`TMPDIR=/tmp` 与 QEMU `-snapshot`。main 三个样本的内核 SHA-256 均为
+`ea091ca43109ad0ae13b2da3ce14acb2504d60cc1e8ea8f0a6b49441450082d2`。
+
+| 实现 | elapsed_s |
+| --- | ---: |
+| main | 810.26 |
+| main | 803.36 |
+| candidate | 793.85 |
+| main（相邻对照） | 811.03 |
+| candidate | 806.49 |
+
+- main 中位数：`810.26s`；candidate 中位数：`800.17s`。
+- 中位数净减少 `10.09s`，约 `1.25%`；均值口径约改善 `1.0%`。
+- 两轮 candidate 都完整通过，且没有出现性能倒退；第一轮相对相邻 main 快 `2.12%`，
+  第二轮相对 main 中位数快约 `0.47%`。
+- 结果低于原先自动合并门槛 `1.5%`，但用户明确接受该稳定正收益并决定纳入 main。
+
+### 300 秒 pc-hot 核验
+
+main 与 candidate 使用上述固定镜像和对应固定内核；两边均通过 toolchain/minibuild 并进入
+正式编译。candidate 在相同宿主窗口内执行 `34.06B` guest 指令，main 为 `32.06B`，进度
+指标增加 `6.24%`。归一化热点变化：
+
+| 热点 | main 占比 | candidate 占比 | 相对变化 |
+| --- | ---: | ---: | ---: |
+| VirtIO `add_notify_wait_pop` | 4.186% | 3.089% | -26.20% |
+| user page fault | 1.003% | 0.906% | -9.69% |
+| TLSF allocate | 3.558% | 3.481% | -2.16% |
+| TLSF deallocate | 2.515% | 2.455% | -2.39% |
+| memset | 5.732% | 5.691% | -0.71% |
+| compiler memcpy | 11.408% | 11.466% | +0.51% |
+
+新增 ELF cache BTree 查找仅占 candidate 总指令 `0.081%`，`load_or_get` 包装占
+`0.019%`，content identity 获取占 `0.008%`，均未形成新热点。VirtIO 与 page-fault
+占比下降证明共享页确实减少重复缺页读取；全局 memcpy 基本不变，说明剩余复制主要来自
+编译器和普通文件路径，也解释了完整墙钟收益只有约 1%。
+
+### 决策
+
+按用户确认保留并合并。后续不继续在 ELF cache 内做锁或 BTree 微调；优先转向重复
+pathname/metadata 的 negative dentry cache，以及 per-CPU 小对象分配快路径。

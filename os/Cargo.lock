@@ -1386,8 +1386,11 @@ dependencies = [
 name = "wateros-mm-impl-common"
 version = "0.1.0"
 dependencies = [
+ "spin",
  "wateros-mm-api-v0",
+ "wateros-mm-frame-alloctor",
  "wateros-runtime",
+ "wateros-vfs-api-v0",
 ]
 
 [[package]]

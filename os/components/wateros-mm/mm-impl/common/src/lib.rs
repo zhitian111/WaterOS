@@ -8,6 +8,8 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use api_v0::addr::{PhysPageNum, VirtAddr, VirtPageNum, PAGE_SIZE};
@@ -19,6 +21,9 @@ use api_v0::frame_allocator::PhysicalFrameAllocator;
 use api_v0::kernel_bringup::LoadElfError;
 use api_v0::mmap::DemandPageLoader;
 use api_v0::perm::PagePerm;
+use core::sync::atomic::AtomicU64;
+use frame_alloctor::{frame_alloc_result, frame_dealloc_result, frame_inc_ref, frame_ref_count};
+use vfs_api::VfsFileContentIdentity;
 
 /// 私有匿名映射的惰性缺页 loader：缺页时不做任何加载，
 /// 直接保留 `handle_lazy_page_fault` 预先清零的页（等价于按需零页）。
@@ -69,6 +74,192 @@ pub struct ElfSegmentLoadParams {
     pub filesz : usize,
     pub vma_start : usize,
     pub vma_file_origin : usize,
+}
+
+const ELF_READONLY_PAGE_CACHE_CAPACITY : usize = 16_384;
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ElfReadonlyPageKey {
+    mount_generation : u64,
+    mount_id : u64,
+    node_id : u64,
+    content_version : u64,
+    vbase : usize,
+    p_offset : usize,
+    filesz : usize,
+    vma_start : usize,
+    file_offset : usize,
+}
+
+struct ElfReadonlyPageEntry {
+    ppn : PhysPageNum,
+    last_used : u64,
+    _identity : VfsFileContentIdentity,
+}
+
+struct ElfReadonlyPageCache {
+    entries : BTreeMap<ElfReadonlyPageKey, ElfReadonlyPageEntry>,
+    tick : u64,
+}
+
+static ELF_READONLY_PAGE_CACHE : spin::Mutex<Option<ElfReadonlyPageCache>> =
+    spin::Mutex::new(None);
+
+fn readonly_page_key(identity : &VfsFileContentIdentity,
+                     content_version : u64,
+                     params : &ElfSegmentLoadParams,
+                     file_offset : usize)
+                     -> ElfReadonlyPageKey {
+    ElfReadonlyPageKey { mount_generation : identity.mount_generation(),
+                         mount_id : identity.mount_id(),
+                         node_id : identity.node_id(),
+                         content_version,
+                         vbase : params.vbase,
+                         p_offset : params.p_offset,
+                         filesz : params.filesz,
+                         vma_start : params.vma_start,
+                         file_offset }
+}
+
+/// Load or reuse one immutable ELF page. The returned frame owns one reference
+/// for the caller's future mapping; the cache retains a separate reference.
+/// The loader runs without the cache lock, so concurrent misses may perform
+/// duplicate I/O but publish only one frame.
+pub fn load_or_get_readonly_elf_page<F>(identity : &VfsFileContentIdentity,
+                                        params : &ElfSegmentLoadParams,
+                                        file_offset : usize,
+                                        mut load : F)
+                                        -> MmResult<PhysPageNum>
+    where F : FnMut(&mut [u8]) -> MmResult<()>
+{
+    loop {
+        let content_version = identity.version();
+        let key = readonly_page_key(identity, content_version, params, file_offset);
+        let cached = {
+            let mut guard = ELF_READONLY_PAGE_CACHE.lock();
+            let cache = guard.get_or_insert_with(|| ElfReadonlyPageCache {
+                                  entries : BTreeMap::new(),
+                                  tick : 0,
+                              });
+            cache.tick = cache.tick.wrapping_add(1);
+            let tick = cache.tick;
+            if let Some(entry) = cache.entries.get_mut(&key) {
+                frame_inc_ref(entry.ppn).map_err(MmError::from)?;
+                entry.last_used = tick;
+                Some(entry.ppn)
+            } else {
+                None
+            }
+        };
+        if let Some(ppn) = cached {
+            if identity.version() == content_version {
+                return Ok(ppn);
+            }
+            let _ = frame_dealloc_result(ppn);
+            continue;
+        }
+
+        let loaded_ppn = frame_alloc_result().map_err(MmError::from)?;
+        let pa = loaded_ppn.0 * PAGE_SIZE;
+        let dst = unsafe { core::slice::from_raw_parts_mut(pa as *mut u8, PAGE_SIZE) };
+        dst.fill(0);
+        if let Err(error) = load(dst) {
+            let _ = frame_dealloc_result(loaded_ppn);
+            return Err(error);
+        }
+        if identity.version() != content_version {
+            let _ = frame_dealloc_result(loaded_ppn);
+            continue;
+        }
+
+        let mut duplicate = None;
+        let mut evicted = None;
+        {
+            let mut guard = ELF_READONLY_PAGE_CACHE.lock();
+            let cache = guard.get_or_insert_with(|| ElfReadonlyPageCache {
+                                  entries : BTreeMap::new(),
+                                  tick : 0,
+                              });
+            cache.tick = cache.tick.wrapping_add(1);
+            let tick = cache.tick;
+            if let Some(entry) = cache.entries.get_mut(&key) {
+                frame_inc_ref(entry.ppn).map_err(MmError::from)?;
+                entry.last_used = tick;
+                duplicate = Some(entry.ppn);
+            } else {
+                if cache.entries.len() >= ELF_READONLY_PAGE_CACHE_CAPACITY {
+                    let victim = cache.entries
+                                      .iter()
+                                      .min_by_key(|(_, entry)| entry.last_used)
+                                      .map(|(key, _)| *key);
+                    if let Some(victim) = victim {
+                        evicted = cache.entries.remove(&victim).map(|entry| entry.ppn);
+                    }
+                }
+                cache.entries.insert(key,
+                                     ElfReadonlyPageEntry { ppn : loaded_ppn,
+                                                            last_used : tick,
+                                                            _identity : identity.clone() });
+                frame_inc_ref(loaded_ppn).map_err(MmError::from)?;
+            }
+        }
+        if let Some(ppn) = evicted {
+            let _ = frame_dealloc_result(ppn);
+        }
+        let result_ppn = if let Some(ppn) = duplicate {
+            let _ = frame_dealloc_result(loaded_ppn);
+            ppn
+        } else {
+            loaded_ppn
+        };
+        if identity.version() != content_version {
+            let _ = frame_dealloc_result(result_ppn);
+            continue;
+        }
+        return Ok(result_ppn);
+    }
+}
+
+/// Directed cache/refcount self-test; callers must initialize the global frame
+/// allocator first.
+pub fn test_readonly_elf_page_cache() {
+    let identity = VfsFileContentIdentity::new(usize::MAX as u64,
+                                               u64::MAX - 1,
+                                               u64::MAX,
+                                               Arc::new(AtomicU64::new(1)));
+    let params = ElfSegmentLoadParams { vbase : 0x10_0000,
+                                        p_offset : 0,
+                                        filesz : PAGE_SIZE,
+                                        vma_start : 0x10_0000,
+                                        vma_file_origin : 0 };
+    let mut loads = 0usize;
+    let first = load_or_get_readonly_elf_page(&identity, &params, 0, |dst| {
+                    loads += 1;
+                    dst[0] = 0x5a;
+                    Ok(())
+                }).expect("first readonly ELF cache load");
+    let second = load_or_get_readonly_elf_page(&identity, &params, 0, |dst| {
+                     loads += 1;
+                     dst[0] = 0xa5;
+                     Ok(())
+                 }).expect("readonly ELF cache hit");
+    assert_eq!(first, second);
+    assert_eq!(loads, 1, "same content key must load only once");
+    assert_eq!(frame_ref_count(first).expect("cached frame refcount"),
+               3,
+               "cache plus two mapping references");
+    frame_dealloc_result(first).expect("release first mapping ref");
+    frame_dealloc_result(second).expect("release second mapping ref");
+
+    identity.mark_changed();
+    let changed = load_or_get_readonly_elf_page(&identity, &params, 0, |dst| {
+                      loads += 1;
+                      dst[0] = 0xa5;
+                      Ok(())
+                  }).expect("changed content version cache miss");
+    assert_ne!(changed, first);
+    assert_eq!(loads, 2, "content version change must reload the page");
+    frame_dealloc_result(changed).expect("release changed mapping ref");
 }
 
 impl ElfSegmentLoadParams {

@@ -20,8 +20,8 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use api_v0::{
-    normalize_absolute_path, SingleRootReadView, VfsError, VfsIoHandle, VfsMetadata,
-    VfsOpenDescriptionState, VfsOpenFlags, VfsPreparedRead, VfsReadLease, VfsResult,
+    normalize_absolute_path, SingleRootReadView, VfsError, VfsFileContentIdentity, VfsIoHandle,
+    VfsMetadata, VfsOpenDescriptionState, VfsOpenFlags, VfsPreparedRead, VfsReadLease, VfsResult,
     VfsSeekWhence,
 };
 use impl_page_cache::{global_cache, FileCacheKey, PageCacheIo};
@@ -41,6 +41,7 @@ struct StableNodeLease {
     fs : SharedRwFs,
     node : FsNodeId,
     identity : MountIdentity,
+    content_identity : VfsFileContentIdentity,
 }
 
 impl StableNodeLease {
@@ -82,6 +83,8 @@ impl StableNodeLease {
     }
 
     fn sync(&self) -> VfsResult<()> { self.fs.lock().sync().map_err(map_fs_err) }
+
+    fn mark_content_changed(&self) { self.content_identity.mark_changed(); }
 }
 
 impl Drop for StableNodeLease {
@@ -94,7 +97,30 @@ impl Drop for StableNodeLease {
     }
 }
 
-fn open_stable_node(path : &str) -> VfsResult<Option<Arc<StableNodeLease>>> {
+type StableContentKey = (u64, u64, u64);
+static CONTENT_VERSIONS : Mutex<BTreeMap<StableContentKey, Weak<AtomicU64>>> =
+    Mutex::new(BTreeMap::new());
+
+fn stable_content_identity(mount_gen : u64,
+                           identity : MountIdentity,
+                           node : FsNodeId)
+                           -> VfsFileContentIdentity {
+    let key = (mount_gen, identity.mount_id, node.raw());
+    let mut versions = CONTENT_VERSIONS.lock();
+    let version = versions.get(&key)
+                          .and_then(Weak::upgrade)
+                          .unwrap_or_else(|| {
+                              let version = Arc::new(AtomicU64::new(1));
+                              versions.insert(key, Arc::downgrade(&version));
+                              version
+                          });
+    VfsFileContentIdentity::new(mount_gen,
+                                identity.mount_id,
+                                node.raw(),
+                                version)
+}
+
+fn open_stable_node(mount_gen : u64, path : &str) -> VfsResult<Option<Arc<StableNodeLease>>> {
     let (fs, rel, identity) = match resolve_route(path)? {
         FsRoute::Root { abs, identity } => (root_rw()?, abs, identity),
         FsRoute::AuxRw { fs, rel, identity, .. } => (fs, rel, identity),
@@ -107,7 +133,11 @@ fn open_stable_node(path : &str) -> VfsResult<Option<Arc<StableNodeLease>>> {
         Err(FsError::Unsupported) => return Ok(None),
         Err(error) => return Err(map_fs_err(error)),
     };
-    Ok(Some(Arc::new(StableNodeLease { fs, node, identity })))
+    let content_identity = stable_content_identity(mount_gen, identity, node);
+    Ok(Some(Arc::new(StableNodeLease { fs,
+                                      node,
+                                      identity,
+                                      content_identity })))
 }
 
 struct DetachedState {
@@ -243,6 +273,9 @@ pub(crate) fn prepare_unlink_detach(path : &str) -> VfsResult<Option<PendingUnli
         state
     };
     let Some(state) = state else {
+        if let Some(stable) = open_stable_node(mount_gen, path)? {
+            stable.mark_content_changed();
+        }
         return Ok(None);
     };
     if state.lock().detached {
@@ -257,7 +290,8 @@ pub(crate) fn prepare_unlink_detach(path : &str) -> VfsResult<Option<PendingUnli
         };
         (meta, state.cache_key.clone(), state.stable.clone())
     };
-    if stable.is_some() {
+    if let Some(stable) = stable.as_ref() {
+        stable.mark_content_changed();
         return Ok(Some(PendingUnlinkDetach { key, state, data : None }));
     }
     let cache = global_cache(mount_gen);
@@ -446,7 +480,7 @@ impl PagedFileHandle {
         let want_write = flags.contains(VfsOpenFlags::WRITE);
         let mount_gen = fs::rootfs::active_impl::mount_generation();
         let cache = global_cache(mount_gen);
-        let stable = open_stable_node(path.as_str())?;
+        let stable = open_stable_node(mount_gen, path.as_str())?;
         let detached = detached_state_for_open(mount_gen, path.as_str(), stable);
         let (stable, cache_file_key) = {
             let state = detached.lock();
@@ -458,6 +492,9 @@ impl PagedFileHandle {
             match stable.as_ref() {
                 Some(node) => node.truncate(0)?,
                 None => crate::truncate_path(path.as_str(), 0)?,
+            }
+            if let Some(node) = stable.as_ref() {
+                node.mark_content_changed();
             }
             meta = match stable.as_ref() {
                 Some(node) => node.metadata()?,
@@ -584,6 +621,12 @@ impl PagedFileHandle {
     fn is_detached(&self) -> bool { self.detached.lock().detached }
 
     fn mark_detached(&self) { self.detached.lock().detached = true; }
+
+    fn mark_content_changed(&self) {
+        if let Some(node) = self.stable_node() {
+            node.mark_content_changed();
+        }
+    }
 
 // 本方法代码由AI完成
     fn read_detached_at(&self, offset : u64, buf : &mut [u8]) -> VfsResult<usize> {
@@ -716,6 +759,9 @@ impl VfsIoHandle for PagedFileHandle {
         };
         reservation.commit(n, n)?;
         self.meta.size = self.current_size();
+        if n != 0 {
+            self.mark_content_changed();
+        }
         Ok(n)
     }
 
@@ -773,6 +819,9 @@ impl VfsIoHandle for PagedFileHandle {
             Err(e) => return Err(e),
         };
         self.meta.size = self.current_size();
+        if n != 0 {
+            self.mark_content_changed();
+        }
         Ok(n)
     }
 
@@ -799,6 +848,13 @@ impl VfsIoHandle for PagedFileHandle {
         };
         m.size = self.current_size();
         Ok(m)
+    }
+
+    fn file_content_identity(&self) -> Option<VfsFileContentIdentity> {
+        if self.is_detached() {
+            return None;
+        }
+        self.stable_node().map(|node| node.content_identity.clone())
     }
 
 // 本方法代码由AI完成
@@ -898,6 +954,7 @@ impl VfsIoHandle for PagedFileHandle {
             }
         }
         reservation.commit_at(reservation.offset().min(len))?;
+        self.mark_content_changed();
         Ok(())
     }
 

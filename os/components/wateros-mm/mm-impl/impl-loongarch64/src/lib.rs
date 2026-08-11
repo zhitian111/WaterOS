@@ -112,6 +112,7 @@ pub fn test_with_range(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
                           .expect("unmap lazy test page")
                           .expect("lazy test page should be resident");
     frame_dealloc_result(lazy_ppn).expect("dealloc lazy test frame");
+    impl_common::test_readonly_elf_page_cache();
     user_access::test_copy_to_user_progress();
 
     log::trace!("[mm-impl::loongarch64] test end");
