@@ -1836,6 +1836,7 @@ dependencies = [
  "log",
  "spin",
  "wateros-base-config",
+ "wateros-mm-frame-alloctor",
 ]
 
 [[package]]
