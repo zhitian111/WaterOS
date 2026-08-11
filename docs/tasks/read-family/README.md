@@ -8,7 +8,7 @@ Unix socket、inet socket、eventfd 和字符设备接口。
 
 已修复的 BuildStorm 阻断是：大于 4 MiB 的 `read` 不再直接返回 `EINVAL`，而是返回
 合法短读。该修复不是本任务集的终点。问题证据见
-[`buildstorm-cargo-index-filesystem-report.md`](../buildstorm-cargo-index-filesystem-report.md)。
+[`buildstorm-cargo-index-filesystem-report.md`](../cross-task-reports/reports/buildstorm-cargo-index-filesystem-report.md)。
 
 ## 已确认问题
 
@@ -68,16 +68,10 @@ RIO-01..09 ───────────────────────
 
 | 状态 | 文件 | 交付 |
 |---|---|---|
-| [x] | [`01-read-access-and-errors.md`](./01-read-access-and-errors.md) | fd/access/type 校验和 errno 顺序 |
-| [x] | [`02-user-copy-progress.md`](./02-user-copy-progress.md) | 双架构部分 user-copy 结果 |
-| [x] | [`03-open-file-description-state.md`](./03-open-file-description-state.md) | `dup/fork` 共享 offset/status |
-| [x] | [`04-vfs-read-lease-and-files.md`](./04-vfs-read-lease-and-files.md) | 统一租约 API 和普通文件/proc 实现（[报告](./rio04-20260731.md)） |
-| [x] | [`05-pipe-and-unix-socket-read.md`](./05-pipe-and-unix-socket-read.md) | pipe、Unix stream/dgram 保留与提交；[完成报告](./rio05-20260801.md) |
-| [x] | [`06-inet-socket-read.md`](./06-inet-socket-read.md) | TCP/UDP/loopback 非破坏性接收；[完成报告](./rio06-20260801.md) |
-| [x] | [`07-eventfd-read.md`](./07-eventfd-read.md) | eventfd 固定宽度原子读取；[完成报告](./rio07-20260801.md) |
-| [x] | [`08-character-and-pseudo-device-read.md`](./08-character-and-pseudo-device-read.md) | UART/RTC/zero/urandom 等设备；[完成报告](./rio08-20260801.md) |
-| [x] | [`09-vector-and-positional-read.md`](./09-vector-and-positional-read.md) | readv/pread/preadv、上限和 iovec；[完成报告](./rio09-20260801.md) |
-| [ ] | [`10-integration-and-regression.md`](./10-integration-and-regression.md) | Linux 对照、LTP、双架构和 BuildStorm |
+| [ ] | [`rio10/task.md`](./rio10/task.md) | Linux 对照、LTP、双架构和 BuildStorm |
+
+RIO-01 至 RIO-09 的实现已进入当前代码；其任务定义已退役，但每项记录保留在对应
+`rioXX/history/`。后续修改以 RIO-10 的集成回归为准。
 
 ## 共同完成要求
 

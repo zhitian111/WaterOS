@@ -11,7 +11,7 @@
 
 ## 代码注释
 
-全仓库扫查范围、重要函数/变量与 `//` 相对 rustdoc 的分工见 **`docs/tasks/commenting.md`**；与 `docs/prompts/documentation.md` 配套使用。
+全仓库扫查范围、重要函数/变量与 `//` 相对 rustdoc 的分工见 **`docs/prompts/tasks/commenting.md`**；与 `docs/prompts/documentation.md` 配套使用。
 
 ### 普通注释
 
@@ -34,7 +34,7 @@
 - 模块整体说明可使用 `//!`。
 - 注释应描述契约和行为，而不只是实现方式。
 
-维护说明：注释任务应以 **`docs/tasks/commenting.md`** 为准，覆盖**全部子 crate 与可选 feature 路径**，而非仅一级聚合层。内核 **`os/components/**`**、**`os/src/`**、用户态 **`user/`** 等处的 **`///` / `//!`** 应随对外契约演进同步；若某次交付仍漏掉子目录，应视为任务未完成而非规范例外。变更 **`pub`** 时同步更新 **`docs/exports/`** 与本指南相关段落。
+维护说明：注释任务应以 **`docs/prompts/tasks/commenting.md`** 为准，覆盖**全部子 crate 与可选 feature 路径**，而非仅一级聚合层。内核 **`os/components/**`**、**`os/src/`**、用户态 **`user/`** 等处的 **`///` / `//!`** 应随对外契约演进同步；若某次交付仍漏掉子目录，应视为任务未完成而非规范例外。变更 **`pub`** 时同步更新 **`docs/exports/`** 与本指南相关段落。
 
 案例：
 

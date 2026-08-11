@@ -56,7 +56,9 @@ make apply_features   # 执行前请先执行 make configure
 
 ## 脚本
 
-内核相关的脚本均在 `./os/scripts/` 目录下，各脚本详细功能请见 `./os/scripts/README.md` ，在 **绝大多数** 情况下，不需要手动指定脚本进行执行，常用功能均在 `./os/Makefile` 内有做包装，具体功能请阅读各个目标。
+内核相关脚本位于 `./os/scripts/`；使用说明与推荐入口见
+[`docs/tools/scripts/README.md`](./docs/tools/scripts/README.md)。在 **绝大多数** 情况下，不需要手动
+执行脚本，常用功能已由 `./os/Makefile` 包装。
 
 ## 技术文档
 

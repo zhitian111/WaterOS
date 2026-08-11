@@ -1,6 +1,0 @@
-feat(os): LoongArch 移植、trap 框架与块存储/VFS 写路径
-
-在 LoongArch64 上完成 boot smoke 与特性修复，统一 feature 命名与启动脚本。
-建立 trap 与 syscall 路由，实现块设备写、VFS 及 ext4 写能力，并预留 IPC
-模块接口。合并 task/mm 进展，修复 ELF 加载（from_elf）在合并后的调用冲突；
-补充内核与用户态侧注释及临时 shell 支持。完善 LA 平台用户任务创建与运行路径。

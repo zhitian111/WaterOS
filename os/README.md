@@ -212,7 +212,7 @@ make gdb                      # 交互式调试
 继续并要求重新执行 `make debug` 或 `make debug-server`。
 
 完整 GDB 命令、报告结构、确定性故障注入和底层原理见
-[`GDB_STALL_DEBUG.md`](../docs/debugging/GDB_STALL_DEBUG.md)。
+[`docs/tools/debugging.md`](../docs/tools/debugging.md)。
 
 ## 9. 常用变量
 
