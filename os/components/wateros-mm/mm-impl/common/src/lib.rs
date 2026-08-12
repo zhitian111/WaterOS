@@ -76,7 +76,7 @@ pub struct ElfSegmentLoadParams {
     pub vma_file_origin : usize,
 }
 
-const ELF_READONLY_PAGE_CACHE_CAPACITY : usize = 16_384;
+const ELF_READONLY_PAGE_CACHE_CAPACITY : usize = 32_768;
 #[cfg(feature = "cache-layer-diagnostics")]
 const ELF_CACHE_DIAGNOSTIC_REPORT_LOOKUPS : u64 = 1 << 14;
 
