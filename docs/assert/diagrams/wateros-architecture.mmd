@@ -1,0 +1,68 @@
+flowchart TB
+
+  subgraph entry["内核编排与用户接口层｜接收用户请求并组织内核启动"]
+    direction LR
+    wateros["wateros<br/>（内核入口与组件编排）"]
+    syscall["wateros-syscall<br/>（系统调用分发）"]
+  end
+
+  subgraph core["内核核心服务层｜管理进程、内存与内核资源"]
+    direction LR
+    task["wateros-task<br/>（任务与调度）"]
+    mm["wateros-mm<br/>（内存管理）"]
+    vfs["wateros-vfs<br/>（虚拟文件系统）"]
+    ipc["wateros-ipc<br/>（进程间通信）"]
+    cred["wateros-cred<br/>（进程凭证）"]
+    network["wateros-network<br/>（网络协议栈）"]
+  end
+
+  subgraph io["文件与设备服务层｜连接内核资源与外部设备"]
+    direction LR
+    fs["wateros-fs<br/>（文件系统）"]
+    tty["wateros-tty<br/>（终端设备）"]
+    driver["wateros-driver<br/>（设备驱动）"]
+  end
+
+  subgraph foundation["平台与基础设施层｜提供跨架构运行基础"]
+    direction LR
+    runtime["wateros-runtime<br/>（内核运行时）"]
+    klog["wateros-klog<br/>（内核日志）"]
+    platform["wateros-platform<br/>（架构与平台适配）"]
+    base["wateros-base<br/>（基础类型与配置）"]
+    utils["wateros-utils<br/>（通用工具）"]
+  end
+
+  wateros --> syscall
+  wateros --> runtime
+  wateros --> utils
+
+  syscall --> task
+  syscall --> mm
+  syscall --> vfs
+  syscall --> ipc
+  syscall --> cred
+  syscall --> network
+
+  vfs --> fs
+  vfs --> tty
+  network --> vfs
+  cred --> task
+  fs --> driver
+  network --> driver
+  driver --> platform
+  runtime --> platform
+  klog --> task
+  klog --> platform
+  task --> base
+  mm --> base
+  driver --> base
+
+  task ~~~ mm ~~~ vfs ~~~ ipc ~~~ cred ~~~ network
+  fs ~~~ tty ~~~ driver
+  runtime ~~~ klog ~~~ platform ~~~ base ~~~ utils
+
+  class wateros boundary;
+  class syscall configuration;
+  class task,mm,vfs,ipc,cred,network service;
+  class fs,tty,driver interface;
+  class runtime,klog,platform,base,utils foundation;

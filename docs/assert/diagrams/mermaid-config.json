@@ -1,0 +1,23 @@
+{
+  "theme": "base",
+  "fontFamily": "Inter, Noto Sans SC, Source Han Sans SC, Arial, sans-serif",
+  "flowchart": {
+    "curve": "basis",
+    "htmlLabels": true,
+    "nodeSpacing": 28,
+    "rankSpacing": 38,
+    "padding": 14,
+    "useMaxWidth": true
+  },
+  "themeVariables": {
+    "background": "transparent",
+    "fontSize": "16px",
+    "lineColor": "#8C5A66",
+    "primaryTextColor": "#64172B",
+    "secondaryTextColor": "#64172B",
+    "tertiaryTextColor": "#64172B",
+    "clusterBkg": "#FFF7F8",
+    "clusterBorder": "#EFACB8",
+    "edgeLabelBackground": "#FFF7F8"
+  }
+}
