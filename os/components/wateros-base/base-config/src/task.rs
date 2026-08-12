@@ -2,8 +2,20 @@
 
 /// 当前内核静态支持的最大逻辑 CPU 数。
 ///
-/// 这是静态容量上限，不表示 configured 或 online CPU 数量。
+/// 这是静态容量上限，不表示 configured 或 online CPU 数量。竞赛运行环境为
+/// RISC-V 8 vCPU、LoongArch 12 vCPU；按目标架构收紧容量可避免所有 per-CPU
+/// 静态数组都按无用的 32 项分配，同时仍由 platform topology 决定实际 online CPU。
+#[cfg(target_arch = "riscv64")]
+pub const MAX_CPUS : usize = 8;
+
+#[cfg(target_arch = "loongarch64")]
+pub const MAX_CPUS : usize = 12;
+
+/// 宿主工具与单元测试不承载目标机 SMP，保留足够容量供配置/API 测试使用。
+#[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
 pub const MAX_CPUS : usize = 32;
+
+const _ : () = assert!(MAX_CPUS > 0 && MAX_CPUS <= u64::BITS as usize);
 
 /// 监督态定时器重武装间隔（毫秒），与 [`trap_handler`] 及 clock syscall 的 sleep 换算一致。
 ///

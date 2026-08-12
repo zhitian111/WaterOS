@@ -496,7 +496,36 @@ clean:
 
 all_start_info:
 	$(call INFO, "开始构建完整项目...")
-all: all_start_info kernel-rv-best kernel-la-best
+
+# `make all` 是比赛交付入口。它刻意不依赖 kernel-*-final 目标，因为那些目标会在
+# os/ 顶层留下中间 ELF；交付目录中只允许出现下面两个固定文件名。这里也不接受
+# MODE/EXTRA_FEATURES/GDB_BUILD/HEAP_ALLOCATOR_FEATURE 覆盖，确保每次都是已知 final
+# 配置，而不是被调用者环境静默污染的实验内核。
+all: all_start_info
+	@find . -maxdepth 1 \( -type f -o -type l \) -name 'kernel-*' -delete
+	$(call INFO, "构建 riscv64 决赛交付内核 kernel-rv...")
+	@cargo build --release --target riscv64gc-unknown-none-elf \
+		--no-default-features \
+		--features qemu-riscv64-opensbi,final_online,heap-tlsf
+	@cp ./target/riscv64gc-unknown-none-elf/release/wateros ./kernel-rv
+	$(call INFO, "构建 loongarch64 决赛交付内核 kernel-la...")
+	@cargo build --release --target loongarch64-unknown-none \
+		--no-default-features \
+		--features qemu-loongarch64-virt,final_online,heap-tlsf
+	@cp ./target/loongarch64-unknown-none/release/wateros ./kernel-la
+	@cmp -s ./target/riscv64gc-unknown-none-elf/release/wateros ./kernel-rv
+	@cmp -s ./target/loongarch64-unknown-none/release/wateros ./kernel-la
+	@readelf -h ./kernel-rv | grep -q 'Machine:.*RISC-V'
+	@readelf -h ./kernel-la | grep -q 'Machine:.*LoongArch'
+	@actual="$$(find . -maxdepth 1 \( -type f -o -type l \) -name 'kernel-*' \
+		-printf '%f\n' | LC_ALL=C sort)"; \
+	 expected="$$(printf '%s\n' kernel-la kernel-rv)"; \
+	 test "$$actual" = "$$expected" || { \
+		echo "错误: make all 交付物必须且只能是 kernel-la 与 kernel-rv" >&2; \
+		printf '实际交付物:\n%s\n' "$$actual" >&2; \
+		exit 1; \
+	 }
+	$(call INFO, "交付完成：仅生成 kernel-rv 与 kernel-la")
 
 fmt:
 	$(call INFO, "开始格式化项目文件...")
