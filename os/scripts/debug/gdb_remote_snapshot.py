@@ -56,8 +56,7 @@ class GdbRemote:
         return value
 
     def _read_packet(self) -> str:
-        # Ignore leading '+' acknowledgements and asynchronous noise until the
-        # next framed reply begins.
+        # 忽略开头的 `+` 确认和异步噪声，直到下一个有边界的响应开始
         while self._read_byte() != ord("$"):
             pass
         payload = bytearray()
@@ -71,7 +70,7 @@ class GdbRemote:
         if expected.lower() != actual:
             self.sock.sendall(b"-")
             raise RemoteError(
-                f"bad GDB packet checksum: expected {expected!r}, calculated {actual!r}"
+                f"GDB 数据包校验和无效：expected={expected!r} calculated={actual!r}"
             )
         self.sock.sendall(b"+")
         return payload.decode("ascii")
@@ -83,7 +82,7 @@ class GdbRemote:
             response = self.command(f"qXfer:features:read:{annex}:{offset:x},1000")
             if not response or response[0] not in ("m", "l"):
                 raise RemoteError(
-                    f"cannot read target feature {annex!r}: {response!r}"
+                    f"无法读取目标特性 {annex!r}：{response!r}"
                 )
             chunks.append(response[1:])
             offset += len(response[1:].encode("ascii"))
@@ -96,7 +95,7 @@ def _local_name(tag: str) -> str:
 
 
 def read_register_description(remote: GdbRemote) -> list[Register]:
-    """Read target.xml and every included register feature from QEMU."""
+    """读取 QEMU 的 target.xml 及其包含的全部寄存器特性。"""
     pending = ["target.xml"]
     seen: set[str] = set()
     registers: list[Register] = []
@@ -107,7 +106,7 @@ def read_register_description(remote: GdbRemote) -> list[Register]:
             continue
         seen.add(annex)
         xml = remote.read_feature(annex)
-        # Some generated QEMU XML uses xi:include without declaring xi.
+        # 部分 QEMU 生成的 XML 使用 xi:include，却没有声明 xi 命名空间
         xml = re.sub(r"(<\/?)xi:", r"\1", xml)
         root = ET.fromstring(xml)
         for elem in root.iter():
@@ -130,7 +129,7 @@ def read_threads(remote: GdbRemote) -> list[str]:
         threads.extend(thread for thread in response[1:].split(",") if thread)
         response = remote.command("qsThreadInfo")
     if response != "l":
-        raise RemoteError(f"cannot enumerate QEMU CPUs: {response!r}")
+        raise RemoteError(f"无法枚举 QEMU CPU：{response!r}")
     return threads
 
 

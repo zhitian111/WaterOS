@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """解析 WaterOS QEMU bring-up 日志，并汇总各测试组结果。"""
+import argparse
 import re
 import sys
+from pathlib import Path
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+from source.argparse_utils import ChineseArgumentParser  # noqa: E402
 
 def strip_ansi(s: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", s)
@@ -60,7 +67,15 @@ def classify_script(path: str) -> str:
     return "other"
 
 def main() -> int:
-    log_path = sys.argv[1] if len(sys.argv) > 1 else "/tmp/wateros_full_run.log"
+    parser = ChineseArgumentParser(description=__doc__)
+    parser.add_argument(
+        "log",
+        nargs="?",
+        default="/tmp/wateros_full_run.log",
+        help="QEMU bring-up 日志路径，默认为 /tmp/wateros_full_run.log",
+    )
+    args = parser.parse_args()
+    log_path = args.log
     text = strip_ansi(open(log_path, "r", errors="replace").read())
 
     scripts = re.split(r"\[busybox-bringup\] script_path = ", text)[1:]
@@ -104,11 +119,11 @@ def main() -> int:
         if k == "basic":
             summary = f"{detail['passed']}/{detail['total']} pass"
         elif k == "busybox":
-            summary = f"{detail['passed']} ok, {detail['failed']} fail (of {detail['total']})"
+            summary = f"通过 {detail['passed']}，失败 {detail['failed']}，总计 {detail['total']}"
         elif k == "libctest":
             summary = f"{detail['passed']} Pass! ({detail['started']} started)"
         elif k == "ltp":
-            summary = f"{detail['passed']} pass, {detail['failed']} fail (of {detail['total']})"
+            summary = f"通过 {detail['passed']}，失败 {detail['failed']}，总计 {detail['total']}"
         else:
             summary = (
                 f"START={'Y' if detail['started'] else 'N'} END={'Y' if detail['ended'] else 'N'}"

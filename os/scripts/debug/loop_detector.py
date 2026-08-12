@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class LoopDetection:
-    """A detected PC loop."""
+    """检测到的 PC 循环。"""
 
     pattern: tuple[int, ...]
     repeats: int

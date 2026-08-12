@@ -57,3 +57,6 @@ WaterOS 的 README 按页面层级使用不同的视觉和内容密度。标准�
 - 中英文技术术语保持一致，例如 Cargo feature、guest、syscall、snapshot；
 - 不使用“AI 完成”等来源性措辞；
 - 不承诺代码尚未实现或尚未验证的能力。
+
+脚本日志的格式与措辞见
+[`docs/tools/scripts/README.md`](../tools/scripts/README.md#日志规范)。

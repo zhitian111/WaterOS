@@ -72,3 +72,20 @@ python3 ./scripts/run/qemu_run.py --help
 
 历史实验报告中的旧命令用于记录当时环境，不代表当前推荐入口。当前路径始终以
 [`os/scripts/README.md`](../../../os/scripts/README.md) 和 `os/Makefile` 为准。
+
+## 日志规范
+
+Shell 脚本统一使用 `os/scripts/source/console.bash`，Python 脚本统一使用
+`os/scripts/source/logging_utils.py`。操作日志使用稳定格式：
+
+```text
+[COMPONENT][LEVEL] 动作或结果 key=value
+```
+
+级别只使用 `TRACE`、`DEBUG`、`INFO`、`WARN` 和 `ERROR`。组件名描述日志来源，例如
+`QEMU`、`CONFIG`、`DEBUG` 和 `TEST`。路径、架构、阶段、计数及退出码等可检索信息使用
+`key=value`，不藏在括号、冒号后的补充说明或带感叹号的提示中。
+
+帮助文本、表格、JSON、TSV、Markdown 报告和 guest 测试协议属于程序输出，不添加日志
+前缀。日志写入 stderr，机器可读结果写入 stdout，因此脚本可以安全参与管道组合。输出
+重定向时自动关闭 ANSI 颜色，也可通过 `NO_COLOR=1` 显式关闭。

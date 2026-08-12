@@ -2,20 +2,30 @@
 # 将 config.conf 转换为编辑器设置，使 rust-analyzer 使用相同的 feature 组合。
 # 该脚本会写入工作区的 .cursor/settings.json。
 set -eu
+WOS_LOG_COMPONENT=CONFIG
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/../source/console.bash"
 
 OS_DIR_DEFAULT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<EOF
+用法: ${0##*/} [OS_DIR]
+
+读取 OS_DIR/config.conf，并把 rust-analyzer Cargo features 写入
+OS_DIR/.cursor/settings.json。OS_DIR 默认为 ${OS_DIR_DEFAULT}。
+EOF
+  exit 0
+fi
 OS_DIR="${1:-${OS_DIR_DEFAULT}}"
 
 CONF_PATH="${OS_DIR}/config.conf"
 if [[ ! -f "${CONF_PATH}" ]]; then
-  error "找不到配置文件: ${CONF_PATH}（先运行 configure.bash）" 2
+  error "配置文件不存在 path=${CONF_PATH} action=先运行_make_configure" 2
 fi
 
-# project root: .../WaterOS_refactor
+# 项目根目录：.../WaterOS_refactor
 WORKSPACE_ROOT="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
 CURSOR_DIR="${WORKSPACE_ROOT}/.cursor"
 SETTINGS_PATH="${CURSOR_DIR}/settings.json"
@@ -37,7 +47,7 @@ for line in text:
         in_package = True
         continue
     if in_package and s.startswith('[') and s.endswith(']'):
-        # next section
+        # 已进入下一个段落
         break
         if in_package:
             m = re.match(r"^name\\s*=\\s*(['\\\"])(.*?)\\1\\s*$", s)
@@ -52,7 +62,7 @@ if [[ -z "${ROOT_PKG}" ]]; then
   error "无法从 ${OS_DIR}/Cargo.toml 读取 package.name" 3
 fi
 
-info "从 config.conf 生成 rust-analyzer features 并写入: ${SETTINGS_PATH}"
+info "开始更新 rust-analyzer features config=${CONF_PATH} output=${SETTINGS_PATH}"
 
 FEATURES_CSV="$(
   WATEROS_SCRIPTS_QUIET=1 "${SCRIPT_DIR}/config-to-features-make.bash" "${CONF_PATH}" "${ROOT_PKG}"
@@ -80,4 +90,4 @@ settings_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", 
 print("ok")
 PY
 
-info "已更新 rust-analyzer.cargo.features。建议重启/Reload rust-analyzer。"
+info "rust-analyzer features 已更新 action=重新加载_rust-analyzer"

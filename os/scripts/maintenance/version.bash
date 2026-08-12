@@ -22,5 +22,5 @@ VERSION="v${COLOR_ANSI_GREEN}${VERSION_BASE}${COLOR_ANSI_CLEAR}-${COLOR_ANSI_PUR
 # 打印版本信息
 # ==============================
 
-info "当前版本信息如下："
+info "输出 WaterOS 版本信息"
 echo -e "${COLOR_ANSI_CYAN}WaterOS${COLOR_ANSI_CLEAR}\t${COLOR_ANSI_WHITE}--version${COLOR_ANSI_CLEAR}\t${VERSION}"

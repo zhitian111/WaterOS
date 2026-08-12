@@ -1,24 +1,44 @@
 #!/bin/bash
 # 保留的 RISC-V64 QEMU 兼容入口，可显式控制 OpenSBI 与 SMP。新流程应使用
 # `make run ARCH=rv`，以复用统一的启动策略。
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WOS_LOG_COMPONENT=QEMU
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/../source/console.bash"
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    cat <<EOF
+用法: ${0##*/}
+
+启动兼容模式的 RISC-V64 QEMU，不接收位置参数。
+
+环境变量:
+  SMP_CORES          Guest CPU 数量，默认为 1，范围为 1 至 8
+  WOS_QEMU_MEM       Guest 内存大小，默认为 1G
+  WATEROS_OPENSBI_FW OpenSBI 固件路径；多核启动时必须设置
+  WOS_TASKSET_CPUS   绑定的宿主 CPU 列表，例如 0-3
+
+固定输入:
+  内核 ./kernel-rv
+  镜像 ./sdcard-rv.img
+EOF
+    exit 0
+fi
 os_file="./kernel-rv"
 fs="./sdcard-rv.img"
 SMP_CORES="${SMP_CORES:-1}"
 QEMU_MEM="${WOS_QEMU_MEM:-1G}"
 if [[ ! "$SMP_CORES" =~ ^[1-8]$ ]]; then
-    echo "SMP_CORES must be an integer in 1..8 (WaterOS RISC-V SMP capacity)" >&2
-    exit 2
+    error "SMP 核数无效 value=${SMP_CORES} expected=1..8" 2
 fi
 if [[ "$SMP_CORES" -gt 1 && -z "${WATEROS_OPENSBI_FW:-}" ]]; then
-    echo "SMP_CORES=$SMP_CORES requires WATEROS_OPENSBI_FW to point to an OpenSBI firmware with SBI HSM" >&2
-    exit 2
+    error "多核启动缺少 OpenSBI HSM 固件 smp=${SMP_CORES} variable=WATEROS_OPENSBI_FW" 2
 fi
 BIOS_ARGS=(-bios default)
 if [[ -n "${WATEROS_OPENSBI_FW:-}" ]]; then
     BIOS_ARGS=(-bios "$WATEROS_OPENSBI_FW")
 fi
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 "$SCRIPT_DIR/qemu_exec_with_taskset.sh" qemu-system-riscv64 -machine virt \
                     -kernel $os_file \

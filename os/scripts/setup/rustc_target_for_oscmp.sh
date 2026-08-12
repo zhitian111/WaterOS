@@ -1,9 +1,13 @@
 #!/bin/sh
 # 查询当前 rustc 是否列出比赛所需的 LoongArch64 与 RISC-V64 target。
 
-echo "loongarch64平台：\r\n\r\n"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+WOS_LOG_COMPONENT=SETUP
+export WOS_LOG_COMPONENT
+. "$SCRIPT_DIR/../source/console.bash"
+
+info "查询 Rust 编译目标 architecture=loongarch64"
 rustc --print target-list | grep loongarch64
 
-echo "\r\n\r\n"
-echo "risc-v平台：\r\n\r\n"
+info "查询 Rust 编译目标 architecture=riscv64"
 rustc --print target-list | grep riscv64gc

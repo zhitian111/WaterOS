@@ -106,4 +106,4 @@ run_la
 
 echo "=== DONE ===" | tee -a "$LOG_DIR/summary.txt"
 cat "$LOG_DIR/summary.txt"
-echo "Full logs: $LOG_DIR"
+echo "完整日志目录: $LOG_DIR"

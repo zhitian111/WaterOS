@@ -1,19 +1,26 @@
 #!/bin/sh
 # 扫描所有本地 Cargo 清单，输出完整 feature 树以及当前默认启用的配置。
 set -eu
+WOS_LOG_COMPONENT=CONFIG
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # shellcheck source=/dev/null
 . "${SCRIPT_DIR}/../source/console.bash"
 
 ROOT_DIR_DEFAULT=$(CDPATH= cd -- "${SCRIPT_DIR}/../.." && pwd)
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+  printf '用法: %s [OS_DIR]\n\n' "${0##*/}"
+  printf '导出 OS_DIR 的完整 Cargo feature 树和默认启用配置。\n'
+  printf '输出文件: OS_DIR/feature-tree.txt、OS_DIR/config.conf\n'
+  exit 0
+fi
 ROOT_DIR="${1:-$ROOT_DIR_DEFAULT}"
 
 OUT_DIR="${ROOT_DIR}"
 TREE_OUT="${OUT_DIR}/feature-tree.txt"
 CONF_OUT="${OUT_DIR}/config.conf"
 
-info "扫描 Cargo.toml: ${ROOT_DIR}"
+info "开始扫描 Cargo 清单 root=${ROOT_DIR}"
 
 PYTHONPATH="${SCRIPT_DIR}/.." python3 - <<'PY' "${ROOT_DIR}" "${TREE_OUT}" "${CONF_OUT}"
 from __future__ import annotations
@@ -119,5 +126,5 @@ if __name__ == "__main__":
     raise SystemExit(main())
 PY
 
-info "feature 树已生成: ${TREE_OUT}"
-info "features 总配置已生成: ${CONF_OUT}"
+info "feature 树已写入 path=${TREE_OUT}"
+info "feature 配置已写入 path=${CONF_OUT}"

@@ -3,6 +3,9 @@
 # 脚本会临时改写用户态 bring-up 列表，并在退出时恢复原文件。
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+WOS_LOG_COMPONENT=TEST
+# shellcheck source=/dev/null
+source "$ROOT/scripts/source/console.bash"
 BRINGUP="$ROOT/src/user_bringup_busybox.rs"
 BACKUP="$ROOT/src/user_bringup_busybox.rs.bak"
 PARSER="$ROOT/scripts/testing/parse_qemu_test_log.py"
@@ -48,23 +51,24 @@ PY
 run_phase() {
   local phase="$1"
   local log="$LOG_DIR/${phase}.log"
-  echo "========== $phase =========="
+  info "开始运行测试阶段 phase=${phase} log=${log}"
   enable_phase "$phase"
   if ! (cd "$ROOT" && make rv_qemu_run >"$log" 2>&1); then
-    echo "  make/qemu exit non-zero (可能 panic 或脚本失败)"
+    warning "QEMU 非正常退出 phase=${phase} action=检查_panic_与脚本日志"
   fi
   if [[ -f "$PARSER" ]]; then
     python3 "$PARSER" "$log" || true
   fi
   if grep -q "PANIC\|Panicked" "$log"; then
-    echo "  ⚠ PANIC 检测到，本阶段后续脚本未执行"
+    error_text="内核 panic 已检出 phase=${phase} action=停止本阶段后续测试"
+    warning "$error_text"
     grep -oE 'unsupported: unknown nr=[0-9]+|Panicked at [^ ]+' "$log" | head -3 | sed 's/^/    /'
   fi
-  echo
+  info "测试阶段结束 phase=${phase}"
 }
 
 for p in P1 P2 P3 P4 P5 P6; do
   run_phase "$p"
 done
 
-echo "日志目录: $LOG_DIR"
+info "全部测试阶段结束 log_dir=${LOG_DIR}"

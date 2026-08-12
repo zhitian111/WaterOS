@@ -6,22 +6,32 @@
 #   - 例如：cargo_clean_all.sh os/components → 只清理 components 下
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WOS_LOG_COMPONENT=CLEAN
 source "$SCRIPT_DIR/../source/console.bash" || {
     echo "无法加载日志函数：$SCRIPT_DIR/../source/console.bash" >&2
     exit 1
 }
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    cat <<EOF
+用法: ${0##*/} [ROOT_DIR]
+
+递归查找 ROOT_DIR 下的 Cargo workspace 根目录并执行 cargo clean。
+ROOT_DIR 默认为当前目录。该操作会删除匹配 workspace 的编译产物。
+EOF
+    exit 0
+fi
 
 # 起始递归目录，默认当前目录
 ROOT_DIR="${1:-.}"
 # 转为绝对路径，便于 find 与 cd
 if [[ -n "$ROOT_DIR" ]]; then
     ROOT_DIR="$(cd "$ROOT_DIR" 2>/dev/null && pwd)" || {
-        error "无效的起始目录: $1" 1
+        error "无效的起始目录 path=$1" 1
     }
 fi
 
-info "开始执行 cargo clean（仅针对有 workspace 的项目）"
-info "递归起始目录：$ROOT_DIR"
+info "开始清理 Cargo workspaces root=${ROOT_DIR}"
 
 success_count=0
 fail_count=0
@@ -45,37 +55,34 @@ find "$ROOT_DIR" -type f -name "Cargo.toml" \
         continue
     fi
 
-    info "找到 workspace 根目录，开始清理：$rel_path"
+    info "开始清理 workspace path=${rel_path}"
 
     (
         cd "$project_dir" || {
-            warning "无法进入目录 $rel_path，跳过"
+            warning "无法进入 workspace path=${rel_path} action=skip"
             return
         }
 
-        debug "执行 cargo clean → $(pwd)"
+        debug "执行 Cargo 清理 directory=$(pwd)"
 
         if cargo clean; then
-            info "清理成功：$rel_path"
+            info "workspace 清理完成 path=${rel_path}"
             ((success_count++))
         else
             err_code=$?
-            warning "cargo clean 失败：$rel_path （退出码 $err_code）"
+            warning "workspace 清理失败 path=${rel_path} exit_code=${err_code}"
             ((fail_count++))
         fi
     )
 
 done
 
-echo ""
-info "清理任务总结（仅统计 workspace 项目）"
-info "成功清理 workspace 数量：$success_count"
-info "跳过的非 workspace 项目数量：$skipped_count"
+info "清理统计 cleaned=${success_count} skipped=${skipped_count} failed=${fail_count}"
 
 if [ $fail_count -eq 0 ]; then
-    info "所有 workspace 项目清理成功，无失败"
+    info "Cargo workspace 清理完成"
 else
-    warning "有 $fail_count 个 workspace 项目清理失败"
+    warning "部分 Cargo workspace 清理失败 failed=${fail_count}"
 fi
 
 trace "脚本执行结束"

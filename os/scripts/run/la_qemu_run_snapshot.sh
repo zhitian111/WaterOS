@@ -3,6 +3,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WOS_LOG_COMPONENT=QEMU
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/../source/console.bash"
 
 backing="${WOS_SDCARD_BACKING:-../test_case/sdcard-la.img}"
 if [[ ! -f "$backing" ]]; then
@@ -17,7 +20,7 @@ mkdir -p "$overlay_dir"
 rm -f "$overlay"
 qemu-img create -f qcow2 -b "$backing" -F raw "$overlay" >/dev/null
 os_file="${WOS_KERNEL:-./kernel-la}"
-echo "[la_qemu_run_snapshot] kernel=$os_file backing=$backing overlay=$overlay id=$snapshot_id" >&2
+info "创建 LoongArch64 磁盘 overlay kernel=${os_file} backing=${backing} overlay=${overlay} id=${snapshot_id}"
 
 "$SCRIPT_DIR/qemu_exec_with_taskset.sh" qemu-system-loongarch64 -kernel "$os_file" -m 1G -nographic -smp 1 \
     -drive file="$overlay",if=none,format=qcow2,id=x0 \

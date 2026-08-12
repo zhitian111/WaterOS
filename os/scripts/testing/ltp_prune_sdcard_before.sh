@@ -23,6 +23,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
+WOS_LOG_COMPONENT=LTP
+source "$ROOT/scripts/source/console.bash"
 
 IMG="$ROOT/sdcard-la.img"
 BEFORE="unlink08"
@@ -39,7 +41,7 @@ while [ $# -gt 0 ]; do
         --img)
             shift
             IMG="${1:-}"
-            [ -n "$IMG" ] || { echo "missing value for --img" >&2; exit 2; }
+            [ -n "$IMG" ] || error "缺少参数值 option=--img" 2
             [[ "$IMG" = /* ]] || IMG="$ROOT/$IMG"
             shift
             ;;
@@ -51,7 +53,7 @@ while [ $# -gt 0 ]; do
         --before)
             shift
             BEFORE="${1:-}"
-            [ -n "$BEFORE" ] || { echo "missing value for --before" >&2; exit 2; }
+            [ -n "$BEFORE" ] || error "缺少参数值 option=--before" 2
             shift
             ;;
         --before=*)
@@ -70,7 +72,7 @@ while [ $# -gt 0 ]; do
         --reset-from)
             shift
             RESET_FROM="${1:-}"
-            [ -n "$RESET_FROM" ] || { echo "missing value for --reset-from" >&2; exit 2; }
+            [ -n "$RESET_FROM" ] || error "缺少参数值 option=--reset-from" 2
             [[ "$RESET_FROM" = /* ]] || RESET_FROM="$ROOT/$RESET_FROM"
             shift
             ;;
@@ -81,34 +83,33 @@ while [ $# -gt 0 ]; do
             ;;
         --dry-run|--list) DRY_RUN=1; shift ;;
         -h|--help) usage; exit 0 ;;
-        *) echo "unknown arg: $1" >&2; usage >&2; exit 2 ;;
+        *) usage >&2; error "未知参数 value=$1" 2 ;;
     esac
 done
 
 case "$LIBC" in
     glibc|musl|both) ;;
-    *) echo "invalid --libc: $LIBC (want glibc|musl|both)" >&2; exit 2 ;;
+    *) error "无效的 libc 类型 value=${LIBC} allowed=glibc,musl,both" 2 ;;
 esac
 
 if ! command -v debugfs >/dev/null 2>&1; then
-    echo "debugfs not found (install e2fsprogs)" >&2
-    exit 1
+    error "未找到 debugfs command=debugfs package=e2fsprogs" 1
 fi
 
-log() { printf '[ltp-prune] %s\n' "$*"; }
+log() { info "$*"; }
 
 if [ -n "$RESET_FROM" ]; then
-    [ -f "$RESET_FROM" ] || { echo "reset source not found: $RESET_FROM" >&2; exit 1; }
+    [ -f "$RESET_FROM" ] || error "重置源镜像不存在 path=${RESET_FROM}" 1
     if [ "$DRY_RUN" -eq 1 ]; then
-        log "dry-run: would reset image $RESET_FROM -> $IMG"
+        log "预演重置镜像 source=${RESET_FROM} target=${IMG}"
         IMG="$RESET_FROM"
     else
-        log "reset image: $RESET_FROM -> $IMG"
+        log "重置镜像 source=${RESET_FROM} target=${IMG}"
         cp -f "$RESET_FROM" "$IMG"
     fi
 fi
 
-[ -f "$IMG" ] || { echo "image not found: $IMG" >&2; exit 1; }
+[ -f "$IMG" ] || error "目标镜像不存在 path=${IMG}" 1
 
 LIBC_PREFIXES=()
 case "$LIBC" in
@@ -136,7 +137,7 @@ def list_binaries(prefix: str) -> list[str]:
             text=True,
         )
     except subprocess.CalledProcessError as exc:
-        print(f"error: debugfs ls {remote} failed:\n{exc.output}", file=sys.stderr)
+        print(f"错误：debugfs 无法列出 {remote}：\n{exc.output}", file=sys.stderr)
         sys.exit(1)
     names: list[str] = []
     for line in out.splitlines():
@@ -144,7 +145,7 @@ def list_binaries(prefix: str) -> list[str]:
             continue
         if "Directory block checksum does not match" in line:
             print(
-                f"warning: {remote} may be corrupted; consider --reset-from test_case/sdcard-*.img",
+                f"警告：{remote} 可能已损坏，建议使用 --reset-from test_case/sdcard-*.img 重置",
                 file=sys.stderr,
             )
         for match in re.finditer(r"\(\d+\)\s+(\S+)", line):
@@ -158,7 +159,7 @@ for prefix in prefixes:
     names = list_binaries(prefix)
     if before not in names:
         print(
-            f"warning: {before} not found under /{prefix}/ltp/testcases/bin "
+            f"警告：/{prefix}/ltp/testcases/bin 中不存在 {before}，"
             f"({len(names)} entries); deleting all names < {before!r}",
             file=sys.stderr,
         )
@@ -176,10 +177,10 @@ if [ "${#TO_DELETE[@]}" -eq 0 ]; then
     exit 0
 fi
 
-log "image: $IMG"
-log "before: $BEFORE (keep this case and later, per glob sort order)"
+log "使用目标镜像 path=${IMG}"
+log "设置保留起点 case=${BEFORE} order=glob"
 log "libc: $LIBC"
-log "candidates: ${#TO_DELETE[@]}"
+log "裁剪候选统计 count=${#TO_DELETE[@]}"
 
 if [ "$DRY_RUN" -eq 1 ]; then
     printf '%s\n' "${TO_DELETE[@]}" | sed 's/^/  /'

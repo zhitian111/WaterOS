@@ -4,6 +4,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 OS_DIR="$PWD"
+WOS_LOG_COMPONENT=PERF
+# shellcheck source=/dev/null
+source "$OS_DIR/scripts/source/console.bash"
 BRINGUP="$OS_DIR/src/user_bringup_busybox.rs"
 BACKUP="$BRINGUP.bak.phases"
 LOG_DIR="/tmp/wateros_perf_phases"
@@ -31,21 +34,21 @@ PY
 run_phase() {
     local name="$1"
     local log="$LOG_DIR/${name}.log"
-    echo "=== PHASE $name $(date -Is) ===" | tee -a "$LOG_DIR/summary.log"
+    info "开始运行性能阶段 phase=${name} timestamp=$(date -Is) log=${log}"
     # 仅等待本 overlay 上的 QEMU 自然退出，避免 pkill 误杀其它并行任务。
     while pgrep -f "sdcard-rv\\.perf-${name}\\.overlay" >/dev/null 2>&1; do sleep 2; done
     make kernel-rv >>"$log" 2>&1
     WOS_SDCARD_BACKING=./sdcard-rv-local.img WOS_SNAPSHOT_ID="perf-${name}" \
         make rv_qemu_run_snapshot >>"$log" 2>&1 || true
     if grep -q 'all commands finished' "$log"; then
-        echo "PHASE $name: OK" | tee -a "$LOG_DIR/summary.log"
+        printf '[PERF][INFO] 性能阶段完成 phase=%s status=passed\n' "$name" | tee -a "$LOG_DIR/summary.log"
     else
-        echo "PHASE $name: INCOMPLETE" | tee -a "$LOG_DIR/summary.log"
+        printf '[PERF][WARN] 性能阶段未完成 phase=%s status=incomplete\n' "$name" | tee -a "$LOG_DIR/summary.log"
         tail -3 "$log" | tee -a "$LOG_DIR/summary.log"
     fi
     grep -E '\[busybox-bringup\].*elapsed=' "$log" | tee -a "$LOG_DIR/summary.log"
     if grep -qiE 'Kernel panic|RefCell already borrowed' "$log"; then
-        echo "PHASE $name: PANIC/REFCELL DETECTED" | tee -a "$LOG_DIR/summary.log"
+        printf '[PERF][ERROR] 性能阶段检测到内核错误 phase=%s reason=panic_or_refcell\n' "$name" | tee -a "$LOG_DIR/summary.log"
         grep -iE 'Kernel panic|RefCell already borrowed' "$log" | head -5 | tee -a "$LOG_DIR/summary.log"
     fi
 }
@@ -97,5 +100,5 @@ run_phase p2_bench
 apply_const "$LOG_DIR/p3.snippet"
 run_phase p3_ltp
 
-echo "=== ALL PHASES DONE ===" | tee -a "$LOG_DIR/summary.log"
+printf '[PERF][INFO] 全部性能阶段结束 log_dir=%s\n' "$LOG_DIR" | tee -a "$LOG_DIR/summary.log"
 cat "$LOG_DIR/summary.log"

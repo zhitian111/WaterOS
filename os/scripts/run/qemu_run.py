@@ -10,9 +10,15 @@ import argparse
 import os
 import platform
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+from source.argparse_utils import ChineseArgumentParser  # noqa: E402
 
 
 OS_ROOT = Path(__file__).resolve().parents[2]
@@ -201,9 +207,36 @@ def build_qemu_launch(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--arch", choices=sorted(VALID_ARCHES), required=True)
-    parser.add_argument("--profile", choices=sorted(VALID_PROFILES), required=True)
+    parser = ChineseArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""环境变量:
+  WOS_SDCARD                 根文件系统镜像路径，必须设置
+  WOS_KERNEL                 内核路径，默认 kernel-<arch>-<profile>
+  WOS_SMP                    Guest CPU 数量，默认为 8，范围为 1 至 8
+  WOS_QEMU_MEM               Guest 内存大小，pre 默认 1G，final 默认 8G
+  WOS_QEMU_SNAPSHOT          设为 1 时启用 QEMU snapshot
+  WOS_GRAPHICS               设为 1 时启用图形设备
+  WOS_QEMU_DISPLAY           图形后端，默认为 auto
+  WOS_QEMU_GDB               设为 1 时开启 GDB server
+  WOS_QEMU_GDB_WAIT          设为 1 时等待 GDB 连接后启动
+  WOS_QEMU_GDB_PORT          GDB 端口，默认为 1234
+  WOS_TASKSET_CPUS           绑定的宿主 CPU 列表，例如 0-3
+  WOS_QEMU_IMAGE_DRIVE_OPTIONS  追加到 RISC-V 镜像 drive 的选项
+""",
+    )
+    parser.add_argument(
+        "--arch",
+        choices=sorted(VALID_ARCHES),
+        required=True,
+        help="Guest 架构：rv 为 RISC-V64，la 为 LoongArch64",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=sorted(VALID_PROFILES),
+        required=True,
+        help="比赛阶段：pre 为初赛，final 为决赛在线环境",
+    )
     args = parser.parse_args()
     try:
         launch = build_qemu_launch(args.arch, args.profile)

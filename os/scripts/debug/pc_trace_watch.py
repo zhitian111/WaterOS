@@ -14,11 +14,17 @@ from pathlib import Path
 _DEBUG_DIR = Path(__file__).resolve().parent
 if str(_DEBUG_DIR) not in sys.path:
     sys.path.insert(0, str(_DEBUG_DIR))
+_SCRIPTS_DIR = _DEBUG_DIR.parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from loop_detector import LoopDetector  # noqa: E402
 from pc_trace_parser import TRACE_PC_BYTES_RE  # noqa: E402
 from qemu_launcher import build_qemu_trace_cmd  # noqa: E402
 from symbol_index import SymbolIndex  # noqa: E402
+from source.logging_utils import error as log_error  # noqa: E402
+from source.logging_utils import info as log_info  # noqa: E402
+from source.argparse_utils import ChineseArgumentParser  # noqa: E402
 
 TRACE_READ_SIZE = 256 * 1024
 PIPE_SIZE = 1024 * 1024
@@ -55,7 +61,7 @@ def _drain_stdout(stream, stop: threading.Event) -> None:
 
 
 def _iter_trace_pcs(trace_fd: int, stop: threading.Event, sample: int):
-    """Yield guest PC from trace fd; ``sample`` = process every Nth trace line."""
+    """从 trace fd 产生 Guest PC；每隔 ``sample`` 条 trace 处理一次。"""
     seen = 0
     buf = b""
     trace_in = os.fdopen(trace_fd, "rb", buffering=0, closefd=True)
@@ -81,7 +87,7 @@ def _iter_trace_pcs(trace_fd: int, stop: threading.Event, sample: int):
 
 
 def run_watch(arch: str, elf: Path, work_dir: Path, sample: int) -> int:
-    _safe_print(f"[pc-watch] loading symbols from {elf} ...", file=sys.stderr, flush=True)
+    log_info(f"开始加载 ELF 符号 path={elf}", component="PC-WATCH")
     index = SymbolIndex(elf, arch)  # type: ignore[arg-type]
     loop_det = LoopDetector()
     last_pc: int | None = None
@@ -94,7 +100,7 @@ def run_watch(arch: str, elf: Path, work_dir: Path, sample: int) -> int:
     _enlarge_pipe(trace_w)
     cmd = build_qemu_trace_cmd(arch, work_dir, trace_fd=trace_w)  # type: ignore[arg-type]
 
-    _safe_print("[pc-watch] starting QEMU (print on PC change only)", file=sys.stderr, flush=True)
+    log_info(f"开始采集 PC trace arch={arch} sample={sample}", component="PC-WATCH")
     try:
         proc = subprocess.Popen(
             cmd,
@@ -107,7 +113,7 @@ def run_watch(arch: str, elf: Path, work_dir: Path, sample: int) -> int:
     except OSError as exc:
         os.close(trace_r)
         os.close(trace_w)
-        _safe_print(f"[pc-watch] QEMU failed: {exc}", file=sys.stderr)
+        log_error(f"QEMU 启动失败 reason={exc}", component="PC-WATCH")
         return 1
     os.close(trace_w)
 
@@ -154,26 +160,26 @@ def run_watch(arch: str, elf: Path, work_dir: Path, sample: int) -> int:
             except OSError:
                 pass
         exit_code = proc.wait()
-        _safe_print(f"[pc-watch] QEMU exited ({exit_code})", file=sys.stderr, flush=True)
+        log_info(f"QEMU 已退出 exit_code={exit_code}", component="PC-WATCH")
     return exit_code
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Run QEMU and print lines only when guest PC changes",
+    parser = ChineseArgumentParser(
+        description="运行 QEMU，仅在 Guest PC 发生变化时输出符号位置",
     )
-    parser.add_argument("--arch", choices=["rv", "la"], required=True)
-    parser.add_argument("--elf", type=Path, required=True)
+    parser.add_argument("--arch", choices=["rv", "la"], required=True, help="Guest 架构")
+    parser.add_argument("--elf", type=Path, required=True, help="内核 ELF 路径")
     parser.add_argument(
         "--sample",
         type=int,
         default=1,
-        help="Use every Nth trace TB (default 1 = all TB boundaries)",
+        help="每隔 N 个 TB 边界采样一次，默认为 1",
     )
     args = parser.parse_args()
     elf = args.elf.resolve()
     if not elf.is_file():
-        _safe_print(f"error: ELF not found: {elf}", file=sys.stderr)
+        _safe_print(f"错误：ELF 文件不存在：{elf}", file=sys.stderr)
         return 2
     return run_watch(args.arch, elf, Path.cwd(), max(1, args.sample))
 

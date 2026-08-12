@@ -10,9 +10,15 @@
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from pathlib import Path
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+from source.argparse_utils import ChineseArgumentParser  # noqa: E402
 
 PASSED_RE = re.compile(r"^passed\s+(\d+)\s*$", re.MULTILINE)
 TPASS_RE = re.compile(r"TPASS:")
@@ -39,9 +45,17 @@ def summarize(text: str) -> dict:
 
 
 def main() -> int:
+    parser = ChineseArgumentParser(description=__doc__)
+    parser.add_argument(
+        "logs",
+        nargs="*",
+        type=Path,
+        help="LTP 日志路径，可传入多个；省略时读取默认日志或 stdin",
+    )
+    args = parser.parse_args()
     paths: list[Path]
-    if len(sys.argv) > 1:
-        paths = [Path(p) for p in sys.argv[1:]]
+    if args.logs:
+        paths = args.logs
     else:
         default = Path("os/rv_local_run_all.log")
         paths = [default] if default.exists() else []

@@ -4,6 +4,20 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 OS_DIR="$PWD"
+WOS_LOG_COMPONENT=TEST
+# shellcheck source=/dev/null
+source "$OS_DIR/scripts/source/console.bash"
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    cat <<EOF
+用法: ${0##*/} [LOG_FILE]
+
+临时将 bring-up 队列替换为 glibc iozone，构建并运行 RISC-V64 内核。
+LOG_FILE 默认为 /tmp/wave1_blockcache_iozone.log。
+脚本会修改 src/user_bringup_busybox.rs，并在退出时从备份恢复。
+EOF
+    exit 0
+fi
 BRINGUP="$OS_DIR/src/user_bringup_busybox.rs"
 BACKUP="$BRINGUP.bak.iozone_minimal"
 LOG="${1:-/tmp/wave1_blockcache_iozone.log}"
@@ -30,12 +44,10 @@ make kernel-rv
 make rv_qemu_run 2>&1 | tee "$LOG"
 
 if grep -q 'iozone test complete' "$LOG"; then
-    echo "IOZONE_MINIMAL: OK (iozone test complete found)"
+    info "iozone 最小验收通过 marker=iozone_test_complete"
 else
-    echo "IOZONE_MINIMAL: FAIL (no iozone test complete)" >&2
-    exit 1
+    error "iozone 最小验收失败 reason=completion_marker_missing log=${LOG}" 1
 fi
 if grep -qiE 'Kernel panic|RefCell already borrowed' "$LOG"; then
-    echo "IOZONE_MINIMAL: PANIC detected" >&2
-    exit 1
+    error "iozone 最小验收失败 reason=kernel_panic log=${LOG}" 1
 fi

@@ -6,7 +6,7 @@ import io
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,7 +22,11 @@ class DoctorTests(unittest.TestCase):
             return f"/usr/bin/{name}" if name in tools else None
 
         output = io.StringIO()
-        with patch.object(wateros_debug.shutil, "which", side_effect=which), redirect_stdout(output):
+        with (
+            patch.object(wateros_debug.shutil, "which", side_effect=which),
+            redirect_stdout(output),
+            redirect_stderr(output),
+        ):
             result = wateros_debug.doctor("rv", elf)
         return result, output.getvalue()
 
@@ -38,7 +42,7 @@ class DoctorTests(unittest.TestCase):
             }
         )
         self.assertEqual(result, 0)
-        self.assertIn("doctor passed", output)
+        self.assertIn("[DEBUG][INFO] 调试环境检查通过", output)
 
     def test_missing_gdb_fails_deterministically(self) -> None:
         result, output = self.run_doctor(

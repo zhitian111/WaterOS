@@ -120,21 +120,21 @@ def parse_layout(header: bytes) -> DebugLayout:
         struct.unpack_from("<QIHHIIIHH", header)
     )
     if magic != DEBUG_MAGIC:
-        raise DebugAbiError(f"bad debug magic: 0x{magic:016x}")
+        raise DebugAbiError(f"调试区魔数无效：0x{magic:016x}")
     if version != 1:
-        raise DebugAbiError(f"unsupported debug ABI version: {version}")
+        raise DebugAbiError(f"不支持调试 ABI 版本：{version}")
     if arch not in (1, 2):
-        raise DebugAbiError(f"unsupported debug architecture: {arch}")
+        raise DebugAbiError(f"不支持调试架构：{arch}")
     if not 1 <= max_cpus <= 256:
-        raise DebugAbiError(f"invalid CPU count: {max_cpus}")
+        raise DebugAbiError(f"CPU 数量无效：{max_cpus}")
     if not 1 <= event_capacity <= 4096:
-        raise DebugAbiError(f"invalid event capacity: {event_capacity}")
+        raise DebugAbiError(f"事件容量无效：{event_capacity}")
     if cpu_size < 328 or event_size < 56:
         raise DebugAbiError(
-            f"invalid record sizes: cpu={cpu_size} event={event_size}"
+            f"记录大小无效：cpu={cpu_size} event={event_size}"
         )
     if build_id_size != 64:
-        raise DebugAbiError(f"unsupported build ID size: {build_id_size}")
+        raise DebugAbiError(f"不支持 Build ID 大小：{build_id_size}")
     embedded_build_id = header[32 : 32 + build_id_size].split(b"\0", 1)[0]
     return DebugLayout(
         version,
@@ -235,7 +235,7 @@ def decode_state(data: bytes, *, event_limit: int = 64) -> dict[str, Any]:
     layout = parse_layout(data[:HEADER_SIZE])
     if len(data) < layout.total_size:
         raise DebugAbiError(
-            f"debug state truncated: need={layout.total_size} got={len(data)}"
+            f"调试状态数据不完整：need={layout.total_size} got={len(data)}"
         )
     cpus: list[dict[str, Any]] = []
     for cpu in range(layout.max_cpus):

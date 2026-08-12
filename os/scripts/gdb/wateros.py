@@ -24,11 +24,10 @@ from debug_abi import (  # noqa: E402
 
 
 class WaterOsSwitchUnwinder(gdb.unwinder.Unwinder):
-    """Recover the incoming task frame while a CPU is stopped inside __switch.
+    """CPU 停在 __switch 内部时恢复即将切入任务的栈帧。
 
-    A normal CFA cannot describe the instant at which SP/RA begin referring to a
-    different task. Both architecture TaskContext layouts deliberately start with
-    `ra, sp, fp`, so one small unwinder covers RISC-V and LoongArch.
+    普通 CFA 无法描述 SP 和 RA 开始指向另一任务的瞬间。两种架构的 TaskContext
+    都刻意以 `ra, sp, fp` 开头，因此一个小型 unwinder 即可覆盖 RISC-V 和 LoongArch。
     """
 
     def __init__(self) -> None:
@@ -107,7 +106,7 @@ def read_snapshot(event_limit: int = 64) -> dict:
     inferior = gdb.selected_inferior()
     response = gdb.execute("maintenance packet Qqemu.PhyMemMode:1", to_string=True)
     if "OK" not in response:
-        raise gdb.GdbError(f"QEMU physical-memory mode failed: {response.strip()}")
+        raise gdb.GdbError(f"QEMU 物理内存模式启用失败：{response.strip()}")
     try:
         address = _symbol_address("WATEROS_DEBUG_STATE")
         header = bytes(inferior.read_memory(address, HEADER_SIZE))
@@ -202,7 +201,7 @@ class WaterOsTask(gdb.Command):
     def invoke(self, argument: str, from_tty: bool) -> None:
         del from_tty
         if not argument.strip():
-            raise gdb.GdbError("usage: wos-task <task-id>")
+            raise gdb.GdbError("用法：wos-task <task-id>")
         task = int(argument, 0)
         snapshot = read_snapshot(event_limit=256)
         current = [cpu for cpu in snapshot["cpus"] if cpu["current_task"] == task]
@@ -234,4 +233,4 @@ WaterOsTasks()
 WaterOsTask()
 WaterOsSnapshot()
 gdb.unwinder.register_unwinder(None, WaterOsSwitchUnwinder(), replace=True)
-print("WaterOS GDB commands loaded: wos-cpus/tasks/task/events/locks/snapshot")
+print("WaterOS GDB 命令已加载：wos-cpus/tasks/task/events/locks/snapshot")

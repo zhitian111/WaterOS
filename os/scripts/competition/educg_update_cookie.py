@@ -26,16 +26,27 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+from source.argparse_utils import ChineseArgumentParser  # noqa: E402
+
 SCRIPT_DIR = Path(__file__).resolve().parent
+SCRIPTS_DIR = SCRIPT_DIR.parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from source.logging_utils import error as log_error  # noqa: E402
+from source.logging_utils import info as log_info  # noqa: E402
+
 DEFAULT_CONF = SCRIPT_DIR / "educg_cookie.conf"
 
 
 def load_conf(path: Path) -> dict[str, Any]:
     if not path.is_file():
-        print(
-            f"缺少配置文件: {path}\n"
-            f"请先执行: cp {SCRIPT_DIR / 'educg_cookie.conf.example'} {path}",
-            file=sys.stderr,
+        log_error(
+            f"配置文件不存在 path={path} template={SCRIPT_DIR / 'educg_cookie.conf.example'}",
+            component="EDUCG",
         )
         sys.exit(1)
     with path.open(encoding="utf-8") as f:
@@ -68,7 +79,7 @@ def http_json(
             parsed = {"error": body or str(exc)}
         return exc.code, parsed
     except urllib.error.URLError as exc:
-        print(f"网络错误: {exc.reason}", file=sys.stderr)
+        log_error(f"网络请求失败 reason={exc.reason}", component="EDUCG")
         sys.exit(1)
 
 
@@ -81,10 +92,13 @@ def push_cookie(server_url: str, token: str, session: str) -> int:
     )
     if status == 200 and resp.get("ok"):
         preview = resp.get("cookie_preview", "")
-        print(f"cookie 更新成功（{preview}）")
+        log_info(f"比赛会话 cookie 更新成功 preview={preview}", component="EDUCG")
         return 0
 
-    print(f"cookie 更新失败（HTTP {status}）: {resp.get('error', resp)}", file=sys.stderr)
+    log_error(
+        f"比赛会话 cookie 更新失败 http_status={status} reason={resp.get('error', resp)}",
+        component="EDUCG",
+    )
     return 1
 
 
@@ -92,7 +106,7 @@ def show_status(server_url: str) -> int:
     url = server_url.rstrip("/") + "/api/status"
     status, resp = http_json("GET", url)
     if status != 200:
-        print(f"查询失败（HTTP {status}）: {resp}", file=sys.stderr)
+        log_error(f"比赛服务状态查询失败 http_status={status} response={resp}", component="EDUCG")
         return 1
 
     print(json.dumps(resp, ensure_ascii=False, indent=2))
@@ -100,7 +114,7 @@ def show_status(server_url: str) -> int:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="向服务器推送 educg_session cookie")
+    parser = ChineseArgumentParser(description="向服务器推送 educg_session cookie")
     parser.add_argument(
         "--conf",
         type=Path,

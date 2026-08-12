@@ -14,20 +14,28 @@ import sys
 import time
 from pathlib import Path
 
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from source.logging_utils import error as log_error  # noqa: E402
+from source.logging_utils import info as log_info  # noqa: E402
+from source.argparse_utils import ChineseArgumentParser  # noqa: E402
+
 ANSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--arch", choices=("rv", "la"), required=True)
-    parser.add_argument("--profile", choices=("pre", "final"), default="pre")
-    parser.add_argument("--smp", type=int, default=1)
-    parser.add_argument("--timeout", type=float, default=120.0)
-    parser.add_argument("--mode", choices=("shell", "run"), default="shell")
-    parser.add_argument("--script", help="absolute guest script path required by --mode run")
-    parser.add_argument("--vim", action="store_true", help="also require a Vim raw-mode save")
-    parser.add_argument("--no-build", action="store_true")
-    parser.add_argument("--log", type=Path)
+    parser = ChineseArgumentParser(description=__doc__)
+    parser.add_argument("--arch", choices=("rv", "la"), required=True, help="Guest 架构")
+    parser.add_argument("--profile", choices=("pre", "final"), default="pre", help="构建阶段，默认为 pre")
+    parser.add_argument("--smp", type=int, default=1, help="Guest CPU 数量，默认为 1")
+    parser.add_argument("--timeout", type=float, default=120.0, help="测试超时秒数，默认为 120")
+    parser.add_argument("--mode", choices=("shell", "run"), default="shell", help="operator 模式，默认为 shell")
+    parser.add_argument("--script", help="run 模式执行的 Guest 绝对路径")
+    parser.add_argument("--vim", action="store_true", help="额外验证 Vim raw-mode 保存流程")
+    parser.add_argument("--no-build", action="store_true", help="复用已有内核，不执行构建")
+    parser.add_argument("--log", type=Path, help="串口日志输出路径")
     return parser.parse_args()
 
 
@@ -119,10 +127,8 @@ def main() -> int:
         console.send_line(b"echo " + interrupt_marker)
         console.wait_line(interrupt_marker)
 
-        # Exercise noncanonical input without depending on an editor being
-        # installed in the competition image. `dd` must receive exactly three
-        # bytes without a newline; the shell restores canonical mode after it
-        # returns so the rest of the smoke test can continue normally.
+        # 在不依赖比赛镜像安装编辑器的情况下验证非规范输入。`dd` 必须接收三个不带
+        # 换行的字节；命令返回后由 Shell 恢复规范模式，使后续冒烟测试能够正常继续
         raw_marker = b"__WOS_RAW_TTY_OK__"
         console.send_line(b"busybox stty -icanon -echo min 1 time 0; "
                           b"dd bs=1 count=3 of=/tmp/wos-raw.txt 2>/dev/null; "
@@ -145,7 +151,7 @@ def main() -> int:
             console.send_line(b"cat /tmp/wos-vim.txt; echo " + vim_marker)
             console.wait_line(vim_marker)
 
-        # Exiting the operator shell must cause the supervisor to spawn rescue.
+        # 退出 operator shell 后，监督进程必须启动救援终端
         prompt_count = bytes(console.output).count(b"# ")
         console.send_line(b"exit")
         while bytes(console.output).count(b"# ") <= prompt_count:
@@ -155,10 +161,13 @@ def main() -> int:
         rescue = b"__WOS_RESCUE_OK__"
         console.send_line(b"echo " + rescue)
         console.wait_line(rescue)
-        print(f"operator smoke passed: arch={args.arch} profile={args.profile} smp={args.smp}")
+        log_info(
+            f"operator 冒烟测试通过 arch={args.arch} profile={args.profile} smp={args.smp}",
+            component="TEST",
+        )
         return 0
     except (TimeoutError, OSError, RuntimeError) as error:
-        print(f"operator smoke failed: {error}", file=sys.stderr)
+        log_error(f"operator 冒烟测试失败 reason={error}", component="TEST")
         return 1
     finally:
         log_path.write_bytes(console.output)
@@ -169,7 +178,7 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGKILL)
         os.close(master)
-        print(f"serial log: {log_path}")
+        log_info(f"串口日志已保存 path={log_path}", component="TEST")
 
 
 if __name__ == "__main__":

@@ -4,12 +4,13 @@ set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../source/console.bash"
+WOS_LOG_COMPONENT=STATS
 
 # 并行线程数（可由 Makefile 传入）
 # THREADS="${THREADS:-4}"
 THREADS=$(nproc)
 
-info "并行线程数：$THREADS"
+info "开始统计仓库文本 workers=${THREADS}"
 
 
 # ======================================================
@@ -49,7 +50,7 @@ load_gitignore() {
   while IFS= read -r gitignore; do
     [[ ! -f "$gitignore" ]] && continue
 
-    trace "加载 Gitignore: $gitignore"
+    trace "加载 Gitignore 文件 path=${gitignore}"
 
     while IFS= read -r rule || [[ -n "$rule" ]]; do
       [[ -z "$rule" || "$rule" =~ ^# ]] && continue
@@ -91,8 +92,8 @@ is_text() {
 
 load_gitignore
 
-trace "目录忽略规则：${IGNORE_DIRS[*]}"
-trace "文件忽略规则：${IGNORE_REGEX[*]}"
+trace "目录忽略规则 rules=${IGNORE_DIRS[*]}"
+trace "文件忽略规则 rules=${IGNORE_REGEX[*]}"
 
 PRUNE=()
 for d in "${IGNORE_DIRS[@]}"; do
@@ -163,19 +164,15 @@ for path in "${FILES[@]}"; do
 
   # 目录切换 → 输出上一目录的汇总
   if [[ -n "$CURRENT_DIR" && "$CURRENT_DIR" != "$FILE_DIR" ]]; then
-    info "--------------------------------------"
-    info "目录统计完成：$CURRENT_DIR"
-    info " 字符总数：${DIR_CHARS[$CURRENT_DIR]:-0}"
-    info " 行数总数：${DIR_LINES[$CURRENT_DIR]:-0}"
-    info "--------------------------------------"
+    info "目录统计完成 directory=${CURRENT_DIR} chars=${DIR_CHARS[$CURRENT_DIR]:-0} lines=${DIR_LINES[$CURRENT_DIR]:-0}"
   fi
   CURRENT_DIR="$FILE_DIR"
 
   tmpfile="$TMPDIR/$(echo "$path" | sed "s/\//_/g")"
   IFS=':' read -r p chars lines < "$tmpfile"
 
-  trace "文件: $path"
-  debug "字符: $chars 行: $lines"
+  trace "统计文件 path=${path}"
+  debug "文件统计完成 path=${path} chars=${chars} lines=${lines}"
 
   DIR_CHARS[$FILE_DIR]=$(( ${DIR_CHARS[$FILE_DIR]:-0} + chars ))
   DIR_LINES[$FILE_DIR]=$(( ${DIR_LINES[$FILE_DIR]:-0} + lines ))
@@ -191,18 +188,7 @@ done
 # ======================================================
 
 if [[ -n "$CURRENT_DIR" ]]; then
-  info "--------------------------------------"
-  info "目录统计完成：$CURRENT_DIR"
-  info " 字符总数：${DIR_CHARS[$CURRENT_DIR]:-0}"
-  info " 行数总数：${DIR_LINES[$CURRENT_DIR]:-0}"
-  info "--------------------------------------"
+  info "目录统计完成 directory=${CURRENT_DIR} chars=${DIR_CHARS[$CURRENT_DIR]:-0} lines=${DIR_LINES[$CURRENT_DIR]:-0}"
 fi
 
-info "--------------------------------------"
-info "最终统计汇总"
-info "--------------------------------------"
-info "总字符数：$TOTAL_CHARS"
-info "总行数：$TOTAL_LINES"
-info "--------------------------------------"
-
-info "统计完成"
+info "仓库文本统计完成 chars=${TOTAL_CHARS} lines=${TOTAL_LINES}"

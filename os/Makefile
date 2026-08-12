@@ -140,16 +140,16 @@ SELECTED_RUN_SCRIPT := ./scripts/run/$(ARCH)_$(PROFILE)_run.sh
 DEBUG_PROFILE := $(ARCH)-$(PROFILE)
 
 define TRACE
-	@echo -e "$(COLOR_ANSI_PURPLE)[MAKEFILE]$(COLOR_ANSI_CLEAR)$(COLOR_ANSI_BLUE)\t[TRACE]\t$(1)$(COLOR_ANSI_CLEAR)"
+	@printf '%b[MAKE][TRACE]%b %s\n' "$(COLOR_ANSI_BLUE)" "$(COLOR_ANSI_CLEAR)" "$(1)"
 endef
 define INFO
-	@echo -e "$(COLOR_ANSI_PURPLE)[MAKEFILE]$(COLOR_ANSI_CLEAR)$(COLOR_ANSI_GREEN)\t[INFO]\t$(1)$(COLOR_ANSI_CLEAR)"
+	@printf '%b[MAKE][INFO]%b %s\n' "$(COLOR_ANSI_GREEN)" "$(COLOR_ANSI_CLEAR)" "$(1)"
 endef
 define WARNING
-	@echo -e "$(COLOR_ANSI_PURPLE)[MAKEFILE]$(COLOR_ANSI_CLEAR)$(COLOR_ANSI_YELLOW)\t[WARNING]\t$(1)$(COLOR_ANSI_CLEAR)"
+	@printf '%b[MAKE][WARN]%b %s\n' "$(COLOR_ANSI_YELLOW)" "$(COLOR_ANSI_CLEAR)" "$(1)" >&2
 endef
 define ERROR
-	@echo -e "$(COLOR_ANSI_PURPLE)[MAKEFILE]$(COLOR_ANSI_CLEAR)$(COLOR_ANSI_RED)\t[ERROR]\t$(1)	错误代码:$(2)$(COLOR_ANSI_CLEAR)"
+	@printf '%b[MAKE][ERROR]%b %s exit_code=%s\n' "$(COLOR_ANSI_RED)" "$(COLOR_ANSI_CLEAR)" "$(1)" "$(2)" >&2
 	@exit $$2
 endef
 
@@ -194,27 +194,27 @@ show-config:
 	@printf "  %-18s %s\n" "GRAPHICS_BACKEND" "$(GRAPHICS_BACKEND)"
 
 validate-config:
-	@case "$(ARCH)" in rv|la) ;; *) echo "错误: ARCH 必须是 rv 或 la" >&2; exit 2 ;; esac
-	@case "$(PROFILE)" in pre|final) ;; *) echo "错误: PROFILE 必须是 pre 或 final" >&2; exit 2 ;; esac
-	@case "$(MODE)" in auto|shell|run) ;; *) echo "错误: MODE 必须是 auto/shell/run" >&2; exit 2 ;; esac
-	@case "$(SMP)" in 1|2|3|4|5|6|7|8) ;; *) echo "错误: SMP 必须是 1..8" >&2; exit 2 ;; esac
-	@case "$(SNAPSHOT)" in 0|1) ;; *) echo "错误: SNAPSHOT 必须是 0 或 1" >&2; exit 2 ;; esac
-	@case "$(WRITE_DISK)" in 0|1) ;; *) echo "错误: WRITE_DISK 必须是 0 或 1" >&2; exit 2 ;; esac
-	@test -n "$(SDCARD)" || { echo "错误: 未配置根文件系统镜像；请设置对应的 *_IMAGE 或 SDCARD" >&2; exit 2; }
-	@case "$(FAULTS)" in 0|1) ;; *) echo "错误: FAULTS 必须是 0 或 1" >&2; exit 2 ;; esac
-	@case "$(START_PAUSED)" in 0|1) ;; *) echo "错误: START_PAUSED 必须是 0 或 1" >&2; exit 2 ;; esac
-	@case "$(GRAPHICS)" in 0|1) ;; *) echo "错误: GRAPHICS 必须是 0 或 1" >&2; exit 2 ;; esac
+	@case "$(ARCH)" in rv|la) ;; *) printf '[MAKE][ERROR] 无效架构 value=%s allowed=rv,la\n' "$(ARCH)" >&2; exit 2 ;; esac
+	@case "$(PROFILE)" in pre|final) ;; *) printf '[MAKE][ERROR] 无效构建阶段 value=%s allowed=pre,final\n' "$(PROFILE)" >&2; exit 2 ;; esac
+	@case "$(MODE)" in auto|shell|run) ;; *) printf '[MAKE][ERROR] 无效运行模式 value=%s allowed=auto,shell,run\n' "$(MODE)" >&2; exit 2 ;; esac
+	@case "$(SMP)" in 1|2|3|4|5|6|7|8) ;; *) printf '[MAKE][ERROR] 无效 CPU 数量 value=%s range=1..8\n' "$(SMP)" >&2; exit 2 ;; esac
+	@case "$(SNAPSHOT)" in 0|1) ;; *) printf '[MAKE][ERROR] 无效快照开关 value=%s allowed=0,1\n' "$(SNAPSHOT)" >&2; exit 2 ;; esac
+	@case "$(WRITE_DISK)" in 0|1) ;; *) printf '[MAKE][ERROR] 无效磁盘写入开关 value=%s allowed=0,1\n' "$(WRITE_DISK)" >&2; exit 2 ;; esac
+	@test -n "$(SDCARD)" || { printf '[MAKE][ERROR] 未配置根文件系统镜像 variable=SDCARD\n' >&2; exit 2; }
+	@case "$(FAULTS)" in 0|1) ;; *) printf '[MAKE][ERROR] 无效故障注入开关 value=%s allowed=0,1\n' "$(FAULTS)" >&2; exit 2 ;; esac
+	@case "$(START_PAUSED)" in 0|1) ;; *) printf '[MAKE][ERROR] 无效暂停启动开关 value=%s allowed=0,1\n' "$(START_PAUSED)" >&2; exit 2 ;; esac
+	@case "$(GRAPHICS)" in 0|1) ;; *) printf '[MAKE][ERROR] 无效图形开关 value=%s allowed=0,1\n' "$(GRAPHICS)" >&2; exit 2 ;; esac
 	@if [[ "$(MODE)" == run ]]; then \
-		test -n "$(SCRIPT)" || { echo "错误: MODE=run 时必须提供 SCRIPT" >&2; exit 2; }; \
-		[[ "$(SCRIPT)" == /* ]] || { echo "错误: SCRIPT 必须是 guest 绝对路径" >&2; exit 2; }; \
+		test -n "$(SCRIPT)" || { printf '[MAKE][ERROR] 运行脚本未配置 mode=run variable=SCRIPT\n' >&2; exit 2; }; \
+		[[ "$(SCRIPT)" == /* ]] || { printf '[MAKE][ERROR] Guest 脚本必须使用绝对路径 value=%s\n' "$(SCRIPT)" >&2; exit 2; }; \
 	elif [[ -n "$(SCRIPT)" ]]; then \
-		echo "错误: SCRIPT 只能与 MODE=run 一起使用" >&2; exit 2; \
+		printf '[MAKE][ERROR] 当前模式不接受运行脚本 mode=%s script=%s\n' "$(MODE)" "$(SCRIPT)" >&2; exit 2; \
 	fi
 	@if [[ -n "$(GUEST_SHELL)" && "$(GUEST_SHELL)" != /* ]]; then \
-		echo "错误: GUEST_SHELL 必须是 guest 绝对路径" >&2; exit 2; \
+		printf '[MAKE][ERROR] Guest Shell 必须使用绝对路径 value=%s\n' "$(GUEST_SHELL)" >&2; exit 2; \
 	fi
 	@if ! [[ "$(PORT)" =~ ^[0-9]+$$ ]] || (( $(PORT) < 1 || $(PORT) > 65535 )); then \
-		echo "错误: PORT 必须是 1..65535" >&2; exit 2; \
+		printf '[MAKE][ERROR] 无效调试端口 value=%s range=1..65535\n' "$(PORT)" >&2; exit 2; \
 	fi
 
 build: validate-config $(SELECTED_BUILD_TARGET)

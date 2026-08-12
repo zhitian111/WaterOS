@@ -2,6 +2,7 @@
 # 将分层的 config.conf 选择转换为顶层 Cargo feature，并沿本地依赖边
 # 向上传播各组件的实现选择。
 set -eu
+WOS_LOG_COMPONENT=CONFIG
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
@@ -17,13 +18,27 @@ fi
 ROOT_DIR_DEFAULT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 ROOT_DIR="${ROOT_DIR_DEFAULT}"
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<EOF
+用法: ${0##*/} [CONFIG_FILE] [ROOT_PACKAGE]
+
+将配置树转换成逗号分隔的顶层 Cargo feature 列表并写入 stdout。
+  CONFIG_FILE   配置文件，默认为 ${ROOT_DIR}/config.conf
+  ROOT_PACKAGE  顶层 package 名，默认从 os/Cargo.toml 读取
+
+环境变量:
+  WATEROS_SCRIPTS_QUIET=1  关闭操作日志，仅保留 feature 列表
+EOF
+  exit 0
+fi
+
 CONF_PATH="${1:-${ROOT_DIR}/config.conf}"
 ROOT_PKG="${2:-}"
 
-info "从 config.conf 生成顶层 flags: root=${ROOT_PKG:-<auto>}"
+info "开始生成顶层 features config=${CONF_PATH} root_package=${ROOT_PKG:-auto}"
 
 if [[ ! -f "${CONF_PATH}" ]]; then
-  warning "配置文件不存在: ${CONF_PATH}，输出空 features"
+  warning "配置文件不存在 path=${CONF_PATH} output=empty"
   printf "%s" ""
   exit 0
 fi
@@ -74,7 +89,7 @@ enabled = parse_config_tree_enabled(conf_path)
 flags, warnings = bubble_features_to_root(root_pkg, enabled, crates)
 
 for w in warnings:
-    # In quiet mode (Makefile), keep stdout clean and suppress warning noise.
+    # Makefile 安静模式保持 stdout 纯净，并抑制非必要警告
     import os as _os
     if _os.environ.get("WATEROS_SCRIPTS_QUIET") == "1":
         continue

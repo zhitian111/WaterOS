@@ -29,8 +29,15 @@ if str(DEBUG_DIR) not in sys.path:
     sys.path.insert(0, str(DEBUG_DIR))
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+from source.argparse_utils import ChineseArgumentParser  # noqa: E402
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 if str(RUN_DIR) not in sys.path:
     sys.path.insert(0, str(RUN_DIR))
+
+from source.logging_utils import error as log_error  # noqa: E402
+from source.logging_utils import info as log_info  # noqa: E402
+from source.logging_utils import warning as log_warning  # noqa: E402
 
 from debug_abi import (  # noqa: E402
     HEADER_SIZE,
@@ -144,19 +151,18 @@ def load_active_session() -> dict[str, Any]:
         payload = json.loads(ACTIVE_SESSION.read_text())
     except FileNotFoundError as exc:
         raise DebugToolError(
-            "no active debug session; run `make debug` or `make debug-server` first"
+            "没有活动的调试会话，请先运行 `make debug` 或 `make debug-server`"
         ) from exc
     except (json.JSONDecodeError, OSError) as exc:
-        raise DebugToolError(f"invalid active debug session: {exc}") from exc
+        raise DebugToolError(f"活动调试会话无效：{exc}") from exc
     if payload.get("version") != SESSION_VERSION:
         raise DebugToolError(
-            f"unsupported active session version: {payload.get('version')!r}"
+            f"不支持活动会话版本：{payload.get('version')!r}"
         )
     pid = payload.get("pid")
     if not isinstance(pid, int) or not process_alive(pid):
         raise DebugToolError(
-            "active debug session is stale; run `make debug` or "
-            "`make debug-server` again"
+            "活动调试会话已经失效，请重新运行 `make debug` 或 `make debug-server`"
         )
     return payload
 
@@ -187,11 +193,11 @@ def resolve_connection(args: argparse.Namespace) -> DebugConnection:
         observed = local_build_id(connection.elf, connection.arch)
         if observed != session.get("build_id"):
             raise DebugToolError(
-                "active session ELF changed: "
+                "活动会话的 ELF 已发生变化："
                 f"session={session.get('build_id')!r} elf={observed!r}"
             )
     if not connection.elf.is_file():
-        raise DebugToolError(f"ELF not found: {connection.elf}")
+        raise DebugToolError(f"ELF 文件不存在：{connection.elf}")
     return connection
 
 
@@ -200,13 +206,13 @@ def ensure_port_available(host: str, port: int) -> None:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
             probe.bind((host, port))
     except OSError as exc:
-        raise DebugToolError(f"GDB port is already in use: {host}:{port}") from exc
+        raise DebugToolError(f"GDB 端口已被占用：{host}:{port}") from exc
     else:
         return
 
 
 def verify_build_id(expected: str, observed: str | None) -> None:
-    """Reject symbolization unless the running guest matches the local ELF."""
+    """仅在运行中的 Guest 与本地 ELF 一致时允许符号化。"""
     if observed != expected:
         raise DebugToolError(
             f"ELF/guest build ID mismatch: elf={expected!r} guest={observed!r}"
@@ -221,24 +227,23 @@ def first_tool(candidates: list[str]) -> str | None:
 def _nm_symbols(
     elf_name: str, arch: str, elf_size: int, elf_mtime_ns: int
 ) -> dict[str, tuple[int, int]]:
-    del elf_size, elf_mtime_ns  # cache-key-only values invalidate a rebuilt ELF
+    del elf_size, elf_mtime_ns  # 这些值仅用于缓存键，ELF 重建后用于使缓存失效
     tool = first_tool(ARCH_TO_BINUTILS[arch])
     if tool is None:
-        raise DebugToolError(f"no usable nm for architecture {arch}")
+        raise DebugToolError(f"没有适用于架构 {arch} 的 nm 工具")
     try:
         output = subprocess.check_output(
             [tool, "-S", "--defined-only", elf_name], text=True, stderr=subprocess.PIPE
         )
     except subprocess.CalledProcessError as exc:
-        raise DebugToolError(exc.stderr.strip() or f"{tool} failed") from exc
+        raise DebugToolError(exc.stderr.strip() or f"{tool} 执行失败") from exc
     symbols: dict[str, tuple[int, int]] = {}
     for line in output.splitlines():
         fields = line.split(None, 3)
         if len(fields) == 4:
             symbols[fields[3]] = (int(fields[0], 16), int(fields[1], 16))
         elif len(fields) == 3:
-            # Hand-written assembly symbols frequently have no size column even
-            # with `nm -S`: address, type, name.
+            # 手写汇编符号即使使用 `nm -S` 也经常没有大小列，只有地址、类型和名称
             symbols[fields[2]] = (int(fields[0], 16), 0)
     return symbols
 
@@ -286,7 +291,7 @@ def has_forced_frame_pointers(elf: Path, arch: str) -> bool:
 
 
 def missing_cfi_symbols(elf: Path, arch: str) -> list[str]:
-    """Return architecture boundary symbols not covered by any emitted FDE."""
+    """返回所有未被 FDE 覆盖的架构边界符号。"""
     output = subprocess.check_output(
         ["readelf", "--debug-dump=frames", str(elf)], text=True, stderr=subprocess.PIPE
     )
@@ -377,8 +382,8 @@ def remote_read_bytes(remote: GdbRemote, address: int, size: int) -> bytes | Non
     chunks = []
     offset = 0
     while offset < size:
-        # QEMU advertises PacketSize=0x1000; memory replies are hex encoded, so
-        # keep the binary request below roughly half that size plus framing.
+        # QEMU 声明 PacketSize=0x1000；内存响应使用十六进制编码，因此二进制请求
+        # 应控制在该大小约一半以内，并为协议框架保留空间
         chunk_size = min(1900, size - offset)
         chunk = read_memory(remote, address + offset, chunk_size)
         if chunk is None or len(chunk) != chunk_size:
@@ -416,7 +421,7 @@ def collect_remote_sample(
         register_rows = []
         for cpu_index, thread in enumerate(read_threads(remote)):
             if remote.command(f"Hg{thread}") != "OK":
-                raise RemoteError(f"cannot select QEMU thread {thread}")
+                raise RemoteError(f"无法选择 QEMU 线程 {thread}")
             register_rows.append(
                 {
                     "cpu": cpu_index,
@@ -433,31 +438,29 @@ def collect_remote_sample(
         try:
             physical = remote.command("Qqemu.PhyMemMode:1")
             if physical != "OK":
-                raise DebugToolError(f"QEMU does not support physical memory mode: {physical!r}")
+                raise DebugToolError(f"QEMU 不支持物理内存模式：{physical!r}")
             state_address, _ = nm_symbol(elf, arch, "WATEROS_DEBUG_STATE")
             header = remote_read_bytes(remote, state_address, HEADER_SIZE)
             if header is None:
-                raise DebugAbiError("cannot read debug header")
+                raise DebugAbiError("无法读取调试区头部")
             layout = parse_layout(header)
             expected_arch = 1 if arch == "rv" else 2
             if layout.arch != expected_arch:
                 raise DebugToolError(
-                    f"debug ABI architecture mismatch: requested={arch} header={layout.arch}"
+                    f"调试 ABI 架构不一致：requested={arch} header={layout.arch}"
                 )
-            # Watch mode only needs the compact CPU double-buffer area. Reading all
-            # 32×256 event records through the stop-and-wait remote protocol would
-            # pause the guest for tens of seconds on every sample.
+            # watch 模式只需要紧凑的 CPU 双缓冲区。通过停等式远程协议读取全部
+            # 32×256 条事件会使每次采样暂停 Guest 数十秒。
             raw = bytearray(layout.total_size)
             raw[:HEADER_SIZE] = header
-            # QEMU exposes one Remote thread per configured vCPU. CPU IDs are
-            # contiguous in both supported machines, so sampling does not need to
-            # fetch unused capacity slots (currently 32) for an `-smp 1/2/4/8`
-            # guest. The decoder still sees a complete zero-filled ABI image.
+            # QEMU 为每个 vCPU 暴露一个 Remote 线程。两种机器的 CPU ID 都连续，
+            # 因此 `-smp 1/2/4/8` 的 Guest 无需读取当前容量为 32 的未使用槽位；
+            # 解码器仍会接收到以零补齐的完整 ABI 镜像。
             observed_cpus = min(layout.max_cpus, max(1, len(register_rows)))
             cpu_bytes = observed_cpus * layout.cpu_slots_size
             cpu_raw = remote_read_bytes(remote, state_address + HEADER_SIZE, cpu_bytes)
             if cpu_raw is None:
-                raise DebugAbiError("cannot read CPU debug state")
+                raise DebugAbiError("无法读取 CPU 调试状态")
             raw[HEADER_SIZE : HEADER_SIZE + cpu_bytes] = cpu_raw
             events_base = HEADER_SIZE + layout.max_cpus * layout.cpu_slots_size
             # 轻量采样也读取每 CPU 的 16-byte 环头，使 event sequence 能参与
@@ -466,7 +469,7 @@ def collect_remote_sample(
                 offset = events_base + cpu * layout.cpu_events_size
                 event_header = remote_read_bytes(remote, state_address + offset, 16)
                 if event_header is None:
-                    raise DebugAbiError(f"cannot read debug event header for CPU {cpu}")
+                    raise DebugAbiError(f"无法读取 CPU {cpu} 的调试事件头部")
                 raw[offset : offset + 16] = event_header
             debug_snapshot = decode_state(raw, event_limit=0)
             debug_snapshot["observed_vcpus"] = observed_cpus
@@ -480,7 +483,7 @@ def collect_remote_sample(
                         remote, state_address + offset, layout.cpu_events_size
                     )
                     if event_raw is None:
-                        raise DebugAbiError(f"cannot read debug events for CPU {cpu}")
+                        raise DebugAbiError(f"无法读取 CPU {cpu} 的调试事件")
                     raw[offset : offset + layout.cpu_events_size] = event_raw
                 debug_snapshot = decode_state(raw, event_limit=layout.event_capacity)
                 debug_snapshot["observed_vcpus"] = observed_cpus
@@ -494,7 +497,7 @@ def collect_remote_sample(
             debug_snapshot["build_id"] = remote_build_id
         except DebugAbiError as exc:
             raise DebugToolError(
-                f"cannot decode WATEROS_DEBUG_STATE from the running guest: {exc}"
+                f"无法解析运行中 Guest 的 WATEROS_DEBUG_STATE：{exc}"
             ) from exc
         finally:
             try:
@@ -520,7 +523,7 @@ def gdb_command() -> str:
     tool = shutil.which("gdb-multiarch")
     if tool is None:
         raise DebugToolError(
-            "gdb-multiarch is required; install with: sudo apt install gdb-multiarch"
+            "缺少 gdb-multiarch，可使用 sudo apt install gdb-multiarch 安装"
         )
     return tool
 
@@ -551,7 +554,7 @@ def run_full_gdb(
     result = subprocess.run(argv, cwd=OS_ROOT, text=True, capture_output=True)
     output.write_text(result.stdout + "\n--- GDB STDERR ---\n" + result.stderr)
     if result.returncode != 0:
-        raise DebugToolError(f"GDB snapshot failed; inspect {output}")
+        raise DebugToolError(f"GDB 快照采集失败，请检查 {output}")
 
 
 def sha256(path: Path) -> str:
@@ -610,14 +613,14 @@ def write_report(
     }
     (report / "metadata.json").write_text(json.dumps(metadata, indent=2))
     register_note = (
-        "RISC-V trap registers: sepc=return PC, scause=trap reason, "
-        "stval=fault address, sstatus=privilege/interrupt state."
+        "RISC-V trap 寄存器：sepc=返回 PC，scause=trap 原因，"
+        "stval=故障地址，sstatus=特权级与中断状态。"
         if arch == "rv"
-        else "LoongArch trap registers: era=return PC, estat=trap/interrupt status, "
-        "badv=fault address, crmd/prmd=privilege/interrupt state."
+        else "LoongArch trap 寄存器：era=返回 PC，estat=trap 与中断状态，"
+        "badv=故障地址，crmd/prmd=特权级与中断状态。"
     )
     summary_lines = [
-        f"WaterOS hang diagnosis: {reason}",
+        f"WaterOS 停滞诊断：{reason}",
         f"ELF: {elf}",
         register_note,
     ]
@@ -625,7 +628,7 @@ def write_report(
         summary_lines.extend(["", render_cpus(sample.debug)])
         edges = lock_wait_edges(sample.debug)
         if edges:
-            summary_lines.extend(["", "Lock wait edges:", json.dumps(edges, indent=2)])
+            summary_lines.extend(["", "锁等待关系：", json.dumps(edges, indent=2)])
     for row in sample.registers:
         location = (
             symbolize_address(str(elf.resolve()), arch, row["pc"])
@@ -881,7 +884,7 @@ def watch(
             if time.monotonic() < startup_deadline:
                 time.sleep(min(interval, 0.5))
                 continue
-            raise DebugToolError(f"cannot sample QEMU GDB stub: {exc}") from exc
+            raise DebugToolError(f"无法从 QEMU GDB stub 采样：{exc}") from exc
         reasons = (
             stagnation_reasons(previous_sample, sample)
             if previous_sample is not None and not is_quiescent(sample)
@@ -909,12 +912,12 @@ def watch(
         if stagnant >= confirm:
             baseline = reason_baselines.get(leading_reason)
             reason = classify_stall(sample, baseline)
-            print(f"[wos-debug] confirmed {reason}; collecting full GDB report", flush=True)
+            log_warning(f"确认内核停滞 reason={reason} action=采集完整_GDB_报告", component="DEBUG")
             sample = collect_remote_sample(
                 arch, elf, host, port, timeout, full_events=True
             )
-            # The lightweight sample detached and resumed the guest. GDB performs the
-            # authoritative all-stop capture and leaves it stopped afterwards.
+            # 轻量采样会分离并恢复 Guest；随后由 GDB 执行权威的全停式采集，且采集后
+            # 保持 Guest 停止。
             report = write_report(
                 arch,
                 elf,
@@ -925,15 +928,16 @@ def watch(
                 serial_log=serial_log,
                 leave_stopped=True,
             )
-            print(f"[wos-debug] report: {report}")
+            log_info(f"调试报告已生成 path={report}", component="DEBUG")
             serial_tail = report / "serial-tail.txt"
             if serial_tail.is_file():
                 lines = serial_tail.read_text(errors="replace").splitlines()
-                print("[wos-debug] serial tail (last 40 lines):")
+                log_info("输出串口日志末尾 lines=40", component="DEBUG")
                 print("\n".join(lines[-40:]))
-            print(
-                f"[wos-debug] guest left stopped; continue with: "
-                f"{gdb_command()} {elf} -ex 'target remote {host}:{port}'"
+            log_info(
+                f"guest 已暂停 action=连接_GDB command={gdb_command()} "
+                f"target={host}:{port} elf={elf}",
+                component="DEBUG",
             )
             return 2
         time.sleep(interval)
@@ -1002,7 +1006,7 @@ def doctor(arch: str | None, elf: Path | None) -> int:
             "binutils-loongarch64-linux-gnu qemu-system-misc"
         )
         return 2
-    print("[wos-debug] doctor passed")
+    log_info("调试环境检查通过", component="DEBUG")
     return 0
 
 
@@ -1054,9 +1058,9 @@ def build_debug_elf(
     )
     elf = OS_ROOT / elf_name
     if not elf.is_file():
-        raise DebugToolError(f"debug ELF was not produced: {elf}")
+        raise DebugToolError(f"未生成调试 ELF：{elf}")
     if doctor(arch, elf) != 0:
-        raise DebugToolError(f"debug ELF validation failed: {elf}")
+        raise DebugToolError(f"调试 ELF 校验失败：{elf}")
     return arch, profile, elf
 
 
@@ -1114,7 +1118,7 @@ def write_exit_report(
 
     static: dict[str, Any] = {}
     if not elf.is_file():
-        static["unavailable"] = "ELF file not found"
+        static["unavailable"] = "ELF 文件不存在"
     else:
         try:
             static["build_id"] = local_build_id(elf, arch)
@@ -1151,19 +1155,19 @@ def write_exit_report(
     }
     (report / "metadata.json").write_text(json.dumps(metadata, indent=2))
     summary = [
-        f"WaterOS debug exit report: {reason}",
+        f"WaterOS 调试退出报告：{reason}",
         f"ELF: {elf}",
-        f"Build ID: {static.get('build_id')}",
+        f"Build ID：{static.get('build_id')}",
         f"DWARF .debug_info: {static.get('has_debug_info')}",
-        f"frame info: {static.get('has_frame_info')}",
-        f"symbol table: {static.get('has_symbol_table')}",
-        f"forced frame pointers: {static.get('forced_frame_pointers')}",
+        f"帧信息：{static.get('has_frame_info')}",
+        f"符号表：{static.get('has_symbol_table')}",
+        f"强制帧指针：{static.get('forced_frame_pointers')}",
     ]
     missing_cfi = static.get("missing_cfi")
     if missing_cfi:
-        summary.append(f"missing CFI: {', '.join(missing_cfi)}")
+        summary.append(f"缺少 CFI：{', '.join(missing_cfi)}")
     summary.append(
-        "Note: QEMU 已退出，无法连接 GDB stub，故未抓取运行时快照；"
+        "说明：QEMU 已退出，无法连接 GDB stub，故未抓取运行时快照；"
         "完整串口日志见 serial.log / serial-tail.txt。"
     )
     (report / "summary.txt").write_text("\n".join(summary) + "\n")
@@ -1207,9 +1211,9 @@ def collect_live_report(
             leave_stopped=True,
         )
     except (OSError, RemoteError, DebugToolError, subprocess.CalledProcessError) as exc:
-        print(
-            f"[wos-debug] live snapshot 失败，仅保存静态退出报告: {exc}",
-            file=sys.stderr,
+        log_warning(
+            f"实时快照失败 reason={exc} fallback=静态退出报告",
+            component="DEBUG",
         )
         return write_exit_report(
             arch, elf, "manual-interrupt", serial_log=serial_log
@@ -1247,7 +1251,7 @@ def command_run(args: argparse.Namespace) -> int:
             serial_log=serial_log,
             start_paused=False,
         )
-        print(f"[wos-debug] QEMU pid={process.pid} serial={serial_log}")
+        log_info(f"QEMU 已启动 pid={process.pid} serial_log={serial_log}", component="DEBUG")
         output_thread = threading.Thread(
             target=tee_output, args=(process, serial_log), daemon=True
         )
@@ -1272,12 +1276,12 @@ def command_run(args: argparse.Namespace) -> int:
                 serial_log=serial_log,
                 returncode=result,
             )
-            print(f"[wos-debug] exit report: {report}")
+            log_info(f"退出报告已生成 path={report}", component="DEBUG")
         return result
     except KeyboardInterrupt:
         report = collect_live_report(arch, elf, args, serial_log, process)
         if report is not None:
-            print(f"[wos-debug] analysis report: {report}")
+            log_info(f"分析报告已生成 path={report}", component="DEBUG")
         return 130
     finally:
         if output_thread is not None:
@@ -1323,11 +1327,10 @@ def command_server(args: argparse.Namespace) -> int:
             target=tee_output, args=(process, serial_log), daemon=True
         )
         output_thread.start()
-        state = "paused at reset" if args.start_paused else "running"
-        print(
-            f"[wos-debug] manual server pid={process.pid} {state}; "
-            "connect from another terminal with: make gdb",
-            flush=True,
+        state = "paused" if args.start_paused else "running"
+        log_info(
+            f"GDB server 已启动 pid={process.pid} state={state} next=make_gdb",
+            component="DEBUG",
         )
         return process.wait()
     except KeyboardInterrupt:
@@ -1344,66 +1347,66 @@ def command_server(args: argparse.Namespace) -> int:
 
 
 def add_connection_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--arch", choices=["rv", "la"])
-    parser.add_argument("--elf", type=Path)
-    parser.add_argument("--host")
-    parser.add_argument("--port", type=int)
-    parser.add_argument("--timeout", type=float, default=5.0)
+    parser.add_argument("--arch", choices=["rv", "la"], help="Guest 架构；可从活动调试会话推断")
+    parser.add_argument("--elf", type=Path, help="内核 ELF 路径；可从活动调试会话推断")
+    parser.add_argument("--host", help="GDB server 地址；默认读取会话或使用 127.0.0.1")
+    parser.add_argument("--port", type=int, help="GDB server 端口；默认读取活动会话")
+    parser.add_argument("--timeout", type=float, default=5.0, help="单次 GDB 操作超时秒数，默认为 5")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = ChineseArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    doctor_parser = subparsers.add_parser("doctor", help="validate host tools and an optional ELF")
-    doctor_parser.add_argument("--arch", choices=["rv", "la"])
-    doctor_parser.add_argument("--elf", type=Path)
+    doctor_parser = subparsers.add_parser("doctor", help="检查宿主工具和可选的 ELF 文件")
+    doctor_parser.add_argument("--arch", choices=["rv", "la"], help="只检查指定架构的工具")
+    doctor_parser.add_argument("--elf", type=Path, help="额外检查指定内核 ELF 的诊断 ABI")
 
-    run_parser = subparsers.add_parser("run", help="build, launch and watch a debug kernel")
-    run_parser.add_argument("profile", choices=sorted(PROFILES))
-    run_parser.add_argument("--smp", type=int, default=8, choices=range(1, 9))
-    run_parser.add_argument("--host", default="127.0.0.1")
-    run_parser.add_argument("--port", type=int, default=1234)
-    run_parser.add_argument("--interval", type=float, default=1.0)
-    run_parser.add_argument("--confirm", type=int, default=10)
-    run_parser.add_argument("--timeout", type=float, default=5.0)
-    run_parser.add_argument("--build-timeout", type=float, default=600.0)
-    run_parser.add_argument("--write-disk", action="store_true")
+    run_parser = subparsers.add_parser("run", help="构建、启动并监测调试内核")
+    run_parser.add_argument("profile", choices=sorted(PROFILES), help="调试配置，例如 rv-pre 或 la-final")
+    run_parser.add_argument("--smp", type=int, default=8, choices=range(1, 9), help="Guest CPU 数量，默认为 8")
+    run_parser.add_argument("--host", default="127.0.0.1", help="GDB server 地址，默认为 127.0.0.1")
+    run_parser.add_argument("--port", type=int, default=1234, help="GDB server 端口，默认为 1234")
+    run_parser.add_argument("--interval", type=float, default=1.0, help="状态采样间隔秒数，默认为 1")
+    run_parser.add_argument("--confirm", type=int, default=10, help="确认停滞所需的连续样本数，默认为 10")
+    run_parser.add_argument("--timeout", type=float, default=5.0, help="单次 GDB 操作超时秒数，默认为 5")
+    run_parser.add_argument("--build-timeout", type=float, default=600.0, help="内核构建超时秒数，默认为 600")
+    run_parser.add_argument("--write-disk", action="store_true", help="允许测试写入磁盘镜像")
     run_parser.add_argument(
         "--faults",
         action="store_true",
-        help="include test-only deterministic fault injection hooks",
+        help="启用仅供测试的确定性故障注入",
     )
 
     server_parser = subparsers.add_parser(
-        "server", help="build and run a manual two-terminal GDB server"
+        "server", help="构建并启动供双终端调试使用的 GDB server"
     )
-    server_parser.add_argument("profile", choices=sorted(PROFILES))
-    server_parser.add_argument("--smp", type=int, default=8, choices=range(1, 9))
-    server_parser.add_argument("--host", default="127.0.0.1")
-    server_parser.add_argument("--port", type=int, default=1234)
-    server_parser.add_argument("--write-disk", action="store_true")
-    server_parser.add_argument("--faults", action="store_true")
-    server_parser.add_argument("--build-timeout", type=float, default=600.0)
+    server_parser.add_argument("profile", choices=sorted(PROFILES), help="调试配置，例如 rv-pre 或 la-final")
+    server_parser.add_argument("--smp", type=int, default=8, choices=range(1, 9), help="Guest CPU 数量，默认为 8")
+    server_parser.add_argument("--host", default="127.0.0.1", help="GDB server 地址，默认为 127.0.0.1")
+    server_parser.add_argument("--port", type=int, default=1234, help="GDB server 端口，默认为 1234")
+    server_parser.add_argument("--write-disk", action="store_true", help="允许测试写入磁盘镜像")
+    server_parser.add_argument("--faults", action="store_true", help="启用仅供测试的确定性故障注入")
+    server_parser.add_argument("--build-timeout", type=float, default=600.0, help="内核构建超时秒数，默认为 600")
     server_parser.add_argument(
         "--start-paused",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="pass QEMU -S (default: true)",
+        help="向 QEMU 传入 -S，默认启用",
     )
 
-    snapshot_parser = subparsers.add_parser("snapshot", help="collect one complete report")
+    snapshot_parser = subparsers.add_parser("snapshot", help="采集一份完整调试报告")
     add_connection_arguments(snapshot_parser)
-    snapshot_parser.add_argument("--leave-stopped", action="store_true")
-    snapshot_parser.add_argument("--serial-log", type=Path)
+    snapshot_parser.add_argument("--leave-stopped", action="store_true", help="采集完成后保持 Guest 暂停")
+    snapshot_parser.add_argument("--serial-log", type=Path, help="关联的串口日志路径")
 
-    watch_parser = subparsers.add_parser("watch", help="detect a hang and collect a report")
+    watch_parser = subparsers.add_parser("watch", help="检测停滞并采集报告")
     add_connection_arguments(watch_parser)
-    watch_parser.add_argument("--interval", type=float, default=1.0)
-    watch_parser.add_argument("--confirm", type=int, default=10)
-    watch_parser.add_argument("--serial-log", type=Path)
+    watch_parser.add_argument("--interval", type=float, default=1.0, help="状态采样间隔秒数，默认为 1")
+    watch_parser.add_argument("--confirm", type=int, default=10, help="确认停滞所需的连续样本数，默认为 10")
+    watch_parser.add_argument("--serial-log", type=Path, help="关联的串口日志路径")
 
-    gdb_parser = subparsers.add_parser("gdb", help="open interactive GDB with WaterOS commands")
+    gdb_parser = subparsers.add_parser("gdb", help="打开包含 WaterOS 命令的交互式 GDB")
     add_connection_arguments(gdb_parser)
     return parser
 
@@ -1418,7 +1421,7 @@ def main() -> int:
         if args.command == "server":
             return command_server(args)
         connection = resolve_connection(args)
-        # snapshot/watch 最终都必须执行完整的 all-thread GDB 抓取；在改变 guest
+        # snapshot/watch 最终都必须执行完整的全线程 GDB 抓取；在改变 Guest
         # 状态前先失败，避免缺少依赖时留下一个半成品报告目录。
         gdb_command()
         if args.command == "snapshot":
@@ -1441,7 +1444,7 @@ def main() -> int:
                 leave_stopped=args.leave_stopped,
             )
             print((report / "summary.txt").read_text(), end="")
-            print(f"[wos-debug] report: {report}")
+            log_info(f"调试报告已生成 path={report}", component="DEBUG")
             return 0
         if args.command == "watch":
             return watch(
@@ -1478,7 +1481,7 @@ def main() -> int:
         subprocess.CalledProcessError,
         subprocess.TimeoutExpired,
     ) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        log_error(str(exc), component="DEBUG")
         return 2
     return 0
 

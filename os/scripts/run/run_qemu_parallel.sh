@@ -2,25 +2,26 @@
 # 在宿主 CPU 预算内并发执行多条独立 QEMU 命令，并为每个任务单独保存日志。
 # 每条命令应作为一个带引号的独立参数传入。
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WOS_LOG_COMPONENT=QEMU
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/../source/console.bash"
 
 usage() {
     cat <<'USAGE'
-Usage:
+用法:
   run_qemu_parallel.sh <command-1> [command-2 ...]
 
-Environment:
-  WOS_HOST_CPUS             Host CPU count used for planning. Default: nproc.
-  WOS_CORES_PER_JOB         Host core count for one qemu instance. Default: 8.
-  WOS_AUTO_SMP              When command does not set WOS_SMP, inject
-                            WOS_SMP=<WOS_CORES_PER_JOB>. Default: 0.
-  WOS_AUTO_UNLOCK_DRIVE    When set to 1, inject
-                            WOS_QEMU_IMAGE_DRIVE_OPTIONS=locking=off.
-                            Auto-applies only for qcow2-compatible images.
-  WOS_MAX_PARALLEL_JOBS     Max parallel jobs. Default: floor(WOS_HOST_CPUS / WOS_CORES_PER_JOB).
-  WOS_QEMU_PARALLEL_LOG_DIR Log directory. Default: ./tmp/wateros-qemu-parallel.
-  WOS_QEMU_PARALLEL_WORKDIR Working directory for all commands. Default: current directory.
+环境变量:
+  WOS_HOST_CPUS              用于规划的宿主 CPU 数量，默认为 nproc 的结果
+  WOS_CORES_PER_JOB          每个 QEMU 实例占用的宿主核心数，默认为 8
+  WOS_AUTO_SMP               命令未设置 WOS_SMP 时，注入 WOS_CORES_PER_JOB，默认为 0
+  WOS_AUTO_UNLOCK_DRIVE      设为 1 时为兼容 qcow2 的镜像注入 locking=off
+  WOS_MAX_PARALLEL_JOBS      最大并行任务数，默认按宿主 CPU 预算计算
+  WOS_QEMU_PARALLEL_LOG_DIR  日志目录，默认为 ./tmp/wateros-qemu-parallel
+  WOS_QEMU_PARALLEL_WORKDIR  所有命令的工作目录，默认为当前目录
 
-Example:
+示例:
   WOS_CORES_PER_JOB=4 WOS_AUTO_SMP=1 ./scripts/run/run_qemu_parallel.sh \
     "WOS_SMP=4 make rv_final_run" \
     "WOS_SMP=4 make rv_final_run"
@@ -30,6 +31,11 @@ Example:
     "make rv_final_run"
 USAGE
 }
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    usage
+    exit 0
+fi
 
 if [[ $# -lt 1 ]]; then
     usage
@@ -46,22 +52,18 @@ WORKDIR="${WOS_QEMU_PARALLEL_WORKDIR:-$(pwd)}"
 SAFE_WORKDIR=$(printf "%q" "$WORKDIR")
 
 if ! [[ "$HOST_CPUS" =~ ^[0-9]+$ ]] || (( HOST_CPUS <= 0 )); then
-    echo "WOS_HOST_CPUS must be a positive integer" >&2
-    exit 1
+    error "宿主 CPU 数量无效 value=${HOST_CPUS} variable=WOS_HOST_CPUS" 1
 fi
 if ! [[ "$CORES_PER_JOB" =~ ^[0-9]+$ ]] || (( CORES_PER_JOB <= 0 )); then
-    echo "WOS_CORES_PER_JOB must be a positive integer" >&2
-    exit 1
+    error "单任务 CPU 数量无效 value=${CORES_PER_JOB} variable=WOS_CORES_PER_JOB" 1
 fi
 if (( CORES_PER_JOB > HOST_CPUS )); then
-    echo "WOS_CORES_PER_JOB=$CORES_PER_JOB is larger than host CPUs $HOST_CPUS" >&2
-    exit 1
+    error "单任务 CPU 数量超过宿主容量 cores_per_job=${CORES_PER_JOB} host_cpus=${HOST_CPUS}" 1
 fi
 
 MAX_SLOT_CALC=$((HOST_CPUS / CORES_PER_JOB))
 if (( MAX_SLOT_CALC < 1 )); then
-    echo "Host CPUs $HOST_CPUS too small for CORES_PER_JOB $CORES_PER_JOB" >&2
-    exit 1
+    error "宿主 CPU 不足 host_cpus=${HOST_CPUS} cores_per_job=${CORES_PER_JOB}" 1
 fi
 
 if (( MAX_PARALLEL <= 0 || MAX_PARALLEL > MAX_SLOT_CALC )); then
@@ -150,7 +152,7 @@ for idx in "${!commands[@]}"; do
     if [[ "$AUTO_UNLOCK_DRIVE" == "1" ]]; then
         image_path="$(extract_sdcard "${commands[$idx]}")"
         if ! supports_locking_off "$image_path"; then
-            echo "[INFO] skip locking=off for $image_path: not qcow2-compatible"
+            info "跳过磁盘解锁 image=${image_path} reason=not_qcow2_compatible"
             :
         elif [[ "${commands[$idx]}" != *"WOS_QEMU_IMAGE_DRIVE_OPTIONS="* ]]; then
             commands["$idx"]="WOS_QEMU_IMAGE_DRIVE_OPTIONS=locking=off ${commands[$idx]}"
@@ -158,14 +160,13 @@ for idx in "${!commands[@]}"; do
     fi
 
     if [[ -n "$smp" && "$smp" -gt "$CORES_PER_JOB" ]]; then
-        echo "[WARN] command #$((idx + 1)) uses WOS_SMP=$smp but CORES_PER_JOB=$CORES_PER_JOB (may oversubscribe host cores)"
+        warning "任务可能超额使用宿主 CPU job=$((idx + 1)) smp=${smp} cores_per_job=${CORES_PER_JOB}"
     fi
 
     log_file="$LOG_DIR/qemu-parallel-$(printf "%02d" "$idx").log"
     cmd="${commands[$idx]}"
 
-    echo "[START] #$((idx + 1)) slot=$slot cpuset=${cpuset} smp=${smp:-unknown} cmd=${cmd}"
-    echo "[LOG] ${log_file}"
+    info "启动并行 QEMU 任务 job=$((idx + 1)) slot=${slot} cpuset=${cpuset} smp=${smp:-unknown} log=${log_file} command=${cmd}"
 
     (WOS_TASKSET_CPUS="$cpuset" bash -lc "cd $SAFE_WORKDIR && $cmd") >"$log_file" 2>&1 &
     pid=$!
@@ -191,8 +192,7 @@ for pid in "${all_pids[@]}"; do
 done
 
 if (( status != 0 )); then
-    echo "[RESULT] one or more jobs failed. See logs under ${LOG_DIR}" >&2
-    exit 1
+    error "并行 QEMU 任务存在失败 log_dir=${LOG_DIR}" 1
 fi
 
-echo "[RESULT] all jobs completed successfully. Logs in ${LOG_DIR}"
+info "全部并行 QEMU 任务完成 log_dir=${LOG_DIR}"

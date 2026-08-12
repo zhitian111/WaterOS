@@ -2,6 +2,7 @@
 # 输出 config.conf 中某个 package 的直接 feature 选择。这是底层兼容工具；
 # 生成顶层配置时优先使用 config-to-features.bash。
 set -eu
+WOS_LOG_COMPONENT=CONFIG
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
@@ -14,20 +15,30 @@ if [[ "${WATEROS_SCRIPTS_QUIET:-0}" == "1" ]]; then
   debug() { :; }
 fi
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<EOF
+用法: ${0##*/} CONFIG_FILE PACKAGE
+
+输出 CONFIG_FILE 中 PACKAGE 直接启用的 feature，结果以逗号分隔并写入 stdout。
+该工具不沿依赖树传播 feature；生成顶层构建参数时应使用 config-to-features.bash。
+EOF
+  exit 0
+fi
+
 if [[ $# -lt 1 ]]; then
-  error "用法: ${0##*/} <config.conf> <package>  （输出：--features 后面的逗号分隔字符串）" 2
+  error "参数不足 usage=${0##*/}_<config.conf>_<package> output=逗号分隔的_features" 2
 fi
 
 CONF_PATH="$1"
 PKG="${2:-}"
 if [[ ! -f "${CONF_PATH}" ]]; then
-  error "配置文件不存在: ${CONF_PATH}" 3
+  error "配置文件不存在 path=${CONF_PATH}" 3
 fi
 if [[ -z "${PKG}" ]]; then
-  error "必须指定 package（因为 config.conf 是一棵树）" 4
+  error "缺少 package 参数 reason=config.conf_包含多个_crate" 4
 fi
 
-info "读取配置文件: ${CONF_PATH}"
+info "读取 feature 配置 path=${CONF_PATH} package=${PKG}"
 
 # 规则：
 # - 支持缩进树：crate 行以 ':' 结尾；其下更深缩进的是内容
@@ -56,7 +67,7 @@ with open(path, "r", encoding="utf-8") as f:
         ind = indent_of(raw.rstrip("\n"))
         line = raw.strip()
 
-        # crate header: "name:"
+        # crate 标题格式为 `name:`
         if line.endswith(":") and " " not in line[:-1]:
             name = line[:-1]
             if name == pkg:
@@ -66,7 +77,7 @@ with open(path, "r", encoding="utf-8") as f:
                 enabled = []
                 continue
             if in_target and target_indent is not None and ind <= target_indent:
-                # left target block
+                # 已离开目标块
                 break
             continue
 
@@ -76,13 +87,13 @@ with open(path, "r", encoding="utf-8") as f:
         if target_indent is None:
             continue
 
-        # first non-header line sets child indent
+        # 第一条非标题行确定子项缩进
         if collect_indent is None:
             collect_indent = ind
 
-        # only collect direct children (same indent)
+        # 只收集缩进相同的直接子项
         if ind != collect_indent:
-            # deeper indent belongs to nested crate's content
+            # 更深的缩进属于嵌套 crate
             continue
 
         enabled.append(line)
@@ -96,9 +107,9 @@ PY
 )"
 
 if [[ -z "${FEATURES}" ]]; then
-  warning "没有任何启用项（输出为空字符串）"
+  warning "未找到启用的 features package=${PKG} output=empty"
 else
-  info "启用项数量: $(python3 - <<'PY' "${CONF_PATH}" "${PKG}"
+  info "Feature 配置生成完成 enabled=$(python3 - <<'PY' "${CONF_PATH}" "${PKG}"
 import sys
 path = sys.argv[1]
 pkg = (sys.argv[2] or "").strip()

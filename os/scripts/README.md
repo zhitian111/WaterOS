@@ -42,6 +42,38 @@ scripts/
 Makefile 会统一校验 `ARCH`、`PROFILE`、`SMP`、`MODE`、镜像和调试参数。完整参数说明见
 仓库根目录的 [`README.md`](../../README.md#构建配置)。
 
+## 参数查询
+
+面向开发者直接调用的脚本均应支持 `-h` 或 `--help`。Python 子命令还可以继续查询下一级
+帮助，例如：
+
+```bash
+python3 ./scripts/debug/wateros_debug.py --help
+python3 ./scripts/debug/wateros_debug.py run --help
+./scripts/config/config-to-features.bash --help
+./scripts/pc-hot/pc-hot-rv.sh --help
+```
+
+参数分为三类：位置参数决定输入文件或操作对象，选项控制本次行为，环境变量负责向
+Makefile 调用的底层脚本传递运行环境。常用直接入口如下：
+
+| 脚本 | 必需参数 | 可选参数或主要环境变量 |
+|:--|:--|:--|
+| `run/qemu_run.py` | `--arch {rv,la}`、`--profile {pre,final}` | `WOS_SDCARD`、`WOS_KERNEL`、`WOS_SMP`、`WOS_QEMU_MEM`、GDB 与图形变量 |
+| `run/run_qemu_parallel.sh` | 至少一条完整命令 | `WOS_CORES_PER_JOB`、`WOS_MAX_PARALLEL_JOBS`、日志目录与工作目录变量 |
+| `debug/wateros_debug.py` | 子命令；`run` 和 `server` 还需要 profile | SMP、连接地址、端口、采样间隔、确认次数和超时参数 |
+| `config/config-to-features.bash` | 无 | 配置文件和根 package，均可使用默认值 |
+| `config/features-conf-to-cargo.bash` | 配置文件、package | `WATEROS_SCRIPTS_QUIET=1` 可关闭操作日志 |
+| `pc-hot/pc-hot-{rv,la}.sh` | `build`、`run`、`analyze` 或 `all` | 输出文件、ELF、Top N、icount shift 和完整 QEMU 命令 |
+| `pc-hot/wait-hot-{rv,la}.sh` | `build` 或 `run` | 输出文件和完整 QEMU 命令 |
+| `syscall-profile/syscall-profile-{rv,la}.sh` | `build` 或 `run` | 输出文件、plugin `key=value` 选项和完整 QEMU 命令 |
+| `testing/operator_smoke.py` | `--arch {rv,la}` | profile、SMP、模式、Guest 脚本、超时和日志路径 |
+| `testing/ltp_prune_sdcard_before.sh` | 无 | 镜像、起始用例、libc、dry-run 和重置源镜像 |
+
+表格只用于入口导航，脚本的 `--help` 是参数名称、默认值和副作用的权威说明。新增或修改
+参数时必须同时更新帮助文本；供 Makefile 调用的兼容包装脚本可以将帮助直接转发给实际
+实现。
+
 ## `run/`：运行与 QEMU 编排
 
 | 脚本 | 作用 |
@@ -180,3 +212,8 @@ make -n run ARCH=la PROFILE=final
 - 公共逻辑放入 `source/` 或 Python 模块，避免复制 QEMU 和 feature 选择策略；
 - 新的稳定入口接入 Makefile，专项工具则在本 README 中登记；
 - 不静默覆盖唯一测试镜像，不用无限重试或无界忙等掩盖失败。
+
+操作日志统一使用 `[COMPONENT][LEVEL] message key=value` 格式。Shell 使用
+`source/console.bash`，Python 使用 `source/logging_utils.py`；帮助文本、分析表格和机器
+可读结果保持原始格式，不混入日志前缀。完整约定见
+[`docs/tools/scripts/README.md#日志规范`](../../docs/tools/scripts/README.md#日志规范)。

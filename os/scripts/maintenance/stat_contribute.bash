@@ -5,6 +5,7 @@
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/../source/console.bash"
+WOS_LOG_COMPONENT=STATS
 
 if [ git status > /dev/null 2> /dev/null ]; then
     error "当前目录不是 Git 仓库" 1
@@ -15,7 +16,6 @@ declare -A chars_count
 total_lines=0
 total_chars=0
 MAX_BAR_WIDTH=40
-PROGRESS_WIDTH=20
 
 # 忽略初始化或特殊文件
 EXCLUDE_PATTERN="(^|/)\.obsidian(/|$)|(^|/)build(/|$)|(^|/)tmp(/|$)|(^|/)target(/|$)|(^|/)Cargo.lock"
@@ -25,35 +25,21 @@ mapfile -d '' files < <(git ls-files -z)
 total_files=${#files[@]}
 current_file_index=0
 
-info "开始统计贡献度，总文件数: $total_files"
-
-# 蓝色系颜色数组
-colors=(34 36 36 34 36)  # 深蓝→青蓝→青蓝→深蓝→青蓝
-color_count=${#colors[@]}
+info "开始统计代码贡献 files=${total_files}"
 
 for file in "${files[@]}"; do
-    ((current_file_index++))  # 索引先加，保证进度条完整
-
-    # 彩色蓝色系渐变进度条
-    progress_len=$(( PROGRESS_WIDTH * current_file_index / total_files ))
-    empty_len=$(( PROGRESS_WIDTH - progress_len ))
-    progress_bar=""
-    for ((i=1; i<=progress_len; i++)); do
-        color_index=$(( i * color_count / PROGRESS_WIDTH ))
-        progress_bar+=$(printf "\033[1;%sm█\033[0m" "${colors[$color_index]}")
-    done
-    progress_bar+=$(printf "%${empty_len}s" "")
-    debug "progress([$progress_bar${COLOR_ANSI_BLUE}] $current_file_index/$total_files) -> $file"
+    ((current_file_index++))
+    debug "统计文件 current=${current_file_index} total=${total_files} path=${file}"
 
     # 忽略文件
     if [[ $file =~ $EXCLUDE_PATTERN ]]; then
-        debug "忽略文件: $file"
+        debug "忽略文件 path=${file}"
         continue
     fi
 
     # 文件统计
     if ! git blame --line-porcelain -- "$file" >/dev/null 2>&1; then
-        warning "无法统计文件: $file"
+        warning "无法统计文件 path=${file}"
         continue
     fi
 
@@ -70,11 +56,9 @@ for file in "${files[@]}"; do
     )
 done
 
-# 最终强制显示 100% 蓝色进度条
-progress_bar=$(printf "\033[1;34m█\033[0m%.0s" $(seq 1 $PROGRESS_WIDTH))
-debug "progress([$progress_bar${COLOR_ANSI_BLUE}] $total_files/$total_files) -> 完成"
+debug "文件统计完成 current=${total_files} total=${total_files}"
 
-info "统计完成，开始输出表格"
+info "代码贡献统计完成 authors=${#lines_count[@]} lines=${total_lines} chars=${total_chars}"
 
 # 输出表格（高亮 + 对齐）
 {

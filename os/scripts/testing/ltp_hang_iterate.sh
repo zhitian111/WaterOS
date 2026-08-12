@@ -17,6 +17,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
+WOS_LOG_COMPONENT=LTP
+source "$ROOT/scripts/source/console.bash"
 
 SKIP_RS="$ROOT/src/user_bringup_ltp_exclusions.rs"
 SDCARD="$ROOT/sdcard-rv.img"
@@ -43,7 +45,7 @@ while [ $# -gt 0 ]; do
         --resume-after)
             shift
             RESUME_AFTER="${1:-}"
-            [ -n "$RESUME_AFTER" ] || { echo "missing value for --resume-after" >&2; exit 2; }
+            [ -n "$RESUME_AFTER" ] || error "缺少参数值 option=--resume-after" 2
             shift
             ;;
         --resume-after=*) RESUME_AFTER="${1#--resume-after=}"; shift ;;
@@ -51,16 +53,16 @@ while [ $# -gt 0 ]; do
             sed -n '2,13p' "$0"
             exit 0
             ;;
-        *) echo "unknown arg: $1" >&2; exit 2 ;;
+        *) error "未知参数 value=$1" 2 ;;
     esac
 done
 
 mkdir -p "$LTP_LOG_DIR"
 
-log() { printf '[ltp-iterate] %s\n' "$*"; }
+log() { info "$*"; }
 
 reset_sdcard_image() {
-    log "reset sdcard: $SDCARD_SRC -> $SDCARD"
+    log "重置 SD 卡镜像 source=${SDCARD_SRC} target=${SDCARD}"
     cp -f "$SDCARD_SRC" "$SDCARD"
     inject_resume_runner "" ""
 }
@@ -158,7 +160,7 @@ PY
 add_skip_entry() {
     local name="$1"
     if read_skip_list | grep -Fxq "$name"; then
-        log "skip list already contains: $name"
+        log "跳过列表已包含用例 case=${name}"
         return 0
     fi
     log "adding to LTP_SUBMIT_SKIP_BASENAMES (sorted): $name"
@@ -169,7 +171,7 @@ text = open(path).read()
 pat = r"(const LTP_SUBMIT_SKIP_BASENAMES:\s*&\[)(.*?)(\n\];)"
 m = re.search(pat, text, re.S)
 if not m:
-    raise SystemExit("LTP_SUBMIT_SKIP_BASENAMES array not found")
+    raise SystemExit("未找到 LTP_SUBMIT_SKIP_BASENAMES 数组")
 names = re.findall(r'"([^"]+)"', m.group(2))
 if name in names:
     sys.exit(0)
@@ -227,7 +229,7 @@ run_qemu_with_monitor() {
     local logfile="$1"
     kill_qemu
     : >"$logfile"
-    log "starting: make rv_qemu_run -> $logfile"
+    log "开始运行 LTP command=make_rv_qemu_run log=${logfile}"
     make rv_qemu_run >>"$logfile" 2>&1 &
     local make_pid=$!
     local prev_hash="" stable_for=0 ltp_started=0
@@ -273,7 +275,7 @@ one_round() {
     local round="$1"
     local logfile="$LTP_LOG_DIR/rv_local_ltp_$(date +%y%m%d%H%M%S)_r${round}.log"
     if run_qemu_with_monitor "$logfile"; then
-        log "LTP complete. log=$logfile"
+        log "LTP 测试完成 log=${logfile}"
         return 0
     fi
     local stuck resume_after
@@ -288,10 +290,10 @@ one_round() {
             log "LTP glibc never started (check root mount / sdcard); log=$logfile"
             return 2
         fi
-        log "hang but no stuck case parsed; log=$logfile"
+        log "检测到停滞但未解析出用例 log=${logfile}"
         return 2
     fi
-    log "stuck case: $stuck (resume after: ${resume_after:-<start>})"
+    log "检测到停滞用例 case=${stuck} resume_after=${resume_after:-start}"
     add_skip_entry "$stuck"
     log "rebuilding kernel-rv..."
     make kernel-rv
