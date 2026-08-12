@@ -76,3 +76,28 @@ A clear first-run win is not repeated. Reject a regression or noise-sized
 change without a second run. Any partial-EFAULT offset error, pinned-slot reuse,
 dirty-data loss, lock-order cycle, or architecture build failure stops the
 candidate before performance testing.
+
+## Result (rejected)
+
+The implementation completed the focused page-cache/API tests, `make check`,
+and both architecture builds. The final RISC-V artifact SHA-256 was
+`85bb02b14eacc98371925205e9c3f29b7b553640aa7985056dc839f9a14d6c63`;
+the final LoongArch64 artifact SHA-256 was
+`a2834b9cf017cf92932b8fcf4b1e000503b56fca179f40e60f4e1b4634f96db7`.
+Both artifacts contained `SCRIPT_BODY_FLAT_BEGIN`.
+
+The first fixed-image BuildStorm A/B sample passed every required marker and
+completed in **558.84 s**, versus the accepted main result of **534.26 s**.
+This is a **24.58 s (4.60%) regression**, well outside the roughly 10 s noise
+band, so the candidate is rejected without a repeat and is not merged to
+main.
+
+The experiment removed the 4 MiB staging allocation, zero fill, and one copy,
+but added per-page pin accounting, fragmented lease traversal, and a more
+complex direct user-copy path. The wall-clock result proves that this complete
+trade is unfavorable for BuildStorm; it does not by itself isolate which new
+cost dominates. Per the predeclared procedure, no post-change PC-hot run is
+performed for a rejected candidate. A future read-path attempt should avoid
+page-granular control work in the common large sequential-read case, for
+example by supporting cache-run or folio-sized spans rather than one descriptor
+and pin transition per 4 KiB page.
