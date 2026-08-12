@@ -148,6 +148,8 @@ struct PageFrame {
     key : Option<(FileCacheKey, u64)>,
     dirty : bool,
     version : u64,
+    /// Active read leases that directly borrow this slot's payload.
+    pins : usize,
     lru_prev : Option<usize>,
     lru_next : Option<usize>,
     lru_class : Option<LruClass>,
@@ -194,6 +196,7 @@ impl GlobalCacheState {
                 frames.push(PageFrame { key : None,
                                         dirty : false,
                                         version : 0,
+                                        pins : 0,
                                         lru_prev : None,
                                         lru_next : None,
                                         lru_class : None,
@@ -343,6 +346,10 @@ impl GlobalCacheState {
 
 // 本方法代码由AI完成
     fn touch_lru(&mut self, idx : usize) {
+        if self.frames[idx].pins != 0 {
+            self.remove_from_lru(idx);
+            return;
+        }
         let class = if self.frames[idx].dirty {
             LruClass::Dirty
         } else {
@@ -387,11 +394,11 @@ impl GlobalCacheState {
 // 本方法代码由AI完成
     fn detach_slot_for_reuse(&mut self,
                              idx : usize,
-                             was_dirty : bool)
+                             _was_dirty : bool)
                              -> Option<((FileCacheKey, u64), Vec<u8>, u64)> {
         #[cfg(feature = "diagnostics")]
         if self.frames[idx].key.is_some() {
-            if was_dirty {
+            if _was_dirty {
                 self.diagnostics.dirty_evictions += 1;
             } else {
                 self.diagnostics.clean_evictions += 1;
@@ -438,7 +445,7 @@ impl GlobalCacheState {
         }
         self.remove_from_lru(idx);
         self.frames[idx].dirty = false;
-        if self.frames[idx].key.is_some() {
+        if self.frames[idx].key.is_some() && self.frames[idx].pins == 0 {
             self.push_lru_back(idx, LruClass::Clean);
         }
     }
@@ -446,6 +453,7 @@ impl GlobalCacheState {
 // 本方法代码由AI完成
     fn return_detached_slot(&mut self, idx : usize) {
         if self.frames[idx].key.is_none() &&
+           self.frames[idx].pins == 0 &&
            !self.free
                 .iter()
                 .any(|&free_idx| free_idx == idx)
@@ -481,8 +489,9 @@ impl GlobalCacheState {
         self.dirty_lru_tail = None;
         self.free
             .clear();
-        self.free
-            .extend((0..self.capacity).rev());
+        self.free.extend((0..self.capacity)
+                             .rev()
+                             .filter(|&idx| self.frames[idx].pins == 0));
     }
 
     #[cfg(test)]
@@ -525,15 +534,17 @@ impl GlobalCacheState {
             match &frame.key {
                 Some(key) => {
                     assert_eq!(self.index.get(key), Some(&idx));
-                    assert!(seen[idx], "active slot {idx} is missing from LRU");
+                    assert_eq!(seen[idx], frame.pins == 0,
+                               "only unpinned active slots belong to LRU");
                 }
                 None => {
                     assert!(!seen[idx], "detached slot {idx} remains in LRU");
-                    assert!(free_seen[idx], "stable detached slot {idx} is not free");
+                    assert_eq!(free_seen[idx], frame.pins == 0,
+                               "only unpinned detached slots are free");
                 }
             }
         }
-        assert_eq!(self.index.len(), seen.iter().filter(|seen| **seen).count());
+        assert_eq!(self.index.len(), self.frames.iter().filter(|frame| frame.key.is_some()).count());
     }
 }
 
@@ -556,12 +567,68 @@ pub struct GlobalFilePageCache {
     open_refs : Mutex<BTreeMap<FileCacheKey, usize>>,
 }
 
+#[derive(Clone, Copy)]
+struct PinnedReadChunk {
+    slot : usize,
+    address : usize,
+    offset : usize,
+    len : usize,
+}
+
+/// A regular-file range whose cache slots cannot be evicted until drop.
+pub struct PinnedFileRead {
+    cache : Arc<GlobalFilePageCache>,
+    chunks : Vec<PinnedReadChunk>,
+    len : usize,
+}
+
+impl PinnedFileRead {
+    #[inline]
+    pub fn len(&self) -> usize { self.len }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool { self.len == 0 }
+
+    /// Visit immutable source fragments without holding the cache metadata
+    /// lock. Pinning prevents both eviction and mutation.
+    pub fn visit(&self, visitor : &mut dyn FnMut(&[u8]) -> bool) {
+        for chunk in &self.chunks {
+            let bytes = unsafe {
+                core::slice::from_raw_parts((chunk.address + chunk.offset) as *const u8,
+                                            chunk.len)
+            };
+            if !visitor(bytes) {
+                break;
+            }
+        }
+    }
+}
+
+impl Drop for PinnedFileRead {
+    fn drop(&mut self) {
+        let mut state = self.cache.state.lock();
+        for chunk in &self.chunks {
+            let frame = &mut state.frames[chunk.slot];
+            debug_assert_ne!(frame.pins, 0);
+            frame.pins = frame.pins.saturating_sub(1);
+            if frame.pins == 0 {
+                if frame.key.is_some() {
+                    state.touch_lru(chunk.slot);
+                } else {
+                    state.return_detached_slot(chunk.slot);
+                }
+            }
+        }
+    }
+}
+
 impl GlobalFilePageCache {
     /// 构造与当前 `mount_gen` 绑定的缓存表。
 // 本方法代码由AI完成
     pub fn new(mount_gen : u64) -> Self {
+        let state = GlobalCacheState::new();
         Self { mount_gen : AtomicU64::new(mount_gen),
-               state : Mutex::new(GlobalCacheState::new()),
+               state : Mutex::new(state),
                files : Mutex::new(BTreeMap::new()),
                open_refs : Mutex::new(BTreeMap::new()) }
     }
@@ -832,7 +899,7 @@ impl GlobalFilePageCache {
                            key : &FileCacheKey,
                            page_idx : u64,
                            file_size : u64,
-                           source : InstallSource,
+                           _source : InstallSource,
                            map_err : fn(Io::Error) -> E)
                            -> Result<(), E>
         where Io : PageCacheIo
@@ -846,7 +913,7 @@ impl GlobalFilePageCache {
                                 .get(&(key.clone(), page_idx))
                                 .copied();
             #[cfg(feature = "diagnostics")]
-            cache.note_lookup(existing, source);
+            cache.note_lookup(existing, _source);
             if let Some(idx) = existing {
                 cache.touch_lru(idx);
                 return Ok(());
@@ -945,15 +1012,14 @@ impl GlobalFilePageCache {
                 cache.touch_lru(existing);
                 return Ok(());
             }
-            cache.page_data_mut(idx)
-                 .copy_from_slice(&page_buf);
+            cache.page_data_mut(idx).copy_from_slice(&page_buf);
             cache.frames[idx].dirty = false;
             cache.frames[idx].version = 0;
             cache.frames[idx].key = Some((key.clone(), page_idx));
             cache.index
                  .insert((key.clone(), page_idx), idx);
             #[cfg(feature = "diagnostics")]
-            cache.note_install(idx, source);
+            cache.note_install(idx, _source);
             cache.touch_lru(idx);
             return Ok(());
         }
@@ -1056,8 +1122,7 @@ impl GlobalFilePageCache {
                 cache.touch_lru(existing);
                 return Ok(());
             }
-            cache.page_data_mut(idx)
-                 .fill(0);
+            cache.page_data_mut(idx).fill(0);
             cache.frames[idx].dirty = false;
             cache.frames[idx].version = 0;
             cache.frames[idx].key = Some((key.clone(), page_idx));
@@ -1156,6 +1221,88 @@ impl GlobalFilePageCache {
         Ok(done)
     }
 
+    /// Resolve a file range once and pin each cache slot for a direct read
+    /// lease. No file data is copied or zero-filled on the hit path.
+    pub fn pin_read_key<Io, E>(self : &Arc<Self>,
+                               io : &mut Io,
+                               key : &FileCacheKey,
+                               file_size : u64,
+                               offset : u64,
+                               max_len : usize,
+                               map_alloc : fn() -> E,
+                               map_err : fn(Io::Error) -> E)
+                               -> Result<PinnedFileRead, E>
+        where Io : PageCacheIo
+    {
+        if max_len == 0 || offset >= file_size {
+            return Ok(PinnedFileRead { cache : self.clone(),
+                                       chunks : Vec::new(),
+                                       len : 0 });
+        }
+        let entry = self.get_file_entry_for_key(key, file_size);
+        let start_page = offset / FILE_PAGE_SIZE as u64;
+        let sequential = entry.read()
+                              .last_read_end_page
+                              .is_some_and(|last| start_page == last.saturating_add(1));
+        let len = min(max_len, usize::try_from(file_size - offset).unwrap_or(0));
+        let page_count = ((offset % FILE_PAGE_SIZE as u64) as usize + len)
+                             .div_ceil(FILE_PAGE_SIZE);
+        let mut pinned = PinnedFileRead { cache : self.clone(),
+                                          chunks : Vec::new(),
+                                          len : 0 };
+        pinned.chunks.try_reserve_exact(page_count).map_err(|_| map_alloc())?;
+        let mut done = 0usize;
+        let mut pos = offset;
+        while done < len {
+            let page_idx = pos / FILE_PAGE_SIZE as u64;
+            let page_off = (pos % FILE_PAGE_SIZE as u64) as usize;
+            let chunk_len = (FILE_PAGE_SIZE - page_off).min(len - done);
+            loop {
+                self.install_page(io,
+                                  key,
+                                  page_idx,
+                                  file_size,
+                                  InstallSource::Demand,
+                                  map_err)?;
+                let mut state = self.state.lock();
+                let Some(&slot) = state.index.get(&(key.clone(), page_idx)) else {
+                    continue;
+                };
+                state.frames[slot].pins = state.frames[slot].pins.saturating_add(1);
+                state.remove_from_lru(slot);
+                let address = state.page_data(slot).as_ptr() as usize;
+                pinned.chunks.push(PinnedReadChunk { slot,
+                                                     address,
+                                                     offset : page_off,
+                                                     len : chunk_len });
+                break;
+            }
+            done += chunk_len;
+            pos += chunk_len as u64;
+        }
+        pinned.len = done;
+        if done > 0 {
+            let end_page = (offset + done as u64 - 1) / FILE_PAGE_SIZE as u64;
+            entry.write().last_read_end_page = Some(end_page);
+        }
+        if sequential && FILE_READ_AHEAD_STRIDE > 0 {
+            let prefetch_start = offset / FILE_PAGE_SIZE as u64 + 1;
+            for ahead in 0..FILE_READ_AHEAD_STRIDE {
+                let page_idx = prefetch_start + ahead as u64;
+                if page_idx * FILE_PAGE_SIZE as u64 >= file_size {
+                    break;
+                }
+                let _ = self.install_page(io,
+                                          key,
+                                          page_idx,
+                                          file_size,
+                                          InstallSource::Prefetch,
+                                          map_err);
+            }
+        }
+        Ok(pinned)
+    }
+
     /// Direct 模式：从 `offset` 写入 `buf`。
 // 本方法代码由AI完成
     pub fn write<Io, E>(&self,
@@ -1217,6 +1364,12 @@ impl GlobalFilePageCache {
                 else {
                     continue;
                 };
+                if cache.frames[idx].pins != 0 {
+                    drop(cache);
+                    drop(guard);
+                    core::hint::spin_loop();
+                    continue;
+                }
                 cache.page_data_mut(idx)[page_off..page_off + chunk].copy_from_slice(
                     &buf[written..written + chunk],
                 );
@@ -1385,7 +1538,8 @@ impl GlobalFilePageCache {
                 cache.frames[slot].dirty = false;
                 cache.frames[slot].version = 0;
                 cache.remove_from_lru(slot);
-                if !cache.free
+                if cache.frames[slot].pins == 0 &&
+                   !cache.free
                          .iter()
                          .any(|&free_idx| free_idx == slot)
                 {
@@ -1429,7 +1583,9 @@ impl GlobalFilePageCache {
                 cache.frames[slot].dirty = false;
                 cache.frames[slot].version = 0;
                 cache.remove_from_lru(slot);
-                if !cache.free.iter().any(|&free_idx| free_idx == slot) {
+                if cache.frames[slot].pins == 0 &&
+                   !cache.free.iter().any(|&free_idx| free_idx == slot)
+                {
                     cache.free.push(slot);
                 }
             }
@@ -1486,18 +1642,26 @@ impl GlobalFilePageCache {
                 cache.frames[slot].dirty = false;
                 cache.frames[slot].version = 0;
                 cache.remove_from_lru(slot);
-                cache.free
-                     .push(slot);
+                if cache.frames[slot].pins == 0 {
+                    cache.free.push(slot);
+                }
             }
         }
         if len > 0 {
             let tail = (len % FILE_PAGE_SIZE as u64) as usize;
             if tail > 0 {
                 let page_idx = len / FILE_PAGE_SIZE as u64;
-                if let Some(&slot) = cache.index
-                                          .get(&(key.clone(), page_idx))
-                {
-                    cache.page_data_mut(slot)[tail..].fill(0);
+                loop {
+                    let Some(&slot) = cache.index.get(&(key.clone(), page_idx)) else {
+                        break;
+                    };
+                    if cache.frames[slot].pins == 0 {
+                        cache.page_data_mut(slot)[tail..].fill(0);
+                        break;
+                    }
+                    drop(cache);
+                    core::hint::spin_loop();
+                    cache = self.state.lock();
                 }
             }
         }
@@ -1960,6 +2124,79 @@ mod tests {
         cache.release_open_ref("/tmp/target");
         assert!(!cache.files.lock().contains_key(&cache.file_key("/tmp/target")));
         cache.state.lock().assert_lru_invariants();
+    }
+
+    #[test]
+    fn pinned_read_visits_cross_page_range_and_restores_lru_on_drop() {
+        let cache = Arc::new(GlobalFilePageCache::new(7));
+        let mut io = CountingIo::new();
+        io.data = (0..FILE_PAGE_SIZE * 3).map(|index| (index / FILE_PAGE_SIZE) as u8)
+                                               .collect();
+        let file_size = io.data.len() as u64;
+        let key = cache.file_key("/tmp/pinned");
+        let offset = (FILE_PAGE_SIZE - 17) as u64;
+        let pinned = cache.pin_read_key(&mut io,
+                                        &key,
+                                        file_size,
+                                        offset,
+                                        FILE_PAGE_SIZE + 31,
+                                        || (),
+                                        |e| e)
+                          .unwrap();
+        let mut copied = Vec::new();
+        pinned.visit(&mut |bytes| {
+            copied.extend_from_slice(bytes);
+            true
+        });
+        assert_eq!(copied,
+                   io.data[offset as usize..offset as usize + pinned.len()]);
+        {
+            let state = cache.state.lock();
+            assert!(pinned.chunks.iter().all(|chunk| {
+                state.frames[chunk.slot].pins == 1 &&
+                state.frames[chunk.slot].lru_class.is_none()
+            }));
+            state.assert_lru_invariants();
+        }
+        drop(pinned);
+        let state = cache.state.lock();
+        assert!(state.frames.iter().all(|frame| frame.pins == 0));
+        state.assert_lru_invariants();
+    }
+
+    #[test]
+    fn invalidated_pinned_slot_is_not_reused_until_lease_drop() {
+        let cache = Arc::new(GlobalFilePageCache::new(7));
+        let mut io = CountingIo::new();
+        io.data = vec![0x5au8; FILE_PAGE_SIZE];
+        let key = cache.file_key("/tmp/invalidate-pinned");
+        let pinned = cache.pin_read_key(&mut io,
+                                        &key,
+                                        FILE_PAGE_SIZE as u64,
+                                        0,
+                                        FILE_PAGE_SIZE,
+                                        || (),
+                                        |e| e)
+                          .unwrap();
+        let slot = pinned.chunks[0].slot;
+        cache.purge_closed_file("/tmp/invalidate-pinned");
+        {
+            let state = cache.state.lock();
+            assert!(state.frames[slot].key.is_none());
+            assert_eq!(state.frames[slot].pins, 1);
+            assert!(!state.free.contains(&slot));
+            state.assert_lru_invariants();
+        }
+        let mut observed = Vec::new();
+        pinned.visit(&mut |bytes| {
+            observed.extend_from_slice(bytes);
+            true
+        });
+        assert_eq!(observed, vec![0x5au8; FILE_PAGE_SIZE]);
+        drop(pinned);
+        let state = cache.state.lock();
+        assert!(state.free.contains(&slot));
+        state.assert_lru_invariants();
     }
 
     fn activate_test_frame(state : &mut GlobalCacheState,

@@ -71,6 +71,12 @@ impl StagedReadLease {
 impl VfsReadLease for StagedReadLease {
     fn bytes(&self) -> &[u8] { self.data.as_slice() }
 
+    fn len(&self) -> usize { self.data.len() }
+
+    fn visit(&self, visitor : &mut dyn FnMut(&[u8]) -> bool) {
+        let _ = visitor(self.data.as_slice());
+    }
+
     fn finish(mut self : Box<Self>, progress : VfsCopyProgress) -> VfsResult<VfsReadFinish> {
         if progress.copied > self.data.len() {
             return Err(VfsError::Io);

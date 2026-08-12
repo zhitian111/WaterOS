@@ -73,8 +73,34 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
         Ok(lease) => lease,
         Err(error) => return UserRet::from_error(error),
     };
-    let progress = copy_to_user_progress(ptr, lease.bytes());
+    let progress = copy_lease_to_user(lease.as_ref(), ptr);
     finish_scattered_read(lease, progress)
+}
+
+fn copy_lease_to_user(lease : &dyn VfsReadLease, ptr : usize) -> UserWriteProgress {
+    struct LeaseSource<'a>(&'a dyn VfsReadLease);
+    impl mm::api::user_access::UserCopySource for LeaseSource<'_> {
+        fn visit(&self, visitor : &mut dyn FnMut(&[u8]) -> bool) {
+            self.0.visit(visitor);
+        }
+    }
+    if ptr == 0 ||
+       (lease.len() != 0 && ptr.checked_add(lease.len() - 1).is_none())
+    {
+        return UserWriteProgress { copied : 0,
+                                   error : Some(ErrNo::EFAULT) };
+    }
+    let Ok(ops) = crate::user_copy::user_aspace_required() else {
+        return UserWriteProgress { copied : 0,
+                                   error : Some(ErrNo::EFAULT) };
+    };
+    let progress = mm::api::user_access::UserMemoryOps::copy_source_to_user_progress(
+        &ops,
+        mm::api::addr::VirtAddr(ptr),
+        &LeaseSource(lease),
+    );
+    UserWriteProgress { copied : progress.copied,
+                        error : progress.error.map(crate::user_copy::mm_user_copy_errno) }
 }
 
 fn acquire_read_lease(fd : usize, transfer_len : usize) -> Result<Box<dyn VfsReadLease>, ErrNo> {
@@ -243,8 +269,16 @@ impl<'a> IovScatterCursor<'a> {
     }
 }
 
-fn scatter_progress(iovecs : &[ImportedIoVec], data : &[u8]) -> UserWriteProgress {
-    IovScatterCursor::new(iovecs).write(data)
+fn scatter_lease(iovecs : &[ImportedIoVec], lease : &dyn VfsReadLease) -> UserWriteProgress {
+    let mut cursor = IovScatterCursor::new(iovecs);
+    let mut error = None;
+    lease.visit(&mut |bytes| {
+        let progress = cursor.write(bytes);
+        error = progress.error;
+        error.is_none() && progress.copied == bytes.len()
+    });
+    UserWriteProgress { copied : cursor.copied,
+                        error }
 }
 
 // 本方法代码由AI完成
@@ -269,7 +303,7 @@ pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {
         Ok(lease) => lease,
         Err(error) => return UserRet::from_error(error),
     };
-    let progress = scatter_progress(&iovecs.entries, lease.bytes());
+    let progress = scatter_lease(&iovecs.entries, lease.as_ref());
     finish_scattered_read(lease, progress)
 }
 

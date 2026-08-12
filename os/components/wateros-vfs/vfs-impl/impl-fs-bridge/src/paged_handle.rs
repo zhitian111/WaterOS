@@ -24,7 +24,7 @@ use api_v0::{
     VfsMetadata, VfsOpenDescriptionState, VfsOpenFlags, VfsPreparedRead, VfsReadLease, VfsResult,
     VfsSeekWhence,
 };
-use impl_page_cache::{global_cache, FileCacheKey, PageCacheIo};
+use impl_page_cache::{global_cache, FileCacheKey, PageCacheIo, PinnedFileRead};
 use spin::Mutex;
 use wateros_base_config::fs::{FileIoMode, FILE_IO_MODE};
 use fs::{FsError, FsNodeId, SharedRwFs};
@@ -1014,12 +1014,13 @@ impl VfsPreparedRead for PagedPreparedRead {
                          .ok_or(VfsError::Io)?
                          .offset();
         let detached = self.detached.lock();
-        let (mut staged, n) = if detached.detached {
+        if detached.detached {
             let start = usize::try_from(offset).map_err(|_| VfsError::Io)?;
             let len = self.max_len.min(detached.data.len().saturating_sub(start));
             let mut staged = try_zeroed(len)?;
             staged.copy_from_slice(&detached.data[start..start + len]);
-            (staged, len)
+            let reservation = self.reservation.take().ok_or(VfsError::Io)?;
+            return Ok(Box::new(StagedReadLease::new(reservation, staged)));
         } else {
             let key = file_key_for_state(self.mount_gen, &detached);
             let stable = detached.stable.clone();
@@ -1032,23 +1033,44 @@ impl VfsPreparedRead for PagedPreparedRead {
             let size = cache.logical_size_key(&key, backing_size);
             let available = size.saturating_sub(offset);
             let len = usize::try_from(available.min(self.max_len as u64)).map_err(|_| VfsError::Io)?;
-            let mut staged = try_zeroed(len)?;
-            let n = if len == 0 {
-                0
-            } else {
-                let mut io = FsPageIo::new(self.mount_gen, stable);
-                cache.read_key(&mut io,
-                               &key,
-                               size,
-                               offset,
-                               staged.as_mut_slice(),
-                               core::convert::identity)?
-            };
-            (staged, n)
-        };
-        staged.truncate(n);
-        let reservation = self.reservation.take().ok_or(VfsError::Io)?;
-        Ok(Box::new(StagedReadLease::new(reservation, staged)))
+            let mut io = FsPageIo::new(self.mount_gen, stable);
+            let pinned = cache.pin_read_key(&mut io,
+                                            &key,
+                                            size,
+                                            offset,
+                                            len,
+                                            || VfsError::NoMemory,
+                                            core::convert::identity)?;
+            let reservation = self.reservation.take().ok_or(VfsError::Io)?;
+            Ok(Box::new(PinnedPagedReadLease { reservation,
+                                               pinned }))
+        }
+    }
+}
+
+struct PinnedPagedReadLease {
+    reservation : ReservationGuard,
+    pinned : PinnedFileRead,
+}
+
+impl VfsReadLease for PinnedPagedReadLease {
+    fn len(&self) -> usize { self.pinned.len() }
+
+    fn visit(&self, visitor : &mut dyn FnMut(&[u8]) -> bool) {
+        self.pinned.visit(visitor);
+    }
+
+    fn finish(mut self : Box<Self>, progress : api_v0::VfsCopyProgress)
+              -> VfsResult<api_v0::VfsReadFinish> {
+        if progress.copied > self.pinned.len() {
+            return Err(VfsError::Io);
+        }
+        self.reservation.commit(progress.copied, self.pinned.len())?;
+        if progress.copied == 0 && !progress.complete {
+            Ok(api_v0::VfsReadFinish::Fault)
+        } else {
+            Ok(api_v0::VfsReadFinish::Bytes(progress.copied))
+        }
     }
 }
 

@@ -19,6 +19,11 @@ pub struct UserCopyProgress {
     pub error : Option<MmError>,
 }
 
+/// Kernel source whose bytes may reside in several stable fragments.
+pub trait UserCopySource {
+    fn visit(&self, visitor : &mut dyn FnMut(&[u8]) -> bool);
+}
+
 impl UserCopyProgress {
     #[inline]
     pub const fn complete(copied : usize) -> Self {
@@ -50,6 +55,36 @@ pub trait UserMemoryOps {
     /// 空输入必须返回 `{ copied: 0, error: None }` 且不访问 `dst`。每一页都必须在
     /// 写入前完成缺页/COW 处理、权限检查和物理地址翻译。
     fn copy_to_user_progress(&self, dst : VirtAddr, src : &[u8]) -> UserCopyProgress;
+
+    /// Copy a fragmented kernel source while allowing implementations to hold
+    /// the address-space guard once across every fragment.
+    fn copy_source_to_user_progress(&self,
+                                    mut dst : VirtAddr,
+                                    source : &dyn UserCopySource)
+                                    -> UserCopyProgress {
+        let mut copied = 0usize;
+        let mut error = None;
+        source.visit(&mut |bytes| {
+            let progress = self.copy_to_user_progress(dst, bytes);
+            copied += progress.copied;
+            error = progress.error;
+            if error.is_none() && progress.copied == bytes.len() {
+                if let Some(next) = dst.0.checked_add(bytes.len()) {
+                    dst = VirtAddr(next);
+                    true
+                } else {
+                    error = Some(MmError::InvalidAddress);
+                    false
+                }
+            } else {
+                false
+            }
+        });
+        match error {
+            Some(error) => UserCopyProgress::failed(copied, error),
+            None => UserCopyProgress::complete(copied),
+        }
+    }
 
     /// 将 `src` 完整写入用户缓冲区 `dst`；可跨页。
     ///

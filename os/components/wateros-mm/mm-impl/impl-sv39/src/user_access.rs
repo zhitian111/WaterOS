@@ -9,7 +9,7 @@ use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
 use api_v0::mmap::{MmapOps, PageFaultAccess};
 use api_v0::perm::PagePerm;
-use api_v0::user_access::{FutexMappingIdentity, UserCopyProgress, UserMemoryOps};
+use api_v0::user_access::{FutexMappingIdentity, UserCopyProgress, UserCopySource, UserMemoryOps};
 use core::sync::atomic::{AtomicU32, Ordering};
 use frame_alloctor::GlobalPhysFrameAllocator;
 
@@ -32,6 +32,13 @@ impl UserMemoryOps for Sv39UserMemoryOps {
 
     fn copy_to_user_progress(&self, dst : VirtAddr, src : &[u8]) -> UserCopyProgress {
         user_copy_to_progress(self.handle, src, dst)
+    }
+
+    fn copy_source_to_user_progress(&self,
+                                    dst : VirtAddr,
+                                    source : &dyn UserCopySource)
+                                    -> UserCopyProgress {
+        user_copy_source_to_progress(self.handle, source, dst)
     }
 
     fn atomic_load_u32(&self, src : VirtAddr) -> MmResult<u32> {
@@ -92,6 +99,39 @@ fn user_copy_to_progress(handle : usize,
               Ok(copy_to_user_in_aspace(aspace,
                                         user_addr,
                                         kernel_src))
+          }) {
+        Ok(progress) => progress,
+        Err(error) => UserCopyProgress::failed(0, error),
+    }
+}
+
+fn user_copy_source_to_progress(handle : usize,
+                                source : &dyn UserCopySource,
+                                mut user_addr : VirtAddr)
+                                -> UserCopyProgress {
+    match user_aspace::with_user_aspace_mut(handle, |aspace| {
+              let mut copied = 0usize;
+              let mut error = None;
+              source.visit(&mut |bytes| {
+                  let progress = copy_to_user_in_aspace(aspace, user_addr, bytes);
+                  copied += progress.copied;
+                  error = progress.error;
+                  if error.is_none() && progress.copied == bytes.len() {
+                      if let Some(next) = user_addr.0.checked_add(bytes.len()) {
+                          user_addr = VirtAddr(next);
+                          true
+                      } else {
+                          error = Some(MmError::InvalidAddress);
+                          false
+                      }
+                  } else {
+                      false
+                  }
+              });
+              Ok(match error {
+                  Some(error) => UserCopyProgress::failed(copied, error),
+                  None => UserCopyProgress::complete(copied),
+              })
           }) {
         Ok(progress) => progress,
         Err(error) => UserCopyProgress::failed(0, error),

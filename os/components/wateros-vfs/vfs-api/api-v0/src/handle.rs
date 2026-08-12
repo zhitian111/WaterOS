@@ -251,9 +251,20 @@ pub enum VfsReadFinish {
     Fault,
 }
 
-/// Stable staged data whose source position is committed only by `finish`.
+/// Stable read data whose source position is committed only by `finish`.
+/// Implementations may expose one contiguous staged buffer or several pinned
+/// page-cache fragments.
 pub trait VfsReadLease: Send {
-    fn bytes(&self) -> &[u8];
+    /// Compatibility view for naturally contiguous leases (pipe/socket/TTY
+    /// and generated data). Fragmented file-cache leases return an empty
+    /// slice; generic consumers must use [`Self::visit`] and [`Self::len`].
+    fn bytes(&self) -> &[u8] { &[] }
+
+    fn len(&self) -> usize { self.bytes().len() }
+
+    fn visit(&self, visitor : &mut dyn FnMut(&[u8]) -> bool) {
+        let _ = visitor(self.bytes());
+    }
 
     fn finish(self : Box<Self>, progress : VfsCopyProgress) -> VfsResult<VfsReadFinish>;
 }

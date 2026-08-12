@@ -17,7 +17,7 @@ use crate::mm_util::{current_user_aspace_handle, mm_err_to_errno};
 
 pub(crate) const USER_PATH_MAX : usize = 4096;
 
-fn mm_user_copy_errno(e : mm::api::error::MmError) -> ErrNo {
+pub(crate) fn mm_user_copy_errno(e : mm::api::error::MmError) -> ErrNo {
     match e {
         mm::api::error::MmError::InvalidAddress => ErrNo::EFAULT,
         other => mm_err_to_errno(other),
