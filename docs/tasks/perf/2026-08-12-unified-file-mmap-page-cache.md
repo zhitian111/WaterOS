@@ -88,3 +88,21 @@ panic, SIGSEGV, timeout, stall, refcount error, stale data, filesystem error, or
 COW violation. A clear first-run win is sufficient and is not repeated. Reject
 a noise-sized result or regression without a second run. Any ownership or
 invalidation ambiguity stops the candidate before performance testing.
+
+## Result: rejected
+
+- Candidate commit: `02835c4b`
+- Fixed image SHA-256:
+  `ca5987d2791f83781762f531557f40fadd0a2ce0068fd9be58c2014465db7f58`
+- RISC-V BuildStorm: **558.25 s**, all required markers present, judge passed,
+  no panic/SIGSEGV/stall/timeout.
+- Accepted main reference: **534.26 s**.
+- Delta: **+23.99 s / +4.49% regression**.
+
+The candidate therefore does not enter main and is not repeated. Reusing the
+same payload removed one allocation/clear/copy on a cold RX fault, but every
+such miss also entered the 32 MiB VFS cache's global mutex, BTree index, LRU,
+and then the separate 128 MiB mmap admission/index. The extra synchronization
+and double indexing outweighed the saved 4 KiB copy. A future Linux-style
+attempt must unify the page identity, lookup, and lock domain rather than only
+bridging two cache payloads.
