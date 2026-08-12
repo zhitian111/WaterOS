@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""配置脚本共用的 Cargo manifest 与 feature 图解析工具。"""
 from __future__ import annotations
 
 import os
@@ -144,7 +145,7 @@ def _parse_deps(tbl: Dict[str, Any]) -> List[Dep]:
         package = dep_name
         path = None
         if isinstance(spec, str):
-            # version string
+            # 版本字符串
             pass
         elif isinstance(spec, dict):
             pkg = spec.get("package")
@@ -210,7 +211,7 @@ def build_index(manifests: Iterable[Path]) -> Tuple[Dict[str, Crate], Dict[str, 
         c = load_crate(m)
         if c is None:
             continue
-        # first wins; duplicate package names are unexpected
+        # 同名 package 不应出现；意外重复时保留第一个
         if c.package not in crates:
             crates[c.package] = c
             pkg_to_manifest[c.package] = m
@@ -234,7 +235,7 @@ def is_api_or_impl_package(package: str) -> bool:
 
 def _is_local_dep(dep: Dep, base_manifest: Path, pkg_to_manifest: Dict[str, Path]) -> bool:
     if dep.path:
-        # if path resolves to an existing manifest, treat as local
+        # 路径能够解析到现有清单时，将其视为本地依赖
         p = (base_manifest.parent / dep.path).resolve()
         if (p / "Cargo.toml").exists():
             return True
@@ -305,7 +306,7 @@ def local_dep_packages(crate: Crate, crates: Dict[str, Crate], pkg_to_manifest: 
             continue
         if dep.package in crates:
             out.append(dep.package)
-    # stable
+    # 保持稳定顺序
     out = sorted(set(out))
     return out
 
@@ -353,7 +354,7 @@ def parse_config_tree_enabled(config_path: Path) -> Dict[str, Set[str]]:
                 continue
             if not stack:
                 continue
-            # feature line belongs to current crate (top of stack)
+            # feature 行属于栈顶的当前 crate
             crate = stack[-1][1]
             enabled.setdefault(crate, set()).add(line)
     return enabled
@@ -390,7 +391,7 @@ def parse_config_tree_enabled_at_indent(config_path: Path, header_indent: int = 
                 continue
             if current is None:
                 continue
-            # collect only direct children of this header indent (+2 spaces convention, but allow any >)
+            # 只收集标题的直接子项；通常缩进两个空格，但也允许其他更深缩进
             enabled.setdefault(current, set()).add(line)
 
     return enabled
@@ -424,19 +425,19 @@ def bubble_features_to_root(
 
     root = crates.get(root_package)
     if root is None:
-        return set(), [f"root package '{root_package}' not found"]
+        return set(), [f"未找到根 package '{root_package}'"]
 
-    # root direct deps: dep_name -> child package
+    # 根 crate 的直接依赖：dep_name -> 子 package
     direct: Dict[str, str] = {d.dep_name: d.package for d in root.deps}
     direct_pkg_to_dep: Dict[str, str] = {pkg: dep for dep, pkg in direct.items()}
 
-    # Build reverse edges: child_package -> list[parent_package]
+    # 构建反向边：child_package -> list[parent_package]
     parents_of: Dict[str, List[str]] = {}
     for p_pkg, p in crates.items():
         for d in p.deps:
             parents_of.setdefault(d.package, []).append(p_pkg)
 
-    # Worklist: desired (pkg, feat)
+    # 工作队列保存待传播的 package 和 feature
     work: List[Tuple[str, str]] = []
     for pkg, feats in enabled_by_pkg.items():
         for feat in feats:
@@ -450,25 +451,23 @@ def bubble_features_to_root(
             continue
         seen.add((pkg, feat))
 
-        # root crate: features are passed directly to cargo --features
+        # 根 crate 的 feature 直接传给 cargo --features
         if pkg == root_package:
             root_flags.add(feat)
             continue
 
-        # If pkg is a direct dep of root, we're done: enable dep/feat at root.
+        # package 是根的直接依赖时，直接在根上启用 dep/feat
         if pkg in direct_pkg_to_dep:
             dep = direct_pkg_to_dep[pkg]
             root_flags.add(f"{dep}/{feat}")
             continue
 
-        # Transitive api-* features are shared by multiple impl features. Bubbling
-        # them upward through parent features can accidentally select every arch
-        # impl that also enables the same API (for example RISC-V + LoongArch).
+        # 多个 impl feature 可能共享传递性的 api-* feature。经由父 feature 向上传播
+        # 可能误选所有启用同一 API 的架构实现，例如同时选择 RISC-V 与 LoongArch。
         if feat.startswith("api-"):
             continue
 
-        # Otherwise, try to bubble to one of its parents by selecting a parent feature
-        # that enables "<depName>/<feat>".
+        # 否则选择能够启用 `<depName>/<feat>` 的父 feature，继续向上传播
         p_candidates = parents_of.get(pkg, [])
         if not p_candidates:
             warnings.append(f"无法回溯: {pkg}:{feat}（没有上游依赖它的本地 crate）")
@@ -484,7 +483,7 @@ def bubble_features_to_root(
             if not dep_name:
                 continue
             needle = f"{dep_name}/{feat}"
-            # find parent feature(s) referencing needle
+            # 查找引用目标项的父 feature
             for p_feat, vals in parent.features.items():
                 if p_feat == "default":
                     continue
@@ -506,7 +505,7 @@ def _crate_feature_tree(crate: Crate, crates: Dict[str, Crate], pkg_to_manifest:
         lines.append(_indent(1) + "(no [features])")
         return lines
 
-    # stable order: default first, then others
+    # 保持稳定顺序：default 在前，其余项在后
     keys = list(crate.features.keys())
     keys.sort(key=lambda k: (0 if k == "default" else 1, k))
     for feat in keys:
@@ -517,7 +516,7 @@ def _crate_feature_tree(crate: Crate, crates: Dict[str, Crate], pkg_to_manifest:
             continue
         for t in vals:
             lines.append(_indent(2) + f"- {t}")
-            # if it's a local dependency feature dep/feat, print nested package block
+            # 对本地依赖的 dep/feat 输出嵌套 package 块
             if "/" in t:
                 dep_name = t.split("/", 1)[0].strip()
                 dep = next((d for d in crate.deps if d.dep_name == dep_name), None)
@@ -543,8 +542,7 @@ def print_json_summary(root: Path) -> Dict[str, Any]:
 
 
 def main(argv: List[str]) -> int:
-    # This module is intended to be invoked by bash scripts.
-    # Minimal CLI is provided for internal piping/debugging.
+    # 本模块主要由 Bash 脚本调用，同时提供最小命令行入口供内部管道和调试使用。
     if len(argv) >= 2 and argv[1] == "--summary":
         root = Path(argv[2]) if len(argv) >= 3 else Path(".")
         data = print_json_summary(root)

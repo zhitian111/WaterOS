@@ -1,5 +1,7 @@
 # runtime-console
 
+[项目首页](../../../../README.md) · [内核工程](../../../README.md) · [wateros-runtime](../README.md)
+
 控制台分为三层：`console-api/api-v0` 定义 `Console` 后端约束，`console-impl/*`
 连接 dummy 或 platform 后端，根 crate 提供统一输出 API 和宏。
 

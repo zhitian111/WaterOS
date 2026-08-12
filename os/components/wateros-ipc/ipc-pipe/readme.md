@@ -1,5 +1,7 @@
 # ipc-pipe
 
+[项目首页](../../../../README.md) · [内核工程](../../../README.md) · [系统架构](../../../../README.md#系统架构)
+
 `ipc-pipe` 提供内核内部匿名 pipe：固定容量 ring buffer、读写端引用计数、阻塞/非阻塞
 I/O，以及 `poll` 等待。它不管理 fd 表；VFS fd-session 层把 `PipeEndpoint` 包装为文件句柄。
 

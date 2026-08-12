@@ -136,22 +136,35 @@ SELECTED_CHECK_TARGET := $(if $(filter rv,$(ARCH)),rv_check,$(if $(filter la,$(A
 SELECTED_RV_FLAG := $(if $(filter final,$(PROFILE)),$(kernel_rv_final_flag),$(kernel_rv_pre_flag))
 SELECTED_LA_FLAG := $(if $(filter final,$(PROFILE)),$(kernel_la_final_flag),$(kernel_la_pre_flag))
 SELECTED_KERNEL := ./kernel-$(ARCH)-$(PROFILE)$(GDB_SUFFIX)
-SELECTED_RUN_SCRIPT := ./scripts/$(ARCH)_$(PROFILE)_run.sh
+SELECTED_RUN_SCRIPT := ./scripts/run/$(ARCH)_$(PROFILE)_run.sh
 DEBUG_PROFILE := $(ARCH)-$(PROFILE)
 
 define TRACE
-	@echo -e "$(COLOR_ANSI_PURPLE)[MAKEFILE]$(COLOR_ANSI_CLEAR)$(COLOR_ANSI_BLUE)\t[TRACE]\t$(1)$(COLOR_ANSI_CLEAR)"
+	@$(call TRACE_CMD,$(1))
+endef
+define DEBUG
+	@$(call DEBUG_CMD,$(1))
 endef
 define INFO
-	@echo -e "$(COLOR_ANSI_PURPLE)[MAKEFILE]$(COLOR_ANSI_CLEAR)$(COLOR_ANSI_GREEN)\t[INFO]\t$(1)$(COLOR_ANSI_CLEAR)"
+	@$(call INFO_CMD,$(1))
 endef
 define WARNING
-	@echo -e "$(COLOR_ANSI_PURPLE)[MAKEFILE]$(COLOR_ANSI_CLEAR)$(COLOR_ANSI_YELLOW)\t[WARNING]\t$(1)$(COLOR_ANSI_CLEAR)"
+	@$(call WARN_CMD,$(1))
+endef
+define WARN
+	@$(call WARN_CMD,$(1))
 endef
 define ERROR
-	@echo -e "$(COLOR_ANSI_PURPLE)[MAKEFILE]$(COLOR_ANSI_CLEAR)$(COLOR_ANSI_RED)\t[ERROR]\t$(1)	错误代码:$(2)$(COLOR_ANSI_CLEAR)"
-	@exit $$2
+	@$(call ERROR_CMD,$(1),$(2)); exit $(2)
 endef
+
+# `*_CMD` 可在复合 Shell 语句中使用；上层宏用于普通 recipe 行。
+# `subst` 兼容历史调用中多余的双引号，避免 printf 对多个参数重复应用格式串。
+TRACE_CMD = printf '%b[Makefile]%b\t%b[TRACE]%b\t%s\n' "$(COLOR_ANSI_PURPLE)" "$(COLOR_ANSI_CLEAR)" "$(COLOR_ANSI_CYAN)" "$(COLOR_ANSI_CLEAR)" '$(subst ",,$(strip $(1)))'
+DEBUG_CMD = printf '%b[Makefile]%b\t%b[DEBUG]%b\t%s\n' "$(COLOR_ANSI_PURPLE)" "$(COLOR_ANSI_CLEAR)" "$(COLOR_ANSI_BLUE)" "$(COLOR_ANSI_CLEAR)" '$(subst ",,$(strip $(1)))'
+INFO_CMD = printf '%b[Makefile]%b\t%b[INFO]%b\t%s\n' "$(COLOR_ANSI_PURPLE)" "$(COLOR_ANSI_CLEAR)" "$(COLOR_ANSI_GREEN)" "$(COLOR_ANSI_CLEAR)" '$(subst ",,$(strip $(1)))'
+WARN_CMD = printf '%b[Makefile]%b\t%b[WARN]%b\t%s\n' "$(COLOR_ANSI_PURPLE)" "$(COLOR_ANSI_CLEAR)" "$(COLOR_ANSI_YELLOW)" "$(COLOR_ANSI_CLEAR)" '$(subst ",,$(strip $(1)))' >&2
+ERROR_CMD = printf '%b[Makefile]%b\t%b[ERROR]%b\t%s exit_code=%s\n' "$(COLOR_ANSI_PURPLE)" "$(COLOR_ANSI_CLEAR)" "$(COLOR_ANSI_RED)" "$(COLOR_ANSI_CLEAR)" '$(subst ",,$(strip $(1)))' '$(2)' >&2
 
 help:
 	@echo "WaterOS 统一入口（默认 ARCH=rv PROFILE=pre SMP=8 SNAPSHOT=1）"
@@ -194,27 +207,27 @@ show-config:
 	@printf "  %-18s %s\n" "GRAPHICS_BACKEND" "$(GRAPHICS_BACKEND)"
 
 validate-config:
-	@case "$(ARCH)" in rv|la) ;; *) echo "错误: ARCH 必须是 rv 或 la" >&2; exit 2 ;; esac
-	@case "$(PROFILE)" in pre|final) ;; *) echo "错误: PROFILE 必须是 pre 或 final" >&2; exit 2 ;; esac
-	@case "$(MODE)" in auto|shell|run) ;; *) echo "错误: MODE 必须是 auto/shell/run" >&2; exit 2 ;; esac
-	@case "$(SMP)" in 1|2|3|4|5|6|7|8) ;; *) echo "错误: SMP 必须是 1..8" >&2; exit 2 ;; esac
-	@case "$(SNAPSHOT)" in 0|1) ;; *) echo "错误: SNAPSHOT 必须是 0 或 1" >&2; exit 2 ;; esac
-	@case "$(WRITE_DISK)" in 0|1) ;; *) echo "错误: WRITE_DISK 必须是 0 或 1" >&2; exit 2 ;; esac
-	@test -n "$(SDCARD)" || { echo "错误: 未配置根文件系统镜像；请设置对应的 *_IMAGE 或 SDCARD" >&2; exit 2; }
-	@case "$(FAULTS)" in 0|1) ;; *) echo "错误: FAULTS 必须是 0 或 1" >&2; exit 2 ;; esac
-	@case "$(START_PAUSED)" in 0|1) ;; *) echo "错误: START_PAUSED 必须是 0 或 1" >&2; exit 2 ;; esac
-	@case "$(GRAPHICS)" in 0|1) ;; *) echo "错误: GRAPHICS 必须是 0 或 1" >&2; exit 2 ;; esac
+	@case "$(ARCH)" in rv|la) ;; *) $(call ERROR_CMD,无效架构 value=$(ARCH) allowed=rv$(COMMA)la,2); exit 2 ;; esac
+	@case "$(PROFILE)" in pre|final) ;; *) $(call ERROR_CMD,无效构建阶段 value=$(PROFILE) allowed=pre$(COMMA)final,2); exit 2 ;; esac
+	@case "$(MODE)" in auto|shell|run) ;; *) $(call ERROR_CMD,无效运行模式 value=$(MODE) allowed=auto$(COMMA)shell$(COMMA)run,2); exit 2 ;; esac
+	@case "$(SMP)" in 1|2|3|4|5|6|7|8) ;; *) $(call ERROR_CMD,无效 CPU 数量 value=$(SMP) range=1..8,2); exit 2 ;; esac
+	@case "$(SNAPSHOT)" in 0|1) ;; *) $(call ERROR_CMD,无效快照开关 value=$(SNAPSHOT) allowed=0$(COMMA)1,2); exit 2 ;; esac
+	@case "$(WRITE_DISK)" in 0|1) ;; *) $(call ERROR_CMD,无效磁盘写入开关 value=$(WRITE_DISK) allowed=0$(COMMA)1,2); exit 2 ;; esac
+	@test -n "$(SDCARD)" || { $(call ERROR_CMD,未配置根文件系统镜像 variable=SDCARD,2); exit 2; }
+	@case "$(FAULTS)" in 0|1) ;; *) $(call ERROR_CMD,无效故障注入开关 value=$(FAULTS) allowed=0$(COMMA)1,2); exit 2 ;; esac
+	@case "$(START_PAUSED)" in 0|1) ;; *) $(call ERROR_CMD,无效暂停启动开关 value=$(START_PAUSED) allowed=0$(COMMA)1,2); exit 2 ;; esac
+	@case "$(GRAPHICS)" in 0|1) ;; *) $(call ERROR_CMD,无效图形开关 value=$(GRAPHICS) allowed=0$(COMMA)1,2); exit 2 ;; esac
 	@if [[ "$(MODE)" == run ]]; then \
-		test -n "$(SCRIPT)" || { echo "错误: MODE=run 时必须提供 SCRIPT" >&2; exit 2; }; \
-		[[ "$(SCRIPT)" == /* ]] || { echo "错误: SCRIPT 必须是 guest 绝对路径" >&2; exit 2; }; \
+		test -n "$(SCRIPT)" || { $(call ERROR_CMD,运行脚本未配置 mode=run variable=SCRIPT,2); exit 2; }; \
+		[[ "$(SCRIPT)" == /* ]] || { $(call ERROR_CMD,Guest 脚本必须使用绝对路径 value=$(SCRIPT),2); exit 2; }; \
 	elif [[ -n "$(SCRIPT)" ]]; then \
-		echo "错误: SCRIPT 只能与 MODE=run 一起使用" >&2; exit 2; \
+		$(call ERROR_CMD,当前模式不接受运行脚本 mode=$(MODE) script=$(SCRIPT),2); exit 2; \
 	fi
 	@if [[ -n "$(GUEST_SHELL)" && "$(GUEST_SHELL)" != /* ]]; then \
-		echo "错误: GUEST_SHELL 必须是 guest 绝对路径" >&2; exit 2; \
+		$(call ERROR_CMD,Guest Shell 必须使用绝对路径 value=$(GUEST_SHELL),2); exit 2; \
 	fi
 	@if ! [[ "$(PORT)" =~ ^[0-9]+$$ ]] || (( $(PORT) < 1 || $(PORT) > 65535 )); then \
-		echo "错误: PORT 必须是 1..65535" >&2; exit 2; \
+		$(call ERROR_CMD,无效调试端口 value=$(PORT) range=1..65535,2); exit 2; \
 	fi
 
 build: validate-config $(SELECTED_BUILD_TARGET)
@@ -225,7 +238,7 @@ run: validate-config build
 	 WOS_QEMU_SNAPSHOT="$(SNAPSHOT)" \
 	 WOS_GRAPHICS="$(GRAPHICS)" WOS_QEMU_DISPLAY="$(GRAPHICS_BACKEND)" \
 	 WOS_WRITE_DISK="$(WRITE_DISK)" WOS_SDCARD="$(SDCARD)" \
-	 python3 ./scripts/qemu_run.py --arch "$(ARCH)" --profile "$(PROFILE)"
+	 python3 ./scripts/run/qemu_run.py --arch "$(ARCH)" --profile "$(PROFILE)"
 
 shell:
 	@$(MAKE) --no-print-directory run ARCH="$(ARCH)" PROFILE="$(PROFILE)" SMP="$(SMP)" \
@@ -237,7 +250,7 @@ debug: validate-config
 	 WATEROS_OPERATOR_SHELL="$(GUEST_SHELL)" WOS_SDCARD="$(SDCARD)" \
 	 WOS_QEMU_SNAPSHOT="$(SNAPSHOT)" WOS_EXTRA_FEATURES="$(EXTRA_FEATURES)" \
 	 WOS_GRAPHICS="$(GRAPHICS)" WOS_QEMU_DISPLAY="$(GRAPHICS_BACKEND)" \
-	 python3 ./scripts/wateros_debug.py run "$(DEBUG_PROFILE)" --smp "$(SMP)" \
+	 python3 ./scripts/debug/wateros_debug.py run "$(DEBUG_PROFILE)" --smp "$(SMP)" \
 		--port "$(PORT)" $(if $(filter 1,$(WRITE_DISK)),--write-disk,) \
 		$(if $(filter 1,$(FAULTS)),--faults,)
 
@@ -246,21 +259,21 @@ debug-server: validate-config
 	 WATEROS_OPERATOR_SHELL="$(GUEST_SHELL)" WOS_SDCARD="$(SDCARD)" \
 	 WOS_QEMU_SNAPSHOT="$(SNAPSHOT)" WOS_EXTRA_FEATURES="$(EXTRA_FEATURES)" \
 	 WOS_GRAPHICS="$(GRAPHICS)" WOS_QEMU_DISPLAY="$(GRAPHICS_BACKEND)" \
-	 python3 ./scripts/wateros_debug.py server "$(DEBUG_PROFILE)" --smp "$(SMP)" \
+	 python3 ./scripts/debug/wateros_debug.py server "$(DEBUG_PROFILE)" --smp "$(SMP)" \
 		--port "$(PORT)" $(if $(filter 0,$(START_PAUSED)),--no-start-paused,) \
 		$(if $(filter 1,$(WRITE_DISK)),--write-disk,) $(if $(filter 1,$(FAULTS)),--faults,)
 
 snapshot:
-	@python3 ./scripts/wateros_debug.py snapshot $(if $(filter 1,$(LEAVE_STOPPED)),--leave-stopped,)
+	@python3 ./scripts/debug/wateros_debug.py snapshot $(if $(filter 1,$(LEAVE_STOPPED)),--leave-stopped,)
 
 watch:
-	@python3 ./scripts/wateros_debug.py watch
+	@python3 ./scripts/debug/wateros_debug.py watch
 
 gdb:
-	@python3 ./scripts/wateros_debug.py gdb
+	@python3 ./scripts/debug/wateros_debug.py gdb
 
 doctor:
-	@python3 ./scripts/wateros_debug.py doctor
+	@python3 ./scripts/debug/wateros_debug.py doctor
 
 
 version:
@@ -270,17 +283,17 @@ version:
 stat: version
 	$(call INFO, "开始统计项目状态信息...")
 	$(call INFO, "开始统计项目文本文件字符数...")
-	@bash ./scripts/stat_texts.bash
+	@bash ./scripts/maintenance/stat_texts.bash
 	$(call INFO, "项目文本文件字符数统计完成！")
 	$(call INFO, "开始统计项目贡献度...")
-	@bash ./scripts/stat_contribute.bash
+	@bash ./scripts/maintenance/stat_contribute.bash
 	$(call INFO, "项目贡献度统计完成！")
 
 configure: ./config.conf ./feature-tree.txt
 
 ./config.conf ./feature-tree.txt:
 	$(call INFO, "正在生成配置文件...")
-	@bash ./scripts/configure.bash 2> /dev/null
+	@bash ./scripts/config/configure.bash 2> /dev/null
 	$(call INFO, "配置文件生成完毕！")
 
 kernel:
@@ -367,7 +380,7 @@ rv_qemu_run: rv_pre_run
 
 rv_qemu_run_snapshot: kernel-rv
 	$(call INFO, "开始运行 riscv64 内核 snapshot 模式，不写回 sdcard-rv.img")
-	@bash ./scripts/rv_qemu_run_snapshot.sh
+	@bash ./scripts/run/rv_qemu_run_snapshot.sh
 	$(call INFO, "riscv64 内核运行结束 snapshot")
 
 .PHONY: rv_qemu_run_snapshot
@@ -418,7 +431,7 @@ la_final_run-gdb la_final_run_log-gdb:
 la_gdb_snapshot:
 	@test -f "$(LA_GDB_ELF)" || \
 		(echo "找不到 ELF: $(LA_GDB_ELF)；请先构建对应 LA 内核" && exit 1)
-	@python3 ./scripts/wateros_debug.py snapshot --arch la \
+	@python3 ./scripts/debug/wateros_debug.py snapshot --arch la \
 		--elf "$(LA_GDB_ELF)" --port "$(GDB_PORT)"
 
 # 兼容旧脚本调用：旧目标按初赛语义执行。
@@ -426,31 +439,31 @@ la_qemu_run: la_pre_run
 
 la_qemu_run_snapshot: kernel-la
 	$(call INFO, "开始运行 loongarch64 内核 snapshot 模式，不写回 sdcard-la.img")
-	@bash ./scripts/la_qemu_run_snapshot.sh
+	@bash ./scripts/run/la_qemu_run_snapshot.sh
 	$(call INFO, "loongarch64 内核运行结束 snapshot")
 
 rv_qemu_run_with_log: kernel-rv
 	$(call INFO, "开始运行 riscv64 内核...")
-	@bash ./scripts/rv_qemu_run_with_log.sh
+	@bash ./scripts/run/rv_qemu_run_with_log.sh
 	$(call INFO, "riscv64 内核运行结束, 调试信息请见qemu.log")
 
 rv_pc_watch: kernel-rv
 	$(call INFO, "riscv64 PC 变动监视（仅 PC 变化时打印）...")
-	@python3 ./scripts/pc_trace_watch.py --arch rv --elf ./kernel-rv
+	@python3 ./scripts/debug/pc_trace_watch.py --arch rv --elf ./kernel-rv
 	$(call INFO, "PC 监视已结束")
 
 rv_symbol_at: kernel-rv
 	@test -n "$(ADDR)" || (echo "用法: make rv_symbol_at ADDR=0x80201234" && exit 1)
-	@python3 ./scripts/resolve_pc_symbol.py --arch rv --elf ./kernel-rv $(ADDR)
+	@python3 ./scripts/debug/resolve_pc_symbol.py --arch rv --elf ./kernel-rv $(ADDR)
 
 la_pc_watch: kernel-la
 	$(call INFO, "loongarch64 PC 变动监视（仅 PC 变化时打印）...")
-	@python3 ./scripts/pc_trace_watch.py --arch la --elf ./kernel-la
+	@python3 ./scripts/debug/pc_trace_watch.py --arch la --elf ./kernel-la
 	$(call INFO, "PC 监视已结束")
 
 la_symbol_at: kernel-la
 	@test -n "$(ADDR)" || (echo "用法: make la_symbol_at ADDR=0x90001234" && exit 1)
-	@python3 ./scripts/resolve_pc_symbol.py --arch la --elf ./kernel-la $(ADDR)
+	@python3 ./scripts/debug/resolve_pc_symbol.py --arch la --elf ./kernel-la $(ADDR)
 
 
 rv_check:
@@ -465,7 +478,7 @@ la_check:
 
 # rv_link_app_asm:
 # 	$(call INFO, "开始生成批处理系统的 asm 文件...")
-# 	@bash ./scripts/rv_link_app_gen.bash
+# 	@bash ./scripts/maintenance/rv_link_app_gen.bash
 # 	$(call INFO, "批处理系统的 asm 文件生成完成！详见./src/riscv/assembly_code/linke_app.asm")
 
 check: validate-config $(SELECTED_CHECK_TARGET)
@@ -480,7 +493,7 @@ rv_user_mode_program:
 clean:
 	$(call INFO, "开始清理构建产物...")
 	@cargo clean
-	@bash ./scripts/cargo_clean_all.sh ./components/
+	@bash ./scripts/maintenance/cargo_clean_all.sh ./components/
 	@rm -f ./kernel-rv >/dev/null 2>/dev/null
 	@rm -f ./kernel-la >/dev/null 2>/dev/null
 	$(call INFO, "构建产物清理完成！")
@@ -535,21 +548,21 @@ fmt:
 
 apply_features: ./config.conf
 	$(call INFO, "开始写入 features riscv64 ...")
-	@bash ./scripts/apply-config-as-default-features.bash
+	@bash ./scripts/config/apply-config-as-default-features.bash
 	$(call INFO, "riscv64 features 写入完成！")
 
 apply_features_la: ./config-loongarch64.conf
 	$(call INFO, "开始写入 features loongarch64 ...")
-	@bash ./scripts/apply-config-as-default-features.bash ./ apply config-loongarch64.conf
+	@bash ./scripts/config/apply-config-as-default-features.bash ./ apply config-loongarch64.conf
 	$(call INFO, "loongarch64 features 写入完成！")
 
 revert_features:
 	$(call INFO, "开始回滚 features...")
-	@bash ./scripts/apply-config-as-default-features.bash ./ os revert
+	@bash ./scripts/config/apply-config-as-default-features.bash ./ os revert
 	$(call INFO, "features 回滚完成！")
 export:
 	$(call INFO, "开始导出 git 追踪文件到 GitLab 仓库...")
-	@bash ./scripts/export-to-gitlab.bash
+	@bash ./scripts/maintenance/export-to-gitlab.bash
 	$(call INFO, "导出完成！")
 
 flush_img:

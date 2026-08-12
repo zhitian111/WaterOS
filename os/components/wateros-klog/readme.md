@@ -1,5 +1,7 @@
 # wateros-klog
 
+[项目首页](../../../README.md) · [内核工程](../../README.md) · [系统架构](../../../README.md#系统架构)
+
 `wateros-klog` 是 WaterOS 的内核消息环。它提供无分配的内核记录入口、固定上限的 ring-buffer
 存储，以及 `syslog(2)`/`dmesg` 所需的内核侧读写语义。它不是 runtime console logger：console
 输出、日志过滤和用户地址拷贝由其他模块负责。

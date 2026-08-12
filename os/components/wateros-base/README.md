@@ -1,5 +1,7 @@
 # wateros-base
 
+[项目首页](../../../README.md) · [内核工程](../../README.md) · [系统架构](../../../README.md#系统架构)
+
 `wateros-base` 保存 WaterOS 各组件都可以依赖的最小类型与同步原语。它不实现
 平台启动、页表、调度或系统调用；这些语义分别属于 platform、MM、task 和 syscall。
 

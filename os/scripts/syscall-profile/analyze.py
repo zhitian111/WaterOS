@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Render a syscall-profile TSV result as a compact Markdown report."""
+"""将 syscall-profile TSV 结果整理为紧凑的 Markdown 报告。"""
 from __future__ import annotations
 
 import argparse
+import sys
 from collections import defaultdict
 from pathlib import Path
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+from source.argparse_utils import ChineseArgumentParser  # noqa: E402
 
 
 def parse(path: Path) -> dict:
@@ -144,9 +150,9 @@ def render(profile: dict, top: int) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("result", type=Path)
-    parser.add_argument("--top", type=int, default=20)
+    parser = ChineseArgumentParser(description=__doc__)
+    parser.add_argument("result", type=Path, help="syscall-profile plugin 生成的原始结果文件")
+    parser.add_argument("--top", type=int, default=20, help="每类统计显示的最大条目数，默认为 20")
     args = parser.parse_args()
     print(render(parse(args.result), args.top), end="")
     return 0
@@ -154,4 +160,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

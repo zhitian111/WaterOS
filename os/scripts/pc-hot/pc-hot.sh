@@ -1,32 +1,34 @@
 #!/usr/bin/env bash
-# pc-hot: per-PC instruction counter (QEMU TCG plugin) + symbol aggregation.
+# pc-hot：通过 QEMU TCG plugin 逐 PC 统计指令数，并按符号聚合结果。
 #
-# Arch-independent plugin source: pc-hot.c.  Per-arch entry points:
+# pc-hot.c 是架构无关的插件源码；按架构使用以下入口：
 #   ./pc-hot-rv.sh ...   (RISC-V)
 #   ./pc-hot-la.sh ...   (LoongArch)
 #
-# Usage:
+# 用法：
 #   pc-hot.sh <rv|la> build
 #   pc-hot.sh <rv|la> run <pcs.txt> -- <qemu args...>
 #   pc-hot.sh <rv|la> analyze <pcs.txt> [kernel.elf] [topN]
 #   pc-hot.sh <rv|la> all <pcs.txt> [topN] -- <qemu args...>
 #
-# `run`/`all` append `-plugin file=$SO,out=<pcs.txt>` to your qemu command.
-# Output is written only at exit: zero streaming output during the run.
+# `run` 和 `all` 会在 QEMU 命令末尾追加 `-plugin file=$SO,out=<pcs.txt>`。
+# 插件只在退出时写入结果，运行期间不会流式输出统计数据。
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
+WOS_LOG_COMPONENT=PC-HOT
+source "$HERE/../source/console.bash"
 
 usage() {
     cat <<'EOF'
-usage:
+用法:
   pc-hot.sh <rv|la> build
   pc-hot.sh <rv|la> run <pcs.txt> -- <qemu args...>
   pc-hot.sh <rv|la> analyze [-t <icount_shift>] <pcs.txt> [kernel.elf] [topN]
   pc-hot.sh <rv|la> all <pcs.txt> [topN] -- <qemu args...>
 
-examples:
+示例:
   ./scripts/pc-hot/pc-hot-rv.sh run /tmp/pcs-rv.txt -- \
       timeout 300 qemu-system-riscv64 -machine virt -kernel ./kernel-rv-final \
       -m 8G -nographic -smp 8 -bios default -no-reboot -icount shift=0,sleep=off
@@ -34,11 +36,16 @@ examples:
       timeout 300 qemu-system-loongarch64 -kernel ./kernel-la-final \
       -m 8G -nographic -smp 8 -no-reboot -icount shift=0,sleep=off
 
-  # with -icount shift=N each executed instruction advances the virtual clock
-  # by 2^N ns; add -t N to analyze to report virtual-clock ticks per core/symbol.
+  # 使用 -icount shift=N 时，每条指令使虚拟时钟前进 2^N ns；分析时传入
+  # -t N，可按核心和符号报告对应的虚拟时钟时间。
   ./scripts/pc-hot/pc-hot-rv.sh analyze -t 0 /tmp/pcs-rv.txt kernel-rv-final 50
 EOF
 }
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    usage
+    exit 0
+fi
 
 ARCH="${1:-}"
 if [ $# -gt 0 ]; then shift; fi
@@ -59,6 +66,10 @@ esac
 
 CMD="${1:-}"
 if [ $# -gt 0 ]; then shift; fi
+if [[ "$CMD" == "-h" || "$CMD" == "--help" || "$CMD" == "help" ]]; then
+    usage
+    exit 0
+fi
 
 BUILD_DIR="$HERE/build/$ARCH"
 SO="$BUILD_DIR/pc-hot-$ARCH.so"
@@ -71,7 +82,7 @@ build() {
     local -a glib_cflags
     read -r -a glib_cflags <<< "$(pkg-config --cflags glib-2.0)"
     gcc "${glib_cflags[@]}" -shared -fPIC -O2 -o "$SO" "$HERE/pc-hot.c"
-    echo "built: $SO"
+    info "QEMU PC 热点插件已构建 path=${SO}"
 }
 
 ensure_so() {
@@ -90,16 +101,15 @@ resolve_elf() {
         echo "$REPO_ROOT/$elf"
         return
     fi
-    echo "error: cannot find kernel ELF: $elf" >&2
-    exit 1
+    error "内核 ELF 不存在 path=${elf}" 1
 }
 
 run_qemu() {
-    local out="${1:?pcs.txt output path required}"
+    local out="${1:?必须提供 pcs.txt 输出路径}"
     shift
     if [ "${1:-}" = "--" ]; then shift; fi
     ensure_so
-    echo "[pc-hot] plugin=$SO out=$out" >&2
+    info "开始采集 PC 热点 plugin=${SO} output=${out}"
     exec "$@" -plugin "file=$SO,out=$out"
 }
 
@@ -112,13 +122,13 @@ analyze() {
     if [ -n "$icount_shift" ]; then
         quantum_ns=$((1 << icount_shift))
     fi
-    local pcs="${1:?pcs.txt required}"
+    local pcs="${1:?必须提供 pcs.txt 路径}"
     local elf
     elf="$(resolve_elf "${2:-$DEFAULT_ELF}")"
     local top="${3:-50}"
     local nm_file="$BUILD_DIR/nm.txt"
     local agg="$BUILD_DIR/fn-agg.txt"
-    echo "[pc-hot] icount shift=${icount_shift:-off} (2^shift ns/insn)" >&2
+    info "设置 QEMU 指令计数 shift=${icount_shift:-off} unit=2^shift_ns_per_instruction"
 
     "$NM_TOOL" -n "$elf" > "$nm_file"
     awk '
@@ -155,7 +165,7 @@ analyze() {
             }
         }
     ' "$nm_file" "$pcs" | sort -rn > "$agg"
-    echo "[pc-hot] $(wc -l < "$agg") symbols -> $agg" >&2
+    info "符号热点聚合完成 symbols=$(wc -l < "$agg") output=${agg}"
 
     if [ -n "$icount_shift" ]; then
         awk -v q="$quantum_ns" \
@@ -192,14 +202,18 @@ analyze() {
 }
 
 all() {
-    local out="${1:?pcs.txt output path required}"
+    local out="${1:?必须提供 pcs.txt 输出路径}"
     local top="${2:-50}"
     shift 2
     if [ "${1:-}" = "--" ]; then shift; fi
     build
     local qemu_status=0
     "$@" -plugin "file=$SO,out=$out" || qemu_status=$?
-    echo "[pc-hot] qemu exited with $qemu_status (timeout usually 124)" >&2
+    if (( qemu_status == 0 )); then
+        info "QEMU 采集正常结束 exit_code=${qemu_status}"
+    else
+        warning "QEMU 采集结束 exit_code=${qemu_status} timeout_exit_code=124"
+    fi
     analyze "$out" "$DEFAULT_ELF" "$top"
 }
 

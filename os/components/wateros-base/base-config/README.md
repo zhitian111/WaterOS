@@ -1,5 +1,7 @@
 # wateros-base-config
 
+[项目首页](../../../../README.md) · [内核工程](../../../README.md) · [wateros-base](../README.md)
+
 `wateros-base-config` 是无状态、`no_std` 的编译期配置 crate。它解决多个组件重复
 声明同一个常量的问题，不负责读取 DTB、命令行或运行时 CPU/内存状态。
 

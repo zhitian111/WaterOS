@@ -1,5 +1,7 @@
 # 当前待办与分析资料
 
+[项目首页](../../README.md) · [文档总览](../README.md) · [任务总览](../tasks/README.md)
+
 `docs/todo/` 只保留仍用于判断下一步工作的性能分析，以及由原作者维护的个人待办；可直接执行的
 任务位于 [`../tasks/README.md`](../tasks/README.md)，可复用的 Agent 提示词位于
 [`../agents/README.md`](../agents/README.md)。

@@ -1,5 +1,7 @@
 # wateros-debug
 
+[项目首页](../../../README.md) · [内核工程](../../README.md) · [调试工具](../../../docs/tools/debugging.md)
+
 `wateros-debug` 是 WaterOS 与主机 GDB 工具之间的低层诊断 ABI。它不依赖调度器、
 内存管理或日志系统，避免调试代码反向制造锁依赖。
 

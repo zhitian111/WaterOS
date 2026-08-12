@@ -102,7 +102,7 @@
 | 维护 | `fmt` | taplo + rustfmt |
 | 其他 | `version` / `stat` | 版本与仓库统计 |
 
-底层脚本：`os/scripts/rv_pre_run.sh`、`rv_final_run.sh`、`rv_qemu_run_with_log.sh`
+底层脚本：`os/scripts/run/rv_pre_run.sh`、`run/rv_final_run.sh`、`run/rv_qemu_run_with_log.sh`
 等；修改 QEMU 参数时同步检查 `docs/prompts/tasks/run_testsuits_qemu.md` 中的环境说明。
 
 要求：

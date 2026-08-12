@@ -16,6 +16,9 @@ __pycache__/
 # 项目编译期配置文件
 feature-tree.txt
 
+# 比赛平台本地认证信息
+os/scripts/competition/educg_cookie.conf
+
 # 成员个人使用目录
 /todo_docs/
 2025a-rcore-kasss233/

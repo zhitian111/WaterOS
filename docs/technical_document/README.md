@@ -1,5 +1,7 @@
 # WaterOS 技术文档
 
+[项目首页](../../README.md) · [文档总览](../README.md) · [LaTeX 工程](./wateros-latex/README.md)
+
 内核技术方案 LaTeX 文档与 Agent 编写说明。
 
 | 目录 | 说明 |

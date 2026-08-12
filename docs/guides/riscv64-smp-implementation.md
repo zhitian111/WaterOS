@@ -33,7 +33,7 @@ mailbox + boot IPI 实现独立的 AP 启动路径：
 
 ```bash
 cd os
-SMP_CORES=4 WATEROS_OPENSBI_FW=/path/to/opensbi-hsm-fw.bin ./scripts/rv_qemu_run.sh
+SMP_CORES=4 WATEROS_OPENSBI_FW=/path/to/opensbi-hsm-fw.bin ./scripts/run/rv_qemu_run.sh
 ```
 
 可使用 `SMP_CORES=1` 做 RISC-V 单核回归。LoongArch QEMU 脚本固定使用

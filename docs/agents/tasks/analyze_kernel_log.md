@@ -44,7 +44,7 @@
 | 文件 | 用途 |
 |------|------|
 | `os/log` 或用户指定的日志路径 | **主分析对象**（通常不提交 git） |
-| `os/scripts/parse_qemu_test_log.py` | 快速汇总各 `*_testcode.sh` 组结果（对 trace 长日志仍须配合 grep） |
+| `os/scripts/testing/parse_qemu_test_log.py` | 快速汇总各 `*_testcode.sh` 组结果（对 trace 长日志仍须配合 grep） |
 | `os/src/user_bringup_busybox.rs` | 当前启用了哪些 `SCRIPT_PATHS`、对应阶段 |
 | `os/components/wateros-syscall/syscall-api/api-v0/src/lib.rs` | PANIC 时 `unsupported: unknown nr=` 的 dispatch 行为 |
 | `os/components/wateros-syscall/**` | syscall 号表、已实现/未实现槽位 |
@@ -141,7 +141,7 @@ riscv64 Linux 常用 nr（PANIC 时查表，**以 Linux 官方表为准**）：
 
 ```bash
 # 可选：脚本摘要（非 trace 专用，但可快速看组是否 END）
-python3 os/scripts/parse_qemu_test_log.py "$LOG"
+python3 os/scripts/testing/parse_qemu_test_log.py "$LOG"
 ```
 
 然后按上文「搜索范围」逐类 grep，建立失败候选列表。

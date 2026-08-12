@@ -1,3 +1,5 @@
+"""验证双架构 QEMU 参数组装、镜像和图形后端策略。"""
+
 from __future__ import annotations
 
 import sys
@@ -6,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-SCRIPTS = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(SCRIPTS))
+RUN_SCRIPTS = Path(__file__).resolve().parents[1] / "run"
+sys.path.insert(0, str(RUN_SCRIPTS))
 
 from qemu_run import QemuConfigError, build_qemu_launch
 

@@ -1,4 +1,23 @@
-# WaterOS 文档总览
+<p align="center">
+  <a href="../README.md">
+    <img src="./assert/cover.jpg" height="72" alt="山东大学">
+  </a>
+</p>
+
+<h1 align="center">WaterOS 文档</h1>
+
+<p align="center">
+  架构说明、开发工具、标准流程与项目记录
+</p>
+
+<p align="center">
+  <a href="../README.md">项目首页</a> ·
+  <a href="../os/README.md">内核工程</a> ·
+  <a href="./tools/README.md">工具文档</a> ·
+  <a href="./workflows/README.md">标准流程</a>
+</p>
+
+---
 
 本目录用于维护 WaterOS 的长期文档体系：
 
@@ -14,11 +33,12 @@
 
 ## 推荐阅读顺序
 
-1. 先看 `agents/README.md` 和 `guides/workflow.md`。
-2. 需要执行项目任务时查看 `tasks/README.md`。
-3. 需要分析性能候选或查看个人待办时查看 `todo/README.md`。
-5. 需要做内存管理验证时查看 `guides/mm-validation.md`。
-6. 需要了解当前文件系统 bring-up 栈时查看 `guides/filesystem-current.md`。
-6. 需要了解设备树、virtio 与 devfs 协作时查看 `guides/device-driver.md`。
-7. 需要了解进程凭证（cred）模块设计与 BusyBox identity syscall 方案时查看 `guides/cred-module-design.md`。
-8. 需要构建、运行、调试或性能采样时先查看 `workflows/README.md`，再按需查阅 `tools/README.md`。
+1. 构建、运行和调试内核时，先看 [`../os/README.md`](../os/README.md)。
+2. 查找工具时，从 [`tools/README.md`](./tools/README.md) 进入。
+3. 执行可重复操作时，遵循 [`workflows/README.md`](./workflows/README.md)。
+4. 接手开发任务时，查看 [`tasks/README.md`](./tasks/README.md) 和对应交接记录。
+5. 自动化 Agent 在工作前阅读 [`agents/README.md`](./agents/README.md)。
+6. 需要项目技术文稿时进入 [`technical_document/README.md`](./technical_document/README.md)。
+
+README 的分级页头、导航和事实引用约定见
+[`guides/readme-style.md`](./guides/readme-style.md)。

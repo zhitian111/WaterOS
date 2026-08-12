@@ -1,3 +1,5 @@
+"""验证活动调试会话的发现、版本检查和连接策略。"""
+
 from __future__ import annotations
 
 import argparse
@@ -8,8 +10,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-SCRIPTS = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(SCRIPTS))
+DEBUG_SCRIPTS = Path(__file__).resolve().parents[1] / "debug"
+sys.path.insert(0, str(DEBUG_SCRIPTS))
 
 import wateros_debug
 from wateros_debug import DebugToolError, resolve_connection

@@ -60,7 +60,7 @@ BuildStorm 在 `[axbuild] ... done` 后必须稳定返回并打印
 - `os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/task/`
 - `os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/fs/io.rs`
 - `os/src/user_bringup_common.rs`
-- `os/scripts/wateros_debug.py`
+- `os/scripts/debug/wateros_debug.py`
 
 ### 任务内容
 

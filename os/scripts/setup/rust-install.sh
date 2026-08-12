@@ -1,0 +1,29 @@
+#!/bin/sh
+# 旧版 Debian/Ubuntu Rust 环境初始化脚本，并通过 hello_world 验证安装。
+# 它会调用 sudo apt 并创建临时 Cargo 工程，执行前请先阅读完整脚本。
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+WOS_LOG_COMPONENT=SETUP
+export WOS_LOG_COMPONENT
+. "$SCRIPT_DIR/../source/console.bash"
+
+info "开始安装 Rust 开发环境"
+
+sudo apt update                  # 更新软件源
+sudo apt install cargo           # cargo 工具链
+sudo apt install rustc           # rustc 编译器
+sudo apt install build-essential # 编译工具链
+sudo apt install pkg-config      # 依赖库管理工具
+sudo apt install libssl-dev      # openssl 库
+rustup component add clippy      # 代码审查工具
+rustup component add rustfmt     # 代码格式化工具
+rustup component add rust-analyzer   # 语言服务器
+cargo new hello_world --bin      # 创建新项目
+cd hello_world                   # 进入项目目录
+cargo build                      # 编译项目
+cargo run                        # 运行项目
+info "Rust 示例工程运行完成 expected_output=Hello,world"
+cd ..
+rm -rf hello_world               # 删除项目
+rm Cargo.*                      # 删除 cargo 配置文件
+info "Rust 开发环境安装完成"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ELF symbol index and addr2line lookup for WaterOS kernels."""
+"""为 WaterOS 内核提供 ELF 符号索引和 addr2line 查询。"""
 from __future__ import annotations
 
 import bisect
@@ -24,7 +24,7 @@ ARCH_TOOLS: dict[Arch, ArchTooling] = {
 
 
 def _rust_llvm_tool(name: str) -> str | None:
-    """Find an LLVM binutil shipped with the active rustup toolchain."""
+    """查找当前 rustup 工具链附带的 LLVM binutil。"""
     try:
         sysroot = Path(
             subprocess.check_output(
@@ -90,28 +90,28 @@ class SymbolLookup:
 
     def format_detail(self) -> str:
         lines = [
-            f"Raw PC:    0x{self.raw_pc:016x}",
-            f"Lookup PC: 0x{self.lookup_pc:016x}",
+            f"原始 PC：  0x{self.raw_pc:016x}",
+            f"查询 PC：  0x{self.lookup_pc:016x}",
         ]
         if self.region_hint:
-            lines.append(f"Region:    {self.region_hint}")
+            lines.append(f"区域：     {self.region_hint}")
         if self.symbol:
-            lines.append(f"Symbol:    {self.symbol.name}")
+            lines.append(f"符号：     {self.symbol.name}")
             lines.append(
-                f"Range:     [0x{self.symbol.start:016x}, 0x{self.symbol.end:016x}) "
+                f"范围：     [0x{self.symbol.start:016x}, 0x{self.symbol.end:016x}) "
                 f"(size={self.symbol.size})"
             )
-            lines.append(f"Offset:    +{self.offset}")
+            lines.append(f"偏移：     +{self.offset}")
         else:
-            lines.append("Symbol:    <not in any symbol range>")
+            lines.append("符号：     不在任何符号范围内")
             if self.nearest:
                 lines.append(
-                    f"Nearest:   {self.nearest.name} @ 0x{self.nearest.start:016x}"
+                    f"最近符号： {self.nearest.name} @ 0x{self.nearest.start:016x}"
                 )
         if self.addr2line_func:
-            lines.append(f"Function:  {self.addr2line_func}")
+            lines.append(f"函数：     {self.addr2line_func}")
         if self.source_file:
-            lines.append(f"Source:    {self.source_file}:{self.source_line or '?'}")
+            lines.append(f"源码：     {self.source_file}:{self.source_line or '?'}")
         return "\n".join(lines)
 
     def _pc_str(self) -> str:
@@ -181,7 +181,7 @@ class SymbolIndex:
         try:
             out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
         except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-            raise RuntimeError(f"failed to run nm on {self.elf_path}: {exc}") from exc
+            raise RuntimeError(f"无法对 {self.elf_path} 执行 nm：{exc}") from exc
 
         symbols: list[SymbolEntry] = []
         for line in out.splitlines():

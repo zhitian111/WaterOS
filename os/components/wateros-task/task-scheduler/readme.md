@@ -1,5 +1,7 @@
 # wateros-task-scheduler
 
+[项目首页](../../../../README.md) · [内核工程](../../../README.md) · [wateros-task](../readme.md)
+
 `wateros-task-scheduler` 是 WaterOS 的多类、每 CPU 调度器。当前实现支持五种 Linux 调度
 策略：`SCHED_OTHER`、`SCHED_BATCH`、`SCHED_IDLE`、`SCHED_FIFO`、`SCHED_RR`；并为每个配置
 CPU 维护 idle task、current task、runnable 队列、timer/switch 统计与重调度状态。

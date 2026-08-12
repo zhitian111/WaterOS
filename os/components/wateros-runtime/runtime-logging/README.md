@@ -1,5 +1,7 @@
 # runtime-logging
 
+[项目首页](../../../../README.md) · [内核工程](../../../README.md) · [wateros-runtime](../README.md)
+
 本 crate 将 `log` facade 接到 `runtime-console`。`init()` 根据 `impl-trace` 至
 `impl-error` feature 选择最大等级；多个 feature 同时出现时选择最详细的等级。
 
