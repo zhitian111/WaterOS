@@ -30,3 +30,23 @@ and copy-on-write behavior remain unchanged.
 Accept only a successful improvement larger than the recent roughly 10 s run
 noise. A clear first result is final and is not repeated. Reject a regression
 or noise-sized improvement without merging the capacity change.
+
+## Result
+
+The first matched sample passed the toolchain, minibuild, compile, artifact,
+and judge checks, but completed in 569.98 s. Against the accepted 128 MiB
+result of 534.26 s this is a 35.72 s / 6.69% regression. Host wall time was
+592.948 s. There was no panic, stall, timeout, or SIGSEGV.
+
+The candidate kernel SHA-256 was
+`4ed6615ae41c83cd43a3239fbe005ebc67ae34a1f2bb50e353b5cdf28a874879`;
+the fixed image SHA-256 remained
+`ca5987d2791f83781762f531557f40fadd0a2ce0068fd9be58c2014465db7f58`.
+The structured result is
+`/tmp/wateros-buildstorm-fixed/readonly-exec-mmap-cache-192m-a1/result.json`.
+
+The larger bound therefore does not expose useful residual capacity in this
+workload. The extra resident frames and cache metadata/search footprint cost
+more than any later reuse they preserve. Per the predeclared stop condition,
+do not repeat this sample and do not merge the capacity change. Preserve this
+branch as the performance-failed record; main remains at 128 MiB.
