@@ -12,11 +12,13 @@
 # - return_address_space_token : 36 * 8
 # - lsx      : 37 * 8, 32 * 16 bytes
 # - fcsr     : 101 * 8
+# - fcc      : 102 * 8
+# - reserved : 103 * 8
 #
 # CSR SAVE0 在用户态运行时保存当前任务的内核栈顶。
 # 用户态进入内核 trap 时，在构建 TrapContext 前用 SAVE0 与 $r3 交换，与 RISC-V
 # 实现中的 sscratch 约定对应。
-    .equ TRAP_CONTEXT_SIZE, 816
+    .equ TRAP_CONTEXT_SIZE, 832
     .equ CSR_PRMD, 0x1
     .equ CSR_ERA, 0x6
     .equ CSR_ESTAT, 0x5
@@ -138,6 +140,47 @@
     vld $vr31, \base, 792
     .endm
 
+    .macro SAVE_FCC
+    move $r13, $r0
+    movcf2gr $r12, $fcc0
+    bstrins.d $r13, $r12, 0, 0
+    movcf2gr $r12, $fcc1
+    bstrins.d $r13, $r12, 1, 1
+    movcf2gr $r12, $fcc2
+    bstrins.d $r13, $r12, 2, 2
+    movcf2gr $r12, $fcc3
+    bstrins.d $r13, $r12, 3, 3
+    movcf2gr $r12, $fcc4
+    bstrins.d $r13, $r12, 4, 4
+    movcf2gr $r12, $fcc5
+    bstrins.d $r13, $r12, 5, 5
+    movcf2gr $r12, $fcc6
+    bstrins.d $r13, $r12, 6, 6
+    movcf2gr $r12, $fcc7
+    bstrins.d $r13, $r12, 7, 7
+    st.d $r13, $r3, 816
+    .endm
+
+    .macro RESTORE_FCC base
+    ld.d $r12, \base, 816
+    bstrpick.d $r13, $r12, 0, 0
+    movgr2cf $fcc0, $r13
+    bstrpick.d $r13, $r12, 1, 1
+    movgr2cf $fcc1, $r13
+    bstrpick.d $r13, $r12, 2, 2
+    movgr2cf $fcc2, $r13
+    bstrpick.d $r13, $r12, 3, 3
+    movgr2cf $fcc3, $r13
+    bstrpick.d $r13, $r12, 4, 4
+    movgr2cf $fcc4, $r13
+    bstrpick.d $r13, $r12, 5, 5
+    movgr2cf $fcc5, $r13
+    bstrpick.d $r13, $r12, 6, 6
+    movgr2cf $fcc6, $r13
+    bstrpick.d $r13, $r12, 7, 7
+    movgr2cf $fcc7, $r13
+    .endm
+
 __alltraps:
     .cfi_startproc
     .cfi_signal_frame
@@ -220,6 +263,7 @@ __alltraps:
     SAVE_LSX_REGS
     movfcsr2gr $r12, $fcsr0
     st.d $r12, $r3, 808
+    SAVE_FCC
 
     move $r4, $r3
     # r1/ra 位于 TrapContext+8，CFA 为进入 trap 前的内核栈顶。
@@ -236,6 +280,7 @@ __alltraps:
 
     beq $r13, $r14, .Lreturn_to_user
     RESTORE_LSX_REGS $r3
+    RESTORE_FCC $r3
     ld.d $r12, $r3, 808
     movgr2fcsr $fcsr0, $r12
     RESTORE_GENERAL_REGS
@@ -266,6 +311,7 @@ __alltraps:
     addi.d $r12, $r3, TRAP_CONTEXT_SIZE
     csrwr $r12, CSR_SAVE0
     RESTORE_LSX_REGS $r3
+    RESTORE_FCC $r3
     ld.d $r12, $r3, 808
     movgr2fcsr $fcsr0, $r12
     RESTORE_GENERAL_REGS

@@ -242,7 +242,8 @@ impl SignalFrameCodec for TrapContext {
                                status : self.sstatus,
                                fpregs,
                                fcsr,
-                               reserved : 0 }
+                               fcc : 0,
+                               vectors : [[0; 2]; 32] }
     }
 
     fn restore_signal_context(&mut self, context : &SignalMachineContext) -> bool {

@@ -153,7 +153,10 @@ pub trait TrapFrameWrite {
     }
 }
 
-/// 用户态信号帧中保存的、与架构无关的最小机器上下文子集。
+/// 内核在构造 Linux 用户信号帧前保存的、与架构无关的机器上下文。
+///
+/// `DATA:` 该类型只在内核组件之间传递，不直接暴露到用户栈。用户可见布局必须由
+/// syscall 层按目标架构的 Linux UAPI 编码，不能依赖本结构的字段顺序。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub struct SignalMachineContext {
@@ -167,8 +170,10 @@ pub struct SignalMachineContext {
     pub fpregs: [u64; 32],
     /// 浮点控制状态。
     pub fcsr: u32,
-    /// 对齐填充，保留。
-    pub reserved: u32,
+    /// LoongArch FCC0..FCC7；其它架构保持为零。
+    pub fcc: u64,
+    /// LoongArch LSX 寄存器的低、高 64 位；其它架构保持为零。
+    pub vectors: [[u64; 2]; 32],
 }
 
 impl Default for SignalMachineContext {
@@ -179,7 +184,8 @@ impl Default for SignalMachineContext {
             status: 0,
             fpregs: [0; 32],
             fcsr: 0,
-            reserved: 0,
+            fcc: 0,
+            vectors: [[0; 2]; 32],
         }
     }
 }

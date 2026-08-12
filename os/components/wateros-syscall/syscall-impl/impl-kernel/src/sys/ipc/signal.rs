@@ -22,7 +22,6 @@ use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
 const RT_SIGSET_SIZE_64 : usize = 8;
 const RT_SIGACTION_SIZE : usize = 24;
 const NSIG : usize = 64;
-const SIGNAL_FRAME_MAGIC : u64 = 0x5741_5445_5253_4947;
 const SS_ONSTACK : i32 = 1;
 const SS_DISABLE : i32 = 2;
 #[cfg(target_arch = "riscv64")]
@@ -80,23 +79,81 @@ struct UserSignalStack {
     size : usize,
 }
 
-#[repr(C)]
+/// Linux keeps room for a 1024-bit signal mask even though the kernel ABI used by
+/// `rt_sigprocmask` currently exposes one 64-bit word.
+const USER_SIGMASK_PADDING : usize = 120;
+
+#[cfg(target_arch = "riscv64")]
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+struct LinuxMachineContext {
+    pc : usize,
+    /// Linux omits x0 and stores x1..x31 in order.
+    gprs : [usize; 31],
+    fpregs : [u64; 32],
+    fcsr : u32,
+}
+
+#[cfg(target_arch = "loongarch64")]
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+struct LinuxMachineContext {
+    pc : usize,
+    gprs : [usize; 32],
+    flags : u32,
+}
+
+#[repr(C, align(16))]
 #[derive(Clone, Copy)]
 struct UserUContext {
     flags : usize,
     link : usize,
     stack : UserSignalStack,
     sigmask : u64,
-    reserved : [u64; 15],
-    machine : SignalMachineContext,
+    reserved : [u8; USER_SIGMASK_PADDING],
+    machine : LinuxMachineContext,
 }
 
-#[repr(C)]
+#[cfg(target_arch = "riscv64")]
+#[repr(C, align(16))]
 #[derive(Clone, Copy)]
 struct UserRtSignalFrame {
     info : UserSigInfo,
     ucontext : UserUContext,
-    magic : u64,
+}
+
+#[cfg(target_arch = "loongarch64")]
+const LOONGARCH_SC_USED_FP : u32 = 1;
+#[cfg(target_arch = "loongarch64")]
+const LOONGARCH_LSX_CTX_MAGIC : u32 = 0x5358_0001;
+
+#[cfg(target_arch = "loongarch64")]
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Default)]
+struct LoongArchContextInfo {
+    magic : u32,
+    size : u32,
+    padding : u64,
+}
+
+#[cfg(target_arch = "loongarch64")]
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+struct LoongArchLsxContext {
+    regs : [u64; 64],
+    fcc : u64,
+    fcsr : u32,
+}
+
+#[cfg(target_arch = "loongarch64")]
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+struct UserRtSignalFrame {
+    info : UserSigInfo,
+    ucontext : UserUContext,
+    lsx_info : LoongArchContextInfo,
+    lsx : LoongArchLsxContext,
+    end : LoongArchContextInfo,
 }
 
 // ── 新增结构体（来自原 task.rs 的 signal 相关类型）────────────
@@ -118,6 +175,146 @@ struct UserSigAction {
 
 const _ : () = assert!(core::mem::size_of::<UserSigAction>() == RT_SIGACTION_SIZE);
 const _ : () = assert!(core::mem::size_of::<UserSigInfo>() == 128);
+const _ : () = assert!(core::mem::offset_of!(UserRtSignalFrame, ucontext) == 0x80);
+const _ : () = assert!(core::mem::offset_of!(UserRtSignalFrame, ucontext.machine) == 0x130);
+#[cfg(target_arch = "riscv64")]
+const _ : () = assert!(core::mem::size_of::<LinuxMachineContext>() == 0x210);
+#[cfg(target_arch = "riscv64")]
+const _ : () = assert!(core::mem::size_of::<UserRtSignalFrame>() == 0x340);
+#[cfg(target_arch = "loongarch64")]
+const _ : () = assert!(core::mem::size_of::<LinuxMachineContext>() == 0x110);
+#[cfg(target_arch = "loongarch64")]
+const _ : () = assert!(core::mem::offset_of!(UserRtSignalFrame, lsx_info) == 0x240);
+#[cfg(target_arch = "loongarch64")]
+const _ : () = assert!(core::mem::size_of::<LoongArchContextInfo>() == 0x10);
+#[cfg(target_arch = "loongarch64")]
+const _ : () = assert!(core::mem::size_of::<LoongArchLsxContext>() == 0x210);
+#[cfg(target_arch = "loongarch64")]
+const _ : () = assert!(core::mem::size_of::<UserRtSignalFrame>() == 0x470);
+
+#[cfg(target_arch = "riscv64")]
+fn encode_machine_context(context : &SignalMachineContext) -> LinuxMachineContext {
+    let mut gprs = [0; 31];
+    gprs.copy_from_slice(&context.gprs[1..]);
+    LinuxMachineContext { pc : context.pc,
+                          gprs,
+                          fpregs : context.fpregs,
+                          fcsr : context.fcsr }
+}
+
+#[cfg(target_arch = "riscv64")]
+fn decode_machine_context(context : &LinuxMachineContext) -> SignalMachineContext {
+    let mut decoded = SignalMachineContext::default();
+    decoded.pc = context.pc;
+    decoded.gprs[1..].copy_from_slice(&context.gprs);
+    decoded.fpregs = context.fpregs;
+    decoded.fcsr = context.fcsr;
+    decoded
+}
+
+#[cfg(target_arch = "loongarch64")]
+fn encode_machine_context(context : &SignalMachineContext) -> LinuxMachineContext {
+    LinuxMachineContext { pc : context.pc,
+                          gprs : context.gprs,
+                          flags : LOONGARCH_SC_USED_FP }
+}
+
+#[cfg(target_arch = "loongarch64")]
+fn encode_lsx_context(context : &SignalMachineContext) -> LoongArchLsxContext {
+    let mut regs = [0; 64];
+    for (slot, vector) in regs.chunks_exact_mut(2)
+                              .zip(context.vectors.iter())
+    {
+        slot.copy_from_slice(vector);
+    }
+    LoongArchLsxContext { regs,
+                          fcc : context.fcc,
+                          fcsr : context.fcsr }
+}
+
+#[cfg(target_arch = "loongarch64")]
+fn decode_machine_context(context : &LinuxMachineContext,
+                          lsx : &LoongArchLsxContext)
+                          -> SignalMachineContext {
+    let mut decoded = SignalMachineContext::default();
+    decoded.pc = context.pc;
+    decoded.gprs = context.gprs;
+    decoded.fcc = lsx.fcc;
+    decoded.fcsr = lsx.fcsr;
+    for (vector, slot) in decoded.vectors.iter_mut()
+                                         .zip(lsx.regs.chunks_exact(2))
+    {
+        vector.copy_from_slice(slot);
+    }
+    for (fpreg, vector) in decoded.fpregs.iter_mut()
+                                           .zip(decoded.vectors.iter())
+    {
+        *fpreg = vector[0];
+    }
+    decoded
+}
+
+#[cfg(target_arch = "riscv64")]
+fn build_user_signal_frame(info : UserSigInfo,
+                           stack : UserSignalStack,
+                           mask : u64,
+                           context : &SignalMachineContext)
+                           -> UserRtSignalFrame {
+    UserRtSignalFrame { info,
+                        ucontext:
+                            UserUContext { flags : 0,
+                                           link : 0,
+                                           stack,
+                                           sigmask : mask,
+                                           reserved : [0; USER_SIGMASK_PADDING],
+                                           machine : encode_machine_context(context) } }
+}
+
+#[cfg(target_arch = "loongarch64")]
+fn build_user_signal_frame(info : UserSigInfo,
+                           stack : UserSignalStack,
+                           mask : u64,
+                           context : &SignalMachineContext)
+                           -> UserRtSignalFrame {
+    UserRtSignalFrame { info,
+                        ucontext:
+                            UserUContext { flags : 0,
+                                           link : 0,
+                                           stack,
+                                           sigmask : mask,
+                                           reserved : [0; USER_SIGMASK_PADDING],
+                                           machine : encode_machine_context(context) },
+                        lsx_info:
+                            LoongArchContextInfo { magic : LOONGARCH_LSX_CTX_MAGIC,
+                                                   size : (core::mem::size_of::<
+                                                       LoongArchContextInfo,
+                                                   >() +
+                                                           core::mem::size_of::<
+                                                               LoongArchLsxContext,
+                                                           >()) as u32,
+                                                   padding : 0 },
+                        lsx : encode_lsx_context(context),
+                        end : LoongArchContextInfo::default() }
+}
+
+#[cfg(target_arch = "riscv64")]
+fn restore_user_machine_context(frame : &UserRtSignalFrame) -> Option<SignalMachineContext> {
+    Some(decode_machine_context(&frame.ucontext.machine))
+}
+
+#[cfg(target_arch = "loongarch64")]
+fn restore_user_machine_context(frame : &UserRtSignalFrame) -> Option<SignalMachineContext> {
+    let expected_size = (core::mem::size_of::<LoongArchContextInfo>() +
+                         core::mem::size_of::<LoongArchLsxContext>()) as u32;
+    if frame.lsx_info.magic != LOONGARCH_LSX_CTX_MAGIC ||
+       frame.lsx_info.size != expected_size ||
+       frame.end.magic != 0 ||
+       frame.end.size != 0
+    {
+        return None;
+    }
+    Some(decode_machine_context(&frame.ucontext.machine, &frame.lsx))
+}
 
 // ── 内部辅助 ────────────────────────────────────────────────
 
@@ -393,23 +590,16 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
                             .map(|sp| sp & !0xF)
                             .ok_or(ErrNo::EFAULT)?;
     let frame_on_alternate = already_on_alternate || switch_to_alternate;
-    let user_frame =
-        UserRtSignalFrame { info : UserSigInfo { signo : pending.signal as i32,
-                                                 errno : 0,
-                                                 code : 0,
-                                                 pad : 0,
-                                                 payload : [0; 112] },
-                            ucontext:
-                                UserUContext { flags : 0,
-                                               link : 0,
-                                               stack:
+    let user_frame = build_user_signal_frame(UserSigInfo { signo : pending.signal as i32,
+                                                           errno : 0,
+                                                           code : 0,
+                                                           pad : 0,
+                                                           payload : [0; 112] },
                                                    signal_stack_for_user(alternate_stack,
                                                                          already_on_alternate),
-                                               sigmask : pending.previous_mask
-                                                                .bits(),
-                                               reserved : [0; 15],
-                                               machine : original },
-                            magic : SIGNAL_FRAME_MAGIC };
+                                                   pending.previous_mask
+                                                          .bits(),
+                                                   &original);
     copy_to_user_struct(frame_sp, &user_frame)?;
     ipc::signal::enter_signal_frame(snapshot.task_id, frame_on_alternate).map_err(|_| {
                                                                              ErrNo::ESRCH
@@ -443,13 +633,12 @@ pub(crate) fn restore_signal_frame(frame : *mut u8) -> Result<(), ErrNo> {
     let snapshot = ensure_current_signal_state()?;
     let context = unsafe { &mut *(frame.cast::<ActiveTrapFrame>()) };
     let frame_sp = TrapFrameRead::user_sp(context);
-    let user_frame = copy_from_user_struct::<UserRtSignalFrame>(frame_sp)?;
-    if user_frame.magic != SIGNAL_FRAME_MAGIC {
+    if frame_sp & 0xF != 0 {
         return Err(ErrNo::EFAULT);
     }
-    if !context.restore_signal_context(&user_frame.ucontext
-                                                  .machine)
-    {
+    let user_frame = copy_from_user_struct::<UserRtSignalFrame>(frame_sp)?;
+    let restored = restore_user_machine_context(&user_frame).ok_or(ErrNo::EFAULT)?;
+    if !context.restore_signal_context(&restored) {
         return Err(ErrNo::EFAULT);
     }
     ipc::signal::leave_signal_frame(snapshot.task_id,

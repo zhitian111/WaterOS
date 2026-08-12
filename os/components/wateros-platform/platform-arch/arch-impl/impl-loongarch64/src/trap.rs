@@ -27,6 +27,10 @@ pub struct TrapContext {
     lsx : [[u64; 2]; 32],
     /// 浮点控制状态；基础 FPR 是对应 LSX 寄存器的低 64 位。
     fcsr : usize,
+    /// 浮点条件码 FCC0..FCC7，按 bit0..bit7 打包。
+    fcc : usize,
+    /// 保持 trap 帧和调用 Rust handler 时的 16 字节栈对齐。
+    reserved : usize,
 }
 
 /// 异常入口向量 CSR（`EENTRY`）：`trap.S` 中 `__alltraps` 的物理入口地址写入此
@@ -65,65 +69,6 @@ const TIMER_SLICE_TICKS : u64 = 10_000_000;
 /// LSX 状态随用户 trap 帧保存和恢复，因此定时器抢占和跨核调度不会串改用户状态。
 /// 基础浮点状态仍由现有信号上下文路径管理。
 const LOONGARCH_EUEN_FPE_SXE : usize = (1 << 0) | (1 << 1);
-
-unsafe fn save_fp_state() -> ([u64; 32], u32) {
-    let mut regs = [0u64; 32];
-    let mut fcsr : usize;
-    let base = regs.as_mut_ptr();
-    unsafe {
-        asm!(
-            "fst.d $f0, {base}, 0", "fst.d $f1, {base}, 8",
-            "fst.d $f2, {base}, 16", "fst.d $f3, {base}, 24",
-            "fst.d $f4, {base}, 32", "fst.d $f5, {base}, 40",
-            "fst.d $f6, {base}, 48", "fst.d $f7, {base}, 56",
-            "fst.d $f8, {base}, 64", "fst.d $f9, {base}, 72",
-            "fst.d $f10, {base}, 80", "fst.d $f11, {base}, 88",
-            "fst.d $f12, {base}, 96", "fst.d $f13, {base}, 104",
-            "fst.d $f14, {base}, 112", "fst.d $f15, {base}, 120",
-            "fst.d $f16, {base}, 128", "fst.d $f17, {base}, 136",
-            "fst.d $f18, {base}, 144", "fst.d $f19, {base}, 152",
-            "fst.d $f20, {base}, 160", "fst.d $f21, {base}, 168",
-            "fst.d $f22, {base}, 176", "fst.d $f23, {base}, 184",
-            "fst.d $f24, {base}, 192", "fst.d $f25, {base}, 200",
-            "fst.d $f26, {base}, 208", "fst.d $f27, {base}, 216",
-            "fst.d $f28, {base}, 224", "fst.d $f29, {base}, 232",
-            "fst.d $f30, {base}, 240", "fst.d $f31, {base}, 248",
-            "movfcsr2gr {fcsr}, $fcsr0",
-            base = in(reg) base,
-            fcsr = out(reg) fcsr,
-            options(nostack),
-        );
-    }
-    (regs, fcsr as u32)
-}
-
-unsafe fn restore_fp_state(regs : &[u64; 32], fcsr : u32) {
-    let base = regs.as_ptr();
-    unsafe {
-        asm!(
-            "fld.d $f0, {base}, 0", "fld.d $f1, {base}, 8",
-            "fld.d $f2, {base}, 16", "fld.d $f3, {base}, 24",
-            "fld.d $f4, {base}, 32", "fld.d $f5, {base}, 40",
-            "fld.d $f6, {base}, 48", "fld.d $f7, {base}, 56",
-            "fld.d $f8, {base}, 64", "fld.d $f9, {base}, 72",
-            "fld.d $f10, {base}, 80", "fld.d $f11, {base}, 88",
-            "fld.d $f12, {base}, 96", "fld.d $f13, {base}, 104",
-            "fld.d $f14, {base}, 112", "fld.d $f15, {base}, 120",
-            "fld.d $f16, {base}, 128", "fld.d $f17, {base}, 136",
-            "fld.d $f18, {base}, 144", "fld.d $f19, {base}, 152",
-            "fld.d $f20, {base}, 160", "fld.d $f21, {base}, 168",
-            "fld.d $f22, {base}, 176", "fld.d $f23, {base}, 184",
-            "fld.d $f24, {base}, 192", "fld.d $f25, {base}, 200",
-            "fld.d $f26, {base}, 208", "fld.d $f27, {base}, 216",
-            "fld.d $f28, {base}, 224", "fld.d $f29, {base}, 232",
-            "fld.d $f30, {base}, 240", "fld.d $f31, {base}, 248",
-            "movgr2fcsr $fcsr0, {fcsr}",
-            base = in(reg) base,
-            fcsr = in(reg) fcsr as usize,
-            options(nostack),
-        );
-    }
-}
 
 #[inline]
 fn decode_loongarch64_trap_cause(estat : usize) -> TrapCause {
@@ -261,13 +206,19 @@ impl TrapFrameWrite for TrapContext {
 
 impl SignalFrameCodec for TrapContext {
     fn capture_signal_context(&self) -> SignalMachineContext {
-        let (fpregs, fcsr) = unsafe { save_fp_state() };
+        let mut fpregs = [0; 32];
+        for (fpreg, vector) in fpregs.iter_mut()
+                                     .zip(self.lsx.iter())
+        {
+            *fpreg = vector[0];
+        }
         SignalMachineContext { gprs : self.x,
                                pc : self.era,
                                status : self.prmd,
                                fpregs,
-                               fcsr,
-                               reserved : 0 }
+                               fcsr : self.fcsr as u32,
+                               fcc : self.fcc as u64,
+                               vectors : self.lsx }
     }
 
     fn restore_signal_context(&mut self, context : &SignalMachineContext) -> bool {
@@ -277,9 +228,14 @@ impl SignalFrameCodec for TrapContext {
         self.x = context.gprs;
         self.x[0] = 0;
         self.era = context.pc;
-        unsafe {
-            restore_fp_state(&context.fpregs, context.fcsr);
+        self.lsx = context.vectors;
+        for (vector, fpreg) in self.lsx.iter_mut()
+                                       .zip(context.fpregs.iter())
+        {
+            vector[0] = *fpreg;
         }
+        self.fcsr = context.fcsr as usize;
+        self.fcc = context.fcc as usize;
         self.set_return_to_user();
         true
     }
