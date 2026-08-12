@@ -6,6 +6,7 @@
 .codegraph/
 .idea/
 .vscode/
+.cursor/
 
 # python 运行垃圾
 __pycache__/
@@ -36,4 +37,3 @@ todo.md
 AGENTS.md
 AGENT.md
 SKILL.md
-
