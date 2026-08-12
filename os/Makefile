@@ -140,18 +140,31 @@ SELECTED_RUN_SCRIPT := ./scripts/run/$(ARCH)_$(PROFILE)_run.sh
 DEBUG_PROFILE := $(ARCH)-$(PROFILE)
 
 define TRACE
-	@printf '%b[MAKE][TRACE]%b %s\n' "$(COLOR_ANSI_BLUE)" "$(COLOR_ANSI_CLEAR)" "$(1)"
+	@$(call TRACE_CMD,$(1))
+endef
+define DEBUG
+	@$(call DEBUG_CMD,$(1))
 endef
 define INFO
-	@printf '%b[MAKE][INFO]%b %s\n' "$(COLOR_ANSI_GREEN)" "$(COLOR_ANSI_CLEAR)" "$(1)"
+	@$(call INFO_CMD,$(1))
 endef
 define WARNING
-	@printf '%b[MAKE][WARN]%b %s\n' "$(COLOR_ANSI_YELLOW)" "$(COLOR_ANSI_CLEAR)" "$(1)" >&2
+	@$(call WARN_CMD,$(1))
+endef
+define WARN
+	@$(call WARN_CMD,$(1))
 endef
 define ERROR
-	@printf '%b[MAKE][ERROR]%b %s exit_code=%s\n' "$(COLOR_ANSI_RED)" "$(COLOR_ANSI_CLEAR)" "$(1)" "$(2)" >&2
-	@exit $$2
+	@$(call ERROR_CMD,$(1),$(2)); exit $(2)
 endef
+
+# `*_CMD` 可在复合 Shell 语句中使用；上层宏用于普通 recipe 行。
+# `subst` 兼容历史调用中多余的双引号，避免 printf 对多个参数重复应用格式串。
+TRACE_CMD = printf '%b[Makefile]%b\t%b[TRACE]%b\t%s\n' "$(COLOR_ANSI_PURPLE)" "$(COLOR_ANSI_CLEAR)" "$(COLOR_ANSI_CYAN)" "$(COLOR_ANSI_CLEAR)" '$(subst ",,$(strip $(1)))'
+DEBUG_CMD = printf '%b[Makefile]%b\t%b[DEBUG]%b\t%s\n' "$(COLOR_ANSI_PURPLE)" "$(COLOR_ANSI_CLEAR)" "$(COLOR_ANSI_BLUE)" "$(COLOR_ANSI_CLEAR)" '$(subst ",,$(strip $(1)))'
+INFO_CMD = printf '%b[Makefile]%b\t%b[INFO]%b\t%s\n' "$(COLOR_ANSI_PURPLE)" "$(COLOR_ANSI_CLEAR)" "$(COLOR_ANSI_GREEN)" "$(COLOR_ANSI_CLEAR)" '$(subst ",,$(strip $(1)))'
+WARN_CMD = printf '%b[Makefile]%b\t%b[WARN]%b\t%s\n' "$(COLOR_ANSI_PURPLE)" "$(COLOR_ANSI_CLEAR)" "$(COLOR_ANSI_YELLOW)" "$(COLOR_ANSI_CLEAR)" '$(subst ",,$(strip $(1)))' >&2
+ERROR_CMD = printf '%b[Makefile]%b\t%b[ERROR]%b\t%s exit_code=%s\n' "$(COLOR_ANSI_PURPLE)" "$(COLOR_ANSI_CLEAR)" "$(COLOR_ANSI_RED)" "$(COLOR_ANSI_CLEAR)" '$(subst ",,$(strip $(1)))' '$(2)' >&2
 
 help:
 	@echo "WaterOS 统一入口（默认 ARCH=rv PROFILE=pre SMP=8 SNAPSHOT=1）"
@@ -194,27 +207,27 @@ show-config:
 	@printf "  %-18s %s\n" "GRAPHICS_BACKEND" "$(GRAPHICS_BACKEND)"
 
 validate-config:
-	@case "$(ARCH)" in rv|la) ;; *) printf '[MAKE][ERROR] 无效架构 value=%s allowed=rv,la\n' "$(ARCH)" >&2; exit 2 ;; esac
-	@case "$(PROFILE)" in pre|final) ;; *) printf '[MAKE][ERROR] 无效构建阶段 value=%s allowed=pre,final\n' "$(PROFILE)" >&2; exit 2 ;; esac
-	@case "$(MODE)" in auto|shell|run) ;; *) printf '[MAKE][ERROR] 无效运行模式 value=%s allowed=auto,shell,run\n' "$(MODE)" >&2; exit 2 ;; esac
-	@case "$(SMP)" in 1|2|3|4|5|6|7|8) ;; *) printf '[MAKE][ERROR] 无效 CPU 数量 value=%s range=1..8\n' "$(SMP)" >&2; exit 2 ;; esac
-	@case "$(SNAPSHOT)" in 0|1) ;; *) printf '[MAKE][ERROR] 无效快照开关 value=%s allowed=0,1\n' "$(SNAPSHOT)" >&2; exit 2 ;; esac
-	@case "$(WRITE_DISK)" in 0|1) ;; *) printf '[MAKE][ERROR] 无效磁盘写入开关 value=%s allowed=0,1\n' "$(WRITE_DISK)" >&2; exit 2 ;; esac
-	@test -n "$(SDCARD)" || { printf '[MAKE][ERROR] 未配置根文件系统镜像 variable=SDCARD\n' >&2; exit 2; }
-	@case "$(FAULTS)" in 0|1) ;; *) printf '[MAKE][ERROR] 无效故障注入开关 value=%s allowed=0,1\n' "$(FAULTS)" >&2; exit 2 ;; esac
-	@case "$(START_PAUSED)" in 0|1) ;; *) printf '[MAKE][ERROR] 无效暂停启动开关 value=%s allowed=0,1\n' "$(START_PAUSED)" >&2; exit 2 ;; esac
-	@case "$(GRAPHICS)" in 0|1) ;; *) printf '[MAKE][ERROR] 无效图形开关 value=%s allowed=0,1\n' "$(GRAPHICS)" >&2; exit 2 ;; esac
+	@case "$(ARCH)" in rv|la) ;; *) $(call ERROR_CMD,无效架构 value=$(ARCH) allowed=rv$(COMMA)la,2); exit 2 ;; esac
+	@case "$(PROFILE)" in pre|final) ;; *) $(call ERROR_CMD,无效构建阶段 value=$(PROFILE) allowed=pre$(COMMA)final,2); exit 2 ;; esac
+	@case "$(MODE)" in auto|shell|run) ;; *) $(call ERROR_CMD,无效运行模式 value=$(MODE) allowed=auto$(COMMA)shell$(COMMA)run,2); exit 2 ;; esac
+	@case "$(SMP)" in 1|2|3|4|5|6|7|8) ;; *) $(call ERROR_CMD,无效 CPU 数量 value=$(SMP) range=1..8,2); exit 2 ;; esac
+	@case "$(SNAPSHOT)" in 0|1) ;; *) $(call ERROR_CMD,无效快照开关 value=$(SNAPSHOT) allowed=0$(COMMA)1,2); exit 2 ;; esac
+	@case "$(WRITE_DISK)" in 0|1) ;; *) $(call ERROR_CMD,无效磁盘写入开关 value=$(WRITE_DISK) allowed=0$(COMMA)1,2); exit 2 ;; esac
+	@test -n "$(SDCARD)" || { $(call ERROR_CMD,未配置根文件系统镜像 variable=SDCARD,2); exit 2; }
+	@case "$(FAULTS)" in 0|1) ;; *) $(call ERROR_CMD,无效故障注入开关 value=$(FAULTS) allowed=0$(COMMA)1,2); exit 2 ;; esac
+	@case "$(START_PAUSED)" in 0|1) ;; *) $(call ERROR_CMD,无效暂停启动开关 value=$(START_PAUSED) allowed=0$(COMMA)1,2); exit 2 ;; esac
+	@case "$(GRAPHICS)" in 0|1) ;; *) $(call ERROR_CMD,无效图形开关 value=$(GRAPHICS) allowed=0$(COMMA)1,2); exit 2 ;; esac
 	@if [[ "$(MODE)" == run ]]; then \
-		test -n "$(SCRIPT)" || { printf '[MAKE][ERROR] 运行脚本未配置 mode=run variable=SCRIPT\n' >&2; exit 2; }; \
-		[[ "$(SCRIPT)" == /* ]] || { printf '[MAKE][ERROR] Guest 脚本必须使用绝对路径 value=%s\n' "$(SCRIPT)" >&2; exit 2; }; \
+		test -n "$(SCRIPT)" || { $(call ERROR_CMD,运行脚本未配置 mode=run variable=SCRIPT,2); exit 2; }; \
+		[[ "$(SCRIPT)" == /* ]] || { $(call ERROR_CMD,Guest 脚本必须使用绝对路径 value=$(SCRIPT),2); exit 2; }; \
 	elif [[ -n "$(SCRIPT)" ]]; then \
-		printf '[MAKE][ERROR] 当前模式不接受运行脚本 mode=%s script=%s\n' "$(MODE)" "$(SCRIPT)" >&2; exit 2; \
+		$(call ERROR_CMD,当前模式不接受运行脚本 mode=$(MODE) script=$(SCRIPT),2); exit 2; \
 	fi
 	@if [[ -n "$(GUEST_SHELL)" && "$(GUEST_SHELL)" != /* ]]; then \
-		printf '[MAKE][ERROR] Guest Shell 必须使用绝对路径 value=%s\n' "$(GUEST_SHELL)" >&2; exit 2; \
+		$(call ERROR_CMD,Guest Shell 必须使用绝对路径 value=$(GUEST_SHELL),2); exit 2; \
 	fi
 	@if ! [[ "$(PORT)" =~ ^[0-9]+$$ ]] || (( $(PORT) < 1 || $(PORT) > 65535 )); then \
-		printf '[MAKE][ERROR] 无效调试端口 value=%s range=1..65535\n' "$(PORT)" >&2; exit 2; \
+		$(call ERROR_CMD,无效调试端口 value=$(PORT) range=1..65535,2); exit 2; \
 	fi
 
 build: validate-config $(SELECTED_BUILD_TARGET)
