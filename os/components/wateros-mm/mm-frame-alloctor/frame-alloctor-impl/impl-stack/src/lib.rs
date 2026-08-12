@@ -80,7 +80,9 @@ fn with_frame_allocator<R>(f : impl FnOnce(&mut StackFrameAllocator) -> R) -> R 
 pub struct StackFrameAllocator {
     recycled : Vec<PhysPageNum>,
     allocated : Vec<bool>,
-    ref_counts : Vec<usize>,
+    /// 每帧共享引用计数。`u32` 已远高于实际单页映射数量，同时避免大内存机器
+    /// 为每个尚未使用的物理页消耗一个 64 位字。
+    ref_counts : Vec<u32>,
     start_ppn : usize,
     end_ppn : usize,
     /// 永不分配的内存内保留区间（如引导 DTB），已裁剪到帧池范围。
@@ -263,7 +265,7 @@ impl StackFrameAllocator {
             return Err(FrameAllocError::InvalidFrame);
         }
         self.ref_counts[idx] = self.ref_counts[idx].saturating_add(1);
-        Ok(self.ref_counts[idx])
+        Ok(self.ref_counts[idx] as usize)
     }
 
     pub fn ref_count(&self, frame : PhysPageNum) -> FrameAllocResult<usize> {
@@ -273,7 +275,7 @@ impl StackFrameAllocator {
         if !self.allocated[idx] || self.ref_counts[idx] == 0 {
             return Err(FrameAllocError::InvalidFrame);
         }
-        Ok(self.ref_counts[idx])
+        Ok(self.ref_counts[idx] as usize)
     }
 }
 

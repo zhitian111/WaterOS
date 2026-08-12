@@ -87,9 +87,8 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
     }
     let start_ppn = (kernel_end_addr + PAGE_SIZE - 1) / PAGE_SIZE;
     let end_ppn = ram_end_exclusive / PAGE_SIZE;
-    let usable_end_ppn = end_ppn.min(0x1_0000_0000usize / PAGE_SIZE);
     frame_alloctor::init_frame_allocator(PhysPageNum(start_ppn),
-                                         PhysPageNum(usable_end_ppn));
+                                         PhysPageNum(end_ppn));
 
     let mut aspace = LoongArch64AddressSpace::new_kernel()
         .expect("kernel_mm: LoongArch64AddressSpace::new_kernel failed");
