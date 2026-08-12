@@ -69,3 +69,23 @@ accepted for RX executable sharing and does not grow at runtime.
 4. Never merge the candidate to main before wall-clock acceptance. Record the
    result and preserve the experiment branch either way.
 
+## Result: rejected
+
+- Candidate commit: `191574df`
+- Fixed image SHA-256:
+  `ca5987d2791f83781762f531557f40fadd0a2ce0068fd9be58c2014465db7f58`
+- Kernel SHA-256:
+  `6ef745fb29e67c5120e4ccdb312009017c2938743b351941d860b7e752d32f05`
+- RISC-V BuildStorm: **546.16 s**, all required markers and judge checks
+  passed, with no panic/SIGSEGV/stall/timeout.
+- Accepted main: **534.26 s**.
+- Delta: **+11.90 s / +2.23% regression**.
+
+The candidate does not enter main and is not repeated. A single 128-byte slot
+avoided the old slab's class and span machinery, but it still paid the
+allocator guard and CPU-local lookup on every operation. Packing 16/32/64-byte
+objects into 128-byte slots also enlarged the actively touched memory and
+cache/TLB footprint. The result rules out a generic size-only cache even in
+this reduced form. Future allocator work should remove allocations at a
+specific hot owner or use an object-specific pool whose lifetime and exact
+size are known; it should not add another generic `GlobalAlloc` front-end.
