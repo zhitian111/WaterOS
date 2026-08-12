@@ -51,3 +51,22 @@ by an adjacent main only if host drift makes the historical 534.26 s comparison
 ambiguous. Accept only a functional improvement exceeding about 10 seconds;
 otherwise record and leave main unchanged.
 
+## Result: rejected as noise-sized
+
+The candidate passed all BuildStorm and judge markers with no panic, SIGSEGV,
+stall, or timeout:
+
+| run | guest compile time |
+| --- | ---: |
+| current main, immediately before candidate | 553.13 s |
+| intrusive O(1) LRU (`cce74a09`) | 552.13 s |
+| delta | -1.00 s / -0.18% |
+
+Both used the fixed image SHA-256
+`ca5987d2791f83781762f531557f40fadd0a2ce0068fd9be58c2014465db7f58`.
+The one-second difference is far below the accepted noise margin, so the
+candidate does not enter main and is not repeated. Together with the 10.46 s
+regression from disabling replacement, this indicates that retaining late ELF
+pages matters but victim selection itself is not a large wall-clock cost. The
+next bounded experiment should test capacity headroom rather than further LRU
+micro-optimization.
