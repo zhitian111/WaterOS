@@ -1,18 +1,18 @@
 //! 绝对路径规范化：用于 VFS 入口在委托 FS 前统一路径形状（不访问块设备）。
 
-use alloc::string::String;
+use alloc::{borrow::Cow, string::String};
 
 use crate::{VfsError, VfsResult};
 
 /// 规范化后的绝对路径，保证以 `/` 开头、无 `//`、无 `.` / 已解析的 `..`。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NormalizedPath {
-    inner: String,
+pub struct NormalizedPath<'a> {
+    inner: Cow<'a, str>,
 }
 
-impl NormalizedPath {
+impl NormalizedPath<'_> {
     /// 以 `str` 形式借用规范化结果，可直接传给后端 FS（已保证以 `/` 开头等不变量）。
-    pub fn as_str(&self) -> &str { self.inner.as_str() }
+    pub fn as_str(&self) -> &str { self.inner.as_ref() }
 }
 
 /// 将用户输入路径规范化为根卷查找用的绝对路径。
@@ -20,7 +20,7 @@ impl NormalizedPath {
 /// - 必须以 `/` 开头，否则 [`VfsError::InvalidPath`]。
 /// - 空路径（`""`）非法。
 /// - `..` 在根之上折叠为根（与常见 Unix 行为一致）。
-pub fn normalize_absolute_path(path: &str) -> VfsResult<NormalizedPath> {
+pub fn normalize_absolute_path(path: &str) -> VfsResult<NormalizedPath<'_>> {
     if path.is_empty() {
         return Err(VfsError::InvalidPath);
     }
@@ -29,7 +29,7 @@ pub fn normalize_absolute_path(path: &str) -> VfsResult<NormalizedPath> {
     }
     if is_normalized_absolute_path(path.as_bytes()) {
         return Ok(NormalizedPath {
-            inner: String::from(path),
+            inner: Cow::Borrowed(path),
         });
     }
     let mut out = String::with_capacity(path.len());
@@ -57,7 +57,7 @@ pub fn normalize_absolute_path(path: &str) -> VfsResult<NormalizedPath> {
         }
         out.push_str(part);
     }
-    Ok(NormalizedPath { inner: out })
+    Ok(NormalizedPath { inner: Cow::Owned(out) })
 }
 
 /// Check the normalized-path invariant without allocating or decoding UTF-8 again.
@@ -97,6 +97,8 @@ pub fn validate_root_file_name(name: &str) -> VfsResult<()> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::borrow::Cow;
+
     use super::normalize_absolute_path;
 
     #[test]
@@ -118,8 +120,18 @@ mod tests {
 
     #[test]
     fn preserves_already_normalized_paths() {
-        assert_eq!(normalize_absolute_path("/").unwrap().as_str(), "/");
-        assert_eq!(normalize_absolute_path("/usr/src/main.rs").unwrap().as_str(),
-                   "/usr/src/main.rs");
+        let root = normalize_absolute_path("/").unwrap();
+        let path = normalize_absolute_path("/usr/src/main.rs").unwrap();
+        assert_eq!(root.as_str(), "/");
+        assert_eq!(path.as_str(), "/usr/src/main.rs");
+        assert!(matches!(root.inner, Cow::Borrowed(_)));
+        assert!(matches!(path.inner, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn owns_only_rewritten_paths() {
+        let path = normalize_absolute_path("/usr//src/./main.rs").unwrap();
+        assert_eq!(path.as_str(), "/usr/src/main.rs");
+        assert!(matches!(path.inner, Cow::Owned(_)));
     }
 }
