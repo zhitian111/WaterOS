@@ -104,7 +104,7 @@ if [ "$RC" -eq 0 ] && [ -n "$ART" ] && [ "$BYTES" -ge 500000 ]; then
             mkdir -p /work/buildstorm.esp/EFI/BOOT
             cp "$EFI" /work/buildstorm.esp/EFI/BOOT/BOOTLOONGARCH64.EFI
             cp "$QEMU_VARS" /work/buildstorm.vars.fd
-            "$QEMU_LD" --library-path "$QROOT/lib" "$QEMU_BIN" \
+            /usr/bin/stdbuf -o0 -e0 "$QEMU_LD" --library-path "$QROOT/lib" "$QEMU_BIN" \
                 -L "$QROOT/share/qemu" \
                 -machine virt -cpu la464 -smp 1 -m 2G -nographic -serial mon:stdio \
                 -drive if=pflash,format=raw,unit=0,readonly=on,file="$QEMU_CODE" \
@@ -127,7 +127,7 @@ if [ "$RC" -eq 0 ] && [ -n "$ART" ] && [ "$BYTES" -ge 500000 ]; then
         QEMU_BIOS=/opt/qemu-rv64/share/opensbi-riscv64-generic-fw_dynamic.bin
 
         if [ -x "$QEMU_BIN" ] && [ -x "$QEMU_LD" ] && [ -r "$QEMU_BIOS" ]; then
-            "$QEMU_LD" --library-path "$(dirname "$QEMU_LD")" "$QEMU_BIN" \
+            /usr/bin/stdbuf -o0 -e0 "$QEMU_LD" --library-path "$(dirname "$QEMU_LD")" "$QEMU_BIN" \
                 -machine virt -smp 1 -m 256M -nographic -bios "$QEMU_BIOS" -kernel "$ART" \
                 > /work/buildstorm.run.out 2>&1 &
             QPID=$!

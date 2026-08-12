@@ -62,22 +62,24 @@ pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
             "kernel_mm: ram_end_exclusive must be above RAM base");
     PHYS_RAM_END_EXCL.store(ram_end_exclusive, Ordering::Release);
 
-    // 从 kernel_end → DTB → RAM 上界换算可用帧范围
+    // 从 kernel_end 到 DTB `/memory` 上界都属于帧池；DTB 自身仅作为一个小的
+    // reserved region 排除，不能再把 DTB 的放置地址误当成 RAM 终点。QEMU 9.2.1
+    // 会把 16 GiB machine 的 DTB 放在约 3 GiB，旧逻辑因此错误丢弃后方 13 GiB。
     // 用 inline asm 取 kernel_end 符号地址（避免 extern static 指针语法歧义）
     let kernel_end_addr : usize;
     unsafe {
         core::arch::asm!("la {}, kernel_end", out(reg) kernel_end_addr);
     }
     let start_ppn = (kernel_end_addr + PAGE_SIZE - 1) / PAGE_SIZE;
-    let alloc_end = if dtb_pa >= 0x8000_0000 && dtb_pa < ram_end_exclusive {
-        dtb_pa & !(PAGE_SIZE - 1)
-    } else {
-        ram_end_exclusive
-    };
-    let end_ppn = alloc_end / PAGE_SIZE;
+    let end_ppn = ram_end_exclusive / PAGE_SIZE;
+    let (reserved_start_ppn, reserved_end_ppn) = dtb_reserved_ppns(dtb_pa,
+                                                                   ram_end_exclusive)
+        .unwrap_or((start_ppn, start_ppn));
 
-    frame_alloctor::init_frame_allocator(PhysPageNum(start_ppn),
-                                         PhysPageNum(end_ppn));
+    frame_alloctor::init_frame_allocator_with_reserved(PhysPageNum(start_ppn),
+                                                       PhysPageNum(end_ppn),
+                                                       PhysPageNum(reserved_start_ppn),
+                                                       PhysPageNum(reserved_end_ppn));
 
     let mut aspace = Sv39AddressSpace::new_kernel()
         .expect("kernel_mm: Sv39AddressSpace::new_kernel failed");
@@ -176,6 +178,19 @@ pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
     api_v0::user_aspace_lifecycle::register_drop_user_aspace_hook(crate::kernel_mm_impl::drop_user_aspace);
     api_v0::user_aspace_lifecycle::register_aspace_cpu_hooks(crate::user_aspace::mark_active,
                                                               crate::user_aspace::mark_inactive);
+}
+
+/// 返回 DTB 实际 blob 覆盖的页区间；无效/不在 RAM 中时不建立保留区。
+fn dtb_reserved_ppns(dtb_pa : usize, ram_end_exclusive : usize) -> Option<(usize, usize)> {
+    if dtb_pa < 0x8000_0000 || dtb_pa >= ram_end_exclusive {
+        return None;
+    }
+    let fdt = unsafe { fdt::Fdt::from_ptr(dtb_pa as *const u8) }.ok()?;
+    let dtb_end = dtb_pa.checked_add(fdt.total_size())?
+                        .min(ram_end_exclusive);
+    let start_ppn = dtb_pa / PAGE_SIZE;
+    let end_ppn = dtb_end.checked_add(PAGE_SIZE - 1)? / PAGE_SIZE;
+    (end_ppn > start_ppn).then_some((start_ppn, end_ppn))
 }
 
 /// 将 `[va_start, va_end)` 内每一虚拟页映射到 **恒等物理页**，并设置

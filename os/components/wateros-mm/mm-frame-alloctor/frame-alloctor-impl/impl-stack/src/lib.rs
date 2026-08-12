@@ -83,6 +83,9 @@ pub struct StackFrameAllocator {
     ref_counts : Vec<usize>,
     start_ppn : usize,
     end_ppn : usize,
+    /// 永不分配的内存内保留区间（如引导 DTB），已裁剪到帧池范围。
+    reserved_start_ppn : usize,
+    reserved_end_ppn : usize,
     /// 仍可从连续区分配的第一页号上界（不包含）；初始为 `end_ppn`。
     next_novel : usize,
 }
@@ -95,16 +98,32 @@ impl StackFrameAllocator {
                ref_counts : Vec::new(),
                start_ppn : 0,
                end_ppn : 0,
+               reserved_start_ppn : 0,
+               reserved_end_ppn : 0,
                next_novel : 0 }
     }
 
     /// 将可用帧限制为半开区间 `[start_ppn,
     /// end_ppn)`（PPN）；会清空回收栈并重置惰性上界。
     pub fn init(&mut self, start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
+        self.init_with_reserved(start_ppn, end_ppn, start_ppn, start_ppn);
+    }
+
+    /// 初始化完整 RAM 帧区间，同时排除一个位于其中的半开保留区间。
+    ///
+    /// 保留区不从 novel/recycled 路径返回，也不能被引用计数或回收接口接受。
+    pub fn init_with_reserved(&mut self,
+                              start_ppn : PhysPageNum,
+                              end_ppn : PhysPageNum,
+                              reserved_start_ppn : PhysPageNum,
+                              reserved_end_ppn : PhysPageNum) {
         self.recycled
             .clear();
         self.start_ppn = start_ppn.0;
         self.end_ppn = end_ppn.0;
+        self.reserved_start_ppn = reserved_start_ppn.0.clamp(self.start_ppn, self.end_ppn);
+        self.reserved_end_ppn = reserved_end_ppn.0.clamp(self.reserved_start_ppn,
+                                                         self.end_ppn);
         self.next_novel = end_ppn.0;
         self.allocated
             .clear();
@@ -118,17 +137,36 @@ impl StackFrameAllocator {
 
     #[inline]
     fn index(&self, frame : PhysPageNum) -> Option<usize> {
-        if frame.0 < self.start_ppn || frame.0 >= self.end_ppn {
+        if frame.0 < self.start_ppn ||
+           frame.0 >= self.end_ppn ||
+           self.is_reserved(frame.0)
+        {
             None
         } else {
             Some(frame.0 - self.start_ppn)
         }
     }
 
+    #[inline]
+    fn is_reserved(&self, ppn : usize) -> bool {
+        self.reserved_start_ppn <= ppn && ppn < self.reserved_end_ppn
+    }
+
+    fn novel_free_frames(&self) -> usize {
+        let total = self.next_novel.saturating_sub(self.start_ppn);
+        let reserved_below_next = self.next_novel
+                                      .min(self.reserved_end_ppn)
+                                      .saturating_sub(self.reserved_start_ppn);
+        total.saturating_sub(reserved_below_next)
+    }
+
     /// 只读内存池统计：总帧 = 区间大小；空闲 = 回收栈 + 未分配连续段。
     pub fn mem_stats(&self) -> FrameMemStats {
-        let total_frames = self.end_ppn.saturating_sub(self.start_ppn);
-        let novel_free = self.next_novel.saturating_sub(self.start_ppn);
+        let reserved_frames = self.reserved_end_ppn.saturating_sub(self.reserved_start_ppn);
+        let total_frames = self.end_ppn
+                               .saturating_sub(self.start_ppn)
+                               .saturating_sub(reserved_frames);
+        let novel_free = self.novel_free_frames();
         let free_frames = self.recycled.len().saturating_add(novel_free);
         FrameMemStats {
             total_frames,
@@ -158,6 +196,9 @@ impl PhysicalFrameAllocator for StackFrameAllocator {
             self.allocated[idx] = true;
             self.ref_counts[idx] = 1;
             return Ok(p);
+        }
+        if self.next_novel == self.reserved_end_ppn {
+            self.next_novel = self.reserved_start_ppn;
         }
         if self.next_novel > self.start_ppn {
             self.next_novel -= 1;
@@ -252,6 +293,14 @@ fn get_frame_allocator_cell() -> &'static MultiprocessorSafeCell<StackFrameAlloc
 
 /// 初始化全局帧分配器（临时 stack 实现）。
 pub fn init_frame_allocator(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
+    init_frame_allocator_with_reserved(start_ppn, end_ppn, start_ppn, start_ppn);
+}
+
+/// 初始化完整物理帧区间，并排除一个半开保留区间。
+pub fn init_frame_allocator_with_reserved(start_ppn : PhysPageNum,
+                                          end_ppn : PhysPageNum,
+                                          reserved_start_ppn : PhysPageNum,
+                                          reserved_end_ppn : PhysPageNum) {
     if !FRAME_ALLOCATOR_READY.load(Ordering::Acquire) {
         unsafe {
             FRAME_ALLOCATOR.write(MultiprocessorSafeCell::new(StackFrameAllocator::new()));
@@ -259,7 +308,12 @@ pub fn init_frame_allocator(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
         FRAME_ALLOCATOR_READY.store(true, Ordering::Release);
     }
     get_frame_allocator_cell();
-    with_frame_allocator(|allocator| allocator.init(start_ppn, end_ppn));
+    with_frame_allocator(|allocator| {
+        allocator.init_with_reserved(start_ppn,
+                                     end_ppn,
+                                     reserved_start_ppn,
+                                     reserved_end_ppn)
+    });
 }
 
 /// 获取全局帧分配器单例容器（供特殊场景直接拿 `exclusive_access()`）。

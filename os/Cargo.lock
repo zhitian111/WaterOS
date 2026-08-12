@@ -1423,6 +1423,7 @@ dependencies = [
 name = "wateros-mm-impl-sv39"
 version = "0.1.0"
 dependencies = [
+ "fdt",
  "log",
  "spin",
  "wateros-base",
