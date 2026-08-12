@@ -23,6 +23,8 @@ pub use api_v0 as api;
 pub use frame_alloctor;
 #[doc(hidden)]
 pub use impl_common::load_or_get_readonly_mmap_page;
+#[doc(hidden)]
+pub use impl_common::load_or_get_readonly_mmap_page_from_frame;
 
 pub mod mempolicy;
 

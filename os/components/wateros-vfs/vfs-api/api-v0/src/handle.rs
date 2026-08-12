@@ -336,6 +336,12 @@ pub trait VfsIoHandle: Send + VfsHandleAny {
     /// `None`.
     fn file_content_identity(&self) -> Option<VfsFileContentIdentity> { None }
 
+    /// Pin an aligned immutable file page. The raw physical page number owns
+    /// one allocator reference which the memory manager must eventually drop.
+    fn pin_readonly_file_page(&mut self, _file_offset : u64) -> VfsResult<Option<usize>> {
+        Ok(None)
+    }
+
     fn seek(&mut self, _offset: i64, _whence: VfsSeekWhence) -> VfsResult<u64> {
         Err(VfsError::Unsupported)
     }

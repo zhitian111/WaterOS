@@ -368,6 +368,8 @@ impl FsPageIo {
 impl PageCacheIo for FsPageIo {
     type Error = VfsError;
 
+    fn out_of_memory(&self) -> VfsError { VfsError::NoMemory }
+
 // 本方法代码由AI完成
     fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> Result<usize, VfsError> {
         if let Some(node) = self.stable_for_key(path) {
@@ -855,6 +857,20 @@ impl VfsIoHandle for PagedFileHandle {
             return None;
         }
         self.stable_node().map(|node| node.content_identity.clone())
+    }
+
+    fn pin_readonly_file_page(&mut self, file_offset : u64) -> VfsResult<Option<usize>> {
+        if self.is_detached() {
+            return Ok(None);
+        }
+        let size = self.current_size();
+        let key = self.cache_file_key();
+        let mut io = self.page_io();
+        global_cache(self.mount_gen).pin_readonly_page_key(&mut io,
+                                                           &key,
+                                                           size,
+                                                           file_offset,
+                                                           core::convert::identity)
     }
 
 // 本方法代码由AI完成

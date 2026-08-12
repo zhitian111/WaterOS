@@ -9,6 +9,7 @@ use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use mm::api::addr::PAGE_SIZE;
+use mm::api::addr::PhysPageNum;
 use mm::api::error::{MmError, MmResult};
 use mm::api::flags::MapFlags;
 use mm::api::mmap::{DemandPageLoader, MmapKind, MmapOps};
@@ -68,6 +69,19 @@ impl DemandPageLoader for VfsMmapPageLoader {
         let Some(identity) = self.content_identity.clone() else {
             return Ok(None);
         };
+        if let Some(ppn) = mm::load_or_get_readonly_mmap_page_from_frame(
+            &identity,
+            file_offset,
+            self.file_size,
+            || {
+                self.handle
+                    .pin_readonly_file_page(file_offset as u64)
+                    .map(|page| page.map(PhysPageNum))
+                    .map_err(|_| MmError::AccessViolation)
+            },
+        )? {
+            return Ok(Some(ppn));
+        }
         let ppn = mm::load_or_get_readonly_mmap_page(&identity,
                                                      file_offset,
                                                      self.file_size,

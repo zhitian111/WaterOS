@@ -531,6 +531,104 @@ pub fn load_or_get_readonly_mmap_page<F>(identity : &VfsFileContentIdentity,
     }
 }
 
+/// Publish or reuse a physical frame already pinned by the VFS page cache.
+/// The supplied frame and the mmap cache each own one allocator reference.
+pub fn load_or_get_readonly_mmap_page_from_frame<F>(identity : &VfsFileContentIdentity,
+                                                    file_offset : usize,
+                                                    mapping_file_size : usize,
+                                                    mut load : F)
+                                                    -> MmResult<Option<PhysPageNum>>
+    where F : FnMut() -> MmResult<Option<PhysPageNum>>
+{
+    debug_assert_eq!(file_offset % PAGE_SIZE, 0);
+    loop {
+        let content_version = identity.version();
+        let key = mmap_readonly_page_key(identity,
+                                         content_version,
+                                         file_offset,
+                                         mapping_file_size);
+        let cached = {
+            let mut guard = MMAP_READONLY_PAGE_CACHE.lock();
+            let cache = guard.get_or_insert_with(MmapReadonlyPageCache::new);
+            cache.tick = cache.tick.wrapping_add(1);
+            let tick = cache.tick;
+            #[cfg(feature = "cache-layer-diagnostics")]
+            {
+                let hit = cache.entries.contains_key(&key);
+                cache.note_lookup(hit);
+            }
+            if let Some(entry) = cache.entries.get_mut(&key) {
+                frame_inc_ref(entry.ppn).map_err(MmError::from)?;
+                entry.last_used = tick;
+                Some(entry.ppn)
+            } else {
+                None
+            }
+        };
+        if let Some(ppn) = cached {
+            if identity.version() == content_version {
+                return Ok(Some(ppn));
+            }
+            let _ = frame_dealloc_result(ppn);
+            continue;
+        }
+
+        let Some(loaded_ppn) = load()? else {
+            return Ok(None);
+        };
+        if identity.version() != content_version {
+            let _ = frame_dealloc_result(loaded_ppn);
+            continue;
+        }
+
+        let mut duplicate = None;
+        {
+            let mut guard = MMAP_READONLY_PAGE_CACHE.lock();
+            let cache = guard.get_or_insert_with(MmapReadonlyPageCache::new);
+            cache.tick = cache.tick.wrapping_add(1);
+            let tick = cache.tick;
+            if let Some(entry) = cache.entries.get_mut(&key) {
+                frame_inc_ref(entry.ppn).map_err(MmError::from)?;
+                entry.last_used = tick;
+                duplicate = Some(entry.ppn);
+                #[cfg(feature = "cache-layer-diagnostics")]
+                {
+                    cache.duplicate_loads += 1;
+                }
+            } else if cache.entries.len() >= MMAP_READONLY_PAGE_CACHE_CAPACITY {
+                #[cfg(feature = "cache-layer-diagnostics")]
+                {
+                    cache.full_bypasses += 1;
+                }
+            } else {
+                if let Err(error) = frame_inc_ref(loaded_ppn) {
+                    let _ = frame_dealloc_result(loaded_ppn);
+                    return Err(MmError::from(error));
+                }
+                cache.entries.insert(key,
+                                     MmapReadonlyPageEntry { ppn : loaded_ppn,
+                                                             last_used : tick,
+                                                             _identity : identity.clone() });
+                #[cfg(feature = "cache-layer-diagnostics")]
+                {
+                    cache.installs += 1;
+                }
+            }
+        }
+        let result_ppn = if let Some(ppn) = duplicate {
+            let _ = frame_dealloc_result(loaded_ppn);
+            ppn
+        } else {
+            loaded_ppn
+        };
+        if identity.version() != content_version {
+            let _ = frame_dealloc_result(result_ppn);
+            continue;
+        }
+        return Ok(Some(result_ppn));
+    }
+}
+
 /// Directed generic mmap cache/refcount self-test; callers initialize frames.
 pub fn test_readonly_mmap_page_cache() {
     let identity = VfsFileContentIdentity::new(usize::MAX as u64 - 1,
@@ -587,6 +685,47 @@ pub fn test_readonly_mmap_page_cache() {
     assert_ne!(changed, first);
     assert_eq!(loads, 4, "content change must reload a private mmap page");
     frame_dealloc_result(changed).expect("release changed mmap mapping ref");
+
+    let shared_identity = VfsFileContentIdentity::new(9,
+                                                      8,
+                                                      7,
+                                                      Arc::new(AtomicU64::new(1)));
+    let mut supplied = 0usize;
+    let shared = load_or_get_readonly_mmap_page_from_frame(&shared_identity,
+                                                           PAGE_SIZE,
+                                                           PAGE_SIZE * 3,
+                                                           || {
+                                                               supplied += 1;
+                                                               let ppn = frame_alloc_result()
+                                                                   .map_err(MmError::from)?;
+                                                               let bytes = unsafe {
+                                                                   core::slice::from_raw_parts_mut(
+                                                                       (ppn.0 * PAGE_SIZE) as *mut u8,
+                                                                       PAGE_SIZE,
+                                                                   )
+                                                               };
+                                                               bytes.fill(0x5a);
+                                                               Ok(Some(ppn))
+                                                           })
+        .expect("publish VFS-backed mmap frame")
+        .expect("VFS supplied a frame");
+    let reused = load_or_get_readonly_mmap_page_from_frame(&shared_identity,
+                                                           PAGE_SIZE,
+                                                           PAGE_SIZE * 3,
+                                                           || {
+                                                               supplied += 1;
+                                                               Ok(None)
+                                                           })
+        .expect("reuse VFS-backed mmap frame")
+        .expect("cached frame remains available");
+    assert_eq!(shared, reused);
+    assert_eq!(supplied, 1);
+    let bytes = unsafe {
+        core::slice::from_raw_parts((reused.0 * PAGE_SIZE) as *const u8, PAGE_SIZE)
+    };
+    assert!(bytes.iter().all(|byte| *byte == 0x5a));
+    frame_dealloc_result(shared).expect("release shared VFS-backed mmap page");
+    frame_dealloc_result(reused).expect("release reused VFS-backed mmap page");
 }
 
 impl ElfSegmentLoadParams {

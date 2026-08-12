@@ -12,9 +12,9 @@ pub const FILE_PAGE_SIZE : usize = 4096;
 pub const BOOTSTRAP_TMPFS_LIMIT_BYTES : usize = 512 * 1024 * 1024;
 
 /// 全局页帧 LRU 槽位数（所有文件共享，非每文件容量）。
-/// 16384 * 4KiB = 64MiB，覆盖 BuildStorm 的重复读取热集。payload 由物理帧池
-/// 承载而非内核堆；内核堆只保存有界的索引和 LRU 元数据。
-pub const FILE_PAGE_CACHE_CAPACITY : usize = 16384;
+/// 8192 * 4KiB = 32MiB。payload 由物理帧池承载而非内核堆；本实验保持已验收容量，
+/// 只验证 file read 与 mmap 共用同一物理页的收益。
+pub const FILE_PAGE_CACHE_CAPACITY : usize = 8192;
 
 /// Direct 模式下顺序读预取步长（页数）；`0` 表示关闭预取。
 /// 增大此值可减少读时的缺页中断次数，对顺序读性能有明显提升。

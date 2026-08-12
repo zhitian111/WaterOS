@@ -28,7 +28,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use spin::{Mutex, RwLock};
 use wateros_base_config::fs::{FILE_PAGE_CACHE_CAPACITY, FILE_PAGE_SIZE, FILE_READ_AHEAD_STRIDE};
 #[cfg(feature = "physical-pages")]
-use wateros_mm_frame_alloctor::OwnedPhysPage;
+use wateros_mm_frame_alloctor::{frame_inc_ref, OwnedPhysPage};
 
 // 本变量代码由AI完成
 const FLUSH_RUN_MAX_PAGES : usize = 64;
@@ -61,6 +61,9 @@ struct PageCacheDiagnostics {
 /// 区间读写下层（通常由 `FsBridge` 委托 `ReadOnlyFs` / `ReadWriteFs`）。
 pub trait PageCacheIo {
     type Error;
+    fn out_of_memory(&self) -> Self::Error {
+        panic!("page-cache physical allocation failed")
+    }
 // 本方法代码由AI完成
     fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> Result<usize, Self::Error>;
 // 本方法代码由AI完成
@@ -309,6 +312,18 @@ impl GlobalCacheState {
         }
         #[cfg(feature = "physical-pages")]
         self.data[idx].as_bytes_mut()
+    }
+
+    fn make_page_unique(&mut self, idx : usize) -> bool {
+        #[cfg(not(feature = "physical-pages"))]
+        {
+            let _ = idx;
+            true
+        }
+        #[cfg(feature = "physical-pages")]
+        {
+            self.data[idx].make_unique().is_ok()
+        }
     }
 
     fn lru_ends(&self, class : LruClass) -> (Option<usize>, Option<usize>) {
@@ -972,6 +987,10 @@ impl GlobalFilePageCache {
                 cache.touch_lru(existing);
                 return Ok(());
             }
+            if !cache.make_page_unique(idx) {
+                cache.return_detached_slot(idx);
+                return Err(map_err(io.out_of_memory()));
+            }
             cache.page_data_mut(idx)
                  .copy_from_slice(&page_buf);
             cache.frames[idx].dirty = false;
@@ -1082,6 +1101,10 @@ impl GlobalFilePageCache {
                 cache.return_detached_slot(idx);
                 cache.touch_lru(existing);
                 return Ok(());
+            }
+            if !cache.make_page_unique(idx) {
+                cache.return_detached_slot(idx);
+                return Err(map_err(io.out_of_memory()));
             }
             cache.page_data_mut(idx)
                  .fill(0);
@@ -1244,6 +1267,9 @@ impl GlobalFilePageCache {
                 else {
                     continue;
                 };
+                if !cache.make_page_unique(idx) {
+                    return Err(map_err(io.out_of_memory()));
+                }
                 cache.page_data_mut(idx)[page_off..page_off + chunk].copy_from_slice(
                     &buf[written..written + chunk],
                 );
@@ -1261,6 +1287,47 @@ impl GlobalFilePageCache {
             pos += chunk as u64;
         }
         Ok(written)
+    }
+
+    /// Return one owned reference to an aligned, clean physical cache page.
+    /// Host-test heap backing and dirty pages are not shareable.
+    pub fn pin_readonly_page_key<Io, E>(&self,
+                                        io : &mut Io,
+                                        key : &FileCacheKey,
+                                        file_size : u64,
+                                        offset : u64,
+                                        map_err : fn(Io::Error) -> E)
+                                        -> Result<Option<usize>, E>
+        where Io : PageCacheIo
+    {
+        if offset >= file_size || offset % FILE_PAGE_SIZE as u64 != 0 {
+            return Ok(None);
+        }
+        let page_idx = offset / FILE_PAGE_SIZE as u64;
+        self.install_page(io,
+                          key,
+                          page_idx,
+                          file_size,
+                          InstallSource::Demand,
+                          map_err)?;
+        #[cfg(not(feature = "physical-pages"))]
+        {
+            Ok(None)
+        }
+        #[cfg(feature = "physical-pages")]
+        {
+            let mut cache = self.state.lock();
+            let Some(&idx) = cache.index.get(&(key.clone(), page_idx)) else {
+                return Ok(None);
+            };
+            if cache.frames[idx].dirty {
+                return Ok(None);
+            }
+            let ppn = cache.data[idx].frame_id();
+            frame_inc_ref(ppn).map_err(|_| map_err(io.out_of_memory()))?;
+            cache.touch_lru(idx);
+            Ok(Some(ppn.0))
+        }
     }
 
 // 本方法代码由AI完成
@@ -1524,6 +1591,8 @@ impl GlobalFilePageCache {
                 if let Some(&slot) = cache.index
                                           .get(&(key.clone(), page_idx))
                 {
+                    assert!(cache.make_page_unique(slot),
+                            "copy shared file-cache page for truncate");
                     cache.page_data_mut(slot)[tail..].fill(0);
                 }
             }

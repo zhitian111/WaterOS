@@ -45,6 +45,23 @@ impl OwnedPhysPage {
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         unsafe { core::slice::from_raw_parts_mut((self.frame.0 * PAGE_SIZE) as *mut u8, PAGE_SIZE) }
     }
+
+    /// Replace a multiply referenced page with a byte-identical private page
+    /// before its owner mutates the contents.
+    pub fn make_unique(&mut self) -> FrameAllocResult<()> {
+        #[cfg(feature = "impl-stack")]
+        {
+            if frame_ref_count(self.frame)? <= 1 {
+                return Ok(());
+            }
+            let mut replacement = Self::alloc_zeroed()?;
+            replacement.as_bytes_mut().copy_from_slice(self.as_bytes());
+            *self = replacement;
+            Ok(())
+        }
+        #[cfg(not(feature = "impl-stack"))]
+        Err(FrameAllocError::Unsupported)
+    }
 }
 
 impl Drop for OwnedPhysPage {

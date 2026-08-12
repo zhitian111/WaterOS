@@ -38,8 +38,10 @@ mmap fault:
    new page. This preserves `MAP_PRIVATE` snapshot semantics.
 4. Expose the page through the existing `VfsIoHandle`/`DemandPageLoader`
    lifetime boundary using stable file identity and page-aligned offsets. A
-   cache miss loads through the normal `FsPageIo`; no independent mmap cache is
-   populated for this path.
+   cache miss loads through the normal `FsPageIo`. The accepted 128 MiB RX
+   cache remains as a hot-page index and owns a reference to the same frame,
+   rather than allocating and copying an independent payload. This preserves
+   its proven residency window after the 32 MiB VFS cache evicts its reference.
 5. Initially admit only the already accepted
    `MAP_PRIVATE && PROT_EXEC && !PROT_WRITE` class. This isolates the benefit of
    removing the duplicate VFS-to-mmap copy while preserving the proven RX
