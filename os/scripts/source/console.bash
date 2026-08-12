@@ -1,4 +1,5 @@
 #!/bin/sh
+# Shell 脚本共用的彩色日志函数；本文件只供其他脚本 source，不单独执行。
 
 # 定义 ANSI 颜色
 COLOR_ANSI_RED="\033[31m"

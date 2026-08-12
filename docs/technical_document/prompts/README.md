@@ -1,5 +1,7 @@
 # WaterOS 技术文档 — Agent 编写提示词索引
 
+[项目首页](../../../README.md) · [文档总览](../../README.md) · [技术文档](../README.md)
+
 本目录为 WaterOS **LaTeX 技术文档**各章的 Agent 任务说明。分发任务时直接 `@` 对应章节的 `.md` 文件即可。
 
 LaTeX 工程目录：`docs/technical_document/wateros-latex/`

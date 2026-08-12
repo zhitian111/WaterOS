@@ -149,12 +149,18 @@ WaterOS/
     ├── src/                  # 内核入口、Trap 处理与测试编排
     ├── components/           # WaterOS 内核组件
     ├── scripts/              # 构建、运行、测试和诊断工具
-    │   ├── debug/            # 调试会话与停滞分析工具
+    │   ├── competition/      # 比赛平台与提交环境辅助工具
+    │   ├── config/           # Cargo feature 配置工具
+    │   ├── debug/            # 调试会话、停滞分析与符号工具
     │   ├── gdb/              # GDB 扩展脚本
+    │   ├── maintenance/      # 清理、统计和仓库维护工具
     │   ├── pc-hot/           # 热点程序计数器采样工具
-    │   ├── source/           # Shell 脚本共用函数
+    │   ├── run/              # QEMU 启动与并行运行工具
+    │   ├── setup/            # 工具链和测试环境初始化
+    │   ├── source/           # Shell 与 Python 共用模块
     │   ├── syscall-profile/  # 系统调用性能分析工具
-    │   └── tests/            # 脚本工具的宿主测试
+    │   ├── testing/          # 功能、性能与 LTP 专项测试
+    │   └── tests/            # 脚本工具的宿主单元测试
     └── vendor/               # 本地维护的第三方依赖
 ```
 
@@ -440,21 +446,24 @@ make la_symbol_at ADDR=0x9000000000200000
 
 | 脚本 | 用法与边界 |
 |:--|:--|
-| `scripts/toolchain_install.bash` | 安装两个 Rust 裸机 target，并将 `os/` 设为 nightly override |
-| `scripts/qemu_run.py --arch rv\|la --profile pre\|final` | 根据 `WOS_*` 环境变量组装 QEMU 命令；通常由 `make run` 调用 |
-| `scripts/wateros_debug.py doctor\|run\|server\|snapshot\|watch\|gdb` | 调试器、停滞监测和报告采集的底层入口；参数可通过 `--help` 查看 |
-| `scripts/configure.bash` | 扫描所有 Cargo manifest，重新生成 `feature-tree.txt` 与 `config.conf` |
-| `scripts/print-config.bash [config.conf]` | 按组件打印配置树中启用的 features |
-| `scripts/config-to-features.bash [config.conf] [root-package]` | 将配置树转换为顶层 Cargo feature 字符串 |
-| `scripts/resolve_pc_symbol.py --arch rv\|la --elf FILE ADDR...` | 将一个或多个 PC 地址解析到符号和源码位置 |
-| `scripts/run_qemu_parallel.sh "COMMAND" ...` | 按宿主 CPU 预算并行运行多条 QEMU 命令，并分别保存日志 |
+| `scripts/setup/toolchain_install.bash` | 安装两个 Rust 裸机 target，并将 `os/` 设为 nightly override |
+| `scripts/run/qemu_run.py --arch rv\|la --profile pre\|final` | 根据 `WOS_*` 环境变量组装 QEMU 命令；通常由 `make run` 调用 |
+| `scripts/debug/wateros_debug.py doctor\|run\|server\|snapshot\|watch\|gdb` | 调试器、停滞监测和报告采集的底层入口；参数可通过 `--help` 查看 |
+| `scripts/config/configure.bash` | 扫描所有 Cargo manifest，重新生成 `feature-tree.txt` 与 `config.conf` |
+| `scripts/config/print-config.bash [config.conf]` | 按组件打印配置树中启用的 features |
+| `scripts/config/config-to-features.bash [config.conf] [root-package]` | 将配置树转换为顶层 Cargo feature 字符串 |
+| `scripts/debug/resolve_pc_symbol.py --arch rv\|la --elf FILE ADDR...` | 将一个或多个 PC 地址解析到符号和源码位置 |
+| `scripts/run/run_qemu_parallel.sh "COMMAND" ...` | 按宿主 CPU 预算并行运行多条 QEMU 命令，并分别保存日志 |
 | `scripts/pc-hot/pc-hot-{rv,la}.sh` | 对指定架构采样热点 PC；详细参数见脚本头部 |
 | `scripts/syscall-profile/syscall-profile-{rv,la}.sh` | 采集 syscall 画像；结果分析见 [`scripts/syscall-profile/README.md`](./os/scripts/syscall-profile/README.md) |
 
 部分专项验收脚本会临时改写 bring-up 队列或磁盘镜像，例如
-`run_perf_bringup_phases*.sh`、`run_iozone_minimal.sh`、`ltp_hang_iterate.sh` 和
-`ltp_prune_sdcard_before.sh`。它们面向对应性能任务，运行前应先阅读脚本头部、确认镜像
+`testing/run_perf_bringup_phases*.sh`、`testing/run_iozone_minimal.sh`、
+`testing/ltp_hang_iterate.sh` 和 `testing/ltp_prune_sdcard_before.sh`。它们面向对应性能任务，运行前应先阅读脚本头部、确认镜像
 路径，并保持工作区可恢复，不应作为普通启动方式使用。
+
+完整的目录分类、脚本清单和安全边界见
+[`os/scripts/README.md`](./os/scripts/README.md)。
 
 `make configure` 会扫描当前各 crate 的 feature，生成 `config.conf` 和
 `feature-tree.txt`，适合检查组件能力及其传播关系。它不会改变正常构建选择。

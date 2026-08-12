@@ -1,11 +1,13 @@
+"""验证重复 PC、任务停滞和等待链的判定逻辑。"""
+
 from __future__ import annotations
 
 import sys
 import unittest
 from pathlib import Path
 
-SCRIPTS = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(SCRIPTS))
+DEBUG_SCRIPTS = Path(__file__).resolve().parents[1] / "debug"
+sys.path.insert(0, str(DEBUG_SCRIPTS))
 
 from wateros_debug import (
     RemoteSample,

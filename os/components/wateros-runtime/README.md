@@ -1,5 +1,7 @@
 # wateros-runtime
 
+[项目首页](../../../README.md) · [内核工程](../../README.md) · [系统架构](../../../README.md#系统架构)
+
 `wateros-runtime` 是内核最底层的运行时服务聚合 crate。它提供输出、日志、panic
 终止与全局堆，但不拥有调度、设备策略或平台寄存器操作。
 

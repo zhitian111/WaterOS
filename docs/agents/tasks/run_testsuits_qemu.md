@@ -21,7 +21,7 @@
 | `os/src/user_bringup_busybox.rs` | **测例开关**：`SCRIPT_PATHS` 分阶段注释 |
 | `os/src/user_bringup_bus.rs` | bring-up 总线；确认 `stage-busybox` 已激活 |
 | `os/src/user_bringup_common.rs` | 串行 runner、libc 前缀、cwd 设置 |
-| `os/scripts/rv_qemu_run.sh` | QEMU 启动参数（块设备、网络、RTC） |
+| `os/scripts/run/rv_qemu_run.sh` | QEMU 启动参数（块设备、网络、RTC） |
 | `os/Makefile` | `make rv_qemu_run` 入口 |
 | `os/sdcard-rv.img` | 根卷 ext4 镜像（含 `/glibc`、`/musl` 测例树） |
 | `docs/roadmap/test-case-full-pass-plan.md` | 全通过路线图与阶段依赖 |
@@ -31,8 +31,8 @@
 
 | 脚本 | 用途 |
 |------|------|
-| `os/scripts/run_phase_tests.sh` | 自动按 P1→P6 切换 `SCRIPT_PATHS` 并逐阶段 `make rv_qemu_run` |
-| `os/scripts/parse_qemu_test_log.py` | 从 QEMU 日志提取各 `*_testcode.sh` 的摘要 |
+| `os/scripts/testing/run_phase_tests.sh` | 自动按 P1→P6 切换 `SCRIPT_PATHS` 并逐阶段 `make rv_qemu_run` |
+| `os/scripts/testing/parse_qemu_test_log.py` | 从 QEMU 日志提取各 `*_testcode.sh` 的摘要 |
 
 ## 搜索范围
 
@@ -94,7 +94,7 @@ test -f sdcard-rv.img
 
 ### 2. 按需调整 QEMU（P4 / mount）
 
-- **P4 网络**：在 `os/scripts/rv_qemu_run.sh` 中取消注释 `virtio-net` 与 `-netdev user`
+- **P4 网络**：在 `os/scripts/run/rv_qemu_run.sh` 中取消注释 `virtio-net` 与 `-netdev user`
 - **P1 mount**：赛题要求第二块 `virtio-blk`（`disk.img`）；单盘时 `mount` 测例预期 `-22`
 
 ### 3. 运行
@@ -110,13 +110,13 @@ make rv_qemu_run 2>&1 | tee /tmp/wateros_P1.log
 
 ```bash
 cd os
-bash scripts/run_phase_tests.sh
+bash scripts/testing/run_phase_tests.sh
 ```
 
 ### 4. 解析日志
 
 ```bash
-python3 os/scripts/parse_qemu_test_log.py /tmp/wateros_P1.log
+python3 os/scripts/testing/parse_qemu_test_log.py /tmp/wateros_P1.log
 ```
 
 若出现 PANIC，额外提取 syscall 号：

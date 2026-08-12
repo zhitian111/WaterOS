@@ -1,5 +1,7 @@
 # 可复用任务提示词
 
+[项目首页](../../../README.md) · [文档总览](../../README.md) · [Agent 文档](../README.md)
+
 本目录存放可直接提供给 Agent 的通用工作说明，不绑定某一轮缺陷或性能实验。
 
 - `analyze_kernel_log.md`：分析 QEMU/内核日志。

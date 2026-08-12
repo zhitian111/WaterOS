@@ -1,4 +1,6 @@
-# WaterOS diagrams
+# WaterOS 图表资源
+
+[项目首页](../../../README.md) · [文档总览](../../README.md) · [系统架构](../../../README.md#系统架构)
 
 本目录保存 README、技术文档和演示材料共用的图表。Mermaid 源文件与生成的 SVG
 使用相同的文件名，README 只引用 SVG，以保证 GitHub、GitLab 和本地预览的显示一致。

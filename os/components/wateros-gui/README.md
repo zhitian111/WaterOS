@@ -1,5 +1,7 @@
 # wateros-gui
 
+[项目首页](../../../README.md) · [内核工程](../../README.md) · [系统架构](../../../README.md#系统架构)
+
 `wateros-gui` 是独立于 GPU transport 的 `no_std + alloc` 内核窗口系统。它已取代
 `os/src/gui.rs` 的一次性欢迎页，并把公共模型、软件合成、硬件显示和硬件输入分离。
 

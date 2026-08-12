@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ELF symbol index and addr2line lookup for WaterOS kernels."""
+"""为 WaterOS 内核提供 ELF 符号索引和 addr2line 查询。"""
 from __future__ import annotations
 
 import bisect

@@ -1,5 +1,7 @@
 # ipc-shm
 
+[项目首页](../../../../README.md) · [内核工程](../../../README.md) · [系统架构](../../../../README.md#系统架构)
+
 `ipc-shm` 实现当前支持范围内的 SysV 共享内存：`shmget`、`shmat`、`shmdt` 和
 `IPC_RMID`。它管理段 ID、SysV key、物理帧及 task attachment 元数据；不解析 syscall
 ABI，也不直接修改用户页表。

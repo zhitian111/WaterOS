@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""验证 syscall-profile TSV 汇总和 Markdown 输出。"""
 from __future__ import annotations
 
 import importlib.util

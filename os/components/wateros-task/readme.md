@@ -1,5 +1,7 @@
 # wateros-task
 
+[项目首页](../../../README.md) · [内核工程](../../README.md) · [系统架构](../../../README.md#系统架构)
+
 `wateros-task` 是 WaterOS 的任务与进程生命周期门面。它把 syscall、trap、MM 与 IPC 所需的
 操作汇聚到稳定接口，并将“任务/进程对象”和“何时、在哪个 CPU 上运行”的职责分别交给
 `task-impl` 与 `task-scheduler`。

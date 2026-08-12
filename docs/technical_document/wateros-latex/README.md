@@ -1,5 +1,7 @@
 # WaterOS LaTeX 技术文档
 
+[项目首页](../../../README.md) · [文档总览](../../README.md) · [技术文档](../README.md)
+
 内核技术方案文档。版式、封面与正文初稿来自 `docs/technical_document/test.tex`。
 
 **Agent 分章编写**：见 [../prompts/README.md](../prompts/README.md)，按章 `@` 对应任务文件即可。

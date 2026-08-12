@@ -1,3 +1,5 @@
+"""验证内核调试 ABI 的布局检查、解析与等待关系提取。"""
+
 from __future__ import annotations
 
 import struct

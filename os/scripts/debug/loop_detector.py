@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Detect repeating PC patterns in a sliding window."""
+"""在滑动窗口中检测重复出现的 PC 序列。"""
 from __future__ import annotations
 
 from collections import deque

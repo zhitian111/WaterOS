@@ -1,5 +1,7 @@
 # runtime-heap-allocator
 
+[项目首页](../../../../README.md) · [内核工程](../../../README.md) · [wateros-runtime](../README.md)
+
 本 crate 提供 WaterOS 的 `#[global_allocator]`。默认 backend 为 TLSF，可用
 `impl-linked-list-allocator` 切回 `LockedHeap`；二者互斥。项目构建可通过
 `HEAP_ALLOCATOR_FEATURE=heap-linked-list` 选择回退实现。

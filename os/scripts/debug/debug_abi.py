@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decode the stable, allocation-free ``WATEROS_DEBUG_STATE`` ABI."""
+"""解析稳定且无需动态分配的 ``WATEROS_DEBUG_STATE`` ABI。"""
 from __future__ import annotations
 
 import struct

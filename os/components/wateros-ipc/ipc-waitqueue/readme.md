@@ -1,5 +1,7 @@
 # ipc-waitqueue
 
+[项目首页](../../../../README.md) · [内核工程](../../../README.md) · [系统架构](../../../../README.md#系统架构)
+
 `ipc-waitqueue` 是 IPC 对 task scheduler 等待队列的唯一适配层。它不保存第二套 waiter
 列表，也不实现自己的 timeout、CPU 选择或 IPI；所有这些语义都委托 `wateros-task`。
 

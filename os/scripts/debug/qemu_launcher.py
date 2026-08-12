@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build QEMU argv; PC trace via ``-D /dev/fd/N`` (see pc_trace_watch.py)."""
+"""组装 QEMU 参数；通过 ``-D /dev/fd/N`` 输出 PC trace。"""
 from __future__ import annotations
 
 import shutil
@@ -15,10 +15,10 @@ def _qemu_bin(arch: Arch) -> list[str]:
 
 
 def build_qemu_trace_cmd(arch: Arch, work_dir: Path, trace_fd: int | None = None) -> list[str]:
-    """Build QEMU argv.
+    """组装 QEMU argv。
 
-    When ``trace_fd`` is set, add ``-D /dev/fd/N`` so exec trace bypasses stdout.
-    Serial / kernel log stays on stdout only; pass ``trace_fd`` via ``pass_fds``.
+    设置 ``trace_fd`` 时追加 ``-D /dev/fd/N``，让 exec trace 绕过 stdout；
+    串口与内核日志仍只写 stdout，调用者通过 ``pass_fds`` 传递该描述符。
     """
     work_dir = work_dir.resolve()
     if arch == "rv":

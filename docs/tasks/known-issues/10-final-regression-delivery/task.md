@@ -46,7 +46,7 @@ log=
 
 - `os/Makefile`
 - `os/scripts/{rv,la}_{pre,final}_run.sh`
-- `os/scripts/run_phase_tests.sh`
+- `os/scripts/testing/run_phase_tests.sh`
 - `os/src/user_bringup_busybox.rs`
 - `final_test_case/README.md`
 - `docs/prompts/tasks/run_testsuits_qemu.md`

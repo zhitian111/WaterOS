@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parse QEMU exec/nochain trace lines and normalize guest PC addresses."""
+"""解析 QEMU exec/nochain trace，并规范化 guest PC 地址。"""
 from __future__ import annotations
 
 import re

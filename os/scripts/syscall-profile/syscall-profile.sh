@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and run the syscall-profile QEMU plugin.
+# 构建并运行 syscall-profile QEMU 插件。
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -66,4 +66,3 @@ case "$COMMAND" in
     run) run_qemu "$@" ;;
     *) usage; exit 2 ;;
 esac
-

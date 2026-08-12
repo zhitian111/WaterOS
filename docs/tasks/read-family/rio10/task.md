@@ -56,8 +56,8 @@ assert(errno == EBADF);
 - `os/scripts/guest_read_family_regression.sh`（需要 glibc/socket 扩展时建议新增）
 - `os/src/user_bringup_busybox.rs`
 - `os/Makefile`
-- `os/scripts/rv_final_run.sh`
-- `os/scripts/la_final_run.sh`
+- `os/scripts/run/rv_final_run.sh`
+- `os/scripts/run/la_final_run.sh`
 - `docs/tasks/read-family/regression-report-YYYYMMDD.md`（测试后新增）
 - `docs/tasks/buildstorm-cargo-index-filesystem-report.md`
 

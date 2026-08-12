@@ -1,3 +1,5 @@
+"""验证调试快照报告、构建标识和归档输出。"""
+
 from __future__ import annotations
 
 import json
@@ -7,8 +9,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-SCRIPTS = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(SCRIPTS))
+DEBUG_SCRIPTS = Path(__file__).resolve().parents[1] / "debug"
+sys.path.insert(0, str(DEBUG_SCRIPTS))
 
 import wateros_debug
 from wateros_debug import DebugToolError, RemoteSample, verify_build_id, write_report

@@ -1,5 +1,7 @@
 # syscall-profile
 
+[项目首页](../../../README.md) · [脚本总览](../README.md) · [工具文档](../../../docs/tools/README.md)
+
 这个 QEMU 插件按 Linux syscall ABI 聚合调用次数、参数、路径复用和返回值，不逐条打印。
 
 后端：

@@ -1,5 +1,7 @@
 # wateros-table-format
 
+[项目首页](../../../../README.md) · [内核工程](../../../README.md) · [wateros-utils](../README.md)
+
 一个无堆分配、`#![no_std]` 的文本表格格式化器。它只写入调用方提供的
 `core::fmt::Write`，从不直接访问 stdout、终端或操作系统 API。
 

@@ -63,11 +63,11 @@ cd os   # 工作目录固定为 os/
 ### 相关路径
 
 - Makefile：`os/Makefile`
-- RISC-V QEMU 脚本：`os/scripts/rv_qemu_run.sh`（virtio-blk + `sdcard-rv.img`；网络参数见脚本内注释）
-- PC 监视：`os/scripts/pc_trace_watch.py`（`make rv_pc_watch`）
-- 符号解析：`os/scripts/resolve_pc_symbol.py`（`make rv_symbol_at ADDR=0x...`）
+- RISC-V QEMU 脚本：`os/scripts/run/rv_qemu_run.sh`（virtio-blk + `sdcard-rv.img`；网络参数见脚本内注释）
+- PC 监视：`os/scripts/debug/pc_trace_watch.py`（`make rv_pc_watch`）
+- 符号解析：`os/scripts/debug/resolve_pc_symbol.py`（`make rv_symbol_at ADDR=0x...`）
 - 测例开关：`os/src/user_bringup_busybox.rs`（`SCRIPT_PATHS`，分 P1–P6 阶段注释）
-- 测例日志解析：`os/scripts/parse_qemu_test_log.py`
+- 测例日志解析：`os/scripts/testing/parse_qemu_test_log.py`
 
 ### 编码类任务的默认验证顺序
 

@@ -1,5 +1,7 @@
 # wateros-driver-display
 
+[项目首页](../../../../README.md) · [内核工程](../../../README.md) · [系统架构](../../../../README.md#系统架构)
+
 显示子系统只抽象“线性帧缓冲 + 主动刷新”，不在驱动中实现窗口、字体或输入事件。
 
 - `display-api/api-v0`：`FramebufferInfo`、`DisplayDevice` 与全局注册表。

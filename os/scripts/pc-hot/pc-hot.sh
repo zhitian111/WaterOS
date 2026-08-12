@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# pc-hot: per-PC instruction counter (QEMU TCG plugin) + symbol aggregation.
+# pc-hot：通过 QEMU TCG plugin 逐 PC 统计指令数，并按符号聚合结果。
 #
-# Arch-independent plugin source: pc-hot.c.  Per-arch entry points:
+# pc-hot.c 是架构无关的插件源码；按架构使用以下入口：
 #   ./pc-hot-rv.sh ...   (RISC-V)
 #   ./pc-hot-la.sh ...   (LoongArch)
 #
-# Usage:
+# 用法：
 #   pc-hot.sh <rv|la> build
 #   pc-hot.sh <rv|la> run <pcs.txt> -- <qemu args...>
 #   pc-hot.sh <rv|la> analyze <pcs.txt> [kernel.elf] [topN]

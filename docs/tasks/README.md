@@ -1,5 +1,7 @@
 # 当前任务与历史记录
 
+[项目首页](../../README.md) · [文档总览](../README.md) · [标准流程](../workflows/README.md)
+
 `docs/tasks/` 只保留与当前代码状态直接相关的执行入口：
 
 - `known-issues/`：尚未闭环的正确性、兼容性和交付问题。

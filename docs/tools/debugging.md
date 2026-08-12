@@ -1,9 +1,11 @@
 # WaterOS RISC-V / LoongArch 卡死诊断：统一 GDB 工具
 
+[项目首页](../../README.md) · [工具总览](./README.md) · [内核工程](../../os/README.md)
+
 ## 0. 推荐入口
 
 WaterOS 使用 `os/Makefile` 作为操作者入口，并由
-`os/scripts/wateros_debug.py` 完成构建、启动、监测和归档现场。
+`os/scripts/debug/wateros_debug.py` 完成构建、启动、监测和归档现场。
 `gdb_remote_snapshot.py` 只保留 Remote packet/register/memory 底层模块，不再提供
 独立 CLI；本文后半部分的旧命令仅作为历史排障案例，新的脚本或自动化不得调用它。
 
@@ -140,7 +142,7 @@ make rv_final_run_log-gdb GDB_WAIT=0
 WOS_KERNEL=./kernel-rv-final-log \
 WOS_QEMU_GDB=1 \
 WOS_QEMU_GDB_PORT=1234 \
-bash ./scripts/rv_final_run.sh
+bash ./scripts/run/rv_final_run.sh
 ```
 
 LoongArch 对应目标如下：
@@ -290,7 +292,7 @@ make la_gdb_snapshot
 ```
 
 当前该 Make 目标已经改为统一 `wateros_debug.py snapshot` 的兼容别名，并强制依赖
-`gdb-multiarch`。底层 [`gdb_remote_snapshot.py`](../../os/scripts/gdb_remote_snapshot.py)
+`gdb-multiarch`。底层 [`gdb_remote_snapshot.py`](../../os/scripts/debug/gdb_remote_snapshot.py)
 只负责 Remote packet、寄存器描述和内存读取，不再接受命令行参数。
 
 ### 3.2 历史快照客户端（CLI 已移除）
@@ -338,7 +340,7 @@ make la_gdb_snapshot GDB_PORT=1235
 旧版 `make la_gdb_snapshot` 曾等价于（仅供理解历史报告）：
 
 ```bash
-python3 ./scripts/gdb_remote_snapshot.py \
+python3 ./scripts/debug/gdb_remote_snapshot.py \
   --arch la \
   --elf ./kernel-la-pre \
   --host 127.0.0.1 \
@@ -348,7 +350,7 @@ python3 ./scripts/gdb_remote_snapshot.py \
 旧版底层脚本也曾直接支持 RISC-V：
 
 ```bash
-python3 ./scripts/gdb_remote_snapshot.py \
+python3 ./scripts/debug/gdb_remote_snapshot.py \
   --arch rv \
   --elf ./kernel-rv-final-log \
   --port 1234

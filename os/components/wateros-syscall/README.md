@@ -1,5 +1,7 @@
 # wateros-syscall
 
+[项目首页](../../../README.md) · [内核工程](../../README.md) · [系统架构](../../../README.md#系统架构)
+
 `wateros-syscall` 统一维护用户态、trap 层和内核 handler 之间的 syscall 契约与实现。
 原 `wateros-abi` 只包含 syscall 相关类型，现已并入 `syscall-api/api-v0`，避免调用号
 和参数/返回编码分散在两个组件中。

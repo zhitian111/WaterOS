@@ -1,5 +1,7 @@
 # pc-hot：按 PC 统计指令执行的 QEMU 插件 + 符号归并工具
 
+[项目首页](../../README.md) · [工具总览](./README.md) · [脚本总览](../../os/scripts/README.md)
+
 用于找内核热路径：运行期间 QEMU 插件在内存里按“PC → 指令数”计数（每核一张哈希表，退出时合并），**运行过程零输出**，退出时把全量不同 PC 一行一条写进文件；再用 `nm` 符号表把 PC 归并回内核符号，得到“符号 → 指令数”表。配合 `-icount` 可以把指令数换算成 QEMU 虚拟时钟 tick，得到“每个核 / 每个符号占用的时钟 tick 数”。
 
 RISC-V 和 LoongArch 是两套独立入口，互不影响，也不改动仓库里其他任何文件。
@@ -42,7 +44,7 @@ os/scripts/pc-hot/
     -m 8G -nographic -smp 8 -no-reboot
 ```
 
-LoongArch 参考启动参数（与 `scripts/la_final_run.sh` 一致，另加 `-snapshot` 可避免写盘）：
+LoongArch 参考启动参数（与 `scripts/run/la_final_run.sh` 一致，另加 `-snapshot` 可避免写盘）：
 
 ```bash
 qemu-system-loongarch64 -kernel ./kernel-la-final -m 8G -nographic -smp 8 \

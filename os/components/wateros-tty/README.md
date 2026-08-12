@@ -1,5 +1,7 @@
 # wateros-tty
 
+[项目首页](../../../README.md) · [内核工程](../../README.md) · [系统架构](../../../README.md#系统架构)
+
 `wateros-tty` 管理 WaterOS 唯一系统控制台的 TTY 行规程。它不负责 VFS 路径、
 文件描述符表，也不包含 Linux syscall 请求号，从而可以独立于具体文件系统和
 系统调用实现复用。

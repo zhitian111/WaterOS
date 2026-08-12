@@ -1,11 +1,13 @@
+"""验证最小 GDB Remote 客户端的报文收发和错误处理。"""
+
 from __future__ import annotations
 
 import sys
 import unittest
 from pathlib import Path
 
-SCRIPTS = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(SCRIPTS))
+DEBUG_SCRIPTS = Path(__file__).resolve().parents[1] / "debug"
+sys.path.insert(0, str(DEBUG_SCRIPTS))
 
 from gdb_remote_snapshot import GdbRemote, RemoteError
 

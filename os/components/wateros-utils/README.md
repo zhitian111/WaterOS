@@ -1,5 +1,7 @@
 # wateros-utils
 
+[项目首页](../../../README.md) · [内核工程](../../README.md) · [系统架构](../../../README.md#系统架构)
+
 与 WaterOS 内核策略、平台和全局状态无关的 `#![no_std]` 工具入口。
 
 目前公共 API 只有 `table_format` 的原样重导出：
@@ -25,4 +27,3 @@ driver 或 platform。启动汇编、UART 直写、CSR/MMU 操作必须放在
 
 表格工具会写入调用方提供的 `core::fmt::Write`。例如 dashboard 应在持有自己的输出
 序列化锁时先完成字符串构造，再一次性输出，避免与其它 CPU 的日志交错。
-

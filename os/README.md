@@ -1,266 +1,192 @@
-# WaterOS 内核快速使用
+<p align="center">
+  <a href="../README.md">
+    <img src="../docs/assert/cover.jpg" height="72" alt="山东大学">
+  </a>
+</p>
 
-WaterOS 同时支持 RISC-V 和 LoongArch QEMU。Make 是面向操作者的
-统一入口；Python 脚本作为调试工具的底层和高级接口。
+<h1 align="center">WaterOS Kernel</h1>
 
-以下命令均在 `os/` 目录执行：
+<p align="center">
+  双架构内核工程、构建入口与开发导航
+</p>
+
+<p align="center">
+  <a href="../README.md">项目首页</a> ·
+  <a href="../docs/tools/makefile.md">Makefile</a> ·
+  <a href="./scripts/README.md">脚本工具</a> ·
+  <a href="../docs/README.md">项目文档</a>
+</p>
+
+---
+
+`os/` 是 WaterOS 内核工程根目录，包含顶层 `wateros` crate、内核组件、构建配置、
+平台链接脚本和开发工具。RISC-V64 与 LoongArch64 共用同一套内核机制，通过 Cargo
+features 在编译期选择架构、平台、赛事阶段与组件实现。
+
+## 快速开始
+
+下面的命令均在 `os/` 目录执行：
 
 ```bash
-cd /home/kasss/WaterOS/os
 make help
-make show-config
-```
+make show-config ARCH=rv PROFILE=pre
 
-`make help` 显示入口命令和主要默认值；`make show-config` 显示经过
-`ARCH/PROFILE`、环境变量和命令行覆盖后最终生效的内核、镜像与运行参数。例如：
-
-```bash
-make show-config ARCH=rv PROFILE=final SMP=4
-make show-config ARCH=la PROFILE=pre LA_PRE_IMAGE=/data/la-pre.img
-```
-
-## 1. 构建与自动评测
-
-统一变量的默认值是 `ARCH=rv PROFILE=pre SMP=8 MODE=auto
-SNAPSHOT=1`。`MODE` 只在编译期选择 operator feature，不会作为 bootargs
-传给 QEMU。
-
-```bash
-# 构建或检查
 make build ARCH=rv PROFILE=pre
-make check ARCH=la PROFILE=final
-
-# 运行内核中现有的 BRINGUP_COMMANDS
 make run ARCH=rv PROFILE=pre
-make run ARCH=rv PROFILE=final
+
+make build ARCH=la PROFILE=pre
 make run ARCH=la PROFILE=pre
-make run ARCH=la PROFILE=final
 ```
 
-Make 不扫描镜像、不维护测试目录，也不提供 `make tests` 或
-`make test TEST=...`。`MODE=auto` 执行什么由内核现有 bringup
-配置决定，QEMU 启动命令不包含 `-append`。额外 Cargo feature 可通过
-通用变量传入：
+根文件系统镜像可以使用 Makefile 的默认路径，也可以通过 `SDCARD` 覆盖：
 
 ```bash
-make run ARCH=rv PROFILE=pre EXTRA_FEATURES=bringup-ltp-glibc-only
+make run ARCH=rv PROFILE=final SDCARD=/path/to/rootfs.img
 ```
 
-## 2. 进入交互终端
+完整参数、默认镜像和目标表见项目首页的
+[`构建配置`](../README.md#构建配置)。Makefile 的参数传播、目标分层和扩展约定见
+[`docs/tools/makefile.md`](../docs/tools/makefile.md)。
+
+## 常见开发场景
+
+### 交互终端
 
 ```bash
-make shell ARCH=rv PROFILE=pre SMP=1
+make shell ARCH=rv PROFILE=pre
 make shell ARCH=la PROFILE=final SMP=4
 ```
 
-启动后看到 `~ #` 或 `/ #` 表示已进入镜像内的用户态 shell。
-这个提示符由 Bash/BusyBox ash 绘制，TTY 负责 UART 字节、行编辑、
-echo、raw mode 和 Ctrl-C 等终端语义。
-
-常用 guest 命令：
-
-```sh
-pwd
-ls -la /
-cd /glibc
-/glibc/busybox sh /glibc/iperf_testcode.sh
-echo hello > /tmp/hello.txt
-cat /tmp/hello.txt
-sleep 30                 # 可按 Ctrl-C 中断
-```
-
-指定 shell 时使用 `GUEST_SHELL`，不要使用 Make 保留变量 `SHELL`；
-该路径在构建时通过 `operator-shell` feature 嵌入内核：
+需要覆盖 guest shell 时，通过 `GUEST_SHELL` 传入镜像内的绝对路径：
 
 ```bash
 make shell ARCH=rv PROFILE=final GUEST_SHELL=/glibc/busybox
 ```
 
-更完整的 TTY、Ctrl-C、raw mode、救援 shell 和排查说明见
-[`wateros-tty/README.md`](./components/wateros-tty/README.md)。
+TTY、Ctrl-C、raw mode 与救援终端的实现说明见
+[`wateros-tty`](./components/wateros-tty/README.md)。
 
-## 3. 运行镜像内指定脚本
+### 执行 guest 脚本
 
-`MODE=run` 保留为通用 operator 能力，它不是 Make 测试目录。它会构建
-`operator-run` feature，并把 `SCRIPT` 在编译时嵌入内核：
+`MODE=run` 在编译期启用 `operator-run`，并将 `SCRIPT` 指定的 guest 绝对路径嵌入
+内核：
 
 ```bash
 make run ARCH=rv PROFILE=final \
-  MODE=run \
-  SCRIPT=/glibc/iperf_testcode.sh
+  MODE=run SCRIPT=/glibc/iperf_testcode.sh
 ```
 
-`SCRIPT` 必须是 guest 中的绝对路径，且只能和 `MODE=run` 一起使用。
-脚本执行完成后 supervisor 会关机，适合自动化测试与 pc-hot 采样；需要保留现场时
-请改用 `make shell`。
+脚本结束后 supervisor 会关闭系统，适合自动化验证和性能采样。需要保留现场时使用
+`make shell` 或调试入口。
 
-## 4. 可选图形桌面
+### 图形界面
 
-图形显示默认关闭，不影响比赛构建。下面的命令会编译 `wateros-gui`，给 QEMU
-挂载 VirtIO GPU、键盘和平板，并打开图形窗口：
+GUI 默认不进入比赛构建。显式启用后，Makefile 会挂载 VirtIO GPU、键盘和平板设备：
 
 ```bash
 make run ARCH=rv PROFILE=pre EXTRA_FEATURES=gui
 make run ARCH=la PROFILE=pre EXTRA_FEATURES=gui
 ```
 
-图形窗口显示 WaterOS 内核桌面；可以拖动窗口、点击按钮、编辑文本框并用 Tab 切换
-焦点。原终端仍承载 UART 日志和交互 shell，图形桌面不是 shell 的替代品。模块结构和
-扩展方式见 [`wateros-gui/README.md`](./components/wateros-gui/README.md)。
+无桌面环境可使用 `GRAPHICS_BACKEND=none` 验证设备初始化。GUI 的结构与扩展方式见
+[`wateros-gui`](./components/wateros-gui/README.md)。
 
-无桌面环境时，可以保留 GPU 设备但隐藏窗口，用于启动回归：
-
-```bash
-make run ARCH=rv PROFILE=pre \
-  EXTRA_FEATURES=gui \
-  GRAPHICS_BACKEND=none
-```
-
-`display-demo` 是 `gui` 的兼容别名。如果只设置 `GRAPHICS=1` 而不编译 `gui`，QEMU
-虽然会挂图形设备，内核不会绑定；启用 `gui` 会默认令 `GRAPHICS=1`，仍可显式用
-`GRAPHICS=0` 覆盖。
-
-## 5. 磁盘 snapshot
-
-统一入口默认 `SNAPSHOT=1`。QEMU 会把 guest 的磁盘写入保存在内存/
-临时层，退出时丢弃；它不是先复制整个 `.img`，也不会改动基础
-镜像。
-
-只有明确需要保存 guest 文件时才开启写盘：
-
-```bash
-make shell ARCH=rv PROFILE=pre WRITE_DISK=1
-```
-
-`WRITE_DISK=1` 会默认把 `SNAPSHOT` 切换为 `0`。仍可显式指定
-`SNAPSHOT=1` 强制不写盘。自动评测、回归和 GDB 调试不应写回基础
-镜像。
-
-## 6. GDB 自动挡
+### 调试与停滞分析
 
 ```bash
 make doctor
-make debug ARCH=rv PROFILE=pre SMP=8
+make debug ARCH=rv PROFILE=final
 ```
 
-`make debug` 会：
-
-1. 构建独立的 `kernel-*-gdb` ELF；
-2. 以 snapshot 模式启动 QEMU 并立即运行；
-3. 每秒监测 CPU、PC、timer、调度、事件和锁；
-4. 确认停滞后暂停 guest，生成 `debug-reports/` 报告；
-5. 保留活动会话，可再执行 `make gdb`。
-
-自动挡终端显示 watch 摘要，完整串口保存在
-`debug-reports/active/*.log`。
-
-## 7. GDB 手动挡（两个终端）
-
-终端一：
-
-```bash
-cd /home/kasss/WaterOS/os
-make debug-server ARCH=rv PROFILE=pre SMP=8
-```
-
-默认 `START_PAUSED=1`，QEMU 停在复位入口，因此连接 GDB 前可能没有
-串口输出。
-
-终端二：
-
-```bash
-cd /home/kasss/WaterOS/os
-make gdb
-```
-
-GDB 连接后可执行：
-
-```gdb
-break wateros_kernel_main
-continue
-wos-cpus
-wos-tasks
-wos-events
-wos-locks
-thread apply all bt full
-```
-
-需要让内核先运行，再在可疑时刻连接：
+两终端手动调试：
 
 ```bash
 # 终端一
-make debug-server ARCH=rv PROFILE=pre START_PAUSED=0
+make debug-server ARCH=la PROFILE=pre PORT=1234
 
-# 终端二，需要时执行
+# 终端二
 make gdb
 ```
 
-## 8. 附加已运行的调试会话
-
-`debug-server` 会把 QEMU PID、架构、profile、ELF、build ID、端口和
-串口日志记录到 `debug-reports/active/session.json`。因此第二个终端
-无需重复参数：
-
-```bash
-make snapshot                 # 抓取现场后默认继续运行
-make snapshot LEAVE_STOPPED=1
-make watch                    # 附加自动停滞检测
-make gdb                      # 交互式调试
-```
-
-会话过期、PID 不存在、ELF 被重建或 build ID 不匹配时，工具会拒绝
-继续并要求重新执行 `make debug` 或 `make debug-server`。
-
-完整 GDB 命令、报告结构、确定性故障注入和底层原理见
+活动会话建立后，可以使用 `make snapshot`、`make watch` 和 `make gdb` 继续附加。完整
+GDB 命令、报告结构与故障注入说明见
 [`docs/tools/debugging.md`](../docs/tools/debugging.md)。
 
-## 9. 常用变量
+### 磁盘写入
 
-下表记录 Makefile 中的静态默认值。需要确认某次命令实际会使用什么，请执行
-`make show-config` 并传入与运行命令相同的变量。
-
-| 变量 | 默认 | 作用 |
-| --- | --- | --- |
-| `ARCH` | `rv` | `rv` / `la` |
-| `PROFILE` | `pre` | `pre` / `final` |
-| `SMP` | `8` | QEMU vCPU 数，`1..8` |
-| `MODE` | `auto` | 编译期 feature 选择：`auto` / `shell` / `run` |
-| `SCRIPT` | 空 | `run` 模式下编译期嵌入的 guest 绝对路径 |
-| `GUEST_SHELL` | 空 | 指定 shell/BusyBox ELF，编译期嵌入 |
-| `SNAPSHOT` | `1` | `1` 不写回基础镜像 |
-| `WRITE_DISK` | `0` | `1` 允许写回，并默认关闭 snapshot |
-| `PORT` | `1234` | QEMU GDB Remote 端口 |
-| `START_PAUSED` | `1` | `debug-server` 是否传入 `-S` |
-| `FAULTS` | `0` | 编译确定性故障注入钩子 |
-| `RV_PRE_IMAGE` | `./sdcard-rv.img` | RISC-V pre 默认镜像 |
-| `RV_FINAL_IMAGE` | `./sdcard-rv.img` | RISC-V final 默认镜像，可独立覆盖 |
-| `LA_PRE_IMAGE` | `./sdcard-la.img` | LoongArch pre 默认镜像 |
-| `LA_FINAL_IMAGE` | `./sdcard-la.img` | LoongArch final 默认镜像 |
-| `SDCARD` | 由上述四项选择 | 覆盖本次运行的镜像路径 |
-| `EXTRA_FEATURES` | 空 | 逗号分隔的额外根 crate feature |
-| `GRAPHICS` | `EXTRA_FEATURES` 含 `gui`/`display-demo` 时为 `1`，否则 `0` | 是否挂载 QEMU VirtIO GPU、键盘、平板并启用图形输出 |
-| `GRAPHICS_BACKEND` | `auto` | QEMU display backend，`auto` 会按宿主/QEMU 支持自动选择，也可显式指定 `gtk`、`sdl`、`cocoa` 或 `none` |
-
-镜像名称只在 Makefile 的四个 `*_IMAGE` 变量中定义，QEMU 启动脚本不会
-根据 profile 猜测镜像，也不会让 final 静默回退到 pre 镜像。可以永久修改
-Makefile 中的默认值，也可以只覆盖一次：
+普通运行默认 `SNAPSHOT=1`，不会写回基础镜像。只有验证持久化语义时才应使用镜像副本
+并开启写盘：
 
 ```bash
-# 临时替换一次 final 镜像
-make run ARCH=rv PROFILE=final SDCARD=/data/wateros-final.img
-
-# 为本次 Make 调用修改该组合的默认值
-make run ARCH=rv PROFILE=pre RV_PRE_IMAGE=/data/wateros-pre.img
+cp /path/to/baseline.img /tmp/wateros-write-test.img
+make run ARCH=rv PROFILE=final \
+  SDCARD=/tmp/wateros-write-test.img WRITE_DISK=1
 ```
 
-## 10. 常见问题
+## 工程结构
 
-- `debug-server` 没有串口输出：默认停在复位入口，在第二个终端
-  `make gdb` 后执行 `continue`。
-- 端口被占用：在终端一传入 `PORT=1235`；终端二会从会话自动
-  读取，不用再传。
-- shell 无输入：使用 `make shell`；交互 TTY 由 `operator-shell` 固定启用。
-- 提示符被日志覆盖：shell/run 的 operator 日志级别固定为 `warn`。
-- 退出 QEMU：按 `Ctrl-A` 后按 `x`。Guest 内的 Ctrl-C 仍用于中断前台进程。
-- 图形窗口未出现：确认使用了 `EXTRA_FEATURES=gui`，并检查宿主是否安装了
-  对应的 QEMU 显示后端；服务器环境可先用 `GRAPHICS_BACKEND=none` 验证驱动。
+```text
+os/
+├── Cargo.toml          # 顶层 crate 与 feature 组合
+├── Cargo.lock          # Rust 依赖锁定
+├── Makefile            # 构建、运行、检查与调试入口
+├── build.rs            # 内核构建脚本
+├── src/                # 内核入口、Trap 与 workload bring-up
+├── components/         # 按子系统拆分的 wateros-* 组件
+├── scripts/            # 配置、运行、调试、测试和维护工具
+└── vendor/             # 项目使用的第三方本地 fork
+```
+
+顶层 `src/` 负责启动顺序和子系统接线，机制与状态应放在对应组件中。组件通常继续分为：
+
+```text
+wateros-example/
+├── example-api/api-v0/       # 跨实现稳定契约
+├── example-impl/impl-*/      # 具体机制和平台实现
+└── src/lib.rs                # Feature 选择、再导出与组合逻辑
+```
+
+完整组件目录树和一级依赖关系见项目首页的
+[`项目结构`](../README.md#项目结构)与[`系统架构`](../README.md#系统架构)。
+
+## 子系统入口
+
+| 子系统 | 主要职责 | 文档 |
+|:--|:--|:--|
+| `wateros-base` | 基础类型、CPU 标识、同步与集中配置 | [`README`](./components/wateros-base/README.md) |
+| `wateros-platform` | ISA、Trap、上下文切换、板级平台与 SMP | [`README`](./components/wateros-platform/README.md) |
+| `wateros-runtime` | 控制台、日志、堆、串口与 panic | [`README`](./components/wateros-runtime/README.md) |
+| `wateros-task` | 进程线程生命周期、调度与等待 | [`README`](./components/wateros-task/readme.md) |
+| `wateros-mm` | 地址空间、页表、物理帧与映射 | 源码目录 |
+| `wateros-vfs` | 路径、FD、FS bridge 与页缓存 | 源码目录 |
+| `wateros-fs` | 根文件系统、伪文件系统与 ext4 后端 | 源码目录 |
+| `wateros-ipc` | signal、futex、pipe、SHM 与 waitqueue | 各子模块 README |
+| `wateros-driver` | 块、网络、显示、输入与板级设备发现 | 源码目录 |
+| `wateros-network` | Socket 接口与 smoltcp 协议栈 | 源码目录 |
+| `wateros-syscall` | Linux generic64 syscall 分发与实现 | [`README`](./components/wateros-syscall/README.md) |
+| `wateros-tty` | 终端会话、行规程与字符交互 | [`README`](./components/wateros-tty/README.md) |
+| `wateros-gui` | 软件桌面、显示与输入事件 | [`README`](./components/wateros-gui/README.md) |
+
+## 工具与验证
+
+- 脚本分类、参数和安全边界：[`scripts/README.md`](./scripts/README.md)
+- 工具文档总览：[`docs/tools/README.md`](../docs/tools/README.md)
+- 标准操作流程：[`docs/workflows/README.md`](../docs/workflows/README.md)
+- 功能测试与日志分析：
+  [`run_testsuits_qemu.md`](../docs/agents/tasks/run_testsuits_qemu.md)、
+  [`analyze_kernel_log.md`](../docs/agents/tasks/analyze_kernel_log.md)
+- PC 与等待热点：[`docs/tools/pc-hot.md`](../docs/tools/pc-hot.md)
+
+改动内核路径后，应根据影响范围执行对应架构的 `make check`、内核构建和 QEMU
+workload。仅通过 Cargo check 不能证明运行时行为正确。
+
+## 开发约定
+
+- 保持 `api-v0`、聚合 crate 和 `impl-*` 的职责边界；
+- 通用逻辑同时考虑 RISC-V64 与 LoongArch64；
+- 修改初始化顺序时检查堆、页表、调度、中断、驱动和文件系统依赖；
+- 不在热路径默认开启高频日志或诊断 feature；
+- 文件系统写入测试使用镜像副本或 overlay；
+- 保留工作区中与当前任务无关的已有修改。
+
+更完整的代码导航和验证矩阵见项目的 `AGENTS.md`。

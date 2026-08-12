@@ -1,3 +1,5 @@
+"""验证调试环境检查对宿主工具和 ELF 的诊断结果。"""
+
 from __future__ import annotations
 
 import io
@@ -8,8 +10,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-SCRIPTS = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(SCRIPTS))
+DEBUG_SCRIPTS = Path(__file__).resolve().parents[1] / "debug"
+sys.path.insert(0, str(DEBUG_SCRIPTS))
 
 import wateros_debug
 

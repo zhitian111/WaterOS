@@ -1,4 +1,4 @@
-"""GDB commands for a WaterOS kernel exposing WATEROS_DEBUG_STATE."""
+"""面向导出 WATEROS_DEBUG_STATE 的 WaterOS 内核注册 GDB 命令。"""
 from __future__ import annotations
 
 import json

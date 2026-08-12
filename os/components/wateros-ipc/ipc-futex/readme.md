@@ -1,5 +1,7 @@
 # ipc-futex
 
+[项目首页](../../../../README.md) · [内核工程](../../../README.md) · [系统架构](../../../../README.md#系统架构)
+
 `ipc-futex` 是 WaterOS 的 futex IPC 子系统。它把“同一个 futex 字上的任务等待、
 唤醒与迁移”映射为 `ipc-waitqueue` 的调度器等待队列，并保存每个线程的 robust-futex
 登记状态。

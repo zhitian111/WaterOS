@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render a syscall-profile TSV result as a compact Markdown report."""
+"""将 syscall-profile TSV 结果整理为紧凑的 Markdown 报告。"""
 from __future__ import annotations
 
 import argparse
@@ -154,4 +154,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

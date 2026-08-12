@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""配置脚本共用的 Cargo manifest 与 feature 图解析工具。"""
 from __future__ import annotations
 
 import os

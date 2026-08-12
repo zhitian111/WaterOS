@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# wait-hot: build/run a QEMU plugin that records per-vCPU idle and
-# blocking-syscall wall time without touching kernel code.
+# wait-hot：构建并运行 QEMU plugin，在不修改内核的情况下记录各 vCPU 的
+# idle 时间和阻塞系统调用墙钟时间。
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
