@@ -8,6 +8,8 @@
 //! ALLOC_SYNC: 后端锁保护分配器元数据，`interrupt_guard` 同时禁止本 CPU 的中断重入。
 
 mod interrupt_guard;
+#[cfg(feature = "impl-tlsf")]
+mod small_pool;
 mod stress;
 
 use config::mm::KERNEL_HEAP_SIZE;

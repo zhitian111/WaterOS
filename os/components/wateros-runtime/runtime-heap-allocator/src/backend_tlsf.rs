@@ -13,6 +13,7 @@ use rlsf::Tlsf;
 use spin::Mutex;
 
 use crate::interrupt_guard::{maybe_warn_high_water, with_allocator_interrupt_guard};
+use crate::small_pool;
 use crate::HeapMemStats;
 use crate::HEAP_SPACE;
 
@@ -115,6 +116,10 @@ unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
     unsafe fn alloc(&self, layout : Layout) -> *mut u8 {
         let (ptr, stats) = with_allocator_interrupt_guard(|| {
             let stats = self.mem_stats();
+            let pooled = unsafe { small_pool::alloc(layout) };
+            if !pooled.is_null() {
+                return (pooled, stats);
+            }
             let mut tlsf = self.inner.lock();
             let ptr = match tlsf.allocate(layout) {
                 Some(ptr) => {
@@ -133,6 +138,10 @@ unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
         if ptr.is_null() {
             return;
         }
+        if small_pool::owns(ptr) {
+            with_allocator_interrupt_guard(|| unsafe { small_pool::dealloc(ptr) });
+            return;
+        }
         if !dealloc_pointer_in_heap(ptr, layout) {
             reject_invalid_pointer("dealloc", ptr, layout);
             return;
@@ -147,6 +156,25 @@ unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
     }
 
     unsafe fn realloc(&self, ptr : *mut u8, layout : Layout, new_size : usize) -> *mut u8 {
+        if small_pool::owns(ptr) {
+            if new_size == 0 {
+                unsafe { self.dealloc(ptr, layout) };
+                return ptr::null_mut();
+            }
+            if new_size <= small_pool::SLOT_SIZE {
+                return ptr;
+            }
+            let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
+                return ptr::null_mut();
+            };
+            let new_ptr = unsafe { self.alloc(new_layout) };
+            if new_ptr.is_null() {
+                return ptr::null_mut();
+            }
+            unsafe { ptr::copy_nonoverlapping(ptr, new_ptr, layout.size().min(new_size)) };
+            unsafe { self.dealloc(ptr, layout) };
+            return new_ptr;
+        }
         if !ptr.is_null() && !dealloc_pointer_in_heap(ptr, layout) {
             reject_invalid_pointer("realloc", ptr, layout);
             return ptr::null_mut();
