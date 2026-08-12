@@ -92,6 +92,10 @@ struct LinuxMachineContext {
     gprs : [usize; 31],
     fpregs : [u64; 32],
     fcsr : u32,
+    /// Tail of Linux's 0x210-byte FP union.  The D-extension `fcsr` remains
+    /// immediately after its 32 registers; the larger Q member only reserves
+    /// the remaining storage and must be zero on signal return.
+    fp_union_tail : [u8; 0x10c],
 }
 
 #[cfg(target_arch = "loongarch64")]
@@ -101,6 +105,7 @@ struct LinuxMachineContext {
     pc : usize,
     gprs : [usize; 32],
     flags : u32,
+    padding : [u8; 4],
 }
 
 #[repr(C, align(16))]
@@ -143,6 +148,7 @@ struct LoongArchLsxContext {
     regs : [u64; 64],
     fcc : u64,
     fcsr : u32,
+    padding : u32,
 }
 
 #[cfg(target_arch = "loongarch64")]
@@ -178,9 +184,9 @@ const _ : () = assert!(core::mem::size_of::<UserSigInfo>() == 128);
 const _ : () = assert!(core::mem::offset_of!(UserRtSignalFrame, ucontext) == 0x80);
 const _ : () = assert!(core::mem::offset_of!(UserRtSignalFrame, ucontext.machine) == 0x130);
 #[cfg(target_arch = "riscv64")]
-const _ : () = assert!(core::mem::size_of::<LinuxMachineContext>() == 0x210);
+const _ : () = assert!(core::mem::size_of::<LinuxMachineContext>() == 0x310);
 #[cfg(target_arch = "riscv64")]
-const _ : () = assert!(core::mem::size_of::<UserRtSignalFrame>() == 0x340);
+const _ : () = assert!(core::mem::size_of::<UserRtSignalFrame>() == 0x440);
 #[cfg(target_arch = "loongarch64")]
 const _ : () = assert!(core::mem::size_of::<LinuxMachineContext>() == 0x110);
 #[cfg(target_arch = "loongarch64")]
@@ -199,7 +205,8 @@ fn encode_machine_context(context : &SignalMachineContext) -> LinuxMachineContex
     LinuxMachineContext { pc : context.pc,
                           gprs,
                           fpregs : context.fpregs,
-                          fcsr : context.fcsr }
+                          fcsr : context.fcsr,
+                          fp_union_tail : [0; 0x10c] }
 }
 
 #[cfg(target_arch = "riscv64")]
@@ -216,7 +223,8 @@ fn decode_machine_context(context : &LinuxMachineContext) -> SignalMachineContex
 fn encode_machine_context(context : &SignalMachineContext) -> LinuxMachineContext {
     LinuxMachineContext { pc : context.pc,
                           gprs : context.gprs,
-                          flags : LOONGARCH_SC_USED_FP }
+                          flags : LOONGARCH_SC_USED_FP,
+                          padding : [0; 4] }
 }
 
 #[cfg(target_arch = "loongarch64")]
@@ -229,7 +237,8 @@ fn encode_lsx_context(context : &SignalMachineContext) -> LoongArchLsxContext {
     }
     LoongArchLsxContext { regs,
                           fcc : context.fcc,
-                          fcsr : context.fcsr }
+                          fcsr : context.fcsr,
+                          padding : 0 }
 }
 
 #[cfg(target_arch = "loongarch64")]

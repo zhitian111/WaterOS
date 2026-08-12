@@ -33,6 +33,11 @@ pub struct TrapContext {
     reserved : usize,
 }
 
+const _ : () = assert!(core::mem::size_of::<TrapContext>() == 832);
+const _ : () = assert!(core::mem::offset_of!(TrapContext, fcsr) == 808);
+const _ : () = assert!(core::mem::offset_of!(TrapContext, fcc) == 816);
+const _ : () = assert!(core::mem::offset_of!(TrapContext, reserved) == 824);
+
 /// 异常入口向量 CSR（`EENTRY`）：`trap.S` 中 `__alltraps` 的物理入口地址写入此
 /// CSR。
 const CSR_EENTRY : usize = 0xC;

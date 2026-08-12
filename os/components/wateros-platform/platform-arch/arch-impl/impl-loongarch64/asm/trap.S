@@ -264,6 +264,10 @@ __alltraps:
     movfcsr2gr $r12, $fcsr0
     st.d $r12, $r3, 808
     SAVE_FCC
+    # TrapContext is copied by value into the current TCB.  Initialise the
+    # explicit alignment slot as well; leaving it as stale kernel-stack bytes
+    # would construct a Rust `usize` from uninitialised storage on every trap.
+    st.d $r0, $r3, 824
 
     move $r4, $r3
     # r1/ra 位于 TrapContext+8，CFA 为进入 trap 前的内核栈顶。
