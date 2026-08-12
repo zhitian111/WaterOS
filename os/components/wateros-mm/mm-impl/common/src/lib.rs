@@ -94,14 +94,18 @@ struct ElfReadonlyPageKey {
 }
 
 struct ElfReadonlyPageEntry {
+    key : ElfReadonlyPageKey,
     ppn : PhysPageNum,
-    last_used : u64,
+    lru_prev : Option<usize>,
+    lru_next : Option<usize>,
     _identity : VfsFileContentIdentity,
 }
 
 struct ElfReadonlyPageCache {
-    entries : BTreeMap<ElfReadonlyPageKey, ElfReadonlyPageEntry>,
-    tick : u64,
+    entries : BTreeMap<ElfReadonlyPageKey, usize>,
+    slots : Vec<ElfReadonlyPageEntry>,
+    lru_head : Option<usize>,
+    lru_tail : Option<usize>,
     #[cfg(feature = "cache-layer-diagnostics")]
     hits : u64,
     #[cfg(feature = "cache-layer-diagnostics")]
@@ -119,7 +123,9 @@ struct ElfReadonlyPageCache {
 impl ElfReadonlyPageCache {
     fn new() -> Self {
         Self { entries : BTreeMap::new(),
-               tick : 0,
+               slots : Vec::new(),
+               lru_head : None,
+               lru_tail : None,
                #[cfg(feature = "cache-layer-diagnostics")]
                hits : 0,
                #[cfg(feature = "cache-layer-diagnostics")]
@@ -132,6 +138,75 @@ impl ElfReadonlyPageCache {
                evictions : 0,
                #[cfg(feature = "cache-layer-diagnostics")]
                next_report : ELF_CACHE_DIAGNOSTIC_REPORT_LOOKUPS }
+    }
+
+    fn unlink_lru(&mut self, idx : usize) {
+        let prev = self.slots[idx].lru_prev;
+        let next = self.slots[idx].lru_next;
+        if let Some(prev) = prev {
+            self.slots[prev].lru_next = next;
+        } else {
+            self.lru_head = next;
+        }
+        if let Some(next) = next {
+            self.slots[next].lru_prev = prev;
+        } else {
+            self.lru_tail = prev;
+        }
+        self.slots[idx].lru_prev = None;
+        self.slots[idx].lru_next = None;
+    }
+
+    fn link_lru_head(&mut self, idx : usize) {
+        self.slots[idx].lru_prev = None;
+        self.slots[idx].lru_next = self.lru_head;
+        if let Some(old_head) = self.lru_head {
+            self.slots[old_head].lru_prev = Some(idx);
+        } else {
+            self.lru_tail = Some(idx);
+        }
+        self.lru_head = Some(idx);
+    }
+
+    fn touch_lru(&mut self, idx : usize) {
+        if self.lru_head == Some(idx) {
+            return;
+        }
+        self.unlink_lru(idx);
+        self.link_lru_head(idx);
+    }
+
+    fn insert(&mut self,
+              key : ElfReadonlyPageKey,
+              ppn : PhysPageNum,
+              identity : VfsFileContentIdentity)
+              -> Option<PhysPageNum> {
+        if self.slots.len() < ELF_READONLY_PAGE_CACHE_CAPACITY {
+            let idx = self.slots.len();
+            self.slots.push(ElfReadonlyPageEntry { key,
+                                                   ppn,
+                                                   lru_prev : None,
+                                                   lru_next : None,
+                                                   _identity : identity });
+            self.entries.insert(key, idx);
+            self.link_lru_head(idx);
+            return None;
+        }
+
+        let idx = self.lru_tail.expect("full ELF cache has an LRU tail");
+        self.unlink_lru(idx);
+        let old_key = self.slots[idx].key;
+        let old_ppn = self.slots[idx].ppn;
+        let removed = self.entries.remove(&old_key);
+        debug_assert_eq!(removed, Some(idx));
+        self.slots[idx] = ElfReadonlyPageEntry { key,
+                                                ppn,
+                                                lru_prev : None,
+                                                lru_next : None,
+                                                _identity : identity };
+        self.entries.insert(key, idx);
+        self.link_lru_head(idx);
+        Some(old_ppn)
     }
 
     #[cfg(feature = "cache-layer-diagnostics")]
@@ -194,17 +269,16 @@ pub fn load_or_get_readonly_elf_page<F>(identity : &VfsFileContentIdentity,
         let cached = {
             let mut guard = ELF_READONLY_PAGE_CACHE.lock();
             let cache = guard.get_or_insert_with(ElfReadonlyPageCache::new);
-            cache.tick = cache.tick.wrapping_add(1);
-            let tick = cache.tick;
             #[cfg(feature = "cache-layer-diagnostics")]
             {
                 let hit = cache.entries.contains_key(&key);
                 cache.note_lookup(hit);
             }
-            if let Some(entry) = cache.entries.get_mut(&key) {
-                frame_inc_ref(entry.ppn).map_err(MmError::from)?;
-                entry.last_used = tick;
-                Some(entry.ppn)
+            if let Some(idx) = cache.entries.get(&key).copied() {
+                let ppn = cache.slots[idx].ppn;
+                frame_inc_ref(ppn).map_err(MmError::from)?;
+                cache.touch_lru(idx);
+                Some(ppn)
             } else {
                 None
             }
@@ -235,38 +309,24 @@ pub fn load_or_get_readonly_elf_page<F>(identity : &VfsFileContentIdentity,
         {
             let mut guard = ELF_READONLY_PAGE_CACHE.lock();
             let cache = guard.get_or_insert_with(ElfReadonlyPageCache::new);
-            cache.tick = cache.tick.wrapping_add(1);
-            let tick = cache.tick;
-            if let Some(entry) = cache.entries.get_mut(&key) {
-                frame_inc_ref(entry.ppn).map_err(MmError::from)?;
-                entry.last_used = tick;
-                duplicate = Some(entry.ppn);
+            if let Some(idx) = cache.entries.get(&key).copied() {
+                let ppn = cache.slots[idx].ppn;
+                frame_inc_ref(ppn).map_err(MmError::from)?;
+                cache.touch_lru(idx);
+                duplicate = Some(ppn);
                 #[cfg(feature = "cache-layer-diagnostics")]
                 {
                     cache.duplicate_loads += 1;
                 }
             } else {
-                if cache.entries.len() >= ELF_READONLY_PAGE_CACHE_CAPACITY {
-                    let victim = cache.entries
-                                      .iter()
-                                      .min_by_key(|(_, entry)| entry.last_used)
-                                      .map(|(key, _)| *key);
-                    if let Some(victim) = victim {
-                        evicted = cache.entries.remove(&victim).map(|entry| entry.ppn);
-                        #[cfg(feature = "cache-layer-diagnostics")]
-                        if evicted.is_some() {
-                            cache.evictions += 1;
-                        }
-                    }
-                }
-                cache.entries.insert(key,
-                                     ElfReadonlyPageEntry { ppn : loaded_ppn,
-                                                            last_used : tick,
-                                                            _identity : identity.clone() });
                 frame_inc_ref(loaded_ppn).map_err(MmError::from)?;
+                evicted = cache.insert(key, loaded_ppn, identity.clone());
                 #[cfg(feature = "cache-layer-diagnostics")]
                 {
                     cache.installs += 1;
+                    if evicted.is_some() {
+                        cache.evictions += 1;
+                    }
                 }
             }
         }
