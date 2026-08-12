@@ -10,6 +10,10 @@
 - `export_*.md`：生成架构、feature、API、实现和发布概览。
 - `ltp_*.md`：LTP 自动迭代与 fast-exit 分析。
 - `run_testsuits_qemu.md`：分阶段 QEMU 测例运行与判读。
+- `CODEX_HANDOFF_EXPORT_PROMPT.md`：从当前对话导出可验证的任务交接。
+- `CODEX_HANDOFF_IMPORT_PROMPT.md`：核验并接管已有任务交接。
+- `CODEX_HANDOFF_UPDATE_PROMPT.md`：继续工作后增量刷新交接状态。
+- `CODEX_HANDOFF_TEMPLATE.md`：交接文件的字段、证据链和完整性模板。
 
 当前问题、性能实施和专项回归分别位于 `docs/tasks/known-issues/`、
 `docs/tasks/perf/` 和 `docs/tasks/read-family/`。每项任务的已完成记录保留在其自身的
