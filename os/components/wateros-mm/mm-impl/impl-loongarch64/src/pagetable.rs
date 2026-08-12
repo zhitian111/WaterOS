@@ -67,6 +67,12 @@ impl LoongArch64PteFlags {
     const fn writable(self) -> bool { (self.0 & Self::W.0) != 0 }
 
     #[inline]
+    const fn dirty(self) -> bool { (self.0 & Self::D.0) != 0 }
+
+    #[inline]
+    const fn user(self) -> bool { (self.0 & Self::PLV_MASK) == Self::PLV_USER }
+
+    #[inline]
     const fn cow(self) -> bool { (self.0 & Self::COW.0) != 0 }
 
     #[inline]
@@ -986,7 +992,27 @@ impl LoongArch64AddressSpace {
     pub(crate) fn handle_cow_fault_no_flush(&mut self,
                                             fault_addr : VirtAddr)
                                             -> MmResult<bool> {
-        self.handle_cow_page(fault_addr.floor_page())
+        let vpn = fault_addr.floor_page();
+        if self.handle_cow_page(vpn)? {
+            return Ok(true);
+        }
+
+        // Another CPU may have resolved the same COW page after this CPU took
+        // a PME on a stale D=0 TLB entry but before it acquired the address-space
+        // lock.  In that case the current PTE is already a writable, dirty user
+        // leaf.  Report the fault as handled so the outer wrapper invalidates
+        // this CPU's stale translation (and conservatively shoots down peers)
+        // before retrying the store.  A genuinely read-only or unmapped page
+        // still returns false and is delivered as SIGSEGV by the trap layer.
+        let Some((pte, level)) = self.walk_find(vpn)? else {
+            return Ok(false);
+        };
+        let flags = pte.flags();
+        Ok(level == 0 &&
+           flags.is_leaf() &&
+           flags.writable() &&
+           flags.dirty() &&
+           flags.user())
     }
 
     // 本方法代码由AI完成
