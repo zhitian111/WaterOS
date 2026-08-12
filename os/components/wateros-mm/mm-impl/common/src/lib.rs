@@ -329,7 +329,7 @@ pub fn test_readonly_elf_page_cache() {
     frame_dealloc_result(changed).expect("release changed mapping ref");
 }
 
-const MMAP_READONLY_PAGE_CACHE_CAPACITY : usize = 32_768;
+const MMAP_READONLY_PAGE_CACHE_CAPACITY : usize = 49_152;
 #[cfg(feature = "cache-layer-diagnostics")]
 const MMAP_CACHE_DIAGNOSTIC_REPORT_LOOKUPS : u64 = 1 << 14;
 
