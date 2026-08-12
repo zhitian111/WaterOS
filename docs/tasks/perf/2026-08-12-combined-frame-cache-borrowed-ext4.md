@@ -40,3 +40,20 @@ LRU, mmap sharing, metadata cache, or block-cache policy.
    focused main integration commit/document result and rebuild `make all` so
    main always remains the best validated kernel.
 
+## Result: rejected
+
+- Fixed image SHA-256:
+  `ca5987d2791f83781762f531557f40fadd0a2ce0068fd9be58c2014465db7f58`
+- RISC-V BuildStorm: **548.82 s**; toolchain, minibuild, compile, and judge
+  passed with no panic/SIGSEGV/stall/timeout.
+- Accepted main: **534.26 s**.
+- Delta: **+14.56 s / +2.73% regression**.
+
+The combination does not enter main and is not repeated. The two isolated
+results (526.55 s and 530.42 s) did not compose; their apparent 3--8 second
+gains were within system noise or changed when combined. This also rejects the
+low-priority strategy of accumulating individually sub-threshold candidates
+without a shared structural explanation. Future work should require either a
+single change above the acceptance margin or fresh diagnostics proving that a
+combination removes the same measured bottleneck without adding another cache
+or allocator layer.
