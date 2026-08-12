@@ -77,7 +77,17 @@ pub(crate) fn destroy(handle: usize) {
 pub fn mark_active(handle: usize, cpu: wateros_base::cpu::CpuId) {
     let Some(cell) = (unsafe { cell(handle) }) else { return };
     if cell.is_dropped() || cpu.raw() >= u64::BITS as usize { return; }
-    cell.tlb_cpus.fetch_or(1u64 << cpu.raw(), Ordering::AcqRel);
+    let cpu_bit = 1u64 << cpu.raw();
+    let previous = cell.tlb_cpus.fetch_or(cpu_bit, Ordering::AcqRel);
+    if previous & cpu_bit == 0 {
+        // LoongArch switches PGDL and ASID without implicitly invalidating old
+        // translations.  Flush before this address space first runs on a CPU,
+        // so an ASID reused after process teardown cannot observe a stale user
+        // mapping on a CPU that did not execute the teardown path locally.
+        // This mirrors the RISC-V first-use guard; LoongArch currently only
+        // provides a conservative full local invalidation primitive.
+        platform::arch::paging::flush_tlb_local(platform::arch::paging::TlbFlushRange::All);
+    }
 }
 
 pub fn mark_inactive(_handle: usize, _cpu: wateros_base::cpu::CpuId) {
