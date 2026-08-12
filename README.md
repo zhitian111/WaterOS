@@ -1,49 +1,46 @@
-<p align="center">
-  <img src="./docs/assert/cover.jpg" height="160" alt="山东大学">
-</p>
-
-<p align="center">
-  <img src="./docs/assert/branding/wateros-wordmark.svg" height="112" alt="WaterOS">
-</p>
-
-<p align="center">
-  <sub>2026年全国大学生计算机系统能力大赛 - 操作系统设计赛(全国)- OS内核实现赛道</sub>
-</p>
+<div align="center">
+  <img src="./docs/assert/cover.jpg" height="160" alt="山东大学" />
+  <br />
+  <img src="./docs/assert/branding/wateros-wordmark.svg" height="112" alt="WaterOS" />
+  <p>
+    <sub>2026年全国大学生计算机系统能力大赛 - 操作系统设计赛(全国)- OS内核实现赛道</sub>
+  </p>
+</div>
 
 ---
 
-<p align="center">
-  <strong>面向操作系统设计赛的双架构 Rust 操作系统内核</strong>
-  <br>
-  <sub>支持 RISC-V64 与 LoongArch64，兼容 Linux generic64 ABI</sub>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Rust-2024-000000?style=flat-square&amp;logo=rust&amp;logoColor=white" alt="Rust 2024">
-  <img src="https://img.shields.io/badge/ISA-RISC--V64-283272?style=flat-square&amp;logo=riscv&amp;logoColor=white" alt="RISC-V64">
-  <img src="https://img.shields.io/badge/ISA-LoongArch64-CB2E2E?style=flat-square" alt="LoongArch64">
-  <img src="https://img.shields.io/badge/Kernel-SMP-7B2CBF?style=flat-square" alt="SMP">
-  <a href="./LICENSE">
-    <img src="https://img.shields.io/badge/License-MIT-2EA44F?style=flat-square" alt="MIT License">
-  </a>
-  <img src="https://img.shields.io/badge/Kernel-WaterOS-0A7EA4?style=flat-square" alt="WaterOS">
-</p>
-
-<p align="center">
-  <a href="https://github.com/zhitian111/WaterOS">GitHub</a>
-  &nbsp;·&nbsp;
-  <a href="https://gitlab.eduxiji.net/T202610422999926/wateros">赛事 GitLab</a>
-</p>
+<div align="center">
+  <p>
+    <strong>面向操作系统设计赛的双架构 Rust 操作系统内核</strong>
+    <br />
+    <sub>支持 RISC-V64 与 LoongArch64，兼容 Linux generic64 ABI</sub>
+  </p>
+  <p>
+    <img src="https://img.shields.io/badge/Rust-2024-000000?style=flat-square&amp;logo=rust&amp;logoColor=white" alt="Rust 2024" />
+    <img src="https://img.shields.io/badge/ISA-RISC--V64-283272?style=flat-square&amp;logo=riscv&amp;logoColor=white" alt="RISC-V64" />
+    <img src="https://img.shields.io/badge/ISA-LoongArch64-CB2E2E?style=flat-square" alt="LoongArch64" />
+    <img src="https://img.shields.io/badge/Kernel-SMP-7B2CBF?style=flat-square" alt="SMP" />
+    <img src="https://img.shields.io/badge/License-MIT-2EA44F?style=flat-square" alt="MIT License" />
+    <img src="https://img.shields.io/badge/Kernel-WaterOS-0A7EA4?style=flat-square" alt="WaterOS" />
+  </p>
+  <p>
+    <a href="https://github.com/zhitian111/WaterOS">GitHub</a>
+    &nbsp;·&nbsp;
+    <a href="https://gitlab.eduxiji.net/T202610422999926/wateros">赛事 GitLab</a>
+    &nbsp;·&nbsp;
+    <a href="./LICENSE">MIT License</a>
+  </p>
+</div>
 
 ---
 
-<p align="center">
+<div align="center">
   <a href="#快速开始">快速开始</a> ·
   <a href="#系统架构">架构设计</a> ·
   <a href="#项目结构">项目结构</a> ·
   <a href="#构建配置">构建配置</a> ·
   <a href="#团队成员">团队成员</a>
-</p>
+</div>
 
 ## 项目简介
 
@@ -123,13 +120,10 @@ WaterOS 由一组职责独立的 `wateros-*` 组件组成。顶层 `wateros` cra
 它们的子系统中。下图展示主要调用和依赖关系，省略组件内部的 `api-v0` 与 `impl-*`
 分层。
 
-<p align="center">
-  <img src="./docs/assert/diagrams/wateros-architecture.svg" width="100%" alt="WaterOS 系统架构">
-</p>
-
-<p align="center">
-  <sub>WaterOS 一级组件及其主要调用与依赖关系</sub>
-</p>
+<div align="center">
+  <img src="./docs/assert/diagrams/wateros-architecture.svg" width="100%" alt="WaterOS 系统架构" />
+  <p><sub>WaterOS 一级组件及其主要调用与依赖关系</sub></p>
+</div>
 
 平台差异主要集中在 `wateros-mm`、`wateros-driver` 与 `wateros-platform` 中。这样的
 边界让调度、VFS、IPC 和大部分系统调用可以直接复用于两种架构，也使架构专有问题能够

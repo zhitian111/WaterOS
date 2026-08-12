@@ -1,21 +1,16 @@
-<p align="center">
+<div align="center">
   <a href="../README.md">
-    <img src="./assert/cover.jpg" height="72" alt="山东大学">
+    <img src="./assert/cover.jpg" height="72" alt="山东大学" />
   </a>
-</p>
-
-<h1 align="center">WaterOS 文档</h1>
-
-<p align="center">
-  架构说明、开发工具、标准流程与项目记录
-</p>
-
-<p align="center">
-  <a href="../README.md">项目首页</a> ·
-  <a href="../os/README.md">内核工程</a> ·
-  <a href="./tools/README.md">工具文档</a> ·
-  <a href="./workflows/README.md">标准流程</a>
-</p>
+  <h1>WaterOS 文档</h1>
+  <p>架构说明、开发工具、标准流程与项目记录</p>
+  <p>
+    <a href="../README.md">项目首页</a> ·
+    <a href="../os/README.md">内核工程</a> ·
+    <a href="./tools/README.md">工具文档</a> ·
+    <a href="./workflows/README.md">标准流程</a>
+  </p>
+</div>
 
 ---
 
