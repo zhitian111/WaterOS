@@ -2,7 +2,9 @@
   <img src="./docs/assert/cover.jpg" height="160" alt="山东大学">
 </p>
 
-<h1 align="center">WaterOS</h1>
+<p align="center">
+  <img src="./docs/assert/branding/wateros-wordmark.svg" height="112" alt="WaterOS">
+</p>
 
 <p align="center">
   <sub>2026年全国大学生计算机系统能力大赛 - 操作系统设计赛(全国)- OS内核实现赛道</sub>
@@ -59,6 +61,20 @@ Cargo feature 树负责在编译期选择目标平台、比赛阶段、组件能
 方式让我们可以在同一份内核源码上组合不同运行环境，同时保持依赖边界清楚、最终产物
 精简。目前，WaterOS 已实现 SMP 任务调度、虚拟内存、VFS 与 ext4、IPC、VirtIO
 设备、网络协议栈及常用 Linux 系统调用等核心能力。
+
+## 赛事提交材料
+
+受赛事材料体积及 GitLab 仓库空间限制，设计文档、演示文件、系统镜像和阶段性提交产物
+统一存放于山东大学云盘。可从 [WaterOS 材料根目录](https://icloud.sdu.edu.cn/link/AA593637DE856E499C98A85662C98307E3)
+访问全部内容，或直接进入对应比赛阶段：
+
+| 比赛阶段 | 提交材料 |
+|:--|:--|
+| **初赛** | [打开材料目录](https://icloud.sdu.edu.cn/anyshare/en-us/link/AA593637DE856E499C98A85662C98307E3/7250739CB79A474FB4A15880D4859F8F/0FB761CC75B24407A09C8A33E952EAE3/C6EDA1620ADD452FB5145E9B338628DB) |
+| **决赛 · 线上阶段** | [打开材料目录](https://icloud.sdu.edu.cn/anyshare/en-us/link/AA593637DE856E499C98A85662C98307E3/7250739CB79A474FB4A15880D4859F8F/0FB761CC75B24407A09C8A33E952EAE3/5A8AEF8BEBED49BC9CA0C99780711857) |
+| **决赛 · 线下阶段** | [打开材料目录](https://icloud.sdu.edu.cn/anyshare/en-us/link/AA593637DE856E499C98A85662C98307E3/7250739CB79A474FB4A15880D4859F8F/0FB761CC75B24407A09C8A33E952EAE3/2270FE582BA3439A969565F62354B927) |
+
+> 云盘共享链接有效期至 **2027 年 8 月 31 日 12:58（北京时间）**。
 
 ## 已验证环境
 
