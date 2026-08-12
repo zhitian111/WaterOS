@@ -50,3 +50,32 @@ Accept only if the first successful sample is below 524.26 s and all toolchain,
 minibuild, compile, artifact, and judge markers pass without panic, stall,
 timeout, SIGSEGV, or filesystem error. A clear win is sufficient and is not
 repeated. Reject a noise-sized result or regression without a second run.
+
+## Result (rejected)
+
+The VFS API tests, `make check`, `make la_check`, and `make all` passed. Both
+Final artifacts were produced and the RISC-V kernel retained the script-body
+marker. The first and only fixed-image BuildStorm sample passed every required
+marker, produced the expected 1,681,000-byte artifact, and had no panic,
+SIGSEGV, stall, timeout, or filesystem error.
+
+| item | result |
+| --- | ---: |
+| accepted main baseline | 534.26 s |
+| borrowed normalized path | 569.55 s |
+| regression | 35.29 s / 6.61% |
+| host wall time | 592.716 s |
+
+The candidate kernel SHA-256 was
+`951e98d868a2e5209fcb2ab5bbc81a7378d1c7db5aadd08c9df9fcb5279953d0`;
+the fixed image SHA-256 was
+`ca5987d2791f83781762f531557f40fadd0a2ce0068fd9be58c2014465db7f58`.
+The structured result is
+`/tmp/wateros-buildstorm-fixed/borrowed-normalized-path-a1/result.json`.
+
+Removing the owning copy did not convert the symbol's instruction share into
+wall-clock benefit. The lifetime-bearing `Cow` changes surrounding code shape
+and the canonical-path scan remains; those costs, or workload variance, exceed
+the eliminated allocation in this matched run. Because the result is a clear
+regression, no plugin run or repeat is justified. Do not merge this candidate;
+main remains the accepted 534.26 s kernel.
