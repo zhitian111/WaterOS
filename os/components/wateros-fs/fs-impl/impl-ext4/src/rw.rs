@@ -62,8 +62,7 @@ fn read_with_small_cache(dev: &SharedBlockDevice,
         .checked_add(dst.len())
         .ok_or(DriverError::InvalidParam)?;
     if dst.len() > 64 || start / BLOCK_SIZE != (end - 1) / BLOCK_SIZE {
-        let mut guard = dev.lock();
-        guard.read_bytes(start_byte, dst)?;
+        dev.read_bytes(start_byte, dst)?;
         return Ok(false);
     }
 
@@ -79,10 +78,7 @@ fn read_with_small_cache(dev: &SharedBlockDevice,
     }
 
     let mut block_buf = [0u8; BLOCK_SIZE];
-    {
-        let mut guard = dev.lock();
-        guard.read_blocks(Lba(block), &mut block_buf)?;
-    }
+    dev.read_blocks(Lba(block), &mut block_buf)?;
     let mut cache = EXT4_SMALL_READ_CACHE.lock();
     cache.valid = true;
     cache.dev_id = dev_id;
@@ -174,8 +170,7 @@ fn block_write_bytes(
     if src.is_empty() {
         return Ok(());
     }
-    let mut guard = dev.lock();
-    let bdev: &mut dyn driver_block_api_v0::BlockDevice = &mut **guard;
+    let bdev: &dyn driver_block_api_v0::BlockDevice = &**dev;
     let bs = bdev.block_size();
     if bs == 0 {
         return Err(DriverError::InvalidParam);
@@ -213,7 +208,7 @@ fn block_write_bytes(
 
 // 本方法代码由AI完成
 fn write_partial_block(
-    bdev: &mut dyn driver_block_api_v0::BlockDevice,
+    bdev: &dyn driver_block_api_v0::BlockDevice,
     block: usize,
     offset: usize,
     data: &[u8],
@@ -917,7 +912,7 @@ mod tests {
                 writes: writes.clone(),
             };
             (
-                Arc::new(Mutex::new(Box::new(dev) as Box<dyn BlockDevice>)),
+                Arc::new(dev),
                 bytes,
                 reads,
                 writes,
@@ -926,7 +921,7 @@ mod tests {
     }
 
     impl BlockDevice for CountingBlockDevice {
-        fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> Result<(), DriverError> {
+        fn read_blocks(&self, start_block: Lba, buf: &mut [u8]) -> Result<(), DriverError> {
             if buf.len() % BLOCK_SIZE != 0 {
                 return Err(DriverError::InvalidParam);
             }
@@ -942,7 +937,7 @@ mod tests {
             Ok(())
         }
 
-        fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> Result<(), DriverError> {
+        fn write_blocks(&self, start_block: Lba, buf: &[u8]) -> Result<(), DriverError> {
             if buf.len() % BLOCK_SIZE != 0 {
                 return Err(DriverError::InvalidParam);
             }

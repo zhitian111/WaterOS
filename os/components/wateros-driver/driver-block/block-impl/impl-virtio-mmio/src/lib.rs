@@ -21,9 +21,12 @@ use api_v0::{BlockDevice, DriverError, DriverResult, Lba};
 use driver_api::MmioRegion;
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
 use mm_api::addr::PhysPageNum;
+use spin::Mutex;
 use virtio_drivers::device::blk::VirtIOBlk;
 #[cfg(feature = "interrupt")]
 use virtio_drivers::device::blk::{BlkReq, BlkResp};
+#[cfg(feature = "interrupt")]
+use virtio_drivers::Error as VirtioError;
 use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
 use virtio_drivers::{BufferDirection, Hal, PhysAddr, PAGE_SIZE};
 
@@ -115,8 +118,9 @@ unsafe impl Hal for VirtioMmioHal {
 
 /// VirtIO-MMIO 上的块设备（`virtio-blk`）。
 pub struct VirtioBlkDevice {
-    /// `virtio-drivers` 侧已握手的传输与队列状态。
-    inner: VirtIOBlk<VirtioMmioHal, MmioTransport<'static>>,
+    /// The lock protects only descriptor submission/retirement. It is never
+    /// held while an interrupt-capable task sleeps.
+    inner: Mutex<VirtIOBlk<VirtioMmioHal, MmioTransport<'static>>>,
     #[cfg(feature = "interrupt")]
     interrupt: Option<Arc<InterruptCompletion>>,
 }
@@ -124,16 +128,31 @@ pub struct VirtioBlkDevice {
 #[cfg(feature = "interrupt")]
 struct InterruptCompletion {
     generation: AtomicUsize,
+    wait: task::WaitQueue,
 }
 
 #[cfg(feature = "interrupt")]
 impl InterruptCompletion {
     fn new() -> Self {
-        Self { generation: AtomicUsize::new(0) }
+        Self {
+            generation: AtomicUsize::new(0),
+            wait: task::WaitQueue::new_named("virtio-blk"),
+        }
     }
 
     fn signal(&self) {
         self.generation.fetch_add(1, Ordering::Release);
+        self.wait.wake_all();
+    }
+
+    fn wait_for_progress(&self, observed: usize) {
+        if irq::can_wait() {
+            self.wait.wait_current_while(|| {
+                self.generation.load(Ordering::Acquire) == observed
+            });
+        } else {
+            core::hint::spin_loop();
+        }
     }
 }
 
@@ -148,7 +167,7 @@ impl VirtioBlkDevice {
         let inner = VirtIOBlk::<VirtioMmioHal, MmioTransport>::new(transport)
             .map_err(|_| DriverError::Unsupported)?;
         Ok(Self {
-            inner,
+            inner: Mutex::new(inner),
             #[cfg(feature = "interrupt")]
             interrupt : None,
         })
@@ -182,7 +201,7 @@ impl VirtioBlkDevice {
                            })
         {
             Ok(_) => {
-                device.inner.enable_interrupts();
+                device.inner.lock().enable_interrupts();
                 device.interrupt = Some(completion);
                 logging::info!("[virtio-blk] interrupt completion enabled irq={}", hwirq);
             }
@@ -196,24 +215,7 @@ impl VirtioBlkDevice {
     }
 
     #[cfg(feature = "interrupt")]
-    fn wait_for_token(&mut self, token : u16, completion : &InterruptCompletion) {
-        loop {
-            if self.inner.peek_used() == Some(token) {
-                return;
-            }
-            let observed = completion.generation.load(Ordering::Acquire);
-            if self.inner.peek_used() == Some(token) {
-                return;
-            }
-            irq::wait_for_interrupt(|| {
-                completion.generation.load(Ordering::Acquire) != observed ||
-                self.inner.peek_used() == Some(token)
-            });
-        }
-    }
-
-    #[cfg(feature = "interrupt")]
-    fn read_blocks_interrupt(&mut self,
+    fn read_blocks_interrupt(&self,
                              start_block : Lba,
                              buf : &mut [u8])
                              -> DriverResult<()> {
@@ -223,19 +225,61 @@ impl VirtioBlkDevice {
                              .ok_or(DriverError::Unsupported)?;
         let mut request = BlkReq::default();
         let mut response = BlkResp::default();
-        let token = unsafe {
-            self.inner.read_blocks_nb(start_block.0 as usize,
-                                      &mut request,
-                                      buf,
-                                      &mut response)
-        }.map_err(|_| DriverError::IoError)?;
-        self.wait_for_token(token, &completion);
-        unsafe { self.inner.complete_read_blocks(token, &request, buf, &mut response) }
-            .map_err(|_| DriverError::IoError)
+        let token = loop {
+            let submitted = {
+                let mut inner = self.inner.lock();
+                unsafe {
+                    inner.read_blocks_nb(start_block.0 as usize,
+                                         &mut request,
+                                         buf,
+                                         &mut response)
+                }
+            };
+            match submitted {
+                Ok(token) => break token,
+                Err(VirtioError::QueueFull) => {
+                    let observed = completion.generation.load(Ordering::Acquire);
+                    completion.wait_for_progress(observed);
+                }
+                Err(error) => {
+                    logging::error!("[virtio-blk] read submit failed: {:?}", error);
+                    return Err(DriverError::IoError);
+                }
+            }
+        };
+        loop {
+            {
+                let mut inner = self.inner.lock();
+                if inner.peek_used() == Some(token) {
+                    let result = unsafe {
+                        inner.complete_read_blocks(token, &request, buf, &mut response)
+                    };
+                    drop(inner);
+                    completion.signal();
+                    return result.map_err(|error| {
+                        logging::error!("[virtio-blk] read completion failed token={} error={:?}",
+                                        token,
+                                        error);
+                        DriverError::IoError
+                    });
+                }
+            }
+            let observed = completion.generation.load(Ordering::Acquire);
+            if irq::can_wait() {
+                completion.wait.wait_current_while(|| {
+                    if completion.generation.load(Ordering::Acquire) != observed {
+                        return false;
+                    }
+                    self.inner.lock().peek_used() != Some(token)
+                });
+            } else {
+                core::hint::spin_loop();
+            }
+        }
     }
 
     #[cfg(feature = "interrupt")]
-    fn write_blocks_interrupt(&mut self,
+    fn write_blocks_interrupt(&self,
                               start_block : Lba,
                               buf : &[u8])
                               -> DriverResult<()> {
@@ -245,34 +289,83 @@ impl VirtioBlkDevice {
                              .ok_or(DriverError::Unsupported)?;
         let mut request = BlkReq::default();
         let mut response = BlkResp::default();
-        let token = unsafe {
-            self.inner.write_blocks_nb(start_block.0 as usize,
-                                       &mut request,
-                                       buf,
-                                       &mut response)
-        }.map_err(|_| DriverError::IoError)?;
-        self.wait_for_token(token, &completion);
-        unsafe { self.inner.complete_write_blocks(token, &request, buf, &mut response) }
-            .map_err(|_| DriverError::IoError)
+        let token = loop {
+            let submitted = {
+                let mut inner = self.inner.lock();
+                unsafe {
+                    inner.write_blocks_nb(start_block.0 as usize,
+                                          &mut request,
+                                          buf,
+                                          &mut response)
+                }
+            };
+            match submitted {
+                Ok(token) => break token,
+                Err(VirtioError::QueueFull) => {
+                    let observed = completion.generation.load(Ordering::Acquire);
+                    completion.wait_for_progress(observed);
+                }
+                Err(error) => {
+                    logging::error!("[virtio-blk] write submit failed: {:?}", error);
+                    return Err(DriverError::IoError);
+                }
+            }
+        };
+        loop {
+            {
+                let mut inner = self.inner.lock();
+                if inner.peek_used() == Some(token) {
+                    let result = unsafe {
+                        inner.complete_write_blocks(token, &request, buf, &mut response)
+                    };
+                    drop(inner);
+                    completion.signal();
+                    return result.map_err(|error| {
+                        logging::error!("[virtio-blk] write completion failed token={} error={:?}",
+                                        token,
+                                        error);
+                        DriverError::IoError
+                    });
+                }
+            }
+            let observed = completion.generation.load(Ordering::Acquire);
+            if irq::can_wait() {
+                completion.wait.wait_current_while(|| {
+                    if completion.generation.load(Ordering::Acquire) != observed {
+                        return false;
+                    }
+                    self.inner.lock().peek_used() != Some(token)
+                });
+            } else {
+                core::hint::spin_loop();
+            }
+        }
     }
 }
 
 impl BlockDevice for VirtioBlkDevice {
     /// 以 LBA 为单位读入 `buf`；长度须为块大小的整数倍，否则由 VirtIO 层返回错误。
-    fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
+    fn read_blocks(&self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
         #[cfg(feature = "interrupt")]
         {
-            if self.interrupt.is_some() && irq::can_wait() {
+            if self.interrupt.is_some() {
                 return self.read_blocks_interrupt(start_block, buf);
             }
         }
         self.inner
+            .lock()
             .read_blocks(start_block.0 as usize, buf)
-            .map_err(|_| DriverError::IoError)
+            .map_err(|error| {
+                logging::error!("[virtio-blk] synchronous read failed lba={} bytes={} error={:?}",
+                                start_block.0,
+                                buf.len(),
+                                error);
+                DriverError::IoError
+            })
     }
 
     /// 将 `buf` 写回磁盘；语义与 [`read_blocks`] 对称。
-    fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> DriverResult<()> {
+    fn write_blocks(&self, start_block: Lba, buf: &[u8]) -> DriverResult<()> {
         let probe = buf.len() >= IOZONE_PROBE_MIN_WRITE_BYTES;
         if probe {
             logging::trace!("[virtio-blk-write] begin lba={} bytes={}",
@@ -280,14 +373,14 @@ impl BlockDevice for VirtioBlkDevice {
                             buf.len());
         }
         #[cfg(feature = "interrupt")]
-        let result = if self.interrupt.is_some() && irq::can_wait() {
+        let result = if self.interrupt.is_some() {
             self.write_blocks_interrupt(start_block, buf)
         } else {
-            self.inner.write_blocks(start_block.0 as usize, buf)
+            self.inner.lock().write_blocks(start_block.0 as usize, buf)
                       .map_err(|_| DriverError::IoError)
         };
         #[cfg(not(feature = "interrupt"))]
-        let result = self.inner.write_blocks(start_block.0 as usize, buf)
+        let result = self.inner.lock().write_blocks(start_block.0 as usize, buf)
                                .map_err(|_| DriverError::IoError);
         if probe {
             match &result {

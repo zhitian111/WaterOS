@@ -6,11 +6,13 @@
 #![no_std]
 extern crate alloc;
 
-use alloc::boxed::Box;
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use api_v0::{BlockDevice, DriverError, DriverResult, Lba};
+use spin::Mutex;
 use wateros_base_config::fs::BLOCK_CACHE_CAPACITY_BLOCKS;
 
 mod manager;
@@ -185,8 +187,7 @@ struct Slot {
 
 /// 写穿块缓存装饰器：[`read_blocks`] 命中则避免访问 `inner`；未命中合并读取，并在近期
 /// 第二次访问时填入 LRU。写入维持 write-through + write-allocate。
-pub struct CachingBlockDevice {
-    inner: Box<dyn BlockDevice + Send>,
+struct CacheState {
     block_size: usize,
     capacity: usize,
     data: Vec<u8>,
@@ -204,10 +205,8 @@ pub struct CachingBlockDevice {
     diagnostics: BlockCacheDiagnostics,
 }
 
-impl CachingBlockDevice {
-    /// 用给定配置包装 `inner`；从 `inner` 读取 [`BlockDevice::block_size`] 并预分配槽位缓冲。
-    pub fn new(inner: Box<dyn BlockDevice + Send>, config: BlockCacheConfig) -> Self {
-        let block_size = inner.block_size();
+impl CacheState {
+    fn new(block_size: usize, config: BlockCacheConfig) -> Self {
         let capacity = if block_size == 0 { 0 } else { config.capacity_blocks };
         let data = vec![0u8; capacity.checked_mul(block_size).unwrap_or(usize::MAX)];
         let mut slots = Vec::new();
@@ -224,7 +223,6 @@ impl CachingBlockDevice {
             free.extend((0..capacity).rev());
         }
         Self {
-            inner,
             block_size,
             capacity,
             data,
@@ -250,12 +248,6 @@ impl CachingBlockDevice {
     fn slot_data_mut(&mut self, idx: usize) -> &mut [u8] {
         let start = idx * self.block_size;
         &mut self.data[start..start + self.block_size]
-    }
-
-    /// 将脏缓存写回底层（写穿下为 no-op）；保留接口供将来 write-back 或测试钩子使用。
-    pub fn flush(&mut self) -> DriverResult<()> {
-        let _ = &mut self.inner;
-        Ok(())
     }
 
     fn touch_lru(&mut self, idx: usize) {
@@ -442,6 +434,85 @@ impl CachingBlockDevice {
 
 }
 
+/// Concurrent write-through cache. Read misses release the cache metadata lock
+/// before entering the backend. A writer generation makes a read retry if it
+/// overlapped write-through, preventing stale data from escaping or remaining
+/// installed in the cache.
+pub struct CachingBlockDevice {
+    inner: Arc<dyn BlockDevice>,
+    block_size: usize,
+    capacity: usize,
+    writer: AtomicBool,
+    write_generation: AtomicUsize,
+    #[cfg(feature = "task-wait")]
+    write_wait: Mutex<Option<task::WaitQueue>>,
+    state: Mutex<CacheState>,
+}
+
+impl CachingBlockDevice {
+    pub fn new(inner: Arc<dyn BlockDevice>, config: BlockCacheConfig) -> Self {
+        let block_size = inner.block_size();
+        let state = CacheState::new(block_size, config);
+        Self {
+            inner,
+            block_size,
+            capacity: state.capacity,
+            writer: AtomicBool::new(false),
+            write_generation: AtomicUsize::new(0),
+            #[cfg(feature = "task-wait")]
+            write_wait: Mutex::new(None),
+            state: Mutex::new(state),
+        }
+    }
+
+    /// Write-through has no independent dirty state.
+    pub fn flush(&self) -> DriverResult<()> { Ok(()) }
+
+    #[cfg(feature = "task-wait")]
+    fn write_wait_queue(&self) -> task::WaitQueue {
+        let mut wait = self.write_wait.lock();
+        *wait.get_or_insert_with(|| task::WaitQueue::new_named("block-cache-write"))
+    }
+
+    #[cfg(feature = "task-wait")]
+    fn can_sleep() -> bool {
+        task::current_task_snapshot().is_some_and(|snapshot| {
+            matches!(snapshot.state, task::TaskState::Running)
+        })
+    }
+
+    fn wait_for_writer(&self) {
+        #[cfg(feature = "task-wait")]
+        if Self::can_sleep() {
+            self.write_wait_queue().wait_current_while(|| self.writer.load(Ordering::Acquire));
+            return;
+        }
+        core::hint::spin_loop();
+    }
+
+    fn acquire_writer(&self) {
+        'retry: loop {
+            if self.writer.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                          .is_ok()
+            {
+                return;
+            }
+            self.wait_for_writer();
+        }
+    }
+
+    fn release_writer(&self) {
+        self.write_generation.fetch_add(1, Ordering::Release);
+        self.writer.store(false, Ordering::Release);
+        #[cfg(feature = "task-wait")]
+        {
+            if let Some(wait) = *self.write_wait.lock() {
+                wait.wake_all();
+            }
+        }
+    }
+}
+
 impl BlockDevice for CachingBlockDevice {
     fn block_size(&self) -> usize {
         self.block_size
@@ -451,7 +522,7 @@ impl BlockDevice for CachingBlockDevice {
         self.inner.total_blocks()
     }
 
-    fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
+    fn read_blocks(&self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
         let bs = self.block_size;
         if bs == 0 || buf.len() % bs != 0 {
             return Err(DriverError::InvalidParam);
@@ -461,90 +532,125 @@ impl BlockDevice for CachingBlockDevice {
         }
 
         let nblocks = buf.len() / bs;
-        #[cfg(feature = "diagnostics")]
-        {
-            self.diagnostics.read_blocks += nblocks as u64;
-        }
-        let base = start_block.0;
-        let mut i = 0usize;
-        while i < nblocks {
+        'retry: loop {
+            let generation = self.write_generation.load(Ordering::Acquire);
+            if self.writer.load(Ordering::Acquire) {
+                self.wait_for_writer();
+                continue;
+            }
+            #[cfg(feature = "diagnostics")]
+            { self.state.lock().diagnostics.read_blocks += nblocks as u64; }
+            let base = start_block.0;
+            let mut i = 0usize;
+            while i < nblocks {
+            let mut state = self.state.lock();
             let mut hit_end = i;
             let mut last_hit_idx = None;
             while hit_end < nblocks {
                 let lk = Lba(base + hit_end as u64);
-                let Some(idx) = self.map.get(lk) else {
+                let Some(idx) = state.map.get(lk) else {
                     break;
                 };
                 buf[hit_end * bs..(hit_end + 1) * bs]
-                    .copy_from_slice(self.slot_data(idx));
+                    .copy_from_slice(state.slot_data(idx));
                 #[cfg(feature = "diagnostics")]
                 {
-                    self.diagnostics.hit_blocks += 1;
+                    state.diagnostics.hit_blocks += 1;
                 }
                 last_hit_idx = Some(idx);
                 hit_end += 1;
             }
             if hit_end > i {
                 if let Some(idx) = last_hit_idx {
-                    self.touch_lru(idx);
+                    state.touch_lru(idx);
                 }
                 i = hit_end;
                 continue;
             }
             let mut j = i + 1;
             #[cfg(feature = "diagnostics")]
-            self.note_miss();
+            state.note_miss();
             while j < nblocks {
                 let lbaj = Lba(base + j as u64);
-                if self.map.get(lbaj).is_some() {
+                if state.map.get(lbaj).is_some() {
                     break;
                 }
                 #[cfg(feature = "diagnostics")]
-                self.note_miss();
+                state.note_miss();
                 j += 1;
             }
             let run_bytes = (j - i) * bs;
             #[cfg(feature = "diagnostics")]
             {
-                self.diagnostics.backend_read_calls += 1;
-                self.diagnostics.backend_read_blocks += (j - i) as u64;
+                state.diagnostics.backend_read_calls += 1;
+                state.diagnostics.backend_read_blocks += (j - i) as u64;
             }
+            drop(state);
             self.inner.read_blocks(Lba(base + i as u64), &mut buf[i * bs..i * bs + run_bytes])?;
+            if self.writer.load(Ordering::Acquire) ||
+               self.write_generation.load(Ordering::Acquire) != generation
+            {
+                continue 'retry;
+            }
+            let mut state = self.state.lock();
+            if self.writer.load(Ordering::Acquire) ||
+               self.write_generation.load(Ordering::Acquire) != generation
+            {
+                drop(state);
+                continue 'retry;
+            }
             for k in i..j {
                 let lk = Lba(base + k as u64);
-                self.admit_read_miss(lk, &buf[k * bs..(k + 1) * bs]);
+                if let Some(idx) = state.map.get(lk) {
+                    buf[k * bs..(k + 1) * bs].copy_from_slice(state.slot_data(idx));
+                    state.touch_lru(idx);
+                } else {
+                    state.admit_read_miss(lk, &buf[k * bs..(k + 1) * bs]);
+                }
             }
             i = j;
+            }
+            if !self.writer.load(Ordering::Acquire) &&
+               self.write_generation.load(Ordering::Acquire) == generation
+            {
+                #[cfg(feature = "diagnostics")]
+                self.state.lock().maybe_report_diagnostics();
+                return Ok(());
+            }
         }
-        #[cfg(feature = "diagnostics")]
-        self.maybe_report_diagnostics();
-        Ok(())
     }
 
-    fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> DriverResult<()> {
+    fn write_blocks(&self, start_block: Lba, buf: &[u8]) -> DriverResult<()> {
         let bs = self.block_size;
         if bs == 0 || buf.len() % bs != 0 {
             return Err(DriverError::InvalidParam);
         }
-        self.inner.write_blocks(start_block, buf)?;
+        self.acquire_writer();
+        let backend_result = self.inner.write_blocks(start_block, buf);
+        if let Err(error) = backend_result {
+            self.release_writer();
+            return Err(error);
+        }
         if self.capacity == 0 {
+            self.release_writer();
             return Ok(());
         }
         let nblocks = buf.len() / bs;
+        let mut state = self.state.lock();
         #[cfg(feature = "diagnostics")]
-        {
-            self.diagnostics.write_blocks += nblocks as u64;
-        }
+        { state.diagnostics.write_blocks += nblocks as u64; }
         for i in 0..nblocks {
             let lba = Lba(start_block.0 + i as u64);
             #[cfg(feature = "diagnostics")]
-            if self.map.get(lba).is_none() {
-                self.diagnostics.write_allocations += 1;
+            if state.map.get(lba).is_none() {
+                state.diagnostics.write_allocations += 1;
             }
-            self.cache_put(lba, &buf[i * bs..(i + 1) * bs]);
+            state.cache_put(lba, &buf[i * bs..(i + 1) * bs]);
         }
         #[cfg(feature = "diagnostics")]
-        self.maybe_report_diagnostics();
+        state.maybe_report_diagnostics();
+        drop(state);
+        self.release_writer();
         Ok(())
     }
 }
@@ -558,7 +664,7 @@ mod tests {
     use std::sync::Mutex;
 
     struct CountingMem {
-        bytes: Vec<u8>,
+        bytes: Mutex<Vec<u8>>,
         reads: Arc<Mutex<usize>>,
         writes: Arc<Mutex<usize>>,
     }
@@ -566,7 +672,7 @@ mod tests {
     impl CountingMem {
         fn new(size_blocks: usize, reads: Arc<Mutex<usize>>, writes: Arc<Mutex<usize>>) -> Self {
             Self {
-                bytes: vec![0u8; size_blocks * api_v0::BLOCK_SIZE],
+                bytes: Mutex::new(vec![0u8; size_blocks * api_v0::BLOCK_SIZE]),
                 reads,
                 writes,
             }
@@ -574,7 +680,7 @@ mod tests {
     }
 
     impl BlockDevice for CountingMem {
-        fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
+        fn read_blocks(&self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
             *self.reads.lock().unwrap() += 1;
             let bs = self.block_size();
             if buf.len() % bs != 0 {
@@ -582,12 +688,13 @@ mod tests {
             }
             let start = (start_block.0 as usize).checked_mul(bs).ok_or(DriverError::InvalidParam)?;
             let end = start.checked_add(buf.len()).ok_or(DriverError::InvalidParam)?;
-            let src = self.bytes.get(start..end).ok_or(DriverError::InvalidParam)?;
+            let bytes = self.bytes.lock().unwrap();
+            let src = bytes.get(start..end).ok_or(DriverError::InvalidParam)?;
             buf.copy_from_slice(src);
             Ok(())
         }
 
-        fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> DriverResult<()> {
+        fn write_blocks(&self, start_block: Lba, buf: &[u8]) -> DriverResult<()> {
             *self.writes.lock().unwrap() += 1;
             let bs = self.block_size();
             if buf.len() % bs != 0 {
@@ -595,7 +702,8 @@ mod tests {
             }
             let start = (start_block.0 as usize).checked_mul(bs).ok_or(DriverError::InvalidParam)?;
             let end = start.checked_add(buf.len()).ok_or(DriverError::InvalidParam)?;
-            let dst = self.bytes.get_mut(start..end).ok_or(DriverError::InvalidParam)?;
+            let mut bytes = self.bytes.lock().unwrap();
+            let dst = bytes.get_mut(start..end).ok_or(DriverError::InvalidParam)?;
             dst.copy_from_slice(buf);
             Ok(())
         }
@@ -605,8 +713,8 @@ mod tests {
     fn repeated_read_admits_on_second_miss_then_hits() {
         let reads = Arc::new(Mutex::new(0));
         let writes = Arc::new(Mutex::new(0));
-        let inner = Box::new(CountingMem::new(4, reads.clone(), writes.clone()));
-        let mut cache = CachingBlockDevice::new(
+        let inner = Arc::new(CountingMem::new(4, reads.clone(), writes.clone()));
+        let cache = CachingBlockDevice::new(
             inner,
             BlockCacheConfig { capacity_blocks: 8 },
         );
@@ -627,8 +735,8 @@ mod tests {
     fn contiguous_miss_merged_single_read() {
         let reads = Arc::new(Mutex::new(0));
         let writes = Arc::new(Mutex::new(0));
-        let inner = Box::new(CountingMem::new(8, reads.clone(), writes.clone()));
-        let mut cache = CachingBlockDevice::new(
+        let inner = Arc::new(CountingMem::new(8, reads.clone(), writes.clone()));
+        let cache = CachingBlockDevice::new(
             inner,
             BlockCacheConfig { capacity_blocks: 8 },
         );
@@ -636,7 +744,7 @@ mod tests {
         let mut buf = vec![0u8; bs * 3];
         cache.read_blocks(Lba(2), &mut buf).unwrap();
         assert_eq!(*reads.lock().unwrap(), 1);
-        assert_eq!(cache.free.len(), cache.capacity,
+        assert_eq!(cache.state.lock().free.len(), cache.capacity,
                    "first-touch scan must not consume data slots");
     }
 
@@ -644,8 +752,8 @@ mod tests {
     fn contiguous_hit_run_serves_all_from_cache() {
         let reads = Arc::new(Mutex::new(0));
         let writes = Arc::new(Mutex::new(0));
-        let inner = Box::new(CountingMem::new(4, reads.clone(), writes.clone()));
-        let mut cache = CachingBlockDevice::new(
+        let inner = Arc::new(CountingMem::new(4, reads.clone(), writes.clone()));
+        let cache = CachingBlockDevice::new(
             inner,
             BlockCacheConfig { capacity_blocks: 4 },
         );
@@ -669,8 +777,8 @@ mod tests {
     fn hit_refreshes_lru_before_eviction() {
         let reads = Arc::new(Mutex::new(0));
         let writes = Arc::new(Mutex::new(0));
-        let inner = Box::new(CountingMem::new(4, reads.clone(), writes));
-        let mut cache = CachingBlockDevice::new(
+        let inner = Arc::new(CountingMem::new(4, reads.clone(), writes));
+        let cache = CachingBlockDevice::new(
             inner,
             BlockCacheConfig { capacity_blocks: 2 },
         );
@@ -700,8 +808,8 @@ mod tests {
     fn write_through_updates_existing_cache_line() {
         let reads = Arc::new(Mutex::new(0));
         let writes = Arc::new(Mutex::new(0));
-        let inner = Box::new(CountingMem::new(2, reads.clone(), writes.clone()));
-        let mut cache = CachingBlockDevice::new(
+        let inner = Arc::new(CountingMem::new(2, reads.clone(), writes.clone()));
+        let cache = CachingBlockDevice::new(
             inner,
             BlockCacheConfig { capacity_blocks: 4 },
         );
@@ -724,8 +832,8 @@ mod tests {
     fn write_allocate_then_read_hits_cache() {
         let reads = Arc::new(Mutex::new(0));
         let writes = Arc::new(Mutex::new(0));
-        let inner = Box::new(CountingMem::new(8, reads.clone(), writes.clone()));
-        let mut cache = CachingBlockDevice::new(
+        let inner = Arc::new(CountingMem::new(8, reads.clone(), writes.clone()));
+        let cache = CachingBlockDevice::new(
             inner,
             BlockCacheConfig { capacity_blocks: 8 },
         );
@@ -743,8 +851,8 @@ mod tests {
     #[test]
     fn capacity_zero_passthrough() {
         let reads = Arc::new(Mutex::new(0));
-        let inner = Box::new(CountingMem::new(2, reads.clone(), Arc::new(Mutex::new(0))));
-        let mut cache = CachingBlockDevice::new(inner, BlockCacheConfig { capacity_blocks: 0 });
+        let inner = Arc::new(CountingMem::new(2, reads.clone(), Arc::new(Mutex::new(0))));
+        let cache = CachingBlockDevice::new(inner, BlockCacheConfig { capacity_blocks: 0 });
         let bs = cache.block_size();
         let mut r = vec![0u8; bs];
         cache.read_blocks(Lba(0), &mut r).unwrap();

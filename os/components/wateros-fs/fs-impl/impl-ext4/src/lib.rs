@@ -17,7 +17,7 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use api_v0::{
     FsAccessMode, FsCapability, FsError, FsImpl, FsKind, FsResult, LocalFs, LocalRwFs, ReadOnlyFs,
-    ReadWriteFs, SharedFs, SharedRwFs,
+    FsRwLock, ReadWriteFs, SharedFs, SharedRwFs,
 };
 use driver_block_api_v0::SharedBlockDevice;
 use spin::Mutex;
@@ -40,8 +40,7 @@ const MAGIC_OFFSET_IN_SB : usize = 0x38;
 // 本方法代码由AI完成
 fn probe_ext4_magic(device : &SharedBlockDevice) -> FsResult<bool> {
     let mut buf = [0u8; 2];
-    let r = device.lock()
-                  .read_bytes(SUPERBLOCK_OFFSET + MAGIC_OFFSET_IN_SB as u64,
+    let r = device.read_bytes(SUPERBLOCK_OFFSET + MAGIC_OFFSET_IN_SB as u64,
                               &mut buf);
     match r {
         Ok(()) => Ok(u16::from_le_bytes(buf) == EXT4_SUPER_MAGIC),
@@ -89,7 +88,7 @@ impl FsImpl for Ext4FsImpl {
         logging::trace!("[fs::ext4] mount_rw begin");
         let mut fs = Ext4FsRw::new();
         ReadWriteFs::mount_rw(&mut fs, device)?;
-        let shared : SharedRwFs = Arc::new(Mutex::new(LocalRwFs::new(Box::new(fs))));
+        let shared : SharedRwFs = Arc::new(FsRwLock::new(LocalRwFs::new(Box::new(fs))));
         Ok(shared)
     }
 }

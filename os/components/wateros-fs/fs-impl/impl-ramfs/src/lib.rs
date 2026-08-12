@@ -16,7 +16,7 @@ use alloc::vec::Vec;
 
 use api_v0::{
     FsAccessMode, FsCapability, FsDirEntry, FsError, FsImpl, FsKind, FsMetadata, FsNodeType,
-    FsResult, LocalRwFs, ReadWriteFs, SharedFs, SharedRwFs,
+    FsResult, FsRwLock, LocalRwFs, ReadWriteFs, SharedFs, SharedRwFs,
 };
 use driver_block_api_v0::SharedBlockDevice;
 use frame_alloctor::OwnedPhysPage;
@@ -1073,7 +1073,7 @@ impl ReadWriteFs for RamFs {
 
 /// Build a shared ramfs handle for auxiliary mounts.
 pub fn new_shared_rw(limit_bytes : Option<usize>, root_mode : u16) -> SharedRwFs {
-    Arc::new(Mutex::new(LocalRwFs::new(Box::new(RamFs::with_options(limit_bytes, root_mode)))))
+    Arc::new(FsRwLock::new(LocalRwFs::new(Box::new(RamFs::with_options(limit_bytes, root_mode)))))
 }
 
 pub struct RamFsImpl;

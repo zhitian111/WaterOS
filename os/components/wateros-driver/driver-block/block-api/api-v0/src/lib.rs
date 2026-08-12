@@ -5,7 +5,7 @@
 #![no_std]
 extern crate alloc;
 
-use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
+use alloc::{sync::Arc, vec, vec::Vec};
 use spin::Mutex;
 
 pub use driver_api::{DriverError, DriverResult};
@@ -27,14 +27,14 @@ impl From<u64> for Lba {
     fn from(value: u64) -> Self { Self(value) }
 }
 
-/// 可在多任务间共享的块设备句柄（内部可变性由 `spin::Mutex` 提供）。
-pub type SharedBlockDevice = Arc<Mutex<Box<dyn BlockDevice>>>;
+/// 可在多任务间共享的块设备句柄；具体实现只在短临界区内同步自身状态。
+pub type SharedBlockDevice = Arc<dyn BlockDevice>;
 
 // 注册顺序稳定：`register_block_device` 返回的下标即在此 `Vec` 中的位置。
 static BLOCK_DEVICES: Mutex<Vec<SharedBlockDevice>> = Mutex::new(Vec::new());
 
 /// 块设备语义契约：按块读写为必须实现；按字节读提供默认实现（内部临时缓冲整段块）。
-pub trait BlockDevice: Send {
+pub trait BlockDevice: Send + Sync {
     /// 设备逻辑块大小；默认 [`BLOCK_SIZE`]。
     fn block_size(&self) -> usize { BLOCK_SIZE }
 
@@ -42,13 +42,13 @@ pub trait BlockDevice: Send {
     fn total_blocks(&self) -> Option<u64> { None }
 
     /// 从 `start_block` 起读取连续块到 `buf`；`buf` 长度须为块大小的整数倍。
-    fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()>;
+    fn read_blocks(&self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()>;
 
     /// 从 `start_block` 起写入连续块；不支持写时须返回 [`DriverError::Unsupported`]。
-    fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> DriverResult<()>;
+    fn write_blocks(&self, start_block: Lba, buf: &[u8]) -> DriverResult<()>;
 
     /// 任意字节对齐读取：通过整段块缓冲实现，调用方须保证 `dst` 非空且偏移合法。
-    fn read_bytes(&mut self, offset: u64, dst: &mut [u8]) -> DriverResult<()> {
+    fn read_bytes(&self, offset: u64, dst: &mut [u8]) -> DriverResult<()> {
         if dst.is_empty() {
             return Ok(());
         }
@@ -85,7 +85,7 @@ pub trait BlockDevice: Send {
     }
 
     /// 读取从 `offset` 起的 `len` 字节到新分配的缓冲区。
-    fn read_prefix(&mut self, offset: u64, len: usize) -> DriverResult<Vec<u8>> {
+    fn read_prefix(&self, offset: u64, len: usize) -> DriverResult<Vec<u8>> {
         let mut buf = vec![0u8; len];
         self.read_bytes(offset, &mut buf)?;
         Ok(buf)
@@ -119,7 +119,7 @@ pub fn test() {
     #[cfg(feature = "logging")]
     logging::trace!("[driver-block-api] test begin");
     assert_eq!(BLOCK_SIZE, 512);
-    let mut sample = SampleBlockDevice::new();
+    let sample = SampleBlockDevice::new();
     let prefix = sample.read_prefix(3, 5).expect("prefix read should work");
     assert_eq!(&prefix, &[3, 4, 5, 6, 7]);
     #[cfg(feature = "logging")]
@@ -143,7 +143,7 @@ impl SampleBlockDevice {
 }
 
 impl BlockDevice for SampleBlockDevice {
-    fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
+    fn read_blocks(&self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
         if buf.len() % BLOCK_SIZE != 0 {
             return Err(DriverError::InvalidParam);
         }
@@ -159,7 +159,7 @@ impl BlockDevice for SampleBlockDevice {
         Ok(())
     }
 
-    fn write_blocks(&mut self, _start_block: Lba, _buf: &[u8]) -> DriverResult<()> {
+    fn write_blocks(&self, _start_block: Lba, _buf: &[u8]) -> DriverResult<()> {
         Err(DriverError::Unsupported)
     }
 }

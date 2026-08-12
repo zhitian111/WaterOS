@@ -6,6 +6,8 @@ use crate::Block;
 use crate::BlockDevice;
 use spin::Mutex;
 
+static CACHE_WRITER: Mutex<()> = Mutex::new(());
+
 /// Write-back cache slot.
 #[derive(Debug, Clone, Default)]
 struct CacheSlot {
@@ -96,31 +98,42 @@ impl BlockCache {
     pub fn read_block(&self, block_id: PBlockId) -> Block {
         debug!("Reading block {}", block_id);
         let set_id = block_id as usize % CACHE_SIZE;
+        let evicted_dirty = {
+            let mut cache = self.cache.lock();
+            let slot_id = cache[set_id].access(block_id) as usize;
+            let slot = &mut cache[set_id].slots[slot_id];
+            if slot.valid && slot.block.id == block_id {
+                return slot.block.clone();
+            }
+            (slot.valid && slot.dirty).then(|| slot.block.clone())
+        };
+        if let Some(block) = evicted_dirty {
+            self.block_dev.write_block(&block);
+        }
+
+        debug!("Loading block {} from disk", block_id);
+        let loaded = self.block_dev.read_block(block_id);
         let mut cache = self.cache.lock();
         let slot_id = cache[set_id].access(block_id) as usize;
         let slot = &mut cache[set_id].slots[slot_id];
-        // Check block id
         if slot.valid && slot.block.id == block_id {
-            // Cache hit
             return slot.block.clone();
-        } else {
-            // Cache miss
-            if slot.valid && slot.dirty {
-                // Write back Dirty block
-                self.block_dev.write_block(&slot.block);
-                slot.dirty = false;
-            }
-            // Read block from disk
-            debug!("Loading block {} from disk", block_id);
-            let block = self.block_dev.read_block(block_id);
-            slot.block = block.clone();
-            slot.valid = true;
-            return block;
         }
+        // A concurrent mutation may have selected a different victim while
+        // the backend read was in flight. Never overwrite newly dirty data;
+        // bypass the cache for this rare collision.
+        if slot.valid && slot.dirty {
+            return loaded;
+        }
+        slot.block = loaded.clone();
+        slot.valid = true;
+        slot.dirty = false;
+        loaded
     }
 
     /// Write a block. (Write-Allocate)
     pub fn write_block(&self, block: &Block) {
+        let _writer = CACHE_WRITER.lock();
         debug!("Writing block {}", block.id);
         let set_id = block.id as usize % CACHE_SIZE;
         let mut cache = self.cache.lock();

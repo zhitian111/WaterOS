@@ -129,18 +129,20 @@ pub fn request(hwirq : u32,
     } else {
         ShareMode::Exclusive
     };
-    let request_cpu = platform::arch::cpu::current_cpu_id().raw();
     let handle = registry().request(IrqId::new(PLATFORM_DOMAIN, HwIrq(hwirq)),
                                     IrqRequest::new(handler).share_mode(share_mode)
                                                             .auto_enable(AutoEnable::Yes))?;
-    // A serialized VirtQueue needs one delivery target, not one PLIC delivery per hart. Keep the
-    // line on the stable BSP context; tasks on other CPUs observe completion through the shared
-    // generation/used ring without rewriting PLIC affinity for every request.
-    if request_cpu != 0 {
-        platform::external_irq::set_enabled(hwirq, request_cpu, false)
-            .map_err(|_| IrqError::Controller)?;
+    // Syscall entry masks local interrupts. A hart may also be spinning on an unrelated legacy
+    // lock while another task sleeps for this device. Make the level-triggered line claimable by
+    // every online hart so one busy BSP cannot starve completion; the PLIC still lets only one
+    // context claim a particular interrupt instance.
+    let online = task::online_cpu_mask().bits();
+    for cpu in 0..u64::BITS as usize {
+        if online & (1u64 << cpu) != 0 {
+            platform::external_irq::set_enabled(hwirq, cpu, true)
+                .map_err(|_| IrqError::Controller)?;
+        }
     }
-    platform::external_irq::set_enabled(hwirq, 0, true).map_err(|_| IrqError::Controller)?;
     Ok(handle)
 }
 

@@ -80,14 +80,13 @@ pub(crate) fn probe_virtio_devices() -> Vec<String> {
                         #[cfg(feature = "block-cache")]
                         {
                             BlockCacheManager::wrap(
-                                Box::new(dev),
+                                Arc::new(dev),
                                 BlockCacheManager::default_config(),
                             )
                         }
                         #[cfg(not(feature = "block-cache"))]
                         {
-                            let dev: Box<dyn BlockDevice> = Box::new(dev);
-                            Arc::new(Mutex::new(dev))
+                            Arc::new(dev)
                         }
                     };
                     let idx = register_block_device(shared);

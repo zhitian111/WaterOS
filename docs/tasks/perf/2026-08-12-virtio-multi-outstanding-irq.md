@@ -91,3 +91,55 @@ data loss. Both Final architecture artifacts must build and contain
 `SCRIPT_BODY_FLAT_BEGIN`. A first successful sample below 524.26 s is accepted;
 a result within the noise band or slower than main is rejected. The fixed
 image is always used through QEMU snapshot mode.
+
+## Result (rejected)
+
+The complete candidate was implemented on `perf/virtio-multi-outstanding-irq`:
+
+- the shared block-device API uses `&self` and implementation-local locking;
+- the WaterOS block cache and `another_ext4` cache release their metadata locks
+  around backend reads and recheck before installing data;
+- the root read/write filesystem lock sleeps contended runtime tasks and
+  permits concurrent readers;
+- VirtIO-MMIO supports several nonblocking requests, IRQ wakeups, queue-full
+  backpressure, used-ring-order retirement, and PLIC delivery on every online
+  hart.
+
+An initial smoke run found a concrete integration bug: a context rejected by
+`irq::can_wait()` fell back to synchronous `add_notify_wait_pop` while other
+asynchronous tokens were already present. That helper expects its own token at
+the used-ring head and returned `WrongToken`. The fix kept all requests on the
+nonblocking queue once IRQ mode was enabled; contexts that cannot sleep poll
+the same queue instead of mixing completion APIs.
+
+Verification after that fix:
+
+- `make check`: pass;
+- `make la_check`: pass;
+- `make all`: pass, both Final kernels produced;
+- standalone WaterOS block-cache tests: pass;
+- `another_ext4 --features block_cache` tests: pass;
+- 120 s fixed-image smoke: active until the intentional timeout, with no
+  panic, SIGSEGV, block error, or runner stall.
+
+The acceptance run
+`/tmp/wateros-buildstorm-fixed/virtio-multi-irq-a6/result.json` used image SHA-256
+`ca5987d2791f83781762f531557f40fadd0a2ce0068fd9be58c2014465db7f58` and timed
+out at 900.023 host seconds. It never completed the first `cagent-glibc` command,
+so no BuildStorm compile marker or guest compile time was produced. The main
+kernel completes the full queue, including BuildStorm, in 534.26 s. This is a
+hard rejection on functionality/progress as well as performance; a diagnostic
+plugin run would only spend more time on an ineligible candidate and was not
+performed.
+
+The experiment establishes two constraints for any future IRQ attempt:
+
+1. synchronous and asynchronous VirtQueue completion APIs must never share a
+   queue while requests are outstanding;
+2. converting the filesystem's outer lock into a sleeping reader/writer lock
+   is not sufficient evidence that every nested legacy lock can safely survive
+   a scheduler switch. The long `cagent` hang indicates a remaining lock-order
+   or wakeup dependency in that broader conversion.
+
+None of this candidate is merged into main. Main remains the accepted 534.26 s
+kernel.

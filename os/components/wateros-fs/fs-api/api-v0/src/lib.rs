@@ -6,9 +6,137 @@
 extern crate alloc;
 
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
-use core::ops::{Deref, DerefMut};
+use core::{cell::UnsafeCell, hint::spin_loop, ops::{Deref, DerefMut}};
 use driver_block_api_v0::SharedBlockDevice;
 use spin::Mutex;
+
+struct FsRwState {
+    readers: usize,
+    writer: bool,
+    waiting_writers: usize,
+}
+
+/// Scheduler-aware reader/writer lock used by filesystem objects that may
+/// block on IRQ-driven I/O. Contended runtime tasks sleep; boot contexts spin.
+pub struct FsRwLock<T> {
+    state: Mutex<FsRwState>,
+    wait: Mutex<Option<task::WaitQueue>>,
+    value: UnsafeCell<T>,
+}
+
+unsafe impl<T: Send> Send for FsRwLock<T> {}
+unsafe impl<T: Send + Sync> Sync for FsRwLock<T> {}
+
+impl<T> FsRwLock<T> {
+    pub const fn new(value: T) -> Self {
+        Self {
+            state: Mutex::new(FsRwState { readers: 0, writer: false, waiting_writers: 0 }),
+            wait: Mutex::new(None),
+            value: UnsafeCell::new(value),
+        }
+    }
+
+    fn wait_queue(&self) -> task::WaitQueue {
+        let mut wait = self.wait.lock();
+        *wait.get_or_insert_with(|| task::WaitQueue::new_named("filesystem-rwlock"))
+    }
+
+    fn wake_waiters(&self) {
+        if let Some(wait) = *self.wait.lock() {
+            wait.wake_all();
+        }
+    }
+
+    pub fn read(&self) -> FsRwLockReadGuard<'_, T> {
+        loop {
+            {
+                let mut state = self.state.lock();
+                if !state.writer && state.waiting_writers == 0 {
+                    state.readers += 1;
+                    return FsRwLockReadGuard { lock: self };
+                }
+            }
+            if task::current_task_snapshot().is_some_and(|snapshot| {
+                matches!(snapshot.state, task::TaskState::Running)
+            }) {
+                let wait = self.wait_queue();
+                wait.wait_current_while(|| {
+                    let state = self.state.lock();
+                    state.writer || state.waiting_writers != 0
+                });
+            } else {
+                spin_loop();
+            }
+        }
+    }
+
+    pub fn write(&self) -> FsRwLockWriteGuard<'_, T> {
+        {
+            let mut state = self.state.lock();
+            state.waiting_writers += 1;
+        }
+        loop {
+            {
+                let mut state = self.state.lock();
+                if !state.writer && state.readers == 0 {
+                    state.waiting_writers -= 1;
+                    state.writer = true;
+                    return FsRwLockWriteGuard { lock: self };
+                }
+            }
+            if task::current_task_snapshot().is_some_and(|snapshot| {
+                matches!(snapshot.state, task::TaskState::Running)
+            }) {
+                let wait = self.wait_queue();
+                wait.wait_current_while(|| {
+                    let state = self.state.lock();
+                    state.writer || state.readers != 0
+                });
+            } else {
+                spin_loop();
+            }
+        }
+    }
+}
+
+pub struct FsRwLockReadGuard<'a, T> { lock: &'a FsRwLock<T> }
+
+impl<T> Deref for FsRwLockReadGuard<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T { unsafe { &*self.lock.value.get() } }
+}
+
+impl<T> Drop for FsRwLockReadGuard<'_, T> {
+    fn drop(&mut self) {
+        let wake = {
+            let mut state = self.lock.state.lock();
+            state.readers -= 1;
+            state.readers == 0 && state.waiting_writers != 0
+        };
+        if wake { self.lock.wake_waiters(); }
+    }
+}
+
+pub struct FsRwLockWriteGuard<'a, T> { lock: &'a FsRwLock<T> }
+
+impl<T> Deref for FsRwLockWriteGuard<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T { unsafe { &*self.lock.value.get() } }
+}
+
+impl<T> DerefMut for FsRwLockWriteGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut T { unsafe { &mut *self.lock.value.get() } }
+}
+
+impl<T> Drop for FsRwLockWriteGuard<'_, T> {
+    fn drop(&mut self) {
+        {
+            let mut state = self.lock.state.lock();
+            state.writer = false;
+        }
+        self.lock.wake_waiters();
+    }
+}
 
 /// 文件系统操作错误；实现方将底层 I/O 与格式错误映射到此枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,7 +331,7 @@ pub trait ReadOnlyFs {
 }
 
 /// 可写根卷：与 [`ReadOnlyFs`] 分离，避免在 `dyn ReadOnlyFs` 上混入写语义；由 `ext4plus` 等实现承载，且实现类型须为 `Send`。
-pub trait ReadWriteFs: Send {
+pub trait ReadWriteFs: Send + Sync {
     /// 以读写方式挂载；底层写能力依赖具体实现（如 journal 完整性）。
     fn mount_rw(&mut self, device: SharedBlockDevice) -> FsResult<()>;
     /// 是否已完成 RW 挂载。
@@ -569,8 +697,8 @@ impl ReadWriteFs for LocalRwFs {
 // 与 LocalFs 相同：单核 bring-up 下由 Mutex 序列化；跨线程 Send 由调用方保证不数据竞争。
 unsafe impl Send for LocalRwFs {}
 
-/// 线程间共享的读写文件系统句柄（`Arc<Mutex<...>>`）。
-pub type SharedRwFs = Arc<Mutex<LocalRwFs>>;
+/// 线程间共享的读写文件系统句柄。只读操作可并行，修改操作保持独占。
+pub type SharedRwFs = Arc<FsRwLock<LocalRwFs>>;
 
 /// 单个文件系统实现的统一注册接口。`impl-*` crate 暴露一个 `'static` 实例（如 `&IMPL`）供聚合层登记。
 ///

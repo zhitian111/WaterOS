@@ -19,7 +19,7 @@ use another_ext4::{
 };
 use api_v0::{
     FsAccessMode, FsCapability, FsDirEntry, FsError, FsImpl, FsKind, FsMetadata, FsNodeId,
-    FsNodeType, FsResult, LocalFs, LocalRwFs, ReadOnlyFs, ReadWriteFs, SharedFs, SharedRwFs,
+    FsNodeType, FsResult, FsRwLock, LocalFs, LocalRwFs, ReadOnlyFs, ReadWriteFs, SharedFs, SharedRwFs,
 };
 use core::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "lookup-diagnostics")]
@@ -67,8 +67,7 @@ struct BlockAdapter {
 impl BlockDevice for BlockAdapter {
     fn read_block(&self, block_id : u64) -> Block {
         let mut data = Box::new([0u8; BLOCK_SIZE]);
-        let mut guard = self.device.lock();
-        let block_size = guard.block_size() as u64;
+        let block_size = self.device.block_size() as u64;
         if block_size == 0 || BLOCK_SIZE as u64 % block_size != 0 {
             self.io_error.store(true, Ordering::Release);
             log::error!(
@@ -76,8 +75,8 @@ impl BlockDevice for BlockAdapter {
             );
             return Block::new(block_id, data);
         }
-        guard.read_blocks(Lba(block_id * (BLOCK_SIZE as u64 / block_size)),
-                          &mut data[..])
+        self.device.read_blocks(Lba(block_id * (BLOCK_SIZE as u64 / block_size)),
+                                &mut data[..])
              .unwrap_or_else(|error| {
                  self.io_error.store(true, Ordering::Release);
                  log::error!("[fs::another-ext4] failed to read block {block_id}: {error:?}");
@@ -86,8 +85,7 @@ impl BlockDevice for BlockAdapter {
     }
 
     fn write_block(&self, block : &Block) {
-        let mut guard = self.device.lock();
-        let block_size = guard.block_size();
+        let block_size = self.device.block_size();
         if block_size == 0 || BLOCK_SIZE % block_size != 0 {
             self.io_error.store(true, Ordering::Release);
             log::error!(
@@ -96,7 +94,7 @@ impl BlockDevice for BlockAdapter {
             return;
         }
         let lba_count = BLOCK_SIZE / block_size;
-        guard.write_blocks(Lba(block.id * lba_count as u64), &block.data[..])
+        self.device.write_blocks(Lba(block.id * lba_count as u64), &block.data[..])
              .unwrap_or_else(|error| {
                  self.io_error.store(true, Ordering::Release);
                  log::error!("[fs::another-ext4] failed to write block {}: {error:?}", block.id);
@@ -106,8 +104,7 @@ impl BlockDevice for BlockAdapter {
 
 fn probe(device : &SharedBlockDevice) -> FsResult<bool> {
     let mut bytes = [0u8; 2];
-    device.lock()
-          .read_bytes(SUPERBLOCK_MAGIC_OFFSET, &mut bytes)
+    device.read_bytes(SUPERBLOCK_MAGIC_OFFSET, &mut bytes)
           .map_err(|_| FsError::Driver)?;
     Ok(u16::from_le_bytes(bytes) == EXT4_SUPER_MAGIC)
 }
@@ -958,7 +955,7 @@ impl FsImpl for AnotherExt4Impl {
     fn mount_rw(&self, device : SharedBlockDevice) -> FsResult<SharedRwFs> {
         let mut fs = AnotherExt4Fs::new();
         ReadWriteFs::mount_rw(&mut fs, device)?;
-        Ok(Arc::new(Mutex::new(LocalRwFs::new(Box::new(fs)))))
+        Ok(Arc::new(FsRwLock::new(LocalRwFs::new(Box::new(fs)))))
     }
 }
 

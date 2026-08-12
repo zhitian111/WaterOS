@@ -50,14 +50,14 @@ impl StableNodeLease {
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {
-        self.fs.lock()
+        self.fs.read()
                .metadata_node(self.node)
                .map(|meta| crate::map_meta(meta, self.identity))
                .map_err(map_fs_err)
     }
 
     fn read_range(&self, offset : u64, buf : &mut [u8]) -> VfsResult<usize> {
-        self.fs.lock()
+        self.fs.read()
                .read_range_node(self.node, offset, buf)
                .map_err(map_fs_err)
     }
@@ -65,7 +65,7 @@ impl StableNodeLease {
     fn write_range(&self, offset : u64, data : &[u8]) -> VfsResult<usize> {
         let mut done = 0usize;
         while done < data.len() {
-            let written = self.fs.lock()
+            let written = self.fs.write()
                                   .write_range_node(self.node,
                                                     offset + done as u64,
                                                     &data[done..])
@@ -79,17 +79,17 @@ impl StableNodeLease {
     }
 
     fn truncate(&self, len : u64) -> VfsResult<()> {
-        self.fs.lock().truncate_node(self.node, len).map_err(map_fs_err)
+        self.fs.write().truncate_node(self.node, len).map_err(map_fs_err)
     }
 
-    fn sync(&self) -> VfsResult<()> { self.fs.lock().sync().map_err(map_fs_err) }
+    fn sync(&self) -> VfsResult<()> { self.fs.write().sync().map_err(map_fs_err) }
 
     fn mark_content_changed(&self) { self.content_identity.mark_changed(); }
 }
 
 impl Drop for StableNodeLease {
     fn drop(&mut self) {
-        if let Err(error) = self.fs.lock().close_node(self.node) {
+        if let Err(error) = self.fs.write().close_node(self.node) {
             log::warn!("[paged_handle] stable node close failed node={} mount={} err={error:?}",
                        self.node.raw(),
                        self.identity.mount_id);
@@ -128,7 +128,7 @@ fn open_stable_node(mount_gen : u64, path : &str) -> VfsResult<Option<Arc<Stable
             return Ok(None);
         }
     };
-    let node = match fs.lock().open_node(rel.as_str()) {
+    let node = match fs.write().open_node(rel.as_str()) {
         Ok(node) => node,
         Err(FsError::Unsupported) => return Ok(None),
         Err(error) => return Err(map_fs_err(error)),
@@ -393,7 +393,7 @@ impl PageCacheIo for FsPageIo {
                 let rw = root_rw()?;
                 let mut done = 0usize;
                 while done < data.len() {
-                    let written = rw.lock()
+                    let written = rw.write()
                                     .write_range(n.as_str(),
                                                  offset + done as u64,
                                                  &data[done..])
@@ -406,7 +406,7 @@ impl PageCacheIo for FsPageIo {
                 }
                 Ok(done)
             }
-            FsRoute::AuxRw { fs, rel, .. } => fs.lock()
+            FsRoute::AuxRw { fs, rel, .. } => fs.write()
                                                 .write_range(rel.as_str(), offset, data)
                                                 .map_err(map_fs_err),
             FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } | FsRoute::PseudoSecurity { .. } => {
@@ -919,14 +919,14 @@ impl VfsIoHandle for PagedFileHandle {
                 let n = normalize_absolute_path(path.as_str())?;
                 match resolve_route(path.as_str())? {
                     FsRoute::Root { .. } => {
-                        match root_rw()?.lock().truncate(n.as_str(), len).map_err(map_fs_err) {
+                        match root_rw()?.write().truncate(n.as_str(), len).map_err(map_fs_err) {
                             Ok(()) => {}
                             Err(VfsError::NotFound) => self.mark_detached(),
                             Err(e) => return Err(e),
                         }
                     }
                     FsRoute::AuxRw { fs, rel, .. } => {
-                        match fs.lock().truncate(rel.as_str(), len).map_err(map_fs_err) {
+                        match fs.write().truncate(rel.as_str(), len).map_err(map_fs_err) {
                             Ok(()) => {}
                             Err(VfsError::NotFound) => self.mark_detached(),
                             Err(e) => return Err(e),

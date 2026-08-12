@@ -179,7 +179,7 @@ fn assert_mount_point_directory_in(ns : &MountNamespace, path : &str) -> VfsResu
     match resolve_material_route(ns, path)? {
         FsRoute::PseudoProc { .. } | FsRoute::PseudoSecurity { .. } => Err(VfsError::NotAFile),
         FsRoute::Root { abs, .. } => {
-            let meta = super::root_rw()?.lock()
+            let meta = super::root_rw()?.read()
                                         .metadata(abs.as_str())
                                         .map_err(super::map_fs_err)?;
             if meta.node_type != FsNodeType::Directory {
@@ -188,7 +188,7 @@ fn assert_mount_point_directory_in(ns : &MountNamespace, path : &str) -> VfsResu
             Ok(())
         }
         FsRoute::AuxRw { fs, rel, .. } => {
-            let meta = fs.lock()
+            let meta = fs.read()
                          .metadata(rel.as_str())
                          .map_err(super::map_fs_err)?;
             if meta.node_type != FsNodeType::Directory {
@@ -565,7 +565,7 @@ pub(crate) fn mount_bootstrap_tmpfs_at(mount_point : &str) -> VfsResult<()> {
 // 本方法代码由AI完成
 pub(crate) fn mount_cgroup_at(mount_point : &str, v2 : bool, options : &str) -> VfsResult<()> {
     let tmp = super::tmpfs::TmpFs::new_cgroup(v2, options).map_err(super::map_fs_err)?;
-    let fs : SharedRwFs = Arc::new(Mutex::new(LocalRwFs::new(Box::new(tmp))));
+    let fs : SharedRwFs = Arc::new(fs::FsRwLock::new(LocalRwFs::new(Box::new(tmp))));
     let fstype = if v2 { "cgroup2" } else { "cgroup" };
     with_current_namespace(|ns| {
         mount_aux_common(ns,

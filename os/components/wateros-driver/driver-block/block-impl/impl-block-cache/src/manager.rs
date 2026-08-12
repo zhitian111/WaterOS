@@ -3,10 +3,8 @@
 
 extern crate alloc;
 
-use alloc::boxed::Box;
 use alloc::sync::Arc;
 use api_v0::{BlockDevice, SharedBlockDevice};
-use spin::Mutex;
 use wateros_base_config::fs::BLOCK_CACHE_CAPACITY_BLOCKS;
 
 use crate::{BlockCacheConfig, CachingBlockDevice};
@@ -24,9 +22,8 @@ impl BlockCacheManager {
     }
 
     /// 用写穿 LRU 包装 `inner` 并返回可注册的共享句柄。
-    pub fn wrap(inner: Box<dyn BlockDevice + Send>, config: BlockCacheConfig) -> SharedBlockDevice {
-        let cached: Box<dyn BlockDevice> = Box::new(CachingBlockDevice::new(inner, config));
-        Arc::new(Mutex::new(cached))
+    pub fn wrap(inner: Arc<dyn BlockDevice>, config: BlockCacheConfig) -> SharedBlockDevice {
+        Arc::new(CachingBlockDevice::new(inner, config))
     }
 
     /// 写穿策略下无独立脏数据；保留接口供将来 write-back 或测试。

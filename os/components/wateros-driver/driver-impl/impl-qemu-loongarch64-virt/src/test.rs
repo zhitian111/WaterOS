@@ -12,7 +12,6 @@ pub fn virtio_blk_probe_test() -> DriverResult<()> {
     let Some(dev) = first_block_device() else {
         return Err(DriverError::NotFound);
     };
-    let mut dev = dev.lock();
     let mut buf = [0u8; BLOCK_SIZE];
     dev.read_blocks(Lba(0), &mut buf)?;
     log::info!(

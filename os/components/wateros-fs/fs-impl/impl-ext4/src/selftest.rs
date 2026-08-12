@@ -30,7 +30,7 @@ pub fn ro_self_test(fs: SharedFs) -> FsResult<()> {
 /// 用已挂载的 RW ext4 句柄做根目录与 `read_range` 烟囱（bring-up 主路径）。
 // 本方法代码由AI完成
 pub fn rw_self_test(rw: SharedRwFs) -> FsResult<()> {
-    let fs = rw.lock();
+    let fs = rw.read();
     match fs.metadata("/") {
         Ok(meta) => {
             logging::info!(
@@ -120,10 +120,10 @@ pub fn rw_mkdir_verify(rw: SharedRwFs, dir_name: &str) -> FsResult<()> {
     let mut path = String::from("/");
     path.push_str(dir_name);
     {
-        let mut guard = rw.lock();
+        let mut guard = rw.write();
         guard.mkdir(path.as_str(), 0o755)?;
     }
-    let meta = rw.lock().metadata(path.as_str())?;
+    let meta = rw.read().metadata(path.as_str())?;
     if meta.node_type != FsNodeType::Directory {
         return Err(api_v0::FsError::Io);
     }

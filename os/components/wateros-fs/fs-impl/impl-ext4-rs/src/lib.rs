@@ -16,7 +16,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use api_v0::{
     FsAccessMode, FsCapability, FsDirEntry, FsError, FsImpl, FsKind, FsMetadata, FsNodeType,
-    FsResult, LocalFs, LocalRwFs, ReadOnlyFs, ReadWriteFs, SharedFs, SharedRwFs,
+    FsResult, FsRwLock, LocalFs, LocalRwFs, ReadOnlyFs, ReadWriteFs, SharedFs, SharedRwFs,
 };
 use driver_block_api_v0::{DriverError, Lba, SharedBlockDevice};
 use ext4_rs::{BlockDevice as Ext4RsBlockDevice, Errno, Ext4, Ext4Error, InodeFileType};
@@ -47,8 +47,7 @@ const S_IFDIR : u16 = 0o040000;
 // 本方法代码由AI完成
 fn probe_ext4_magic(device : &SharedBlockDevice) -> FsResult<bool> {
     let mut buf = [0u8; 2];
-    device.lock()
-          .read_bytes(SUPERBLOCK_OFFSET + MAGIC_OFFSET_IN_SB as u64,
+    device.read_bytes(SUPERBLOCK_OFFSET + MAGIC_OFFSET_IN_SB as u64,
                       &mut buf)
           .map_err(|_| FsError::Driver)?;
     Ok(u16::from_le_bytes(buf) == EXT4_SUPER_MAGIC)
@@ -64,9 +63,7 @@ impl Ext4RsBlockDevice for BlockDevAdapter {
 // 本方法代码由AI完成
     fn read_offset(&self, offset : usize) -> Vec<u8> {
         let mut out = vec![0u8; ext4_rs::BLOCK_SIZE];
-        let _ = self.device
-                    .lock()
-                    .read_bytes(offset as u64, &mut out);
+        let _ = self.device.read_bytes(offset as u64, &mut out);
         out
     }
 
@@ -85,8 +82,7 @@ fn block_write_bytes(dev : &SharedBlockDevice,
     if src.is_empty() {
         return Ok(());
     }
-    let mut guard = dev.lock();
-    let bdev : &mut dyn driver_block_api_v0::BlockDevice = &mut **guard;
+    let bdev : &dyn driver_block_api_v0::BlockDevice = &**dev;
     let bs = bdev.block_size();
     if bs == 0 {
         return Err(DriverError::InvalidParam);
@@ -118,7 +114,7 @@ fn block_write_bytes(dev : &SharedBlockDevice,
 
 // 单块内部分写入：先读整块再 patch 子区间。
 // 本方法代码由AI完成
-fn write_partial_block(bdev : &mut dyn driver_block_api_v0::BlockDevice,
+fn write_partial_block(bdev : &dyn driver_block_api_v0::BlockDevice,
                        block : usize,
                        offset : usize,
                        data : &[u8])
@@ -933,6 +929,6 @@ impl FsImpl for Ext4RsImpl {
         log::info!("[fs::ext4-rs] mount_rw begin");
         let mut fs = Ext4RsFs::new();
         ReadWriteFs::mount_rw(&mut fs, device)?;
-        Ok(Arc::new(Mutex::new(LocalRwFs::new(Box::new(fs)))))
+        Ok(Arc::new(FsRwLock::new(LocalRwFs::new(Box::new(fs)))))
     }
 }

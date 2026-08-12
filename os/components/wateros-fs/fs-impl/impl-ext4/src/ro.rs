@@ -30,7 +30,6 @@ impl Ext4Read for BlockDeviceReader {
         dst: &mut [u8],
     ) -> Result<(), Box<dyn core::error::Error + Send + Sync + 'static>> {
         self.device
-            .lock()
             .read_bytes(start_byte, dst)
             .map_err(|err| Box::new(BlockIoError(err)) as _)
     }

@@ -702,6 +702,7 @@ dependencies = [
  "spin",
  "wateros-base-config",
  "wateros-driver-block-api-v0",
+ "wateros-task",
 ]
 
 [[package]]
@@ -730,6 +731,7 @@ dependencies = [
 name = "wateros-driver-block-impl-virtio-pci"
 version = "0.1.0"
 dependencies = [
+ "spin",
  "virtio-drivers",
  "wateros-driver-api-v0",
  "wateros-driver-block-api-v0",
@@ -1009,6 +1011,7 @@ dependencies = [
  "spin",
  "wateros-driver-block-api-v0",
  "wateros-runtime-logging",
+ "wateros-task",
 ]
 
 [[package]]

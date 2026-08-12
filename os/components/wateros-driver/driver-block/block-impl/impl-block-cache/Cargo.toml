@@ -7,9 +7,11 @@
     api-v0 = { path = "../../block-api/api-v0/", package = "wateros-driver-block-api-v0", default-features = false }
     log = { version = "0.4.29" }
     spin = "0.10.0"
+    task = { path = "../../../../wateros-task", package = "wateros-task", default-features = true, optional = true }
     wateros-base-config = { path = "../../../../wateros-base/base-config", package = "wateros-base-config" }
 
 [features]
     api-v0 = [  ]
     diagnostics = [  ]
+    task-wait = [ "dep:task" ]
     default = [ "api-v0" ]
