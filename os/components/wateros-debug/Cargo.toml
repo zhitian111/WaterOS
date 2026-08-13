@@ -11,6 +11,7 @@ spin = { version = "0.10.0", default-features = false, features = [ "mutex", "sp
 [features]
 default = []
 enabled = []
+self_test = []
 
 [profile.dev]
 panic = "abort"

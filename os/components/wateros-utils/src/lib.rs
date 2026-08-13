@@ -7,3 +7,8 @@
 
 /// `no_std`、无堆分配的文本表格格式化 crate 原样重导出。
 pub use table_format;
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    assert!(!core::any::type_name::<usize>().is_empty());
+}

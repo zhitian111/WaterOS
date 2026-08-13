@@ -171,4 +171,7 @@
         "tty/self_test",
         "platform/self_test",
         "syscall/self_test",
+        "base/self_test",
+        "utils/self_test",
+        "debug/self_test",
     ]

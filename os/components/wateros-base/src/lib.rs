@@ -6,3 +6,9 @@
 //! 以免基础依赖反向引用上层子系统。
 pub mod cpu;
 pub mod sync;
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    let mask = cpu::CpuMask::EMPTY;
+    assert_eq!(mask.bits(), 0);
+}

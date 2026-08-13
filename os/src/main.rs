@@ -174,6 +174,9 @@ fn run_self_tests() {
     tty::self_test();
     platform::self_test();
     syscall::self_test();
+    base::self_test();
+    utils::self_test();
+    debug::self_test();
     cred::self_test();
     driver::self_test();
     ipc::self_test();

@@ -8,3 +8,6 @@
 [dependencies]
 config = { path = "base-config", package = "wateros-base-config" }
 spin = { version = "0.10.0", default-features = false, features = ["mutex", "spin_mutex"] }
+
+[features]
+self_test = []

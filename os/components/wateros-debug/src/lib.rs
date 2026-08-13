@@ -17,6 +17,13 @@ pub const NO_TASK : u64 = u64::MAX;
 pub const MAX_CPUS : usize = config::task::MAX_CPUS;
 pub const ENABLED : bool = cfg!(feature = "enabled");
 pub const DEBUG_FAULT_REASON_BASE : u32 = 0xF017_0000;
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    assert_eq!(DEBUG_ABI_VERSION, 1);
+    assert!(EVENT_CAPACITY > 0);
+    assert!(HELD_LOCK_CAPACITY > 0);
+}
 #[cfg(target_arch = "riscv64")]
 pub const DEBUG_ARCH : u16 = 1;
 #[cfg(target_arch = "loongarch64")]
