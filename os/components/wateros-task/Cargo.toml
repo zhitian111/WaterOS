@@ -21,7 +21,7 @@
     base = { path = "../wateros-base", package = "wateros-base", default-features = false }
 
 [features]
-    self_test = [  ]
+    self_test = [ "impl-core/self_test" ]
 
 
 [profile.dev]

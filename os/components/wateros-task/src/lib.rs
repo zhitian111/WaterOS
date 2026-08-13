@@ -40,6 +40,7 @@ pub fn init() {
 /// 任务组件内核态自检；只验证调度器已建立，不创建或切换用户任务。
 pub fn self_test() {
     log::info!("[task] self_test begin");
+    active_impl::self_test();
     let mask = online_cpu_mask();
     assert!(mask.bits() != 0, "at least the boot CPU must be online");
     let idle_ticks = total_idle_ticks();

@@ -29,6 +29,13 @@ pub use api_v0::TaskBootstrap;
 pub use process::{ParentDeathNotification, ProcessControlBlock, ProcessRegistry};
 pub use tcb::TaskControlBlock;
 
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[task/impl-core] self_test begin");
+    assert!(core::mem::size_of::<TaskControlBlock>() > 0);
+    log::info!("[task/impl-core] self_test complete");
+}
+
 static mut PROCESS_REGISTRY : MaybeUninit<MultiprocessorSafeCell<ProcessRegistry>> =
     MaybeUninit::uninit();
 static PROCESS_REGISTRY_READY : AtomicBool = AtomicBool::new(false);
