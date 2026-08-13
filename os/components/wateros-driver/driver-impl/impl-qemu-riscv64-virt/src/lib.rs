@@ -31,6 +31,11 @@ pub(crate) static INIT_AFTER_BOOT_DONE: AtomicBool = AtomicBool::new(false);
 
 pub use machine::machine;
 
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    test::self_test();
+}
+
 /// DTB 扫描、virtio 注册与 devfs 同步的完整 bring-up 路径；成功返回后设备表可能仍为空。
 pub fn init_after_boot() -> DriverResult<()> {
     if INIT_AFTER_BOOT_DONE.swap(true, Ordering::AcqRel) {

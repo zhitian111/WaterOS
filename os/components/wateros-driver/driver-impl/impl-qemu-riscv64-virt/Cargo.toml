@@ -39,3 +39,4 @@
     default = [ "api-v0" ]
     display = [ "dep:display" ]
     input = [ "dep:input" ]
+    self_test = [  ]

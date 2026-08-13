@@ -34,3 +34,10 @@ pub fn test() {
     let _ = virtio_blk_probe_test();
     log::trace!("[driver-impl-qemu] test end");
 }
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[driver/impl-qemu-riscv64] self_test begin");
+    test();
+    log::info!("[driver/impl-qemu-riscv64] self_test complete");
+}

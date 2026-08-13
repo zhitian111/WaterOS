@@ -97,6 +97,14 @@ pub fn test() {
 #[cfg(feature = "self_test")]
 pub fn self_test() {
     log::info!("[driver] self_test begin");
-    test();
+    api_v0::test();
+    block::test();
+    character::api_v0::test();
+    assert_eq!(display::supported_devices().len(), 3);
+    network::test();
+    #[cfg(feature = "impl-qemu-loongarch64-virt")]
+    impl_qemu_loongarch64_virt::self_test();
+    #[cfg(feature = "impl-qemu-riscv64-virt")]
+    impl_qemu_riscv64_virt::self_test();
     log::info!("[driver] self_test complete");
 }

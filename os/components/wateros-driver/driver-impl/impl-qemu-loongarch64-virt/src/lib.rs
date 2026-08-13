@@ -11,7 +11,7 @@ mod devfs;
 mod enumerate;
 mod machine;
 mod register;
-mod test;
+pub mod test;
 pub mod uart;
 
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -29,6 +29,11 @@ use input::input_device_count;
 pub(crate) static INIT_AFTER_BOOT_DONE: AtomicBool = AtomicBool::new(false);
 
 pub use machine::machine;
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    test::self_test();
+}
 
 /// 扫描 PCIe ECAM 总线、注册 virtio 设备并同步 devfs。
 pub fn init_after_boot() -> DriverResult<()> {
