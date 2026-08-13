@@ -16,7 +16,7 @@
 - 根卷管理：`os/components/wateros-fs/fs-rootfs/`（`rootfs-api`、`impl-kernel`）
 - ext4 实现（RO + RW 合一）：`os/components/wateros-fs/fs-impl/impl-ext4/src/{lib.rs,ro.rs,rw.rs,selftest.rs}`
 - another_ext4 实现：`os/components/wateros-fs/fs-impl/impl-another-ext4/src/lib.rs`；上游源码固定 vendored 于 `os/vendor/another_ext4/`
-- 内核启动接线：`os/src/main.rs`（在 `driver::active_impl::init_after_boot()` 成功后调用 `fs::init()` / `fs::test()`；默认 QEMU feature 下可再跑 `vfs::test()`（含 `self_test` RW 读回校验），见 `docs/exports/public-api/wateros-vfs.md`）
+- 内核启动接线：`os/src/main.rs` 的统一 `init_services_after_boot()`（驱动、网络、FS 初始化后调用统一 `self_test`；用户态 bring-up 不再重复调用旧 `test()` 链）
 - QEMU 块设备（VirtIO-MMIO 实现）：`os/components/wateros-driver/driver-block/block-impl/impl-virtio-mmio/src/lib.rs`；DTB 枚举与注册：`os/components/wateros-driver/driver-impl/impl-qemu-riscv64-opensbi/src/lib.rs`
 
 ## 一级组件与目录结构
@@ -55,8 +55,8 @@
    - 遍历 **`registered_fs_impls()`** 调 **`probe(&device)`**；首个返回 `Some(kind)` 且 `supports(kind, ReadOnly)` 的 impl 被选中，调用 **`rootfs::active_impl::set_active_fs_impl(imp)`**；
    - 调用 **`mount_default_root()`**：内部经 **`imp.mount_ro(device)`** 得到 `SharedFs`，写入全局；
    - 挂载成功后：打印 **`/`**、枚举 **`list_nodes()`** 设备路径，并对根卷调用 **`ReadOnlyFs::boot_dump_all_paths()`**（ext4 上 DFS 打印 `[fs::boot-tree]` 路径）。
-3. **`fs::test()`**：
-   - 调用 `fs-api` 的样例自检；
+3. **`fs::self_test()`**：
+   - 调用 FS 聚合层及各激活 impl 的内核态可用性自检；
    - **`impl_ext4::ro_self_test(root_fs)`**：固定路径元数据 / 文本前缀读 / ELF 头解析；
    - **`pick_fs_impl(Ext4, ReadWrite)`** 取得 RW impl，对当前根设备 **`mount_rw`** → **`impl_ext4::rw_smoke_self_test(rw, "hello", b"hello")`**；
    - 再用 **现有只读句柄** `root.read("/hello")` 校验内容（**`[fs::ext4][test] verify OK`**）。
@@ -77,7 +77,7 @@ flowchart TD
   ext4Fallback["impl-ext4-rs / impl-ext4 (fallback)"] --> agg
   agg -->|"probe + supports"| pick["pick_fs_impl"]
   pick -->|mount_ro| rootfsImpl["fs-rootfs impl-kernel"]
-  pick -->|mount_rw| rwSelfTest["fs::test write smoke"]
+  pick -->|mount_rw| rwSelfTest["fs::self_test write smoke"]
 ```
 
 ## 各层职责摘要

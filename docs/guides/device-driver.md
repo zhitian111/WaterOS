@@ -41,10 +41,10 @@
 
 2. 控制台、日志、堆、**`platform::arch::init()`** 以及 MM 自检（含可选分页冒烟测试，取决于根 crate 的 `impl-sv39` 等 feature）。
 
-3. **`driver::active_impl::init_after_boot()`**  
-   当前内核主线直接调用 **`active_impl`**，以便获得 **`DriverResult`**；聚合层的 `driver::init_after_boot()` 为另一套包装（内部用 `log` 打失败），二者不要混用以免排查困惑。
+3. **统一服务初始化入口 `init_services_after_boot()`**  
+   `os/src/main.rs` 先调用当前机器实现的 `init_after_boot()`，成功后继续 RTC、网络、FS 初始化和统一 `self_test`；用户态 bring-up 在该入口返回成功后才启动。
 
-4. 若上一步为 **`Ok`**，再执行 **`fs::init()`**、**`fs::test()`**（根文件系统与 **`impl-ext4`** 自检依赖 devfs 上已可见的块设备路径）。
+4. 若上一步为 **`Ok`**，再执行 FS 初始化和统一 `self_test`（根文件系统与 ext4 检查依赖 devfs 上已可见的块设备路径）。
 
 ```mermaid
 flowchart LR

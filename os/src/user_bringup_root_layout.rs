@@ -253,7 +253,7 @@ pub fn prune_ltp_excluded_testcases() {
     warn!("[{LOG_TAG}] vfs-bridge off: skip LTP testcase prune");
 }
 
-/// LTP 用例依赖的账户文件；在 `fs::test` / `vfs::test` 之后再次写入，避免自检覆盖。
+/// LTP 用例依赖的账户文件；在统一 `self_test` 之后再次写入，避免自检覆盖。
 #[cfg(feature = "vfs-bridge")]
 pub fn refresh_ltp_accounts() {
     use vfs::api::VfsFsKind;

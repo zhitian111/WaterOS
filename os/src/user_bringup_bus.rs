@@ -1,17 +1,14 @@
-//! QEMU 用户态 bring-up 总线：在 `kernel_main` 中于 `fs::init` 之后，
-//! 按固定顺序完成根文件系统、自检和用户态入口发布。约定见
+//! QEMU 用户态 bring-up 总线：在 `kernel_main` 中于统一服务初始化和自检之后，
+//! 按固定顺序完成根文件系统与用户态入口发布。约定见
 //! `docs/roadmap/riscv64-busybox/wp-init-test-bus.md`.
 //!
-//! 不需要的阶段直接在 [`run`] 里注释掉对应行即可。策略与 `fs::test` 一致（warn 后继续）。
-//! 用户任务必须在 `fs::test` / `vfs::test` 之后发布：这些启动期自检会短暂修改
-//! TTY、随机数句柄等全局测试状态，若 AP 已经并行运行用户任务会污染真实会话。
+//! 不需要的阶段直接在 [`run`] 里注释掉对应行即可。统一 `self_test` 已在进入本总线前完成。
 
 use runtime::logging::*;
 
 /// 运行已登记的 bring-up 阶段（按编号递增顺序）。
 ///
-/// 仅在 `driver::machine().init_after_boot` 成功且已执行 `fs::init`
-/// 之后调用。
+/// 仅在统一服务初始化成功且已完成根文件系统准备后调用。
 pub fn run() {
     info!("[bringup][stage-00-bus] BEGIN");
     match fs::mount_default_root_rw() {
@@ -55,10 +52,6 @@ pub fn run() {
     // crate::user_bringup_mm::run_stage_02();
     // crate::user_bringup_posix_fs::run_stage_posix_fs_meta();
     //crate::user_bringup_basic::run_stage_basic();
-    fs::test();
-    #[cfg(feature = "vfs-bridge")]
-    vfs::test();
-
     // 最后才入队 operator/自动评测任务。SMP 下 AP 会立即消费就绪队列，
     // 因而这里同时也是“启动期全局状态已经稳定”的发布边界。
     crate::user_bringup_busybox::run_stage_busybox();
