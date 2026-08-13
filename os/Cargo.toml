@@ -167,4 +167,5 @@
         "mm/self_test",
         "runtime/self_test",
         "klog/self_test",
+        "task/self_test",
     ]

@@ -81,5 +81,16 @@ pub fn init() {
     scheduler::init();
     active_impl::init_process_registry();
 }
+
+#[cfg(feature = "self_test")]
+/// 任务组件内核态自检；只验证调度器已建立，不创建或切换用户任务。
+pub fn self_test() {
+    log::info!("[task] self_test begin");
+    let mask = online_cpu_mask();
+    assert!(mask.bits() != 0, "at least the boot CPU must be online");
+    let idle_ticks = total_idle_ticks();
+    log::info!("[task] self_test observed idle_ticks={}", idle_ticks);
+    log::info!("[task] self_test complete; no task state was mutated");
+}
 /// 启动调度器并切入第一批可运行任务。
 pub fn run_first_task() -> ! { scheduler::run_first_task() }

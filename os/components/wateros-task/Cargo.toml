@@ -20,6 +20,9 @@
     scheduler = { path = "./task-scheduler/", package = "wateros-task-scheduler", default-features = false }
     base = { path = "../wateros-base", package = "wateros-base", default-features = false }
 
+[features]
+    self_test = [  ]
+
 
 [profile.dev]
     panic = "abort"
