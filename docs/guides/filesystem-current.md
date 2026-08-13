@@ -12,8 +12,8 @@
 
 - 聚合与入口：`os/components/wateros-fs/Cargo.toml`、`os/components/wateros-fs/src/lib.rs`
 - 通用 FS 契约（`ReadOnlyFs` / `ReadWriteFs` / `FsImpl` / `FsKind` / `FsAccessMode`）：`os/components/wateros-fs/fs-api/api-v0/src/lib.rs`
-- 设备文件抽象：`os/components/wateros-fs/fs-devfs/`（`devfs-api`、`impl-kernel` / `impl-dummy`）
-- 根卷管理：`os/components/wateros-fs/fs-rootfs/`（`rootfs-api`、`impl-kernel` / `impl-dummy`）
+- 设备文件抽象：`os/components/wateros-fs/fs-devfs/`（`devfs-api`、`impl-kernel`）
+- 根卷管理：`os/components/wateros-fs/fs-rootfs/`（`rootfs-api`、`impl-kernel`）
 - ext4 实现（RO + RW 合一）：`os/components/wateros-fs/fs-impl/impl-ext4/src/{lib.rs,ro.rs,rw.rs,selftest.rs}`
 - another_ext4 实现：`os/components/wateros-fs/fs-impl/impl-another-ext4/src/lib.rs`；上游源码固定 vendored 于 `os/vendor/another_ext4/`
 - 内核启动接线：`os/src/main.rs`（在 `driver::active_impl::init_after_boot()` 成功后调用 `fs::init()` / `fs::test()`；默认 QEMU feature 下可再跑 `vfs::test()`（含 `self_test` RW 读回校验），见 `docs/exports/public-api/wateros-vfs.md`）
@@ -30,7 +30,6 @@
 | `fs-rootfs` | 包名 `wateros-fs-rootfs`：根卷挂载与全局 `SharedFs` 句柄（`RootFsManager`），由聚合层注入选好的 `FsImpl` |
 | `fs-impl/impl-ext4` | 包名 `wateros-fs-impl-ext4`：ext4 单一 impl，**RO 路径**基于 `ext4-view`、**RW 路径**基于 `ext4plus`（beta），对外暴露 `Ext4FsImpl` 与 `pub static IMPL` |
 | `fs-impl/impl-another-ext4` | 包名 `wateros-fs-impl-another-ext4`：基于 vendored `another_ext4` 的 RO/RW impl；通过 4096-byte 文件系统块到 WaterOS LBA 块设备的适配层访问磁盘 |
-| `fs-impl/impl-dummy` | 占位（当前聚合层未作为默认根 FS） |
 | `fs-impl/impl-devfs` | 历史/备用 impl 目录，主线 devfs 在 **`fs-devfs`** |
 
 聚合层 `src/lib.rs` 不再用 `active_impl` 单选某 impl；而是通过 **静态注册表** `registered_fs_impls()` 按 cfg 静态拼接所有可用 impl，再由挂载流程按 `probe` + `supports(kind, mode)` 选择。
@@ -42,7 +41,7 @@
 - **`default`**：`api-v0` + **`impl-another-ext4`** + `impl-ramfs`；默认根卷由 another_ext4 提供。
 - **`api-v0`**：向下打开各子 crate 的 `api-v0` feature。
 - **`impl-another-ext4` / `impl-ext4-rs` / `impl-ext4`**：互斥的 ext4 后端 feature；需要回退时在 `wateros-fs` 这一层关闭默认 feature 并显式启用目标后端，不由 Makefile 选择。
-- **`impl-dummy` / `impl-devfs`**：独立 feature 位，用于裁剪 impl crate 编译入。
+- **`impl-devfs`**：历史/备用 impl 标识；当前设备文件系统使用 `fs-devfs` 的 `impl-kernel`。
 
 `fs-devfs` 默认 **`impl-kernel`**（从 `driver_block_api_v0` 枚举块设备并生成 `/dev/vblkN`）。`fs-rootfs` 默认 **`impl-kernel`**（`mount_default_root`、`root_fs()` 等模块级入口；通过 `set_active_fs_impl(&dyn FsImpl)` 接受聚合层注入）。
 

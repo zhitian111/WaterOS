@@ -17,7 +17,7 @@ log = { version = "0.4.29" }
 vfs-api = { path = "../wateros-vfs/vfs-api/api-v0", package = "wateros-vfs-api-v0", optional = true }
 
 [features]
-    self_test = [  ]
+    self_test = ["impl-smoltcp?/self_test"]
 default = ["api-v0", "impl-smoltcp", "vfs-handles"]
 api-v0 = []
 impl-smoltcp = ["dep:impl-smoltcp"]

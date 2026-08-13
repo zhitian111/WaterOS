@@ -46,5 +46,7 @@ pub fn self_test() {
     let config = NetworkConfig { address: [10, 0, 2, 15], prefix_len: 24, gateway: [10, 0, 2, 2] };
     assert_eq!(config.prefix_len, 24);
     assert_ne!(config.address, config.gateway);
+    #[cfg(feature = "impl-smoltcp")]
+    impl_smoltcp::self_test();
     log::info!("[network] self_test complete");
 }

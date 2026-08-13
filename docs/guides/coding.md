@@ -82,8 +82,8 @@ pub fn test() {
     block::test();
     #[cfg(feature = "impl-qemu-riscv64-opensbi")]
     impl_qemu_riscv64_opensbi::test();
-    #[cfg(feature = "impl-dummy")]
-    log::info!("[driver] dummy impl: skip qemu probe test");
+    #[cfg(feature = "self_test")]
+    log::info!("[driver] self_test: skip hardware-dependent probe when unavailable");
     log::trace!("[driver] test end");
 }
 ```

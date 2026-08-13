@@ -27,9 +27,8 @@
 | 聚合层 | `src/lib.rs` | 导出 `api`、`block`、`character`、`network`；提供 `init_when_boot`、`init_after_boot`、`test`；通过 feature 选择 `active_impl`。 |
 | 设备抽象 API | `driver-api/api-v0/` | `DeviceInfo`、`DeviceType`、`MmioRegion`、`DriverError` 等与具体总线无关的公共类型。 |
 | 块设备子系统 | `driver-block/` | `BlockDevice` trait、`register_block_device`、全局块设备表（`SharedBlockDevice`）；**VirtIO-MMIO 块实现**位于 `driver-block/block-impl/impl-virtio-mmio/`，由 feature **`impl-virtio-mmio`** 启用并由 `wateros-driver` 的 **`impl-qemu-riscv64-opensbi`** 自动打开。可选 **写穿 LRU 块缓存** `driver-block/block-impl/impl-block-cache/`（**`CachingBlockDevice`**），由 **`wateros-driver`** 的 **`impl-block-cache`** 与根 crate **`qemu-riscv64-opensbi`** 下的 **`driver/impl-block-cache`** 打开；注册 virtio-blk 时用其包装底层设备，对上接口不变。 |
-| 字符 / 网络子系统 | `driver-character/`、`driver-network/` | 当前以 **dummy impl** 为主，占位与自检。 |
+| 字符 / 网络子系统 | `driver-character/`、`driver-network/` | 提供内核字符设备与网络设备抽象，并由当前平台实现接线。 |
 | 平台实现 | `driver-impl/impl-qemu-riscv64-opensbi/` | QEMU RISC-V + OpenSBI：DTB 扫描、virtio-mmio 探测、调用 **`driver-block`** 中的 **`VirtioBlkDevice`** 完成实例化；若启用 **`block-cache`** feature，则以 **`CachingBlockDevice`** 包装后再 **`register_block_device`**；否则直接注册裸设备。末尾触发 devfs 同步。 |
-| 空实现 | `driver-impl/impl-dummy/` | 无硬件时的编译与链接占位。 |
 
 **默认 feature**（见组件根 `Cargo.toml`）：`impl-qemu-riscv64-opensbi`，即默认启用 QEMU OpenSBI 路径下的真实探测逻辑。
 
@@ -104,8 +103,8 @@ QEMU 常在 DTB 中描述 **多个 virtio-mmio 槽位**；未接入设备的槽�
 | devfs 节点刷新（经 `wateros-fs`） | 已有。 |
 | 中断实际挂接与 `IrqLine` 使用 | **未接线**；`DeviceInfo.irq` 多为信息记录。 |
 | virtio-net 等网络设备 | **类型可识别**，无完整网络栈注册路径。 |
-| character / network 子系统 | **以 dummy 为主**，占位与自检。 |
-| 非 QEMU / 非 OpenSBI 平台 | 依赖切换 **`impl-dummy`** 或其它未来 impl。 |
+| character / network 子系统 | 提供抽象与当前平台接线；自检由统一 `self_test` 入口控制。 |
+| 非 QEMU / 非 OpenSBI 平台 | 需要新增对应平台 impl 并在聚合层接入。 |
 
 ## 相关导出文档
 
