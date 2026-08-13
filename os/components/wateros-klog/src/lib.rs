@@ -19,6 +19,13 @@ pub mod syscall {
 pub use active_impl::*;
 pub use api_v0::*;
 
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[klog] self_test begin");
+    active_impl::self_test();
+    log::info!("[klog] self_test complete");
+}
+
 #[macro_export]
 macro_rules! klog_trace {
     ($($arg:tt)*) => {{

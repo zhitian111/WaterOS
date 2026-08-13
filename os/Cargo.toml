@@ -166,4 +166,5 @@
         "network/self_test",
         "mm/self_test",
         "runtime/self_test",
+        "klog/self_test",
     ]

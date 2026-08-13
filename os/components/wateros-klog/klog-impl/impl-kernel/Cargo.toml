@@ -12,6 +12,9 @@ spin = "0.10.0"
 wateros-base-config = { path = "../../../wateros-base/base-config/", package = "wateros-base-config", default-features = true }
 debug = { path = "../../../wateros-debug/", package = "wateros-debug", default-features = false }
 
+[features]
+    self_test = [  ]
+
 [profile.dev]
 panic = "abort"
 

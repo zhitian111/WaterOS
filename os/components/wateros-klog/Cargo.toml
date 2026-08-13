@@ -11,6 +11,7 @@
     impl-kernel = { path = "./klog-impl/impl-kernel/", package = "wateros-klog-impl-kernel", default-features = true }
 
 [features]
+    self_test = [ "impl-kernel/self_test" ]
 api-v0 = []
 default = [ "api-v0", "impl-kernel" ]
 impl-kernel = []

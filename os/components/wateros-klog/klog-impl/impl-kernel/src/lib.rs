@@ -13,6 +13,14 @@ mod syslog;
 pub use format::record_fmt;
 pub use global::{dispatch_kernel, init, record, stats};
 
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    use api_v0::{LOG_INFO, LOG_KERN};
+    init();
+    let _result = record(LOG_INFO, LOG_KERN, b"klog-self-test");
+    assert!(stats().records_committed >= 1);
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
