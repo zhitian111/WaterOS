@@ -165,6 +165,27 @@ fn bringup_driver_and_user(memory_end: usize) {
     }
 }
 
+/// 所有架构共用的启动早期初始化入口。
+fn init_when_boot(dtb_pa: usize) {
+    platform::init_when_boot(dtb_pa);
+    driver::init_when_boot();
+}
+
+/// 所有架构共用的启动后核心初始化入口。
+///
+/// 调用者必须先完成 console、日志、堆和架构原语初始化；本函数只接管
+/// timebase、task、trap 与 MM 的顺序，避免两个架构入口各自漂移。
+fn init_after_boot(dtb_pa: usize, memory_end: usize, cpu_id: task::CpuId) {
+    platform::init_after_boot();
+    crate::boot_timebase::probe_and_init_timebase(dtb_pa);
+    task::init();
+    task::set_timekeeper_cpu(cpu_id);
+    #[cfg(feature = "dashboard-debug")]
+    crate::dashboard::init();
+    crate::trap_handler::init();
+    mm::init_after_boot(dtb_pa, memory_end);
+}
+
 #[cfg(feature = "self_test")]
 fn run_self_tests() {
     runtime::logging::info!("[self-test] unified kernel self_test begin");
@@ -188,7 +209,7 @@ fn run_self_tests() {
 
 #[cfg(feature = "qemu-riscv64-opensbi")]
 mod qemu_riscv64_opensbi {
-    use crate::bringup_driver_and_user;
+    use crate::{bringup_driver_and_user, init_after_boot, init_when_boot};
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use runtime::logging::*;
     /// Firmware-selected boot hart. `usize::MAX` means no hart entered yet.
@@ -299,20 +320,11 @@ mod qemu_riscv64_opensbi {
         runtime::showlogo();
         klog::init();
         runtime::logging::init();
-        platform::init_when_boot(dtb_pa);
-        driver::init_when_boot();
-        platform::init_after_boot();
-        crate::boot_timebase::probe_and_init_timebase(dtb_pa);
+        init_when_boot(dtb_pa);
         runtime::heap_allocator::init();
         platform::arch::init();
-        task::init();
-        task::set_timekeeper_cpu(cpu_id);
-        #[cfg(feature = "dashboard-debug")]
-        crate::dashboard::init();
-        crate::trap_handler::init();
-        // MM 初始化
         let memory_end = platform::physical_ram_end_exclusive();
-        mm::init_after_boot(dtb_pa, memory_end);
+        init_after_boot(dtb_pa, memory_end, cpu_id);
         AP_BOOT_READY.store(true, Ordering::Release);
 
         let requested_aps = start_secondary_harts(cpu_id, dtb_pa);
@@ -333,7 +345,7 @@ mod qemu_riscv64_opensbi {
 
 #[cfg(feature = "qemu-loongarch64-virt")]
 mod qemu_loongarch64_virt {
-    use crate::bringup_driver_and_user;
+    use crate::{bringup_driver_and_user, init_after_boot, init_when_boot};
     use core::sync::atomic::{AtomicBool, Ordering};
     use runtime::logging::*;
 
@@ -428,9 +440,7 @@ mod qemu_loongarch64_virt {
         platform::arch::init();
         let _ = platform::smp::init_ipi();
         let dtb_pa = platform::active_impl::boot::device_tree_phys_addr();
-        platform::init_when_boot(dtb_pa);
-        driver::init_when_boot();
-        platform::init_after_boot();
+        init_when_boot(dtb_pa);
         let configured =
             platform::active_impl::smp::init_configured_cpu_mask(dtb_pa).expect("initialize \
                                                                                  LoongArch CPU \
@@ -438,17 +448,10 @@ mod qemu_loongarch64_virt {
                                                                                  DTB");
         info!("[smp] LA configured CPU mask={:#x}",
               configured.bits());
-        crate::boot_timebase::probe_and_init_timebase(dtb_pa);
-        task::init();
-        task::set_timekeeper_cpu(cpu_id);
-        task::set_cpu_online(cpu_id);
-        #[cfg(feature = "dashboard-debug")]
-        crate::dashboard::init();
-        crate::trap_handler::init();
-        platform::arch::paging::init_paging_disable_mmu();
-
         let memory_end = platform::physical_ram_end_exclusive();
-        mm::init_after_boot(dtb_pa, memory_end);
+        init_after_boot(dtb_pa, memory_end, cpu_id);
+        task::set_cpu_online(cpu_id);
+        platform::arch::paging::init_paging_disable_mmu();
 
         AP_BOOT_READY.store(true, Ordering::Release);
         let requested_aps = start_secondary_cpus(cpu_id);
