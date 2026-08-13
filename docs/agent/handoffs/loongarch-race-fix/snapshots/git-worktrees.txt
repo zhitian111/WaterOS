@@ -1,0 +1,28 @@
+worktree /home/zhitian/project/WaterOS_refactor
+HEAD c413c4b97e36f91b1b4ba960209d00509f45ebd5
+branch refs/heads/main
+
+worktree /home/zhitian/project/WaterOS_loongson2k1000_port
+HEAD f3cebb7781b9cdf789294727ab1612f9952b69e6
+branch refs/heads/feat/loongson2k1000-port
+
+worktree /home/zhitian/project/WaterOS_real_hardware_ports
+HEAD 2d5a68e26cdd108762cbaf25824361041c0016bd
+branch refs/heads/feat/real-hardware-common
+
+worktree /home/zhitian/project/WaterOS_runtime_image_bringup
+HEAD 7f3d646da662f0b9a34cc287f2242253c525336c
+branch refs/heads/fix/runtime-image-bringup
+
+worktree /home/zhitian/project/WaterOS_visionfive2_port
+HEAD 70a8dead1c4bd112933e12dde35abfe7bd42e257
+branch refs/heads/feat/visionfive2-port
+
+worktree /tmp/wateros-elf-cache-128m
+HEAD d47367e20ff06493c9e28d4e4cda11b425fd3d6a
+branch refs/heads/perf/elf-cache-128m
+
+worktree /tmp/wateros-perf-tools
+HEAD 765e0257d6a1217e32ccc389414306171a595de5
+detached
+

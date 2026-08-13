@@ -1,0 +1,18 @@
+# branch.oid c413c4b97e36f91b1b4ba960209d00509f45ebd5
+# branch.head main
+# branch.upstream github/main
+# branch.ab +89 -4
+? docs/agent/
+? os/components/wateros-platform/platform-impl/impl-qemu-riscv64-opensbi/src/plic.rs
+? os/kernel-la-linux-baseline-6.12.102
+? os/kernel-la-linux-baseline-6.12.102.config
+? os/kernel-rv-final-smp-test
+? os/kernel-rv-final-stats
+? os/kernel-rv-linux-baseline-6.12.102
+? os/kernel-rv-linux-baseline-6.12.102.config
+? os/sdcard-la-pub.img.buildstorm_testcode.sh.bak-20260811
+? os/sdcard-la-pub.img.buildstorm_testcode.sh.bak-20260812-online-exact
+? os/sdcard-la-pub.img.buildstorm_testcode.sh.bak-20260812-pre-online
+? os/sdcard-rv-pub.img.buildstorm_testcode.sh.bak-20260811
+? os/sdcard-rv-pub.img.buildstorm_testcode.sh.bak-20260812-online-exact
+? os/sdcard-rv-pub.img.buildstorm_testcode.sh.bak-20260812-pre-online

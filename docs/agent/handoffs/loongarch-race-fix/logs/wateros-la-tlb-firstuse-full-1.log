@@ -1,0 +1,592 @@
+[36m██╗    ██╗ █████╗ ████████╗███████╗██████╗      ██████╗ ███████╗
+██║    ██║██╔══██╗╚══██╔══╝██╔════╝██╔══██╗    ██╔═══██╗██╔════╝
+██║ █╗ ██║███████║   ██║   █████╗  ██████╔╝    ██║   ██║███████╗
+██║███╗██║██╔══██║   ██║   ██╔══╝  ██╔══██╗    ██║   ██║╚════██║
+╚███╔███╔╝██║  ██║   ██║   ███████╗██║  ██║    ╚██████╔╝███████║
+ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝     ╚═════╝ ╚══════╝
+[0m[36m[WaterOS][cpu=0][0m[31m    [ERROR]  [bringup][stage-busybox] BEGIN[0m
+[36m[WaterOS][cpu=0][0m[31m    [ERROR]  [busybox-bringup] kernel runner enqueued; queue will be selected from root image marker[0m
+[36m[WaterOS][cpu=0][0m[31m    [ERROR]  [bringup][stage-busybox] END[0m
+[36m[WaterOS][cpu=1][0m[31m    [ERROR]  [busybox-bringup] detected Final image; running 2 command(s)[0m
+[36m[WaterOS][cpu=1][0m[31m    [ERROR]  [busybox-bringup] SCRIPT_BODY_FLAT_BEGIN path=/glibc/cagent_testcode.sh bytes=6325[0m
+[36m[WaterOS][cpu=1][0m[31m    [ERROR]  [busybox-bringup] SCRIPT_BODY_FLAT_END path=/glibc/cagent_testcode.sh[0m
+[36m[WaterOS][cpu=1][0m[31m    [ERROR]  [busybox-bringup] program=/glibc/cagent_testcode.sh argv=["/glibc/cagent_testcode.sh"] start_mono_ns=366465170[0m
+#### OS COMP TEST GROUP START cagent-glibc ####
+Simple LLM Server listening on http://127.0.0.1:8080
+API endpoint: http://127.0.0.1:8080/v1/chat/completions
+Press Ctrl+C to stop
+
+Request: POST /v1/chat/completions HTTP/1.1
+  [Neural Inference]
+    Template 0 (factorial calculation): score=0.000
+    Template 1 (date calculation): score=0.000
+    Template 2 (network connections): score=0.000
+    Template 3 (cpu cores): score=3.182
+    Template 4 (disk usage): score=0.000
+    Template 5 (system uptime): score=3.182
+    Template 6 (username): score=0.000
+    Template 7 (listening ports): score=0.000
+    Template 8 (kernel version): score=0.000
+    => Selected: cpu cores (score=3.182)
+Request: POST /v1/chat/completions HTTP/1.1
+Request: POST /v1/chat/completions HTTP/1.1
+  [Neural Inference]
+    Template 0 (factorial calculation): score=0.000
+    Template 1 (date calculation): score=0.000
+    Template 2 (network connections): score=3.464
+    Template 3 (cpu cores): score=0.000
+    Template 4 (disk usage): score=0.000
+    Template 5 (system uptime): score=0.000
+    Template 6 (username): score=0.000
+    Template 7 (listening ports): score=1.155
+    Template 8 (kernel version): score=1.155
+    => Selected: network connections (score=3.464)
+Request: POST /v1/chat/completions HTTP/1.1
+  [Neural Inference]
+    Template 0 (factorial calculation): score=0.566
+    Template 1 (date calculation): score=2.687
+    Template 2 (network connections): score=0.000
+    Template 3 (cpu cores): score=0.000
+    Template 4 (disk usage): score=0.000
+    Template 5 (system uptime): score=0.000
+    Template 6 (username): score=0.000
+    Template 7 (listening ports): score=0.000
+    Template 8 (kernel version): score=0.000
+    => Selected: date calculation (score=2.687)
+Request: POST /v1/chat/completions HTTP/1.1
+  [Neural Inference]
+    Template 0 (factorial calculation): score=2.475
+    Template 1 (date calculation): score=0.000
+    Template 2 (network connections): score=0.000
+    Template 3 (cpu cores): score=0.000
+    Template 4 (disk usage): score=0.000
+    Template 5 (system uptime): score=0.000
+    Template 6 (username): score=0.000
+    Template 7 (listening ports): score=0.000
+    Template 8 (kernel version): score=0.000
+    => Selected: factorial calculation (score=2.475)
+Request: POST /v1/chat/completions HTTP/1.1
+Request: POST /v1/chat/completions HTTP/1.1
+  [Neural Inference]
+    Template 0 (factorial calculation): score=0.000
+    Template 1 (date calculation): score=0.000
+    Template 2 (network connections): score=0.000
+    Template 3 (cpu cores): score=0.000
+    Template 4 (disk usage): score=2.000
+    Template 5 (system uptime): score=0.000
+    Template 6 (username): score=0.000
+    Template 7 (listening ports): score=0.000
+    Template 8 (kernel version): score=2.500
+    => Selected: kernel version (score=2.500)
+Request: POST /v1/chat/completions HTTP/1.1
+Request: POST /v1/chat/completions HTTP/1.1
+  [Neural Inference]
+    Template 0 (factorial calculation): score=0.000
+    Template 1 (date calculation): score=0.000
+    Template 2 (network connections): score=1.768
+    Template 3 (cpu cores): score=0.000
+    Template 4 (disk usage): score=1.414
+    Template 5 (system uptime): score=0.000
+    Template 6 (username): score=0.000
+    Template 7 (listening ports): score=0.000
+    Template 8 (kernel version): score=3.182
+    => Selected: kernel version (score=3.182)
+Request: POST /v1/chat/completions HTTP/1.1
+Request: POST /v1/chat/completions HTTP/1.1
+Request: POST /v1/chat/completions HTTP/1.1
+Request: POST /v1/chat/completions HTTP/1.1
+Request: POST /v1/chat/completions HTTP/1.1
+Request: POST /v1/chat/completions HTTP/1.1
+Request: POST /v1/chat/completions HTTP/1.1
+Request: POST /v1/chat/completions HTTP/1.1
+Request: POST /v1/chat/completions HTTP/1.1
+Request: POST /v1/chat/completions HTTP/1.1
+testcase cagent fs-create pass 199
+testcase cagent factorial pass 210
+testcase cagent cpu pass 205
+Request: POST /v1/chat/completions HTTP/1.1
+testcase cagent fs-usage pass 284
+testcase cagent date pass 247
+testcase cagent kernel pass 293
+testcase cagent fs-search pass 283
+testcase cagent network pass 307
+testcase cagent fs-readwrite pass 293
+testcase cagent fs-directory pass 369
+
+Shutting down server...
+#### OS COMP TEST GROUP END cagent-glibc ####
+[36m[WaterOS][cpu=1][0m[31m    [ERROR]  [busybox-bringup] program=/glibc/cagent_testcode.sh argv=["/glibc/cagent_testcode.sh"] end_mono_ns=2157283410 elapsed=1s 790ms (1790818240ns)[0m
+[36m[WaterOS][cpu=1][0m[31m    [ERROR]  [busybox-bringup] command succeeded program=/glibc/cagent_testcode.sh exit_code=0[0m
+[36m[WaterOS][cpu=1][0m[31m    [ERROR]  [busybox-bringup] SCRIPT_BODY_FLAT_BEGIN path=/glibc/buildstorm_testcode.sh bytes=14913[0m
+[36m[WaterOS][cpu=1][0m[31m    [ERROR]  [busybox-bringup] SCRIPT_BODY_FLAT_END path=/glibc/buildstorm_testcode.sh[0m
+[36m[WaterOS][cpu=1][0m[31m    [ERROR]  [busybox-bringup] program=/glibc/buildstorm_testcode.sh argv=["/glibc/buildstorm_testcode.sh"] start_mono_ns=2171882690[0m
+#### OS COMP TEST GROUP START buildstorm-glibc ####
+rustc 1.98.0-nightly (57d06900f 2026-05-27)
+cargo 1.98.0-nightly (fbb61be30 2026-05-26)
+TOOLCHAIN_RESULT status=OK
+MINIBUILD_RESULT status=OK
+----- pre-build tg-xtask (untimed) -----
+warning: failed to save last-use data
+This may prevent cargo from accurately tracking what is being used in its global cache. This information is used for automatically removing unused data in the cache.
+
+out of range integral type conversion attempted
+
+Caused by:
+  out of range integral type conversion attempted
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.35s
+----- build arceos-helloworld (timed, arch=loongarch64) -----
+BUILDSTORM_BEGIN mode=multi
+warning: failed to save last-use data
+This may prevent cargo from accurately tracking what is being used in its global cache. This information is used for automatically removing unused data in the cache.
+
+out of range integral type conversion attempted
+
+Caused by:
+  out of range integral type conversion attempted
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.29s
+     Running `target/debug/tg-xtask arceos build -p arceos-helloworld --arch loongarch64`
+[1970-01-01T00:00:25Z INFO  axbuild::context] Workspace root: /work/tgoskits
+Using build config: /work/tgoskits/tmp/axbuild/config/arceos-helloworld/build-loongarch64-unknown-none-softfloat.toml
+[1970-01-01T00:00:26Z INFO  axbuild::build::config_file] Found build config at /work/tgoskits/tmp/axbuild/config/arceos-helloworld/build-loongarch64-unknown-none-softfloat.toml
+Using build config: /work/tgoskits/tmp/axbuild/config/arceos-helloworld/build-loongarch64-unknown-none-softfloat.toml
+[1970-01-01T00:00:27Z INFO  axbuild::build::config_file] Found build config at /work/tgoskits/tmp/axbuild/config/arceos-helloworld/build-loongarch64-unknown-none-softfloat.toml
+[axbuild] cargo build package=arceos-helloworld target=scripts/targets/std/pie/loongarch64-unknown-linux-musl.json config=/work/tgoskits/tmp/axbuild/config/arceos-helloworld/build-loongarch64-unknown-none-softfloat.toml ...
+sh -c /work/tgoskits/tmp/axbuild/std/prebuild/prebuild-loongarch64-unknown-linux-musl-bd8e59296c60d6af.sh
+AR_loongarch64_unknown_linux_musl=loongarch64-linux-musl-ar
+AX_LOG=info
+AX_TARGET=loongarch64-unknown-none-softfloat
+CARGO_UNSTABLE_JSON_TARGET_SPEC=true
+CC_loongarch64_unknown_linux_musl=loongarch64-linux-musl-cc
+CFLAGS_loongarch64_unknown_linux_musl=-mabi=lp64s -msoft-float -fno-stack-protector
+CXXFLAGS_loongarch64_unknown_linux_musl=-mabi=lp64s -msoft-float -fno-stack-protector
+SMP=1
+cargo build --config /work/tgoskits/tmp/axbuild/std/config-loongarch64-unknown-linux-musl-dynamic.toml -p arceos-helloworld --target scripts/targets/std/pie/loongarch64-unknown-linux-musl.json -Z unstable-options --target-dir /work/tgoskits/target --features arceos,ax-std/irq,ax-std/paging,ax-std/smp,ax-std/std-compat -Z json-target-spec --release --message-format json-render-diagnostics
+warning: failed to save last-use data
+This may prevent cargo from accurately tracking what is being used in its global cache. This information is used for automatically removing unused data in the cache.
+
+out of range integral type conversion attempted
+
+Caused by:
+  out of range integral type conversion attempted
+   Compiling compiler_builtins v0.1.160 (/root/.rustup/toolchains/nightly-2026-05-28-loongarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/compiler-builtins/compiler-builtins)
+   Compiling core v0.0.0 (/root/.rustup/toolchains/nightly-2026-05-28-loongarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core)
+   Compiling libc v0.2.185
+   Compiling std v0.0.0 (/root/.rustup/toolchains/nightly-2026-05-28-loongarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std)
+   Compiling thiserror v2.0.18
+   Compiling heapless v0.9.3
+   Compiling ax-percpu v0.4.14 (/work/tgoskits/components/percpu/percpu)
+   Compiling num-traits v0.2.19
+   Compiling radium v0.7.0
+   Compiling ax-errno v0.6.1 (/work/tgoskits/components/axerrno)
+   Compiling libc v0.2.186
+   Compiling anyhow v1.0.103
+   Compiling rust_decimal v1.42.1
+   Compiling ax-alloc v0.8.12 (/work/tgoskits/os/arceos/modules/axalloc)
+   Compiling someboot v0.3.5 (/work/tgoskits/platforms/someboot)
+   Compiling ax-driver v0.12.0 (/work/tgoskits/drivers/ax-driver)
+   Compiling somehal v0.8.0 (/work/tgoskits/platforms/somehal)
+   Compiling axplat-dyn v0.7.12 (/work/tgoskits/platforms/axplat-dyn)
+   Compiling ax-hal v0.5.28 (/work/tgoskits/os/arceos/modules/axhal)
+   Compiling ax-task v0.6.4 (/work/tgoskits/os/arceos/modules/axtask)
+   Compiling ax-runtime v0.10.4 (/work/tgoskits/os/arceos/modules/axruntime)
+   Compiling scope-local v0.4.2 (/work/tgoskits/components/scope-local)
+   Compiling ax-posix-api v0.5.29 (/work/tgoskits/os/arceos/api/arceos_posix_api)
+   Compiling rustc-std-workspace-core v1.99.0 (/root/.rustup/toolchains/nightly-2026-05-28-loongarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/rustc-std-workspace-core)
+   Compiling alloc v0.0.0 (/root/.rustup/toolchains/nightly-2026-05-28-loongarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc)
+   Compiling rustc-demangle v0.1.27
+   Compiling panic_abort v0.0.0 (/root/.rustup/toolchains/nightly-2026-05-28-loongarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/panic_abort)
+   Compiling cfg-if v1.0.4
+   Compiling rustc-literal-escaper v0.0.7
+   Compiling unwind v0.0.0 (/root/.rustup/toolchains/nightly-2026-05-28-loongarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/unwind)
+   Compiling rustc-std-workspace-alloc v1.99.0 (/root/.rustup/toolchains/nightly-2026-05-28-loongarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/rustc-std-workspace-alloc)
+   Compiling panic_unwind v0.0.0 (/root/.rustup/toolchains/nightly-2026-05-28-loongarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/panic_unwind)
+   Compiling hashbrown v0.17.1
+   Compiling std_detect v0.1.5 (/root/.rustup/toolchains/nightly-2026-05-28-loongarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std_detect)
+   Compiling proc_macro v0.0.0 (/root/.rustup/toolchains/nightly-2026-05-28-loongarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/proc_macro)
+   Compiling log v0.4.33
+   Compiling bitflags v2.13.0
+   Compiling byteorder v1.5.0
+   Compiling as-any v0.3.2
+   Compiling scopeguard v1.2.0
+   Compiling stable_deref_trait v1.2.1
+   Compiling bit_field v0.10.3
+   Compiling derive_more v2.1.1
+   Compiling tock-registers v0.10.1
+   Compiling ax-kernel-guard v0.3.11 (/work/tgoskits/components/kernel_guard)
+   Compiling irq-framework v0.3.0 (/work/tgoskits/components/irq-framework)
+   Compiling lock_api v0.4.14
+   Compiling rdif-def v0.3.0 (/work/tgoskits/drivers/interface/rdif-def)
+   Compiling ax-memory-addr v0.6.9 (/work/tgoskits/memory/memory_addr)
+   Compiling ax-kspin v0.3.15 (/work/tgoskits/components/kspin)
+   Compiling strum v0.27.2
+   Compiling mmio-api v0.2.2 (/work/tgoskits/memory/mmio-api)
+   Compiling rdif-base v0.8.3 (/work/tgoskits/drivers/interface/rdif-base)
+   Compiling hash32 v0.3.1
+   Compiling pci_types v0.10.1
+   Compiling futures-sink v0.3.32
+   Compiling futures-core v0.3.32
+   Compiling slab v0.4.12
+   Compiling pin-project-lite v0.2.17
+   Compiling arrayvec v0.7.7
+   Compiling spin v0.12.0
+   Compiling spinning_top v0.3.0
+   Compiling rdif-msi v0.2.0 (/work/tgoskits/drivers/interface/rdif-msi)
+   Compiling rdif-clk v0.5.4 (/work/tgoskits/drivers/interface/rdif-clk)
+   Compiling rdif-power v0.8.0 (/work/tgoskits/drivers/interface/rdif-power)
+   Compiling rdif-reset v0.1.0 (/work/tgoskits/drivers/interface/rdif-reset)
+   Compiling futures-task v0.3.32
+   Compiling futures-channel v0.3.32
+   Compiling acpi v6.1.1
+   Compiling rdif-pcie v0.2.5 (/work/tgoskits/drivers/interface/rdif-pcie)
+   Compiling rdif-intc v0.15.0 (/work/tgoskits/drivers/interface/rdif-intc)
+   Compiling futures-io v0.3.32
+   Compiling tap v1.0.1
+   Compiling futures-util v0.3.32
+   Compiling uguid v2.2.1
+   Compiling const-str v1.1.0
+   Compiling funty v2.0.0
+   Compiling num-align v0.1.0
+   Compiling wyz v0.5.1
+   Compiling const-default v1.0.0
+   Compiling pcie v0.6.7 (/work/tgoskits/drivers/pci/pcie)
+   Compiling bytemuck v1.25.0
+   Compiling fdt-raw v0.3.0
+   Compiling ranges-ext v0.6.4 (/work/tgoskits/memory/ranges-ext)
+   Compiling bitvec v1.1.1
+   Compiling rgb v0.8.53
+   Compiling uefi-raw v0.14.0
+   Compiling spinning_top v0.2.5
+   Compiling buddy-slab-allocator v0.4.6 (/work/tgoskits/memory/buddy-slab-allocator)
+   Compiling rlsf v0.2.2
+   Compiling loongArch64 v0.2.6
+   Compiling ucs2 v0.3.3
+   Compiling mbarrier v0.1.3
+   Compiling ptr_meta v0.3.1
+   Compiling fdt-edit v0.2.3
+   Compiling utf8-width v0.1.8
+   Compiling axpanic v0.1.1 (/work/tgoskits/components/axpanic)
+   Compiling ansi_rgb v0.2.0
+   Compiling byte-unit v5.2.5
+   Compiling dma-api v0.9.3 (/work/tgoskits/memory/dma-api)
+   Compiling kernutil v0.2.2 (/work/tgoskits/components/kernutil)
+   Compiling page-table-generic v0.7.4 (/work/tgoskits/memory/page-table-generic)
+   Compiling ax-page-table-entry v0.8.10 (/work/tgoskits/memory/page_table_entry)
+   Compiling rdif-pinctrl v0.1.2 (/work/tgoskits/drivers/interface/rdif-pinctrl)
+   Compiling numeric-enum-macro v0.2.0
+   Compiling ax-page-table-multiarch v0.8.13 (/work/tgoskits/memory/page_table_multiarch)
+   Compiling axbacktrace v0.4.5 (/work/tgoskits/components/axbacktrace)
+   Compiling fdt-parser v0.4.19
+   Compiling ax-memory-set v0.6.12 (/work/tgoskits/memory/memory_set)
+   Compiling ax-lazyinit v0.4.8 (/work/tgoskits/components/ax-lazyinit)
+   Compiling rdrive v0.23.6 (/work/tgoskits/drivers/rdrive)
+   Compiling futures v0.3.32
+   Compiling ax-cpu v0.8.3 (/work/tgoskits/components/axcpu)
+   Compiling rdif-serial v0.9.0 (/work/tgoskits/drivers/interface/rdif-serial)
+   Compiling ax-log v0.5.18 (/work/tgoskits/os/arceos/modules/axlog)
+   Compiling chrono v0.4.45
+   Compiling memchr v2.8.2
+   Compiling linux-raw-sys v0.12.1
+   Compiling ax-ctor-bare v0.4.8 (/work/tgoskits/components/ctor_bare/ctor_bare)
+   Compiling bitmaps v3.2.1
+   Compiling some-serial v0.7.0 (/work/tgoskits/drivers/serial/some-serial)
+   Compiling ax-io v0.6.1 (/work/tgoskits/components/axio)
+   Compiling axpoll v0.5.1 (/work/tgoskits/components/axpoll)
+   Compiling aml v0.16.4
+   Compiling flatten_objects v0.2.4
+   Compiling ax-plat v0.12.0 (/work/tgoskits/platforms/ax-plat)
+   Compiling uefi v0.37.0
+   Compiling axklib v0.7.5 (/work/tgoskits/components/axklib)
+   Compiling ax-mm v0.5.28 (/work/tgoskits/os/arceos/modules/axmm)
+   Compiling ax-sync v0.5.28 (/work/tgoskits/os/arceos/modules/axsync)
+   Compiling ax-api v0.7.4 (/work/tgoskits/os/arceos/api/arceos_api)
+   Compiling ax-std v0.5.28 (/work/tgoskits/os/arceos/ulib/axstd)
+   Compiling arceos-helloworld v0.1.0 (/work/tgoskits/apps/arceos/helloworld)
+    Finished `release` profile [optimized] target(s) in 8m 38s
+Converting ELF to BIN format...
+  elf: /work/tgoskits/target/loongarch64-unknown-linux-musl/release/arceos-helloworld
+  bin: /work/tgoskits/target/loongarch64-unknown-linux-musl/release/arceos-helloworld.bin
+/root/.rustup/toolchains/nightly-2026-05-28-loongarch64-unknown-linux-gnu/lib/rustlib/loongarch64-unknown-linux-gnu/bin/llvm-objcopy --strip-all -O binary /work/tgoskits/target/loongarch64-unknown-linux-musl/release/arceos-helloworld /work/tgoskits/target/loongarch64-unknown-linux-musl/release/arceos-helloworld.bin
+[axbuild] cargo build package=arceos-helloworld target=scripts/targets/std/pie/loongarch64-unknown-linux-musl.json config=/work/tgoskits/tmp/axbuild/config/arceos-helloworld/build-loongarch64-unknown-none-softfloat.toml ... done (526.77s)
+[axbuild] cargo build elf=/work/tgoskits/target/loongarch64-unknown-linux-musl/release/arceos-helloworld
+[axbuild] cargo build artifact_dir=/work/tgoskits/target/loongarch64-unknown-linux-musl/release
+----- boot arceos-helloworld in qemu (untimed, arch=loongarch64) -----
+BUILDSTORM_RESULT mode=multi status=OK rc=0 cores=12 elapsed_s=535.81 artifact=target/loongarch64-unknown-linux-musl/release/arceos-helloworld bytes=1714568 run=OK
+#### OS COMP TEST GROUP END buildstorm-glibc ####
+InitializeExceptions,IrqEnabled = 0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03040002 I0
+PROGRESS CODE: V03040003 I0
+PROGRESS CODE: V03041001 I0
+PROGRESS CODE: V03051005 I0
+PROGRESS CODE: V02010000 I0
+PROGRESS CODE: V02011000 I0
+PROGRESS CODE: V02011001 I0
+PROGRESS CODE: V02010004 I0
+PROGRESS CODE: V02010004 I0
+PROGRESS CODE: V02010004 I0
+[2J[01;01H[=3h[2J[01;01HPROGRESS CODE: V01040001 I0
+PROGRESS CODE: V02010000 I0
+PROGRESS CODE: V03051007 I0
+PROGRESS CODE: V03051001 I0
+PROGRESS CODE: V03058000 I0
+BdsDxe: loading Boot0001 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x2,0x0)
+PROGRESS CODE: V03058001 I0
+BdsDxe: starting Boot0001 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x2,0x0)
+UEFI application started.
+UEFI console ok.
+No FDT found in UEFI config tables.
+Found ACPI 1.0 RSDP at address: 0xdf7f000
+Found ACPI 2.0 RSDP at address: 0xdf7f014
+Using ACPI 2 RSDP at address: 0xdf7f014
+UEFI setup.
+Kernel LMA: 0xce10000
+Found Full16550
+  Base address: 0x1fe001e0
+  Baud rate: Some(115200)
+  Clock frequency: None
+Early console initialized at vaddr 0x800000001fe001e0
+Early console setup complete.
+Exiting UEFI boot services...
+PROGRESS CODE: V03101019 I0
+Exited boot services, memory map obtained.
+VM Load @0xce10000
+VM Load Offset: 0x8ce10000
+Memory Map:
+  Free   0x00000000000000 - 0x0000000ce10000 (206.06 MiB)
+  KImg   0x0000000ce10000 - 0x0000000d000000 (1.94 MiB)
+  Free   0x0000000d000000 - 0x0000000d410000 (4.06 MiB)
+  Rsv    0x0000000d410000 - 0x0000000d420000 (64 KiB)
+  Free   0x0000000d420000 - 0x0000000d990000 (5.44 MiB)
+  Rsv    0x0000000d990000 - 0x0000000dba0000 (2.06 MiB)
+  Free   0x0000000dba0000 - 0x0000000dc00000 (384 KiB)
+  Rsv    0x0000000dc00000 - 0x0000000dd20000 (1.12 MiB)
+  Free   0x0000000dd20000 - 0x0000000dde0000 (768 KiB)
+  Rsv    0x0000000dde0000 - 0x0000000df70000 (1.56 MiB)
+  Free   0x0000000df70000 - 0x0000000df76000 (24 KiB)
+  Rsv    0x0000000df76000 - 0x0000000e160000 (1.91 MiB)
+  Free   0x0000000e160000 - 0x0000000f1e0000 (16.5 MiB)
+  Rsv    0x0000000f1e0000 - 0x0000000f230000 (320 KiB)
+  Free   0x0000000f230000 - 0x00000010000000 (13.81 MiB)
+  MMIO   0x000000100d0000 - 0x000000100d1000 (4 KiB)
+  MMIO   0x000000100e0000 - 0x000000100e1000 (4 KiB)
+  MMIO   0x0000001d000000 - 0x0000001d0c0000 (768 KiB)
+  Free   0x00000080000000 - 0x000000f0000000 (1.75 GiB)
+Initialize RAM allocator: 0x0..0xce10000
+Initializing per-CPU data
+Per-CPU data one cpu size: 0x41000 bytes
+Total per-CPU data size for secondary CPUs: 0x41000 bytes (1 CPUs)
+Flushed RAM used range to memory map: 0x0..0x1000, current: 0x1000
+Flushed RAM used range to memory map: 0x1000..0x42000, current: 0x42000
+Per-CPU data allocated at 0x1000 - 0x42000
+Initializing per-CPU RAM for CPU0 - hard id 0x0 @ 0x1000
+CPU0 - hard id 0x0, stack top @0x42000, stack top virt @0x9000000000042000, entry virt @0xffffffff80027000
+Setting EENTRY to 0x900000000ced0000
+EENTRY set to 0x900000000ced0000
+Setting TLBRENTRY to 0xceda000
+Page table entry flags: PteConfig { paddr: 0x0000000000000000, valid: true, read: true, writable: true, executable: true, lower: false, dirty: false, global: false, is_dir: false, huge: false, mem_attr: Normal }
+KImage              : [0xffffffff80000000, 0xffffffff80200000) -> [0x000000000ce10000, 0x000000000d010000) (2 MiB)
+Mapping: vaddr=0xffffffff80000000, paddr=0xce10000, size=0x200000
+Boot page table at physical address: 0x42000
+MMU Entry point at physical address: 0xce344e0
+MMU Entry virtual address: 0xffffffff800244e0
+Setting up page table...
+Enabling MMU...
+MMU enabled, jumping to 0xffffffff800244e0, sp=0x900000000cf8f000
+Early console initialized at vaddr 0x800000001fe001e0
+Early console setup complete.
+Trap vector at 0x900000000ced0000
+Memory Map:
+  Rsv    0x00000000000000 - 0x00000000001000 (4 KiB)
+  PerCPU 0x00000000001000 - 0x00000000042000 (260 KiB)
+  Rsv    0x00000000042000 - 0x00000000046000 (16 KiB)
+  Free   0x00000000046000 - 0x0000000ce10000 (205.79 MiB)
+  KImg   0x0000000ce10000 - 0x0000000d000000 (1.94 MiB)
+  Free   0x0000000d000000 - 0x0000000d410000 (4.06 MiB)
+  Rsv    0x0000000d410000 - 0x0000000d420000 (64 KiB)
+  Free   0x0000000d420000 - 0x0000000d990000 (5.44 MiB)
+  Rsv    0x0000000d990000 - 0x0000000dba0000 (2.06 MiB)
+  Free   0x0000000dba0000 - 0x0000000dc00000 (384 KiB)
+  Rsv    0x0000000dc00000 - 0x0000000dd20000 (1.12 MiB)
+  Free   0x0000000dd20000 - 0x0000000dde0000 (768 KiB)
+  Rsv    0x0000000dde0000 - 0x0000000df70000 (1.56 MiB)
+  Free   0x0000000df70000 - 0x0000000df76000 (24 KiB)
+  Rsv    0x0000000df76000 - 0x0000000e160000 (1.91 MiB)
+  Free   0x0000000e160000 - 0x0000000f1e0000 (16.5 MiB)
+  Rsv    0x0000000f1e0000 - 0x0000000f230000 (320 KiB)
+  Free   0x0000000f230000 - 0x00000010000000 (13.81 MiB)
+  MMIO   0x000000100d0000 - 0x000000100d1000 (4 KiB)
+  MMIO   0x000000100e0000 - 0x000000100e1000 (4 KiB)
+  MMIO   0x0000001d000000 - 0x0000001d0c0000 (768 KiB)
+  MMIO   0x0000001fe00000 - 0x0000001fe01000 (4 KiB)
+  Free   0x00000080000000 - 0x000000f0000000 (1.75 GiB)
+Jumping to main entry point at 0xffffffff80016b40 with SP 0x9000000000042000
+
+       d8888                            .d88888b.   .d8888b.
+      d88888                           d88P" "Y88b d88P  Y88b
+     d88P888                           888     888 Y88b.
+    d88P 888 888d888  .d8888b  .d88b.  888     888  "Y888b.
+   d88P  888 888P"   d88P"    d8P  Y8b 888     888     "Y88b.
+  d88P   888 888     888      88888888 888     888       "888
+ d8888888888 888     Y88b.    Y8b.     Y88b. .d88P Y88b  d88P
+d88P     888 888      "Y8888P  "Y8888   "Y88888P"   "Y8888P"
+
+arch = loongarch64
+platform = acpi
+target = loongarch64-unknown-none-softfloat
+build_mode = 
+log_level = info
+backtrace = false
+smp = 1
+
+[37m[ 21.078576 ax_runtime:211] [32mLogging is enabled.[m
+[m[37m[ 21.094324 ax_runtime:212] [32mPrimary CPU 0 started, arg = 0x0.[m
+[m[37m[ 21.104401 ax_runtime:214] [32mFound physcial memory regions:[m
+[m[37m[ 21.144457 ax_runtime:216] [32m  [PA:0x0, PA:0x1000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.161366 ax_runtime:216] [32m  [PA:0x1000, PA:0x42000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.174930 ax_runtime:216] [32m  [PA:0x42000, PA:0x46000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.188667 ax_runtime:216] [32m  [PA:0x46000, PA:0xce10000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.202688 ax_runtime:216] [32m  [PA:0xce10000, PA:0xd000000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.216908 ax_runtime:216] [32m  [PA:0xd000000, PA:0xd410000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.231377 ax_runtime:216] [32m  [PA:0xd410000, PA:0xd420000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.245472 ax_runtime:216] [32m  [PA:0xd420000, PA:0xd990000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.259136 ax_runtime:216] [32m  [PA:0xd990000, PA:0xdba0000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.272920 ax_runtime:216] [32m  [PA:0xdba0000, PA:0xdc00000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.286777 ax_runtime:216] [32m  [PA:0xdc00000, PA:0xdd20000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.300869 ax_runtime:216] [32m  [PA:0xdd20000, PA:0xdde0000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.314785 ax_runtime:216] [32m  [PA:0xdde0000, PA:0xdf70000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.328699 ax_runtime:216] [32m  [PA:0xdf70000, PA:0xdf76000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.342488 ax_runtime:216] [32m  [PA:0xdf76000, PA:0xe160000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.356124 ax_runtime:216] [32m  [PA:0xe160000, PA:0xf1e0000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.369982 ax_runtime:216] [32m  [PA:0xf1e0000, PA:0xf230000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.383714 ax_runtime:216] [32m  [PA:0xf230000, PA:0x10000000) reserved (READ | WRITE | EXECUTE | RESERVED)[m
+[m[37m[ 21.397691 ax_runtime:216] [32m  [PA:0x100d0000, PA:0x100d1000) mmio (READ | WRITE | DEVICE | RESERVED)[m
+[m[37m[ 21.411159 ax_runtime:216] [32m  [PA:0x100e0000, PA:0x100e1000) mmio (READ | WRITE | DEVICE | RESERVED)[m
+[m[37m[ 21.425077 ax_runtime:216] [32m  [PA:0x1d000000, PA:0x1d0c0000) mmio (READ | WRITE | DEVICE | RESERVED)[m
+[m[37m[ 21.440519 ax_runtime:216] [32m  [PA:0x1fe00000, PA:0x1fe01000) mmio (READ | WRITE | DEVICE | RESERVED)[m
+[m[37m[ 21.454479 ax_runtime:216] [32m  [PA:0x80000000, PA:0xf0000000) free memory (READ | WRITE | FREE)[m
+[m[37m[ 21.468705 ax_runtime:358] [32mInitialize global memory allocator...[m
+[m[37m[ 21.479886 ax_runtime:359] [32m  use buddy-slab-allocator allocator.[m
+[m[37m[ 21.494485 ax_alloc::buddy_slab:150] [32mInitialize global memory allocator, start_vaddr: 0x9000000080000000, size: 0x70000000[m
+[m[37m[ 21.565872 ax_alloc::buddy_slab:399] [32mglobal allocator initialized[m
+[m[37m[ 21.579748 ax_runtime:251] [32mkernel aspace: [VA:0x9000000000000000, VA:0xffffffffffffffff)[m
+[m[37m[ 21.593275 ax_mm:92] [32mInitialize virtual memory management...[m
+[m[37m[ 23.141144 ax_runtime:263] [32mInitialize platform devices...[m
+[m[37m[ 23.157801 somehal::driver:11] [32mInitializing rdrive with ACPI RSDP at 0xdf7f014[m
+[m[37m[ 23.227164 acpi::aml:106] [32mInitializing AML interpreter v6.1.1[m
+[m[37m[ 23.519970 acpi::aml:289] [32mInitialized 17 devices[m
+[m[37m[ 23.650773 rdrive::probe::acpi:903] [32mACPI initialized: 1 PCI ECAM region(s), 0 IOAPIC(s), 1 PCH-PIC(s)[m
+[m[37m[ 23.718515 ax_runtime:289] [32mInitialize interrupt handlers...[m
+[m[37m[ 23.760794 ax_runtime::devices:2] [32mProbe platform devices...[m
+[m[37m[ 23.795511 ax_runtime:328] [32mInitialize thread local storage...[m
+[m[37m[ 23.808287 ax_runtime:334] [32mPrimary CPU 0 init OK.[m
+[mHello, world!
+[37m[ 23.865790 0 someboot::efi_stub:395] [32mResetting system via UEFI...[m
+[m[36m[WaterOS][cpu=1][0m[31m    [ERROR]  [busybox-bringup] program=/glibc/buildstorm_testcode.sh argv=["/glibc/buildstorm_testcode.sh"] end_mono_ns=580915899170 elapsed=578s 744ms (578744016480ns)[0m
+[36m[WaterOS][cpu=1][0m[31m    [ERROR]  [busybox-bringup] command succeeded program=/glibc/buildstorm_testcode.sh exit_code=0[0m
+[36m[WaterOS][cpu=1][0m[31m    [ERROR]  [busybox-bringup] all commands finished[0m

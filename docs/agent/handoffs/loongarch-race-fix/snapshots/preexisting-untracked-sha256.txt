@@ -1,0 +1,13 @@
+70cdb08f5fc4c1c94f36328920c9b530784c1cabb8b3587683ccd8fcf407be3e  os/components/wateros-platform/platform-impl/impl-qemu-riscv64-opensbi/src/plic.rs
+f2656488901d3d7abba89fcf855d46ea88b095a2db12c9a6b20af5f91f902679  os/kernel-la-linux-baseline-6.12.102
+a965416699b4a69789f8974a783a801722ca3f0a99c5dc4100ede53be1ec4b7f  os/kernel-la-linux-baseline-6.12.102.config
+726191ae2c04a8b136f6a787362a8bd67707a796a3e86ab052805a968cf5e2ff  os/kernel-rv-final-smp-test
+13aae535f526e7114bf744038c59d2fac5f494d603484a1cff3f858c1c80af3b  os/kernel-rv-final-stats
+0b82784211adf84c5cb5b1ae4c22062954053c92a75ed94a706dc95d8bcb2c53  os/kernel-rv-linux-baseline-6.12.102
+10d357fdfc076c60f00b112ae17bea68318379b718dfaa34ada38ad95c0b28ea  os/kernel-rv-linux-baseline-6.12.102.config
+5bfbaa5bd99bec595ccd980fff0ebc002d42c0ce0a7e28af266f0ddad69b7189  os/sdcard-la-pub.img.buildstorm_testcode.sh.bak-20260811
+84d631012532e6817565cba02d35d8a2721c5ec7787a1e0519d6d0ae0a4274bb  os/sdcard-la-pub.img.buildstorm_testcode.sh.bak-20260812-online-exact
+2a0df1fb1d04c33a5d4d801f151978b25cbbeee90cb9d322e6793f555ec8957b  os/sdcard-la-pub.img.buildstorm_testcode.sh.bak-20260812-pre-online
+5bfbaa5bd99bec595ccd980fff0ebc002d42c0ce0a7e28af266f0ddad69b7189  os/sdcard-rv-pub.img.buildstorm_testcode.sh.bak-20260811
+84d631012532e6817565cba02d35d8a2721c5ec7787a1e0519d6d0ae0a4274bb  os/sdcard-rv-pub.img.buildstorm_testcode.sh.bak-20260812-online-exact
+2a0df1fb1d04c33a5d4d801f151978b25cbbeee90cb9d322e6793f555ec8957b  os/sdcard-rv-pub.img.buildstorm_testcode.sh.bak-20260812-pre-online

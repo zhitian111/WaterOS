@@ -1,0 +1,4 @@
+5968bc35557866023b3ca96e04a0a72ee3e14a3f98b22c599fd8b72c7b6a6c9f  docs/agent/handoffs/loongarch-race-fix/logs/wateros-la-cow-race-fix-verify1.log
+4d880a8859a99ff2c172e5378475f7f6a74eb7d21ac3468aaaae9683849aad82  docs/agent/handoffs/loongarch-race-fix/logs/wateros-la-fault-probe-full-3.log
+675bbbe61e4347cf5d2099bf64a9c476db22885e3afee212b66492ac435add35  docs/agent/handoffs/loongarch-race-fix/logs/wateros-la-tlb-firstuse-full-1.log
+0724a83771d0db37628396450bf1f89b3cc8d56703bf62fa1e7873f34e2c9ec8  docs/agent/handoffs/loongarch-race-fix/logs/wateros-la-tlb-firstuse-full-2.log

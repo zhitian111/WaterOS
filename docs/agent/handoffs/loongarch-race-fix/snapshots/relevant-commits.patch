@@ -1,0 +1,152 @@
+commit 9bc1702328e5533a2260af3a2ed240230e78e2e8
+Date: 2026-08-13T00:12:13+08:00
+Subject: [fix] flush reused LoongArch ASIDs on first CPU use
+---
+ .../wateros-mm/mm-impl/impl-loongarch64/src/user_aspace.rs   | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/os/components/wateros-mm/mm-impl/impl-loongarch64/src/user_aspace.rs b/os/components/wateros-mm/mm-impl/impl-loongarch64/src/user_aspace.rs
+index 60c732a5..02bac0cd 100644
+--- a/os/components/wateros-mm/mm-impl/impl-loongarch64/src/user_aspace.rs
++++ b/os/components/wateros-mm/mm-impl/impl-loongarch64/src/user_aspace.rs
+@@ -77,7 +77,17 @@ pub(crate) fn destroy(handle: usize) {
+ pub fn mark_active(handle: usize, cpu: wateros_base::cpu::CpuId) {
+     let Some(cell) = (unsafe { cell(handle) }) else { return };
+     if cell.is_dropped() || cpu.raw() >= u64::BITS as usize { return; }
+-    cell.tlb_cpus.fetch_or(1u64 << cpu.raw(), Ordering::AcqRel);
++    let cpu_bit = 1u64 << cpu.raw();
++    let previous = cell.tlb_cpus.fetch_or(cpu_bit, Ordering::AcqRel);
++    if previous & cpu_bit == 0 {
++        // LoongArch switches PGDL and ASID without implicitly invalidating old
++        // translations.  Flush before this address space first runs on a CPU,
++        // so an ASID reused after process teardown cannot observe a stale user
++        // mapping on a CPU that did not execute the teardown path locally.
++        // This mirrors the RISC-V first-use guard; LoongArch currently only
++        // provides a conservative full local invalidation primitive.
++        platform::arch::paging::flush_tlb_local(platform::arch::paging::TlbFlushRange::All);
++    }
+ }
+ 
+ pub fn mark_inactive(_handle: usize, _cpu: wateros_base::cpu::CpuId) {
+commit 705950b4df7f04646ed4603061d7adc8525e8ad6
+Date: 2026-08-13T00:53:46+08:00
+Subject: [fix] retry concurrently resolved LoongArch COW faults
+---
+ .../mm-impl/impl-loongarch64/src/pagetable.rs      | 28 +++++++++++++++++++++-
+ 1 file changed, 27 insertions(+), 1 deletion(-)
+
+diff --git a/os/components/wateros-mm/mm-impl/impl-loongarch64/src/pagetable.rs b/os/components/wateros-mm/mm-impl/impl-loongarch64/src/pagetable.rs
+index 9ab9316e..24af489b 100644
+--- a/os/components/wateros-mm/mm-impl/impl-loongarch64/src/pagetable.rs
++++ b/os/components/wateros-mm/mm-impl/impl-loongarch64/src/pagetable.rs
+@@ -66,6 +66,12 @@ impl LoongArch64PteFlags {
+     #[inline]
+     const fn writable(self) -> bool { (self.0 & Self::W.0) != 0 }
+ 
++    #[inline]
++    const fn dirty(self) -> bool { (self.0 & Self::D.0) != 0 }
++
++    #[inline]
++    const fn user(self) -> bool { (self.0 & Self::PLV_MASK) == Self::PLV_USER }
++
+     #[inline]
+     const fn cow(self) -> bool { (self.0 & Self::COW.0) != 0 }
+ 
+@@ -986,7 +992,27 @@ impl LoongArch64AddressSpace {
+     pub(crate) fn handle_cow_fault_no_flush(&mut self,
+                                             fault_addr : VirtAddr)
+                                             -> MmResult<bool> {
+-        self.handle_cow_page(fault_addr.floor_page())
++        let vpn = fault_addr.floor_page();
++        if self.handle_cow_page(vpn)? {
++            return Ok(true);
++        }
++
++        // Another CPU may have resolved the same COW page after this CPU took
++        // a PME on a stale D=0 TLB entry but before it acquired the address-space
++        // lock.  In that case the current PTE is already a writable, dirty user
++        // leaf.  Report the fault as handled so the outer wrapper invalidates
++        // this CPU's stale translation (and conservatively shoots down peers)
++        // before retrying the store.  A genuinely read-only or unmapped page
++        // still returns false and is delivered as SIGSEGV by the trap layer.
++        let Some((pte, level)) = self.walk_find(vpn)? else {
++            return Ok(false);
++        };
++        let flags = pte.flags();
++        Ok(level == 0 &&
++           flags.is_leaf() &&
++           flags.writable() &&
++           flags.dirty() &&
++           flags.user())
+     }
+ 
+     // 本方法代码由AI完成
+commit 1f56057a5dc7cb80f056140d1a3f43ad33dc3c42
+Date: 2026-08-13T00:37:53+08:00
+Subject: [fix] stop exposing competition script contents
+---
+ os/src/user_bringup_busybox.rs | 38 --------------------------------------
+ 1 file changed, 38 deletions(-)
+
+diff --git a/os/src/user_bringup_busybox.rs b/os/src/user_bringup_busybox.rs
+index eb32f3dd..0d432d0e 100644
+--- a/os/src/user_bringup_busybox.rs
++++ b/os/src/user_bringup_busybox.rs
+@@ -1,6 +1,5 @@
+ //! `stage-busybox`: mount the root volume, then run the image-appropriate test queue.
+ 
+-use alloc::vec::Vec;
+ use runtime::logging::*;
+ use vfs::api::SingleRootReadView;
+ 
+@@ -75,42 +74,6 @@ fn commands_for_image(image : BringupImage) -> &'static [BringupCommand] {
+     }
+ }
+ 
+-fn script_path_for_command(cmd : &BringupCommand) -> Option<&str> {
+-    if cmd.program.ends_with(".sh") {
+-        return Some(cmd.program);
+-    }
+-    cmd.argv.iter().copied().find(|arg| arg.ends_with(".sh"))
+-}
+-
+-/// Print the selected script before executing it.  CR/LF bytes are removed and
+-/// visible separators are inserted between bytes, so result/failure markers in
+-/// the body cannot appear as a contiguous string in a judge's serial scan.
+-fn dump_script_body(cmd : &BringupCommand) {
+-    let Some(path) = script_path_for_command(cmd) else {
+-        return;
+-    };
+-    let body = match vfs::root::read_view().read(path) {
+-        Ok(body) => body,
+-        Err(error) => {
+-            error!("[{LOG_TAG}] script-body read failed path={path}: {error:?}");
+-            return;
+-        }
+-    };
+-    let mut flat = Vec::with_capacity(body.len().saturating_mul(2));
+-    for byte in body {
+-        if byte != b'\n' && byte != b'\r' {
+-            if !flat.is_empty() {
+-                flat.push(b'|');
+-            }
+-            flat.push(byte);
+-        }
+-    }
+-    error!("[{LOG_TAG}] SCRIPT_BODY_FLAT_BEGIN path={path} bytes={}", flat.len());
+-    runtime::console::write_raw_bytes(&flat);
+-    runtime::console::write_raw_bytes(b"\n");
+-    error!("[{LOG_TAG}] SCRIPT_BODY_FLAT_END path={path}");
+-}
+-
+ /// Keep the libc search path coupled to the detected image format.  This avoids the generic
+ /// loader's build-feature heuristic selecting the final-round environment for an LTP image.
+ fn envp_for_command(image : BringupImage, program : &str) -> &'static [&'static str] {
+@@ -172,7 +135,6 @@ pub(crate) extern "C" fn run_auto_queue(_arg : usize) -> ! {
+     }
+ 
+     for cmd in commands {
+-        dump_script_body(cmd);
+         let start_ns = monotonic_ns();
+         error!("[{LOG_TAG}] program={} argv={:?} start_mono_ns={start_ns}",
+                cmd.program, cmd.argv);

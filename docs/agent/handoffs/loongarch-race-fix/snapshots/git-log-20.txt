@@ -1,0 +1,20 @@
+c413c4b9 (HEAD -> main) [merge] integrate GitLab README layout
+d2bb5bf3 (docs/readme_ref) [docs] fix GitLab centered layout
+705950b4 [fix] retry concurrently resolved LoongArch COW faults
+1f56057a [fix] stop exposing competition script contents
+acf60257 [merge] integrate documentation and tooling updates
+8b49e719 [tools] restore Makefile logging macros
+76768d0e [docs] add submission links and project wordmark
+9bc17023 [fix] flush reused LoongArch ASIDs on first CPU use
+2cc13e52 [fix] initialize trap and signal ABI padding
+2a7d2712 (fix/linux-signal-frame-abi) [fix] use full LoongArch DTB memory range
+cc62fc75 [fix] match Linux signal frame ABI
+9dabdb86 [diag] add nested qemu-only validation
+9dc0ea72 [merge] fix online architecture capacity
+b4eb7f75 [docs] add verified agent handoff guides
+4fc6cb05 [tools] stop tracking editor settings
+8f64c318 [tools] standardize script logging and help
+3e50e14e [diag] print nested buildstorm qemu output
+6cdecd3a (fix/arch-cpu-capacity-online) [fix] honor online memory and CPU topology
+6d9d37fb [tools] organize scripts and documentation
+e8face5b [docs] redesign project README
