@@ -1523,6 +1523,7 @@ dependencies = [
 name = "wateros-syscall"
 version = "0.1.0"
 dependencies = [
+ "log",
  "wateros-syscall-api-v0",
  "wateros-syscall-impl-kernel",
 ]

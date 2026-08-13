@@ -170,4 +170,5 @@
         "task/self_test",
         "tty/self_test",
         "platform/self_test",
+        "syscall/self_test",
     ]

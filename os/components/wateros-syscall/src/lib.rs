@@ -12,3 +12,10 @@ pub use impl_kernel::{
     send_kernel_signal_to_process_group,
     terminate_current_process, terminate_current_thread, timer_slack_for_task, timer_tick,
 };
+
+/// 系统调用内核实现的非用户态自检。
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    assert!(!impl_kernel::is_restartable_syscall(usize::MAX));
+    log::info!("[syscall] self_test complete; no user-mode transition performed");
+}

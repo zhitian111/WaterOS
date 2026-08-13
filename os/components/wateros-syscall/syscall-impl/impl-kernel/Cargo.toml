@@ -20,6 +20,7 @@
     klog = { path = "../../../wateros-klog/", package = "wateros-klog", default-features = true }
 
 [features]
+    self_test = [ ]
     api-v0 = [ "api-v0/api-v0", "fd-session" ]
     bringup-stats = [  ]
     cred-session = [ "cred/api-v0", "cred/impl-root", "dep:cred" ]
