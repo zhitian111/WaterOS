@@ -168,4 +168,5 @@
         "runtime/self_test",
         "klog/self_test",
         "task/self_test",
+        "tty/self_test",
     ]

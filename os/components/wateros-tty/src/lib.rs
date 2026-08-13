@@ -14,3 +14,14 @@ pub mod api {
 pub use api_v0::*;
 #[cfg(feature = "impl-console")]
 pub use impl_console::*;
+
+/// 终端内核态可用性自检；测试结束后恢复默认终端状态。
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    let before = termios();
+    let transformed = transform_output(b"tty\n");
+    assert_eq!(transformed, b"tty\r\n");
+    configure(api_v0::ConsoleTtyMode::Interactive);
+    set_termios(before, true);
+    log::info!("[tty] self_test complete; terminal state restored");
+}

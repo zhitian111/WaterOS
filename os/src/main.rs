@@ -171,6 +171,7 @@ fn run_self_tests() {
     runtime::self_test();
     klog::self_test();
     task::self_test();
+    tty::self_test();
     cred::self_test();
     driver::self_test();
     ipc::self_test();

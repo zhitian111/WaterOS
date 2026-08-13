@@ -1635,6 +1635,7 @@ dependencies = [
 name = "wateros-tty"
 version = "0.1.0"
 dependencies = [
+ "log",
  "wateros-tty-api-v0",
  "wateros-tty-impl-console",
 ]
