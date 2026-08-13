@@ -136,7 +136,7 @@ fn ensure_etc_passwd(sess : &mut (impl vfs::api::RootRwSession + ?Sized)) {
                            false\nnobody:x:65534:65534:nobody:/nonexistent:/bin/false\n";
     const GROUP : &str = "root:x:0:\ndaemon:x:1:\nnobody:x:65534:\nnogroup:x:65534:\n";
     const NSSWITCH : &str =
-        "passwd: files\ngroup: files\nshadow: files\ngshadow: files\nhosts: files\n";
+        "passwd: files\ngroup: files\nshadow: files\ngshadow: files\nhosts: files dns\n";
     const PROTOCOLS : &str = "ip 0 IP\nhopopt 0 HOPOPT\nicmp 1 ICMP\nigmp 2 IGMP\nggp 3 GGP\ntcp \
                               6 TCP\nudp 17 UDP\nipv6 41 IPv6\nipv6-route 43 \
                               IPv6-Route\nipv6-frag 44 IPv6-Frag\nesp 50 ESP\nah 51 AH\nipv6-icmp \

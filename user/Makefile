@@ -24,6 +24,8 @@ else ifeq ($(PACKAGE),operator)
 PACKAGE_LIST := base-layout,busybox,operator-tools
 else ifeq ($(PACKAGE),graphics)
 PACKAGE_LIST := microwindows
+else ifeq ($(PACKAGE),jvm)
+PACKAGE_LIST := openjdk21
 else
 PACKAGE_LIST := $(PACKAGE)
 endif
@@ -49,6 +51,7 @@ help:
 	@echo "  make image  ARCH=rv PACKAGE=operator"
 	@echo "  make image  ARCH=rv PACKAGE=graphics  # Nano-X + Doom"
 	@echo "  make image  ARCH=rv SKIP_PACKAGE=mgba # all，但跳过 mGBA 及其依赖者"
+	@echo "  make image  ARCH=rv PACKAGE=jvm IMAGE_SIZE_MB=512  # OpenJDK 21 (RV/LA)"
 	@echo "  make image  ARCH=rv PACKAGE=base-layout,busybox,operator-tools"
 	@echo "  make overlay ARCH=rv PACKAGE=operator BASE_IMAGE=../os/sdcard-rv.img"
 	@echo "  make inspect ARCH=rv"
@@ -65,6 +68,7 @@ help:
 	@echo "  minimal   = base-layout,busybox"
 	@echo "  operator  = base-layout,busybox,operator-tools"
 	@echo "  graphics  = microwindows (dependencies add the base packages)"
+	@echo "  jvm       = OpenJDK 21 headless (RV/LA; dependencies add the base packages)"
 	@echo "  other     = a comma-separated custom package list"
 	@echo "  SKIP_PACKAGE = comma-separated exclusions; dependent packages are skipped too"
 	@echo "Toolchain overrides: RV_CROSS_COMPILE=... LA_CROSS_COMPILE=..."

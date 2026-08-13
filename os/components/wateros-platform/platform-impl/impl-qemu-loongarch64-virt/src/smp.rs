@@ -210,6 +210,10 @@ impl PlatformSmp for QemuLoongArchSmp {
     /// 首期不支持远端 TLB 刷新，禁止上层把此错误降级为本地 flush。
     fn flush_tlb_remote(_ : CpuMask) -> PlatformSmpResult<()> { Err(PlatformSmpError::Unsupported) }
 
+    fn flush_icache_remote(_ : CpuMask) -> PlatformSmpResult<()> {
+        Err(PlatformSmpError::Unsupported)
+    }
+
     /// 打开当前 CPU IPI 接收端，并在状态镜像中标为 Started。
     fn init_ipi() -> PlatformSmpResult<()> {
         iocsr_write32(u32::MAX, IOCSR_IPI_EN);

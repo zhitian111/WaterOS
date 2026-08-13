@@ -73,6 +73,10 @@ pub trait PlatformSmp {
     /// Firmware-backed platforms may complete this without requiring the
     /// target CPUs to take a supervisor software interrupt.
     fn flush_tlb_remote(mask: CpuMask) -> PlatformSmpResult<()>;
+    /// Synchronously execute an instruction-cache fence on the selected CPUs.
+    ///
+    /// RISC-V uses this for the process-wide form of `riscv_flush_icache(2)`.
+    fn flush_icache_remote(mask: CpuMask) -> PlatformSmpResult<()>;
     /// 初始化本 CPU 的 IPI 接收硬件。调用时机在 CPU-local/trap 基础设施就绪之后。
     fn init_ipi() -> PlatformSmpResult<()>;
 }

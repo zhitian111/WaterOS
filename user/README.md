@@ -79,15 +79,35 @@ build/images/wateros-rv.ext4.sha256
 | `OUTPUT`        | `build/images/wateros-<arch>.ext4` | 自定义输出路径                    |
 | `BASE_IMAGE`    | 无                                 | `overlay` 使用的基础镜像          |
 
-`PACKAGE` 提供四个预设：
+`PACKAGE` 提供五个预设：
 
+| 选项 | 实际内容 | 适用场景 |
+| --- | --- | --- |
+| `all` | 当前架构支持的全部 package | 默认完整用户空间 |
+| `minimal` | `base-layout,busybox` | 最小静态 shell/rootfs |
+| `operator` | minimal + `operator-tools` | shell 与现场诊断工具 |
+| `graphics` | `microwindows` 及其依赖 | 双架构 Nano-X、演示程序与 Doom |
+| `jvm` | `openjdk21` 及其依赖 | 双架构 OpenJDK 21 headless 运行时 |
 
-| 选项       | 实际内容                   | 适用场景                       |
-| ------------ | ---------------------------- | -------------------------------- |
-| `all`      | 当前架构支持的全部 package | 默认完整用户空间               |
-| `minimal`  | `base-layout,busybox`      | 最小静态 shell/rootfs          |
-| `operator` | minimal +`operator-tools`  | shell 与现场诊断工具           |
-| `graphics` | `microwindows` 及其依赖    | 双架构 Nano-X、演示程序与 Doom |
+例如：
+
+```bash
+# 默认完整镜像
+make image ARCH=rv
+
+# 最小镜像
+make image ARCH=rv PACKAGE=minimal
+
+# Nano-X 与 Doom；依赖会自动补齐
+make image ARCH=rv PACKAGE=graphics
+
+# OpenJDK 21；为运行时和后续应用预留空间
+make image ARCH=rv PACKAGE=jvm IMAGE_SIZE_MB=512 \
+  OUTPUT=build/images/wateros-rv-openjdk21.ext4
+
+# 用户自定义组合，名称用逗号分隔
+make image ARCH=rv PACKAGE=base-layout,busybox,operator-tools
+```
 
 所有组合默认写入同一个架构产物，例如 `wateros-rv.ext4`。后一次构建会替换前一次
 生成的镜像。需要同时保留多个组合时使用 `OUTPUT`：
@@ -101,8 +121,9 @@ make image ARCH=rv PACKAGE=graphics \
 ```
 
 `PACKAGE=all` 会扫描 `packages/*/package.toml`，只选择声明支持当前 `ARCH` 的 package。
-当前 `microwindows` 已同时支持 RV 与 LA，因此两个架构的默认完整镜像都包含 Nano-X、
-演示程序、Doom 和 `doom1.wad`。
+当前 `microwindows` 与 `openjdk21` 均支持 RV 和 LA，因此两个架构的默认完整镜像都包含
+Nano-X、演示程序、Doom、`doom1.wad` 和 OpenJDK 21。JVM 运行时较大，制作 `all` 镜像时
+建议设置 `IMAGE_SIZE_MB=512`。
 
 ## 常用命令
 
@@ -417,17 +438,96 @@ packages/<name>/
 
 当前 package：
 
-
-| 名称             | 作用                       | 架构   |
-| ------------------ | ---------------------------- | -------- |
-| `base-layout`    | 目录、账号、环境与基础配置 | RV、LA |
-| `busybox`        | 静态 shell 与常用 applet   | RV、LA |
-| `operator-tools` | WaterOS 现场诊断脚本       | RV、LA |
-| `microwindows`   | Nano-X、演示程序、Doom     | RV、LA |
+| 名称 | 作用 | 架构 |
+| --- | --- | --- |
+| `base-layout` | 目录、账号、环境与基础配置 | RV、LA |
+| `busybox` | 静态 shell 与常用 applet | RV、LA |
+| `operator-tools` | WaterOS 现场诊断脚本 | RV、LA |
+| `microwindows` | Nano-X、演示程序、Doom | RV、LA |
+| `mgba` | mGBA 模拟器及示例 ROM | RV |
+| `waterfm` | Nano-X 文件管理器 | RV |
+| `openjdk21` | OpenJDK 21 headless、zlib 与 JVM 冒烟探针 | RV、LA |
 
 `base-layout` 只创建 `/dev`、`/proc`、`/tmp` 等挂载点。运行时实际内容仍由 WaterOS 的
 devfs、procfs 和 tmpfs 提供。内核 operator supervisor 直接启动 `/bin/sh`，当前不会
 把 `/etc/init.d/rcS` 作为传统 PID 1 执行。
+
+## OpenJDK 21
+
+`openjdk21` 在 RISC-V 使用 Alpine v3.22 的 musl 二进制包，在 LoongArch 使用龙芯发布的
+新世界 glibc 2.34+ 版本，并为后者从受管交叉工具链安装匹配的 glibc 运行库、交叉构建
+zlib。所有下载文件均校验 SHA-256。当前选择 Java 21 LTS；包内包含 `java`/HotSpot
+运行时，不包含 `javac`，适合验证 WaterOS 的 Linux ABI 与运行现有 JAR/class。
+
+```bash
+# 在 user/ 下构建 512 MiB JVM 镜像
+make image ARCH=rv PACKAGE=jvm IMAGE_SIZE_MB=512 \
+  OUTPUT=build/images/wateros-rv-openjdk21.ext4
+
+# 在仓库根目录，让 WaterOS 启动镜像并自动跑完整 JVM 探针后关机
+make -C os run ARCH=rv PROFILE=pre MODE=run \
+  SCRIPT=/opt/wateros/bin/wos-jvm-smoke \
+  SDCARD=../user/build/images/wateros-rv-openjdk21.ext4 SMP=4
+```
+
+LoongArch 使用相同流程，把上述命令中的 `ARCH=rv` 和文件名中的 `rv` 改为 `ARCH=la`
+与 `la` 即可。双架构冒烟脚本都会关闭 compressed class pointers，避免 HotSpot 默认预留
+1 GiB class space；这不影响普通 Java 类加载，只是不再使用该地址压缩优化。
+
+镜像内可直接运行：
+
+```sh
+java -version
+wos-jvm-smoke version
+wos-jvm-smoke hello
+wos-jvm-smoke runtime-int
+wos-jvm-smoke exception              # 异常展开、catch/finally、跨线程异常投递
+wos-jvm-smoke jit
+wos-jvm-smoke jit-strict             # 固定 C2 编译目标并核对编译结果
+wos-jvm-smoke network                 # 默认测试 example.com
+wos-jvm-smoke network your.host.name  # 指定 HTTPS 主机
+wos-jvm-smoke application             # JAR/NIO/子进程/Selector
+wos-jvm-smoke strict                  # 不含外网的严格完整 JVM 验收
+```
+
+冒烟测试固定使用 Serial GC、128 MiB 最大堆，并关闭 compressed ordinary/class pointers，
+覆盖版本输出、class 装载、解释执行、
+线程、分配/GC 和默认 JIT。联网探针额外覆盖 Java 信任库加载、DNS、TCP 443、TLS
+握手和 HTTPS 响应。镜像安装 Alpine `ca-certificates-bundle` 的系统 PEM，并安装由同一
+证书集合生成的 JKS 到 `/etc/ssl/certs/java/cacerts`；APK、JKS 和预编译探针均在构建时
+校验 SHA-256。
+
+应用探针以可执行 JAR 形式运行，覆盖 JAR manifest、classloader/resource、反射、UTF-8、
+临时目录、1 MiB FileChannel 读写、文件锁、mmap/msync、原子 rename、`ProcessBuilder`
+的环境变量/stdout/stderr/退出码，以及基于 Selector/epoll 的本机 TCP accept 和 direct
+ByteBuffer。
+
+严格验收模式在上述覆盖之外，还要求 GC 日志中实际出现一次回收，验证递归异常栈展开、
+`catch/finally` 和跨线程未捕获异常投递，并使用 `-Xbatch`、关闭分层编译、降低编译阈值和
+`PrintCompilation`，确认 `JitProbe::hot` 确实被 C2 编译且生成代码的结果与参考实现一致。
+成功时最终输出 `WATEROS_JVM_STRICT_OK`。该模式不含依赖外部环境的 DNS/TLS/HTTPS：
+
+```bash
+make -C os run ARCH=rv PROFILE=pre MODE=run \
+  SCRIPT=/opt/wateros/bin/wos-jvm-strict \
+  SDCARD=../user/build/images/wateros-rv-openjdk21.ext4 SMP=4
+```
+
+应用探针也可单独运行：
+
+```bash
+make -C os run ARCH=rv PROFILE=pre MODE=run \
+  SCRIPT=/opt/wateros/bin/wos-jvm-application \
+  SDCARD=../user/build/images/wateros-rv-openjdk21.ext4 SMP=4
+```
+
+自动跑联网探针并在完成后关机：
+
+```bash
+make -C os run ARCH=rv PROFILE=pre MODE=run \
+  SCRIPT=/opt/wateros/bin/wos-jvm-network \
+  SDCARD=../user/build/images/wateros-rv-openjdk21.ext4 SMP=4
+```
 
 ## EXT4 生成规则
 

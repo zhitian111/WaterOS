@@ -1,0 +1,79 @@
+#!/bin/sh
+set -eu
+
+JAVA=/usr/lib/jvm/java-21-openjdk/bin/java
+TESTS=/opt/wateros/jvm-tests
+SAFE_VM_ARGS="-XX:+UseSerialGC -XX:ActiveProcessorCount=2 -XX:-UseCompressedOops -XX:-UseCompressedClassPointers -Xms16m -Xmx128m"
+
+case "${1:-all}" in
+    version)
+        exec "$JAVA" $SAFE_VM_ARGS -Xint -version
+        ;;
+    hello)
+        exec "$JAVA" $SAFE_VM_ARGS -Xint -cp "$TESTS" Hello
+        ;;
+    runtime-int)
+        exec "$JAVA" $SAFE_VM_ARGS -Xint -cp "$TESTS" RuntimeProbe
+        ;;
+    exception)
+        exec "$JAVA" $SAFE_VM_ARGS -Xint -cp "$TESTS" ExceptionProbe
+        ;;
+    jit)
+        exec "$JAVA" $SAFE_VM_ARGS -cp "$TESTS" RuntimeProbe
+        ;;
+    jit-strict)
+        exec "$JAVA" $SAFE_VM_ARGS \
+            -Xbatch \
+            -XX:-TieredCompilation \
+            -XX:CompileThreshold=100 \
+            -XX:CompileCommand=quiet \
+            '-XX:CompileCommand=compileonly,JitProbe::hot' \
+            -XX:+PrintCompilation \
+            -cp "$TESTS" JitProbe
+        ;;
+    network)
+        exec "$JAVA" $SAFE_VM_ARGS -Xint -cp "$TESTS" NetworkProbe "${2:-example.com}"
+        ;;
+    application)
+        exec "$JAVA" $SAFE_VM_ARGS -Xint -jar "$TESTS/ApplicationProbe.jar"
+        ;;
+    all)
+        "$JAVA" $SAFE_VM_ARGS -Xint -version
+        "$JAVA" $SAFE_VM_ARGS -Xint -cp "$TESTS" Hello
+        "$JAVA" $SAFE_VM_ARGS -Xint -cp "$TESTS" RuntimeProbe
+        "$JAVA" $SAFE_VM_ARGS -cp "$TESTS" RuntimeProbe
+        "$JAVA" $SAFE_VM_ARGS -Xint -jar "$TESTS/ApplicationProbe.jar"
+        ;;
+    strict)
+        "$JAVA" $SAFE_VM_ARGS -Xint -version
+        "$JAVA" $SAFE_VM_ARGS -Xint -cp "$TESTS" Hello
+
+        GC_LOG=/tmp/wateros-jvm-gc.log
+        "$JAVA" $SAFE_VM_ARGS -Xint -Xlog:gc -cp "$TESTS" RuntimeProbe \
+            >"$GC_LOG" 2>&1
+        cat "$GC_LOG"
+        grep -E 'GC\([0-9]+\).*Pause|Pause Full' "$GC_LOG" >/dev/null
+
+        "$JAVA" $SAFE_VM_ARGS -Xint -cp "$TESTS" ExceptionProbe
+
+        JIT_LOG=/tmp/wateros-jvm-jit.log
+        "$JAVA" $SAFE_VM_ARGS \
+            -Xbatch \
+            -XX:-TieredCompilation \
+            -XX:CompileThreshold=100 \
+            -XX:CompileCommand=quiet \
+            '-XX:CompileCommand=compileonly,JitProbe::hot' \
+            -XX:+PrintCompilation \
+            -cp "$TESTS" JitProbe >"$JIT_LOG" 2>&1
+        cat "$JIT_LOG"
+        grep -E 'JitProbe::hot' "$JIT_LOG" >/dev/null
+        grep -F 'WATEROS_JVM_JIT_OK' "$JIT_LOG" >/dev/null
+
+        "$JAVA" $SAFE_VM_ARGS -Xint -jar "$TESTS/ApplicationProbe.jar"
+        echo WATEROS_JVM_STRICT_OK
+        ;;
+    *)
+        echo "usage: wos-jvm-smoke [version|hello|runtime-int|exception|jit|jit-strict|network [host]|application|all|strict]" >&2
+        exit 2
+        ;;
+esac

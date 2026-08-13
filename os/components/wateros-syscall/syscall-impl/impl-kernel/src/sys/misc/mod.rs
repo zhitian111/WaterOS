@@ -6,6 +6,8 @@ pub(crate) mod bringup_stats;
 pub(crate) mod ioctl;
 pub(crate) mod mount;
 #[cfg(target_arch = "riscv64")]
+pub(crate) mod riscv_flush_icache;
+#[cfg(target_arch = "riscv64")]
 pub(crate) mod riscv_hwprobe;
 pub(crate) mod sync;
 pub(crate) mod sysinfo;
@@ -19,6 +21,8 @@ pub(crate) use bringup_stats::{
 };
 pub(crate) use ioctl::sys_ioctl;
 pub(crate) use mount::sys_mount;
+#[cfg(target_arch = "riscv64")]
+pub(crate) use riscv_flush_icache::sys_riscv_flush_icache;
 #[cfg(target_arch = "riscv64")]
 pub(crate) use riscv_hwprobe::sys_riscv_hwprobe;
 pub(crate) use sync::{sys_fdatasync, sys_fsync, sys_sync};

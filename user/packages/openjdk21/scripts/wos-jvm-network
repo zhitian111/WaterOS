@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+
+exec /opt/wateros/bin/wos-jvm-smoke network "${1:-example.com}"

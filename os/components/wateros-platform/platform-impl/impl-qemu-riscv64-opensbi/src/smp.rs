@@ -77,6 +77,12 @@ impl PlatformSmp for QemuRiscv64OpenSbiSmp {
         .map(|_| ())
     }
 
+    /// 经 SBI RFENCE 扩展在目标 hart 上执行 `fence.i`。
+    fn flush_icache_remote(mask: CpuMask) -> PlatformSmpResult<()> {
+        let hart_mask = sbi::HartMask::from_mask_base(mask.bits() as usize, 0);
+        result(sbi::remote_fence_i(hart_mask)).map(|_| ())
+    }
+
     /// OpenSBI 不需要额外接收端控制；SSIE 由 arch boot 路径启用。
     fn init_ipi() -> PlatformSmpResult<()> {
         Ok(())

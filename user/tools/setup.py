@@ -55,6 +55,7 @@ LA_DEBIAN_PACKAGES = (
     "gcc-14-loongarch64-linux-gnu-base",
     "libc6-loong64-cross",
     "libc6-dev-loong64-cross",
+    "libgcc-s1-loong64-cross",
     "libgcc-14-dev-loong64-cross",
     "linux-libc-dev-loong64-cross",
 )
@@ -87,8 +88,10 @@ def create_loongarch_launchers(destination: Path) -> Path:
     _write_launcher(
         Path(f"{prefix}gcc"),
         'root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)\n'
+        'export LD_LIBRARY_PATH="$root/usr/lib/x86_64-linux-gnu'
+        '${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\n'
         'exec "$root/usr/bin/loongarch64-linux-gnu-gcc-14" '
-        '--sysroot="$root/usr/loongarch64-linux-gnu" '
+        '--sysroot="$root" '
         '-B"$root/usr/lib/gcc-cross/loongarch64-linux-gnu/14/" '
         '-B"$root/usr/loongarch64-linux-gnu/bin/" "$@"\n',
     )
@@ -102,6 +105,8 @@ def create_loongarch_launchers(destination: Path) -> Path:
         _write_launcher(
             Path(f"{prefix}{tool}"),
             'root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)\n'
+            'export LD_LIBRARY_PATH="$root/usr/lib/x86_64-linux-gnu'
+            '${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\n'
             f'exec "$root/usr/bin/loongarch64-linux-gnu-{tool}" "$@"\n',
         )
     return prefix
@@ -114,6 +119,11 @@ def validate_loongarch_install(destination: Path) -> Path:
                             text=True, capture_output=True).stdout.strip()
     if "loongarch64" not in result:
         raise SetupError(f"installed compiler has unexpected target: {result}")
+    with tempfile.TemporaryDirectory(prefix="wateros-la-toolchain-") as temporary:
+        shared = Path(temporary) / "probe.so"
+        subprocess.run([str(compiler), "-shared", "-x", "c", "-", "-o", str(shared)],
+                       input="int wateros_la_dynamic_probe;\n", text=True,
+                       check=True, capture_output=True)
     return prefix
 
 
