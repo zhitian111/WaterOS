@@ -61,6 +61,44 @@ pub struct VfsFramebufferInfo {
     pub mapped_len : usize,
 }
 
+/// framebuffer 中一次需要提交到显示设备的矩形区域。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VfsFramebufferRegion {
+    pub x : u32,
+    pub y : u32,
+    pub width : u32,
+    pub height : u32,
+}
+
+impl VfsFramebufferRegion {
+    /// 判断非空矩形是否完全位于给定 framebuffer 内，并拒绝坐标加法溢出。
+    pub fn fits(self, info : VfsFramebufferInfo) -> bool {
+        self.width != 0 && self.height != 0 &&
+        self.x.checked_add(self.width).is_some_and(|end| end <= info.width) &&
+        self.y.checked_add(self.height).is_some_and(|end| end <= info.height)
+    }
+}
+
+#[cfg(test)]
+mod framebuffer_region_tests {
+    use super::{VfsFramebufferInfo, VfsFramebufferRegion};
+
+    const INFO : VfsFramebufferInfo = VfsFramebufferInfo { width : 1280,
+                                                            height : 800,
+                                                            stride : 5120,
+                                                            byte_len : 4_096_000,
+                                                            phys_base : 0,
+                                                            mapped_len : 4_096_000 };
+
+    #[test]
+    fn accepts_bounded_region_and_rejects_invalid_regions() {
+        assert!(VfsFramebufferRegion { x : 10, y : 20, width : 640, height : 400 }.fits(INFO));
+        assert!(!VfsFramebufferRegion { x : 0, y : 0, width : 0, height : 1 }.fits(INFO));
+        assert!(!VfsFramebufferRegion { x : 1200, y : 0, width : 100, height : 1 }.fits(INFO));
+        assert!(!VfsFramebufferRegion { x : u32::MAX, y : 0, width : 2, height : 1 }.fits(INFO));
+    }
+}
+
 /// evdev 节点的稳定能力摘要。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VfsInputDeviceInfo {
@@ -434,6 +472,13 @@ pub trait VfsIoHandle: Send + VfsHandleAny {
 
     /// 将 framebuffer 变更提交给宿主显示设备。
     fn flush_device(&mut self) -> VfsResult<()> { Err(VfsError::Unsupported) }
+
+    /// 只提交 framebuffer 中指定的非空矩形区域。
+    fn flush_device_region(&mut self,
+                           _region : VfsFramebufferRegion)
+                           -> VfsResult<()> {
+        Err(VfsError::Unsupported)
+    }
 
     /// 是否为软件 RTC 字符设备（syscall 层对 rtc fd 分发专用 ioctl）。
     fn is_rtc_device(&self) -> bool {

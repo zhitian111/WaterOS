@@ -8,7 +8,8 @@ WaterOS 的 Nano-X 图形方案不是让 GPU 直接“运行桌面”，而是�
 2. WaterOS 驱动识别设备，得到 framebuffer 和原始输入事件。
 3. 内核通过 Linux 兼容的 `/dev/fb0`、`/dev/input/eventN` 向用户态提供设备。
 4. Nano-X server 在用户态管理窗口、绘制控件、分发输入。
-5. `nxclock`、`nxedit`、Doom 等客户端通过 AF_UNIX socket 请求 Nano-X 创建窗口。
+5. `nxclock`、`nxedit`、Doom 等客户端通过 AF_UNIX socket 请求 Nano-X 创建窗口；Doom
+   还使用 SysV SHM 命令区批量提交一帧请求。
 
 一句话概括：
 
@@ -105,23 +106,24 @@ Nano-X 客户端
 
 | 层次 | 主要位置 | 职责 |
 |---|---|---|
-| QEMU 参数 | [`qemu_run.py`](../../os/scripts/run/qemu_run.py) | 挂载 GPU、keyboard、tablet 并打开图形窗口 |
-| RISC-V 设备枚举 | [`enumerate.rs`](../../os/components/wateros-driver/driver-impl/impl-qemu-riscv64-virt/src/enumerate.rs) | 从 DTB 枚举 VirtIO-MMIO，设备 ID 16/18 对应 display/input |
-| RISC-V 驱动注册 | [`register.rs`](../../os/components/wateros-driver/driver-impl/impl-qemu-riscv64-virt/src/register.rs) | 创建并注册显示与输入设备 |
-| 显示公共 API | [`driver-display/.../lib.rs`](../../os/components/wateros-driver/driver-display/display-api/api-v0/src/lib.rs) | `FramebufferInfo`、`DisplayDevice`、设备注册表 |
-| RISC-V GPU 驱动 | [`impl-virtio-mmio/src/lib.rs`](../../os/components/wateros-driver/driver-display/display-impl/impl-virtio-mmio/src/lib.rs) | 初始化 VirtIO GPU、DMA framebuffer、flush |
-| 输入公共 API | [`driver-input/.../lib.rs`](../../os/components/wateros-driver/driver-input/input-api/api-v0/src/lib.rs) | `InputDeviceInfo`、`RawInputEvent`、设备注册表 |
-| RISC-V 输入驱动 | [`impl-virtio-mmio/src/lib.rs`](../../os/components/wateros-driver/driver-input/input-impl/impl-virtio-mmio/src/lib.rs) | 读取 VirtIO input 队列和设备能力 |
-| fbdev/evdev VFS | [`user_graphics.rs`](../../os/components/wateros-vfs/vfs-impl/impl-fd-session/src/user_graphics.rs) | `/dev/fb0`、输入节点、事件队列和 worker |
-| Linux ioctl ABI | [`ioctl.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/misc/ioctl.rs) | 翻译 fbdev/evdev ioctl 和用户指针 |
-| mmap syscall | [`mmap.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/mem/mmap.rs) | 校验权限并把 VFS 设备映射交给 MM |
-| MM 公共接口 | [`mm-api/.../mmap.rs`](../../os/components/wateros-mm/mm-api/api-v0/src/mmap.rs) | `MmapKind::Device`、`DeviceMapping`、lease |
-| Sv39 设备映射 | [`user_heap_mmap.rs`](../../os/components/wateros-mm/mm-impl/impl-sv39/src/user_heap_mmap.rs) | 将现有 DMA 物理页映射到用户页表 |
-| 启动接线 | [`os/src/main.rs`](../../os/src/main.rs) | 初始化图形设备并启动输入 worker |
-| Nano-X 配置 | [`config/wateros`](../../user/packages/microwindows/config/wateros) | 静态构建、FB 后端、evdev 后端、内置 nanowm |
-| WaterOS 适配补丁 | [`patches/`](../../user/packages/microwindows/patches) | fbdev/evdev、launcher、刷新和 RV64 Doom 修复 |
-| 用户包构建 | [`build.py`](../../user/packages/microwindows/build.py) | 交叉编译、静态 ELF 检查、安装程序和 WAD |
-| 启动脚本 | [`start-nanox`](../../user/packages/microwindows/scripts/start-nanox) | 启动 server、等待 socket、启动默认客户端并清理 |
+| QEMU 参数 | [`qemu_run.py`](../../../os/scripts/run/qemu_run.py) | 挂载 GPU、keyboard、tablet 并打开图形窗口 |
+| RISC-V 设备枚举 | [`enumerate.rs`](../../../os/components/wateros-driver/driver-impl/impl-qemu-riscv64-virt/src/enumerate.rs) | 从 DTB 枚举 VirtIO-MMIO，设备 ID 16/18 对应 display/input |
+| RISC-V 驱动注册 | [`register.rs`](../../../os/components/wateros-driver/driver-impl/impl-qemu-riscv64-virt/src/register.rs) | 创建并注册显示与输入设备 |
+| 显示公共 API | [`driver-display/.../lib.rs`](../../../os/components/wateros-driver/driver-display/display-api/api-v0/src/lib.rs) | `FramebufferInfo`、`DisplayDevice`、设备注册表 |
+| VirtIO GPU 本地扩展 | [`gpu.rs`](../../../os/vendor/virtio-drivers/src/device/gpu.rs) | `flush_region()` 校验区域、计算 backing offset 并发送两条 GPU 命令 |
+| RISC-V GPU 驱动 | [`impl-virtio-mmio/src/lib.rs`](../../../os/components/wateros-driver/driver-display/display-impl/impl-virtio-mmio/src/lib.rs) | 初始化 VirtIO GPU、DMA framebuffer、flush |
+| 输入公共 API | [`driver-input/.../lib.rs`](../../../os/components/wateros-driver/driver-input/input-api/api-v0/src/lib.rs) | `InputDeviceInfo`、`RawInputEvent`、设备注册表 |
+| RISC-V 输入驱动 | [`impl-virtio-mmio/src/lib.rs`](../../../os/components/wateros-driver/driver-input/input-impl/impl-virtio-mmio/src/lib.rs) | 读取 VirtIO input 队列和设备能力 |
+| fbdev/evdev VFS | [`user_graphics.rs`](../../../os/components/wateros-vfs/vfs-impl/impl-fd-session/src/user_graphics.rs) | `/dev/fb0`、输入节点、事件队列和 worker |
+| Linux ioctl ABI | [`ioctl.rs`](../../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/misc/ioctl.rs) | 翻译 fbdev/evdev ioctl 和用户指针 |
+| mmap syscall | [`mmap.rs`](../../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/mem/mmap.rs) | 校验权限并把 VFS 设备映射交给 MM |
+| MM 公共接口 | [`mm-api/.../mmap.rs`](../../../os/components/wateros-mm/mm-api/api-v0/src/mmap.rs) | `MmapKind::Device`、`DeviceMapping`、lease |
+| Sv39 设备映射 | [`user_heap_mmap.rs`](../../../os/components/wateros-mm/mm-impl/impl-sv39/src/user_heap_mmap.rs) | 将现有 DMA 物理页映射到用户页表 |
+| 启动接线 | [`os/src/main.rs`](../../../os/src/main.rs) | 初始化图形设备并启动输入 worker |
+| Nano-X 配置 | [`config/wateros`](../../../user/packages/microwindows/config/wateros) | 静态构建、FB 后端、evdev 后端、内置 nanowm |
+| WaterOS 适配补丁 | [`patches/`](../../../user/packages/microwindows/patches) | fbdev/evdev、launcher、刷新和 RV64 Doom 修复 |
+| 用户包构建 | [`build.py`](../../../user/packages/microwindows/build.py) | 交叉编译、静态 ELF 检查、安装程序和 WAD |
+| 启动脚本 | [`start-nanox`](../../../user/packages/microwindows/scripts/start-nanox) | 启动 server、等待 socket、启动默认客户端并清理 |
 
 ## 5. 启动时发生了什么
 
@@ -145,7 +147,7 @@ user-graphics
 ### 5.2 QEMU 创建设备
 
 运行命令包含 `EXTRA_FEATURES=user-graphics` 时，Make 会启用图形输出，
-[`qemu_run.py`](../../os/scripts/run/qemu_run.py) 为 RISC-V 添加：
+[`qemu_run.py`](../../../os/scripts/run/qemu_run.py) 为 RISC-V 添加：
 
 ```text
 -device virtio-gpu-device
@@ -247,7 +249,8 @@ syscall 层实现 Linux fbdev ioctl：
 | `FBIOGET_FSCREENINFO` | 返回 framebuffer 地址、长度、stride 等固定信息 |
 | `FBIOGET_VSCREENINFO` | 返回分辨率、32 bpp 和 BGRA 通道布局 |
 | `FBIOPUT_VSCREENINFO` | 首版只接受与当前模式完全相同的参数 |
-| `FBIOPAN_DISPLAY` | 校验零偏移后执行一次 GPU flush |
+| `FBIOPAN_DISPLAY` | 标准兼容回退：校验零偏移后执行一次全屏 GPU flush |
+| `WOSFBIO_FLUSH_RECT` | WaterOS 扩展：校验矩形后只刷新变化区域 |
 | cmap ioctl | true-color 模式不需要调色板，返回 `ENOTTY` |
 
 Linux ABI 结构使用 `#[repr(C)]`，并在编译期断言 64 位结构大小为 80 和 160 字节。
@@ -293,20 +296,24 @@ framebuffer，也不做逐帧 `copy_to_user`，因此避免了内核与用户态
 ### 6.5 绘制和刷新
 
 Nano-X server 接受客户端绘制请求，在 CPU 上完成文字、线条、矩形、位图和窗口合成，
-最终直接修改 mmap framebuffer。
+最终直接修改 mmap framebuffer。screen driver 的 `Update` 回调把每次修改合并成最小
+包围矩形；framebuffer 打开后还会登记一次全屏脏区，保证第一帧必定显示。
 
-仅写内存不会自动更新 QEMU 窗口。WaterOS 的 Nano-X patch 在每轮 server 事件循环调用：
+仅写内存不会自动更新 QEMU 窗口。server 在等待下一批事件前只在存在脏区时调用：
 
 ```text
-FBIOPAN_DISPLAY
-  → syscall framebuffer_ioctl()
-  → VFS FramebufferHandle::flush_device()
-  → DisplayDevice::flush()
-  → VirtIOGpu::flush()
+WOSFBIO_FLUSH_RECT(x, y, width, height)
+  → syscall framebuffer_ioctl()（复制参数并校验边界）
+  → VFS FramebufferHandle::flush_device_region()
+  → DisplayDevice::flush_region()
+  → VirtIOGpu::flush_region()
+  → TRANSFER_TO_HOST_2D + RESOURCE_FLUSH
   → QEMU 图形窗口更新
 ```
 
-首版采用全屏刷新。公共 API 已保留 `flush_region()`，以后可基于脏矩形只提交变化区域。
+如果内核不认识私有 ioctl，Nano-X 只在收到 `ENOTTY` 时回退到标准
+`FBIOPAN_DISPLAY` 全屏刷新。提交失败时不会丢弃脏区，而是在下一轮重试。空闲桌面没有
+脏区，因此不会持续提交 GPU 命令。
 
 ## 7. 鼠标和键盘是怎样到达应用的
 
@@ -374,8 +381,9 @@ evdev 还支持：
 
 WaterOS patch 为 Nano-X 增加两个后端：
 
-- keyboard 后端打开 `/dev/input/keyboard0`，把 Linux key code 转换为 Nano-X key，
-  同时维护 Shift、Ctrl、Alt、Meta 和 CapsLock；
+- keyboard 后端打开 `/dev/input/keyboard0`，通过显式美式 QWERTY 表把 Linux key code
+  转换为 Nano-X key，不能假设 `KEY_A..KEY_Z` 连续；Shift 与 CapsLock 异或决定字母
+  大小写，CapsLock 只在首次按下时切换，收到 `SYN_DROPPED` 则清除瞬时修饰键；
 - pointer 后端打开 `/dev/input/pointer0`，通过 `EVIOCGABS` 查询硬件坐标范围，再按当前
   屏幕宽高缩放绝对坐标，并转换鼠标按键状态。
 
@@ -410,7 +418,7 @@ Doom    ─┘
 
 监听 socket 的 `poll/select` 必须在 accept 队列非空时报告 `POLLIN`。WaterOS 曾出现
 “只能看到鼠标、客户端全在运行但没有窗口”的问题，根因就是服务端没有从 accept 队列
-取出连接；现在 [`unix_sock.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/unix_sock.rs)
+取出连接；现在 [`unix_sock.rs`](../../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/unix_sock.rs)
 已经实现该语义。
 
 ### 8.3 `start-nanox` 做了什么
@@ -429,8 +437,9 @@ Editor、Events 和 Doom。
 
 ## 9. Doom 为什么也能显示
 
-Doom 是一个 Nano-X 客户端，不直接访问 `/dev/fb0`。它把 320×200 的调色板画面转换成
-ARGB，再调用 Nano-X API 创建窗口并提交像素。
+Doom 是一个 Nano-X 客户端，不直接访问 `/dev/fb0`。它使用 256 项 BGRA 查找表，在一次
+循环中把 320×200 调色板画面直接放大到可复用的 32 位缓冲，再调用 Nano-X API 创建窗口
+并提交像素；每帧不分配临时缓冲。
 
 镜像中的相关文件：
 
@@ -447,11 +456,13 @@ ARGB，再调用 Nano-X API 创建窗口并提交像素。
 DOOMWADDIR=/usr/share/games/doom
 ```
 
-并默认添加 `-3 -warp 1 1`：三倍放大且直接进入 E1M1，避开当前 WAD 内置 demo 与老端口
-版本不一致的问题。
+并默认添加 `-2 -warp 1 1`：二倍放大为 640×400 并直接进入 E1M1，避开当前 WAD 内置
+demo 与老端口版本不一致的问题。用户显式传入 `-3` 时仍可使用 960×600。
 
-上游 Doom 还在每帧使用大块 `alloca()`。三倍 ARGB 画面会耗尽 RV64 普通用户栈，曾在
-完成初始化后立即段错误。WaterOS patch 将缩放缓冲和 ARGB 缓冲改为可复用堆内存。
+`GrArea()` 受 Nano-X 单请求大小限制，大画面原本会被拆成几十个 socket 请求。Doom 在
+`GrOpen()` 后申请 3 MiB SysV SHM 命令区，把一帧所有 Area 请求批量交给 server，随后用
+一次 `GrFlush()` 标记帧边界。server 绘制完所有块后只留下一个合并脏区，因此每个显示帧
+最多触发一次 GPU present。SHM 创建失败时自动退回 AF_UNIX 请求路径，程序仍可运行。
 
 ## 10. 用户镜像如何提供 Nano-X
 
@@ -471,7 +482,7 @@ Microwindows 固定使用 vendored 源码，WaterOS 修改全部位于 package p
 - `MOUSE/KEYBOARD=WATEROS_EVDEV`；
 - `NANOX=Y`、`NANOWM=Y`；
 - 使用内置字体；
-- 禁用 X11、SDL、NX11、SysV SHM 和外部字体/图片依赖；
+- 禁用 X11、SDL、NX11 和外部字体/图片依赖，启用 Nano-X SysV SHM 命令批处理；
 - 不构建依赖 PTY 的 `nxterm`。
 
 构建器用目标架构 `readelf` 检查每个 ELF，确保架构正确、没有 `PT_INTERP`，也没有动态
@@ -509,11 +520,13 @@ Nano-X 已有 Linux framebuffer 和输入后端。提供 Linux 兼容子集可�
 
 `read/write/lseek` 仍保留用于诊断，但不是正常桌面绘制路径。
 
-### 12.3 为什么首版主动全屏 flush
+### 12.3 为什么使用脏矩形和一帧一次 present
 
-VirtIO framebuffer 是普通内存，设备不知道哪些字节被 CPU 改过。理想方案是 Nano-X
-维护脏矩形并调用区域刷新；但上游部分 blit 路径会直接写 mmap 内存而不触发统一的
-`Update` 回调。首版每轮事件循环全屏 flush，优先保证正确性，之后再优化传输范围。
+VirtIO framebuffer 是普通内存，设备不知道哪些字节被 CPU 改过。若 server 每处理一个
+请求就全屏刷新，960×600 的 Doom 帧被拆成约 77 个请求时，可能重复提交几十次
+1280×800 画面。现在所有实际写屏路径通过 `Update` 累积脏矩形，Doom 又用 SHM 批量请求
+和 `GrFlush()` 明确帧边界，所以 server 每帧只提交一次合并区域。初始全屏脏区兼顾首次
+显示正确性，失败保留脏区则保证设备短暂错误不会永久丢帧。
 
 ### 12.4 为什么不拆成 `wateros-fbdev` 和 `wateros-input-event`
 
@@ -532,16 +545,380 @@ syscall 和 MM 能力，使依赖关系更复杂。
 内核 `wateros-gui` 适合启动画面和内核诊断，Nano-X 适合真正的用户程序和进程隔离。
 两者都是 framebuffer 的最终所有者，首版不做 compositor 嵌套，因此编译期互斥最安全。
 
-## 13. 构建与运行
+## 13. 键盘与图形刷新优化
 
-### 13.1 首次准备工具链
+这一章集中说明 Nano-X 第一版运行后暴露出的两个问题，以及当前采用的完整优化链路：
+
+- 键盘输入 `asd` 却得到 `abc`；
+- Doom 能显示，但帧率低、窗口刷新慢，空闲桌面也在持续提交 GPU。
+
+优化不是单纯把某个循环“调快”，而是同时调整输入翻译、Nano-X 请求传输、脏区管理、
+内核 fbdev 接口、VirtIO GPU 提交和 Doom 像素转换。
+
+### 13.1 优化前的问题
+
+#### 键盘映射错误
+
+Linux `evdev` 字母键码按照键盘位置定义，不是按照字母表连续排列。例如：
+
+```text
+KEY_A = 30
+KEY_S = 31
+KEY_D = 32
+```
+
+旧代码错误地使用：
+
+```c
+'a' + (code - KEY_A)
+```
+
+因此 `KEY_S` 被计算为 `b`，`KEY_D` 被计算为 `c`，最终表现为输入 `asd`，Nano-X
+应用却收到 `abc`。
+
+#### 全屏刷新过于频繁
+
+旧补丁 `0003-wateros-present-every-loop.patch` 让 Nano-X server 在每轮循环中都执行：
+
+```c
+ioctl(fb, FBIOPAN_DISPLAY, &fb_var);
+```
+
+这意味着即使没有窗口变化，也会沿着下面的路径提交整屏：
+
+```text
+Nano-X server 循环
+  → FBIOPAN_DISPLAY
+  → VFS flush_device()
+  → DisplayDevice::flush()
+  → VirtIO GPU 全屏 TRANSFER_TO_HOST_2D
+  → VirtIO GPU 全屏 RESOURCE_FLUSH
+```
+
+当前 framebuffer 为 `1280×800×4`，一次全屏提交约传输 4 MiB。只修改一个字符、移动一个
+小窗口和完全空闲时，付出的代价却相同。
+
+Doom 的旧默认窗口为 3×，即 `960×600×4`，单帧像素约 2.2 MiB。Nano-X 单个协议请求
+上限约 30 KiB，`GrArea()` 必须把一帧拆成几十个请求。没有批处理时，这些请求分别经过
+AF_UNIX socket，并可能让 server 多次返回事件循环；配合“每轮全屏刷新”，一帧可能触发
+很多次 1280×800 提交。
+
+### 13.2 键盘映射如何修复
+
+当前 `kbd_wateros_evdev.c` 使用显式 Linux keycode → ASCII 表：
+
+```c
+[KEY_Q] = 'q', [KEY_W] = 'w', ...
+[KEY_A] = 'a', [KEY_S] = 's', [KEY_D] = 'd', ...
+[KEY_Z] = 'z', [KEY_X] = 'x', ...
+```
+
+这样不再假定 `KEY_A..KEY_Z` 与字母表具有相同顺序。当前固定使用美式 QWERTY 布局，并
+同时处理：
+
+- 26 个英文字母；
+- 数字及其 Shift 符号；
+- 退格、Tab、Enter、Escape；
+- 方向键、Home、End、Insert、Delete、PageUp、PageDown；
+- F1–F12；
+- 常用小键盘按键；
+- 左右 Shift、Ctrl、Alt 和 Meta。
+
+字母大小写使用：
+
+```text
+大写 = Shift 状态 XOR Caps Lock 状态
+```
+
+Caps Lock 只在 `event.value == 1`，即首次按下时切换；`value == 2` 的硬件重复事件不会
+反复切换。`value == 0/1/2` 分别作为释放、按下和重复处理。
+
+收到 `SYN_DROPPED` 表示 evdev 客户端已经丢失一段事件，此时清除 Shift、Ctrl、Alt、
+Meta 等瞬时状态，但保留 Caps Lock，避免漏掉释放事件后出现“按键一直按住”的现象。
+
+### 13.3 先区分写像素、记录脏区和提交画面
+
+当前刷新路径中有三个不同动作：
+
+1. **绘制**：Nano-X 软件渲染器修改 mmap 得到的 framebuffer 内存；
+2. **Update**：记录哪些坐标发生变化，不立即访问 GPU；
+3. **present**：将合并后的区域提交给 VirtIO GPU，QEMU 窗口才真正变化。
+
+`fblin32` 的点、水平线和垂直线，以及 fill、convblit、frameblit、窗口移动和 expose
+等实际写屏路径，最终都会调用 screen driver 的 `Update`。内存 framebuffer 设备本身
+不需要 `Update`，只有最终屏幕 framebuffer 才负责累计脏区。
+
+### 13.4 当前脏矩形合并逻辑
+
+`fb_update()` 不再只保存一个布尔值，而是保存脏区的最小包围矩形：
+
+```text
+dirty = [x1, y1, x2, y2)
+```
+
+收到新区域时执行：
+
+```text
+x1 = min(x1, update.x)
+y1 = min(y1, update.y)
+x2 = max(x2, update.x + update.width)
+y2 = max(y2, update.y + update.height)
+```
+
+所有输入都会裁剪到屏幕范围；零尺寸和完全位于屏幕外的区域直接忽略。例如三个绘制请求：
+
+```text
+A = (10, 20, 100, 50)
+B = (80, 30, 100, 60)
+C = (20, 90, 40, 20)
+```
+
+最终只产生一个覆盖它们的矩形：
+
+```text
+(10, 20) 到 (180, 110)
+```
+
+framebuffer 打开后会登记一次全屏脏区，确保桌面第一次显示时不会再次出现“黑屏但鼠标
+可见”。初次提交完成后恢复为普通区域刷新。
+
+`fb_preselect()` 只有在存在脏区时才提交。提交成功后清除脏区；失败时保留，下轮重试，
+避免一次设备错误造成永久缺帧。因此 Nano-X 完全空闲时不会继续产生 GPU present。
+
+### 13.5 SysV SHM 在 Nano-X 中的作用
+
+这里的共享内存不是 framebuffer，也不是 Doom 直接映射 GPU DMA 页。它共享的是
+**Nano-X 客户端发给 server 的协议命令和像素参数**。
+
+Doom 在 `GrOpen()` 后、发送其他绘图请求前调用：
+
+```c
+GrReqShmCmds(3 * 1024 * 1024);
+```
+
+建立过程如下：
+
+```text
+Doom client                         nano-X server
+    │ GrNumReqShmCmds(size=3 MiB)        │
+    ├──────── AF_UNIX socket ───────────>│
+    │                                    ├─ shmget()
+    │                                    ├─ shmat()
+    │<──────────── SHM key ──────────────┤
+    ├─ shmget(key)
+    ├─ shmat()
+    └─ nxAssignReqbuffer(shared_memory)
+```
+
+成功后，客户端原来的堆请求缓冲区被 SHM 替换：
+
+```text
+共享命令区
+├── nxAreaReq 头 + 像素块 1
+├── nxAreaReq 头 + 像素块 2
+├── nxAreaReq 头 + 像素块 3
+└── ...
+```
+
+`GrArea()` 仍会遵守约 30 KiB 的单请求限制，但几十个分块连续写入同一块 SHM，不再逐块
+通过 socket 搬运。Doom 每帧最后显式调用 `GrFlush()`，客户端只通过 socket 发送一个很小
+的 `nxShmCmdsFlushReq`，告诉 server：
+
+- SHM 前多少字节有效；
+- 是否需要完成确认。
+
+socket 此时主要承担唤醒和同步作用，约 1–2.2 MiB 的帧数据留在共享内存中。
+
+server 的 `GrShmCmdsFlushWrapper()` 在一次外层请求中遍历并执行所有内部命令。它会检查：
+
+- flush 长度非零且不超过 SHM 大小；
+- 剩余字节至少容纳一个请求头；
+- 请求长度非零、正确对齐且不越界；
+- 请求编号处于合法范围；
+- SHM 中禁止嵌套 SHM 创建和 SHM flush 请求。
+
+非法命令区会被整批拒绝，避免畸形客户端让 server 越界或死循环。
+
+SHM 协商被 server 拒绝或 `shmget()` 失败时，客户端保持原有 AF_UNIX 请求路径，Doom
+仍可运行，只是性能较低。上游客户端对极少见的最后一步 `shmat()` 失败处理仍不够完整，
+后续应确保失败值被恢复为 `nxSharedMem = 0` 后再回退。
+
+### 13.6 为什么一帧通常只提交一次
+
+当前 Doom 的一帧按照下面的顺序执行：
+
+```text
+GrArea()
+  → 将几十个 Area 分块写入 SHM
+GrFlush()
+  → 通过 socket 发送一次 SHM flush 通知
+nano-X server
+  → 在一次 GrShmCmdsFlushWrapper 中执行全部 Area
+  → 每个绘图操作只合并 Update 脏区
+server 返回事件循环
+  → fb_preselect() 提交一个合并矩形
+```
+
+所以 SHM 解决“几十个协议请求分别传输和唤醒”的问题，脏矩形解决“每个绘图操作都全屏
+提交”的问题，显式 `GrFlush()` 则定义帧边界。三者需要配合，单独启用其中一个不能完整
+消除原来的刷新放大。
+
+### 13.7 内核区域刷新链路
+
+用户态优先使用 WaterOS 私有 ioctl：
+
+```c
+struct wos_fb_rect {
+    uint32_t x;
+    uint32_t y;
+    uint32_t width;
+    uint32_t height;
+};
+
+ioctl(fb, WOSFBIO_FLUSH_RECT, &rect);
+```
+
+内核调用链为：
+
+```text
+sys_ioctl
+  → 复制 WosFramebufferRegion 用户参数
+  → 检查非空、加法溢出和 framebuffer 边界
+  → VfsIoHandle::flush_device_region()
+  → FramebufferHandle 再次校验固定显示模式
+  → DisplayDevice::flush_region()
+  ├─ RISC-V：VirtIO-MMIO
+  └─ LoongArch：VirtIO-PCI
+  → virtio_drivers::VirtIOGpu::flush_region()
+  → TRANSFER_TO_HOST_2D(rect, backing_offset)
+  → RESOURCE_FLUSH(rect)
+```
+
+线性 framebuffer 的 backing offset 为：
+
+```text
+offset = ((y × screen_width) + x) × 4
+```
+
+底层驱动再次检查零尺寸、坐标加法溢出和越界。用户指针复制、边界校验和固定元数据查询
+都不持有 display 锁；只有真正发送 GPU 命令时才获取该锁。
+
+不支持区域 ioctl 的旧内核会返回 `ENOTTY`，Nano-X 随即回退到标准
+`FBIOPAN_DISPLAY` 全屏刷新。其他 display 驱动若没有覆盖 `flush_region()`，公共 trait
+默认也会安全退化为 `flush()`。
+
+### 13.8 Doom 像素转换优化
+
+旧实现分两步处理每帧：
+
+```text
+320×200 的 8 位索引图
+  → 放大为 8 位中间缓冲
+  → 整帧查调色板转换为 32 位 ARGB
+```
+
+当前维护一张 256 项 BGRA 查找表，使用一次循环直接完成缩放和颜色转换：
+
+```text
+源索引 → argb_palette[index] → 直接写入复用的 32 位输出缓冲
+```
+
+每条源扫描线只转换一次，纵向放大的其他行直接复制第一条结果。输出缓冲在分辨率确定后
+只分配一次，不在每帧执行 `malloc/free`。Doom 改变调色板时会同步更新 256 项查找表，
+因此受伤红屏、拾取物品等调色效果仍然有效。
+
+`start-doom` 默认从 3× 改为 2×：
+
+```text
+默认：640×400，约 1.0 MiB/帧
+可选 -3：960×600，约 2.2 MiB/帧
+```
+
+2× 同时减少 CPU 软件缩放、SHM 写入量、Nano-X 绘制量和 VirtIO 提交像素数。3× 仍作为
+显式选项保留：
+
+```sh
+start-doom -3
+```
+
+### 13.9 优化前后对比
+
+| 项目 | 优化前 | 当前实现 |
+|---|---|---|
+| 字母键 | 错误假设 keycode 连续 | 显式 QWERTY 映射 |
+| Caps Lock | 重复事件可能反复切换 | 仅首次按下切换 |
+| 事件丢失 | 修饰键可能卡住 | `SYN_DROPPED` 清理瞬时状态 |
+| Nano-X 空闲 | 每轮全屏刷新 | 无脏区不提交 |
+| 小窗口变化 | 提交 1280×800 全屏 | 提交合并脏矩形 |
+| Doom 请求 | 多个 AF_UNIX 像素请求 | 3 MiB SysV SHM 批处理 |
+| Doom 帧边界 | 不明确 | 每帧显式 `GrFlush()` |
+| Doom 默认窗口 | 960×600 | 640×400 |
+| 像素转换 | 8 位放大后再转 32 位 | 查表直接生成缩放 BGRA |
+| 输出缓冲 | 原实现可能在热路径临时分配 | 分辨率确定后复用 |
+| GPU 提交 | 一帧可能触发多次全屏提交 | 通常一帧一次区域 present |
+| 兼容回退 | 只有全屏 ioctl | 区域 ioctl 不支持时回退全屏 |
+
+### 13.10 如何观察优化是否生效
+
+统计默认关闭。启动 server 时启用 Nano-X 统计：
+
+```sh
+NANOX_STATS=1 start-nanox >/tmp/nanox.log 2>&1 &
+```
+
+启动 Doom 时启用帧率和转换统计：
+
+```sh
+DOOM_STATS=1 start-doom
+```
+
+Nano-X 日志会报告：
+
+- `updates`：收到的 Update 数量；
+- `region`：区域 present 成功次数；
+- `full`：回退全屏 present 次数；
+- `pixels`：累计提交像素数。
+
+Doom 会报告：
+
+- FPS；
+- 每帧平均像素转换时间；
+- 每帧平均 Nano-X 请求提交时间。
+
+验收时应重点观察：
+
+1. Nano-X 空闲时 present 计数不再持续增长；
+2. Doom 运行时 present 增长速度接近 Doom FPS，而不是一帧增长几十次；
+3. `full` 正常保持为零，说明使用了区域 ioctl；
+4. 提交像素量接近 Doom 窗口及其重绘区域，而不是每次固定 1280×800；
+5. `nxedit` 中 `asd`、`qwerty`、Shift、Caps Lock、方向键和退格均正确。
+
+### 13.11 相关实现位置
+
+| 内容 | 文件/位置 |
+|---|---|
+| 键盘、脏区、SHM 加固和 Doom 优化补丁 | [`0005-wateros-input-present-doom-performance.patch`](../../../user/packages/microwindows/patches/0005-wateros-input-present-doom-performance.patch) |
+| Nano-X SHM 构建开关 | [`config/wateros`](../../../user/packages/microwindows/config/wateros) |
+| Doom 默认 2× 启动参数 | [`start-doom`](../../../user/packages/microwindows/scripts/start-doom) |
+| 私有 framebuffer ioctl | [`ioctl.rs`](../../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/misc/ioctl.rs) |
+| VFS 中立区域和接口 | [`handle.rs`](../../../os/components/wateros-vfs/vfs-api/api-v0/src/handle.rs) |
+| `/dev/fb0` 区域提交实现 | [`user_graphics.rs`](../../../os/components/wateros-vfs/vfs-impl/impl-fd-session/src/user_graphics.rs) |
+| display 公共区域类型和 trait | [`display-api/api-v0/src/lib.rs`](../../../os/components/wateros-driver/driver-display/display-api/api-v0/src/lib.rs) |
+| RISC-V MMIO 区域刷新 | [`impl-virtio-mmio/src/lib.rs`](../../../os/components/wateros-driver/driver-display/display-impl/impl-virtio-mmio/src/lib.rs) |
+| LoongArch PCI 区域刷新 | [`impl-virtio-pci/src/lib.rs`](../../../os/components/wateros-driver/driver-display/display-impl/impl-virtio-pci/src/lib.rs) |
+| VirtIO GPU offset、边界和两条区域命令 | [`gpu.rs`](../../../os/vendor/virtio-drivers/src/device/gpu.rs) |
+| 静态优化检查 | [`test_userland.py`](../../../user/tests/test_userland.py) |
+
+## 14. 构建与运行
+
+### 14.1 首次准备工具链
 
 ```bash
 make -C user setup ARCH=rv
 # LoongArch 使用：make -C user setup ARCH=la
 ```
 
-### 13.2 生成 Nano-X 根文件系统
+### 14.2 生成 Nano-X 根文件系统
 
 ```bash
 make -C user image ARCH=rv
@@ -555,7 +932,7 @@ user/build/images/wateros-rv.ext4
 user/build/images/wateros-la.ext4
 ```
 
-### 13.3 启动 WaterOS
+### 14.3 启动 WaterOS
 
 ```bash
 cd os
@@ -596,7 +973,7 @@ start-doom -2
 start-doom -3 -warp 1 2
 ```
 
-## 14. 现场演示建议
+## 15. 现场演示建议
 
 答辩时按以下顺序演示，能同时证明驱动、内存映射、输入和用户态 IPC：
 
@@ -628,9 +1005,9 @@ start-doom -3 -warp 1 2
 
 这表明 fbdev ioctl 成功返回实际显示模式。
 
-## 15. 常见问题排查
+## 16. 常见问题排查
 
-### 15.1 没有弹出 QEMU 图形窗口
+### 16.1 没有弹出 QEMU 图形窗口
 
 确认启动参数包含：
 
@@ -644,7 +1021,7 @@ EXTRA_FEATURES=user-graphics
 GRAPHICS=1 GRAPHICS_BACKEND=gtk
 ```
 
-### 15.2 缺少 `/dev/fb0`
+### 16.2 缺少 `/dev/fb0`
 
 检查：
 
@@ -653,7 +1030,7 @@ GRAPHICS=1 GRAPHICS_BACKEND=gtk
 - 启动日志是否出现 `registered virtio-gpu`；
 - devfs 是否在驱动注册后刷新。
 
-### 15.3 缺少键盘或指针节点
+### 16.3 缺少键盘或指针节点
 
 检查日志中是否出现：
 
@@ -664,7 +1041,7 @@ registered virtio-input ... Pointer
 
 还要确认 QEMU 挂载了 keyboard 和 tablet，而不只是 GPU。
 
-### 15.4 黑屏但能看到鼠标
+### 16.4 黑屏但能看到鼠标
 
 这通常说明：
 
@@ -683,7 +1060,7 @@ ls -l /tmp/.nano-X
 如果客户端存在但没有窗口，重点检查 AF_UNIX listener 的 `POLLIN`/accept queue；如果
 窗口内容写入后不出现，重点检查 `FBIOPAN_DISPLAY` 和 VirtIO flush。
 
-### 15.5 `nano-X did not create /tmp/.nano-X`
+### 16.5 `nano-X did not create /tmp/.nano-X`
 
 直接运行 server 查看错误：
 
@@ -694,7 +1071,7 @@ nano-X
 
 常见原因是 `/dev/fb0` 不存在、ioctl/mmap 失败或 `/tmp` 未挂载。
 
-### 15.6 输入无响应
+### 16.6 输入无响应
 
 可以短暂读取二进制事件验证节点：
 
@@ -704,7 +1081,7 @@ od -An -tx1 -N 48 /dev/input/pointer0
 
 移动鼠标后应得到 24 字节整数倍的数据。不要长期用 `cat` 把二进制事件输出到串口。
 
-### 15.7 直接运行 `doom` 找不到 WAD
+### 16.7 直接运行 `doom` 找不到 WAD
 
 使用：
 
@@ -718,7 +1095,7 @@ start-doom
 DOOMWADDIR=/usr/share/games/doom doom -3 -warp 1 1
 ```
 
-### 15.8 server 重启失败
+### 16.8 server 重启失败
 
 删除残留 socket：
 
@@ -728,7 +1105,25 @@ rm -f /tmp/.nano-X
 
 正常情况下 `start-nanox` 会自动清理。
 
-## 16. 当前限制和下一步
+### 16.9 点击 Doom 显示 `Exec format error`
+
+`start-doom` 是 shell 脚本，不是 ELF。WaterOS 当前的 `execve` 不负责解析 shebang；而
+`nxlaunch` 使用 `execvp` 直接执行配置中的程序，因此菜单必须写成：
+
+```text
+Doom - /bin/sh /usr/bin/start-doom
+```
+
+不能写成：
+
+```text
+Doom - /usr/bin/start-doom
+```
+
+修改用户镜像中的 launcher 配置后需要重新执行 `make image`，仅重新构建内核不会更新
+`/etc/wateros/nxlaunch.cnf`。
+
+## 17. 当前限制和下一步
 
 当前已经完成：
 
@@ -745,7 +1140,7 @@ rm -f /tmp/.nano-X
 
 - 单显示器、固定启动分辨率；
 - CPU 软件渲染，无 3D 加速；
-- 首版全屏刷新，性能仍可优化；
+- 当前使用包围矩形区域刷新；复杂遮挡可能仍比精确矩形集合多提交一些像素；
 - 输入使用低频轮询 worker，尚未改成完整中断驱动；
 - 不支持 DRM/KMS、动态 mode setting、多显示器；
 - 未实现 PTY，因此不构建 `nxterm`；
@@ -753,24 +1148,25 @@ rm -f /tmp/.nano-X
 
 建议优化顺序：
 
-1. 实现可靠脏矩形并调用 `flush_region()`；
+1. 将单个包围矩形扩展为小型矩形集合，减少相距很远窗口同时更新时的过度提交；
 2. 将 VirtIO input 接入中断，减少轮询延迟和空闲唤醒；
 3. 如需统一 libc，再补充可复现的 LoongArch musl 工具链；
 4. 支持显示模式变更和更通用的像素格式；
 5. 若需要更复杂桌面，再评估 PTY、字体、剪贴板和多进程会话管理。
 
-## 17. 答辩速记
+## 18. 答辩速记
 
-### 17.1 30 秒版本
+### 18.1 30 秒版本
 
 > 我们在 QEMU 上使用 VirtIO GPU 和 VirtIO input。内核驱动获得 GPU 的 DMA
 > framebuffer，并通过 Linux 兼容的 `/dev/fb0` 和 evdev 暴露给用户态。Nano-X server
 > 用 `mmap(MAP_SHARED)` 直接映射 framebuffer，在 CPU 上完成软件绘制和窗口合成，之后
-> 用 `FBIOPAN_DISPLAY` 触发 VirtIO flush。键盘和鼠标由内核 worker 转成 24 字节 Linux
+> 用 WaterOS 区域 ioctl 触发 VirtIO 的矩形 transfer 和 flush，不支持时才回退全屏刷新；
+> Doom 通过 SysV SHM 把一帧命令批量交给 server。键盘和鼠标由内核 worker 转成 24 字节 Linux
 > `input_event`，Nano-X 读取后按焦点分发给客户端。应用通过 `/tmp/.nano-X` 的 AF_UNIX
 > socket 与 server 通信，因此能运行编辑器、计算器和 Doom，同时串口 shell 始终保留。
 
-### 17.2 两分钟版本的讲解顺序
+### 18.2 两分钟版本的讲解顺序
 
 1. **硬件层**：QEMU 模拟 GPU、键盘和平板；RISC-V 走 MMIO，LoongArch 走 PCI。
 2. **驱动层**：统一为 `DisplayDevice` 和 `InputDevice`，上层不依赖 transport。
@@ -780,7 +1176,7 @@ rm -f /tmp/.nano-X
 6. **安全和扩展**：lease 防止 DMA 页提前释放，设备映射不参与 COW/普通帧回收；feature
    与内核 GUI 互斥，默认比赛构建不受影响。
 
-### 17.3 常见答辩问题
+### 18.3 常见答辩问题
 
 **问：Nano-X 是驱动吗？**
 
@@ -832,7 +1228,7 @@ Nano-X 同时观察事件。
 保留 `DisplayDevice/InputDevice` 上层接口，替换设备发现和具体驱动即可。fbdev、evdev、
 MM 设备映射、Nano-X 和用户程序不需要跟着重写。
 
-## 18. 术语表
+## 19. 术语表
 
 | 术语 | 简单解释 |
 |---|---|

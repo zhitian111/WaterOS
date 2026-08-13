@@ -1,6 +1,9 @@
 [workspace]
     members = [ "./syscall-api/api-v0/", "./syscall-impl/impl-kernel/" ]
 
+[patch.crates-io]
+    virtio-drivers = { path = "../../vendor/virtio-drivers" }
+
 [package]
     name = "wateros-syscall"
     version = "0.1.0"

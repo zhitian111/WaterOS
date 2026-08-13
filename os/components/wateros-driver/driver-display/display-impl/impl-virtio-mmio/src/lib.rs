@@ -6,7 +6,9 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::{ptr, ptr::NonNull, slice};
 
-use api_v0::{DisplayDevice, DriverError, DriverResult, FramebufferInfo, PixelFormat};
+use api_v0::{
+    DisplayDevice, DriverError, DriverResult, FramebufferInfo, FramebufferRegion, PixelFormat,
+};
 use driver_api::MmioRegion;
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
 use mm_api::addr::PhysPageNum;
@@ -137,6 +139,12 @@ impl DisplayDevice for VirtioGpuMmioDevice {
     fn flush(&mut self) -> DriverResult<()> {
         self.inner
             .flush()
+            .map_err(|_| DriverError::IoError)
+    }
+
+    fn flush_region(&mut self, region : FramebufferRegion) -> DriverResult<()> {
+        self.inner
+            .flush_region(region.x, region.y, region.width, region.height)
             .map_err(|_| DriverError::IoError)
     }
 }

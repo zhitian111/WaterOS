@@ -215,7 +215,8 @@ Doom 安装位置：
 /usr/share/games/doom/doom1.wad
 ```
 
-`start-doom` 默认使用三倍窗口并直接进入 E1M1。要进入标题画面和菜单，可执行：
+`start-doom` 默认使用二倍窗口（640×400）并直接进入 E1M1。二倍窗口显著减少软件缩放和
+VirtIO GPU 提交的像素量。需要三倍窗口时可执行：
 
 ```sh
 start-doom -3
@@ -226,6 +227,16 @@ start-doom -3
 ```sh
 start-doom -3 -warp 1 2
 ```
+
+性能统计默认关闭。排查刷新次数或 Doom 帧率时可分别启用：
+
+```sh
+NANOX_STATS=1 start-nanox >/tmp/nanox.log 2>&1 &
+DOOM_STATS=1 start-doom
+```
+
+Nano-X 统计会报告脏区更新、present 次数和提交像素数；Doom 统计会报告 FPS、像素转换和
+请求提交耗时。
 
 完整图形链路和排查方式见
 [`Nano-X 支持文档`](../docs/todo/kasss's_todo_list/nanox.md)。

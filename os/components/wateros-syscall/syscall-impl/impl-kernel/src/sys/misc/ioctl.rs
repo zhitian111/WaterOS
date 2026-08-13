@@ -4,7 +4,10 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use vfs::api::{VfsError, VfsFramebufferInfo, VfsInputDeviceInfo, VfsSpecialDeviceInfo};
+use vfs::api::{
+    VfsError, VfsFramebufferInfo, VfsFramebufferRegion, VfsInputDeviceInfo,
+    VfsSpecialDeviceInfo,
+};
 
 use crate::sys::time::rtc::sys_rtc_ioctl;
 use crate::user_copy::{copy_from_user_struct, copy_to_user, copy_to_user_struct};
@@ -31,6 +34,8 @@ const FBIOGET_FSCREENINFO : u32 = 0x4602;
 const FBIOGETCMAP : u32 = 0x4604;
 const FBIOPUTCMAP : u32 = 0x4605;
 const FBIOPAN_DISPLAY : u32 = 0x4606;
+/// WaterOS framebuffer 扩展：提交一个 `WosFramebufferRegion` 脏矩形。
+const WOSFBIO_FLUSH_RECT : u32 = 0x4010_5701;
 
 const EVDEV_IOCTL_TYPE : u32 = b'E' as u32;
 const EVIOCGVERSION_NR : u32 = 0x01;
@@ -103,6 +108,17 @@ struct LinuxFbVarScreenInfo {
 
 const _ : () = assert!(core::mem::size_of::<LinuxFbFixScreenInfo>() == 80);
 const _ : () = assert!(core::mem::size_of::<LinuxFbVarScreenInfo>() == 160);
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WosFramebufferRegion {
+    x : u32,
+    y : u32,
+    width : u32,
+    height : u32,
+}
+
+const _ : () = assert!(core::mem::size_of::<WosFramebufferRegion>() == 16);
 
 fn fb_var(info : VfsFramebufferInfo) -> LinuxFbVarScreenInfo {
     LinuxFbVarScreenInfo { xres : info.width,
@@ -184,6 +200,23 @@ fn framebuffer_ioctl(fd : usize,
                     Ok(()) => UserRet::from_success(0),
                     Err(error) => UserRet::from_error(vfs_error_to_errno(error)),
                 }
+            }
+        }
+        WOSFBIO_FLUSH_RECT => {
+            let requested = match copy_from_user_struct::<WosFramebufferRegion>(argp) {
+                Ok(value) => value,
+                Err(error) => return UserRet::from_error(error),
+            };
+            let region = VfsFramebufferRegion { x : requested.x,
+                                                 y : requested.y,
+                                                 width : requested.width,
+                                                 height : requested.height };
+            if !region.fits(info) {
+                return UserRet::from_error(ErrNo::EINVAL);
+            }
+            match vfs::fd::with_current_io(fd, |handle| handle.flush_device_region(region)) {
+                Ok(()) => UserRet::from_success(0),
+                Err(error) => UserRet::from_error(vfs_error_to_errno(error)),
             }
         }
         FBIOGETCMAP | FBIOPUTCMAP => UserRet::from_error(ErrNo::ENOTTY),

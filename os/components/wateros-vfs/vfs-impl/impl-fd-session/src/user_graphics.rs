@@ -14,11 +14,11 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use api_v0::{
     VfsCopyProgress, VfsDeviceMapping, VfsDeviceMappingLease, VfsError,
-    VfsFramebufferInfo, VfsInputDeviceInfo, VfsIoHandle, VfsMetadata, VfsNodeType,
+    VfsFramebufferInfo, VfsFramebufferRegion, VfsInputDeviceInfo, VfsIoHandle, VfsMetadata, VfsNodeType,
     VfsOpenDescriptionState, VfsPreparedRead, VfsReadFinish, VfsReadLease,
     VfsReadReservation, VfsResult, VfsSeekWhence, VfsSpecialDeviceInfo,
 };
-use driver_display_api_v0::{FramebufferInfo, SharedDisplayDevice};
+use driver_display_api_v0::{FramebufferInfo, FramebufferRegion, SharedDisplayDevice};
 use driver_input_api_v0::{
     input_devices, InputDeviceInfo, InputDeviceKind, RawInputEvent, SharedInputDevice,
 };
@@ -117,13 +117,18 @@ impl Drop for FramebufferReadLease {
 /// `/dev/fb0` 的打开文件描述。
 pub struct FramebufferHandle {
     device : SharedDisplayDevice,
+    /// 显示模式和 DMA 映射在设备注册后保持不变。缓存这份信息可让 ioctl
+    /// 参数复制、`stat` 和 `mmap` 查询都不必获取 display 锁。
+    info : VfsFramebufferInfo,
     description : Arc<VfsOpenDescriptionState>,
     accmode : u32,
 }
 
 impl FramebufferHandle {
     fn new(device : SharedDisplayDevice, accmode : u32, nonblocking : bool) -> Self {
+        let info = map_fb_info(device.lock().info());
         Self { device,
+               info,
                description : Arc::new(VfsOpenDescriptionState::new(
                    0,
                    if nonblocking { O_NONBLOCK } else { 0 },
@@ -201,7 +206,7 @@ impl VfsIoHandle for FramebufferHandle {
     }
 
     fn seek(&mut self, offset : i64, whence : VfsSeekWhence) -> VfsResult<u64> {
-        let len = self.device.lock().info().byte_len as u64;
+        let len = self.info.byte_len as u64;
         match whence {
             VfsSeekWhence::Set if offset >= 0 => self.description.set_offset_if_idle(offset as u64),
             VfsSeekWhence::Cur => self.description.add_signed_offset(offset),
@@ -218,11 +223,12 @@ impl VfsIoHandle for FramebufferHandle {
     }
 
     fn metadata(&self) -> VfsResult<VfsMetadata> {
-        Ok(special_metadata("/dev/fb0", self.device.lock().info().byte_len as u64, 0o20660))
+        Ok(special_metadata("/dev/fb0", self.info.byte_len as u64, 0o20660))
     }
 
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
         Ok(Box::new(Self { device : self.device.clone(),
+                           info : self.info,
                            description : self.description.clone(),
                            accmode : self.accmode }))
     }
@@ -242,19 +248,32 @@ impl VfsIoHandle for FramebufferHandle {
     }
 
     fn special_device_info(&self) -> Option<VfsSpecialDeviceInfo> {
-        Some(VfsSpecialDeviceInfo::Framebuffer(map_fb_info(self.device.lock().info())))
+        Some(VfsSpecialDeviceInfo::Framebuffer(self.info))
     }
 
     fn device_mapping(&self) -> VfsResult<VfsDeviceMapping> {
-        let info = self.device.lock().info();
         let lease : Arc<dyn VfsDeviceMappingLease> = self.device.clone();
-        Ok(VfsDeviceMapping { phys_start : info.phys_base,
-                              len : info.mapped_len,
+        Ok(VfsDeviceMapping { phys_start : self.info.phys_base,
+                              len : self.info.mapped_len,
                               lease })
     }
 
     fn flush_device(&mut self) -> VfsResult<()> {
         self.device.lock().flush().map_err(|_| VfsError::Driver)
+    }
+
+    fn flush_device_region(&mut self,
+                           region : VfsFramebufferRegion)
+                           -> VfsResult<()> {
+        if !region.fits(self.info) {
+            return Err(VfsError::InvalidPath);
+        }
+        let mut device = self.device.lock();
+        device.flush_region(FramebufferRegion { x : region.x,
+                                                 y : region.y,
+                                                 width : region.width,
+                                                 height : region.height })
+              .map_err(|_| VfsError::Driver)
     }
 }
 

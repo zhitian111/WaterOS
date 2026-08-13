@@ -31,6 +31,9 @@
         "./driver-network/network-impl/impl-virtio-mmio/",
         "./driver-network/network-impl/impl-virtio-pci/",
     ]
+
+[patch.crates-io]
+    virtio-drivers = { path = "../../vendor/virtio-drivers" }
 [package]
     name = "wateros-driver"
     version = "0.1.0"

@@ -65,6 +65,40 @@ class ConfigurationTests(unittest.TestCase):
                     "start-doom")
         self.assertTrue(launcher.is_file())
         self.assertIn("DOOMWADDIR", launcher.read_text(encoding="utf-8"))
+        menu = (userland.PACKAGE_ROOT / "microwindows/config/"
+                "nxlaunch.cnf").read_text(encoding="utf-8")
+        self.assertIn("Doom - /bin/sh /usr/bin/start-doom", menu)
+        self.assertNotIn("Doom - /usr/bin/start-doom", menu)
+
+    def test_nanox_input_and_present_optimizations_are_configured(self) -> None:
+        package = userland.PACKAGE_ROOT / "microwindows"
+        optimization = (package / "patches/"
+                        "0005-wateros-input-present-doom-performance.patch")
+        text = optimization.read_text(encoding="utf-8")
+        all_patches = "\n".join(
+            patch.read_text(encoding="utf-8")
+            for patch in sorted((package / "patches").glob("*.patch")))
+        qwerty = "qwertyuiopasdfghjklzxcvbnm"
+        for letter in qwerty:
+            mapping = f"[KEY_{letter.upper()}] = '{letter}'"
+            self.assertIn(mapping, text)
+        added_lines = "\n".join(
+            line[1:] for line in text.splitlines()
+            if line.startswith("+") and not line.startswith("+++"))
+        self.assertNotIn("code - KEY_A", added_lines)
+        self.assertIn("WOSFBIO_FLUSH_RECT", text)
+        self.assertIn("_IOW('W', 0x01, struct wos_fb_rect)", text)
+        self.assertIn("upper = shift ^ caps_lock", text)
+        self.assertIn("code == KEY_CAPSLOCK && value == 1", text)
+        self.assertIn("event.value == 0 ? KBD_KEYRELEASE : KBD_KEYPRESS", all_patches)
+        self.assertIn("SYN_DROPPED", text)
+        self.assertIn("GrReqShmCmds(3 * 1024 * 1024)", text)
+        self.assertIn("render_scaled_frame", text)
+        config = (package / "config/wateros").read_text(encoding="utf-8")
+        self.assertIn("HAVE_SHAREDMEM_SUPPORT   = Y", config)
+        self.assertFalse((package / "patches/0003-wateros-present-every-loop.patch").exists())
+        launcher = (package / "scripts/start-doom").read_text(encoding="utf-8")
+        self.assertIn('set -- -2 "$@"', launcher)
 
     def test_dependency_cycle_is_rejected(self) -> None:
         def package(name: str) -> userland.Package:

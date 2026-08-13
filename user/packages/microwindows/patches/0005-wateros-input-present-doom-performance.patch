@@ -1,0 +1,702 @@
+diff --git a/src/contrib/doom/i_system.c b/src/contrib/doom/i_system.c
+index 3322a3a..6ebe655 100644
+--- a/src/contrib/doom/i_system.c
++++ b/src/contrib/doom/i_system.c
+@@ -122,6 +122,11 @@ printf("OPEN GRAPHICS\n");
+     if (GrOpen() < 0)
+         I_Error("Can't open graphics\n");
+ 
++    /* Batch a complete 3x ARGB frame in Nano-X's existing SysV SHM command
++     * buffer.  Allocation failure is deliberately non-fatal: the client
++     * library falls back to the normal AF_UNIX request buffer. */
++    GrReqShmCmds(3 * 1024 * 1024);
++
+     //I_InitSound();
+     //  I_InitGraphics();
+ }
+diff --git a/src/contrib/doom/i_video.c b/src/contrib/doom/i_video.c
+index 1a29b43..f6141b9 100644
+--- a/src/contrib/doom/i_video.c
++++ b/src/contrib/doom/i_video.c
+@@ -25,7 +25,8 @@ static const char
+ rcsid[] = "$Id: i_x.c,v 1.6 1997/02/03 22:45:10 b1 Exp $";
+ 
+ #include <stdlib.h>
+-#include <alloca.h>
++#include <string.h>
++#include <sys/time.h>
+ #include "m_swap.h"
+ #include "doomstat.h"
+ #include "i_system.h"
+@@ -49,11 +50,16 @@ boolean		grabMouse;
+ // to use ....
+ static int	multiply=1;
+ 
+-/* Upstream allocates both converted frames with alloca() on every redraw.
+- * A 3x ARGB frame exhausts a normal RV64 userspace stack, so keep reusable
+- * heap buffers instead.  The scale is fixed before the first frame. */
+-static unsigned char *scaled_output;
++/* The scale is fixed before the first frame, so one reusable 32-bit output
++ * buffer is enough.  Converting directly into it avoids an intermediate
++ * scaled 8-bit frame on every redraw. */
+ static uint32_t *argb_output;
++static uint32_t argb_palette[256];
++static int doom_stats_enabled = -1;
++static unsigned long doom_stats_frames;
++static unsigned long long doom_stats_convert_us;
++static unsigned long long doom_stats_submit_us;
++static struct timeval doom_stats_last;
+ 
+ //
+ //  Translates the key 
+@@ -115,8 +121,6 @@ void I_ShutdownGraphics(void)
+ {
+   free(argb_output);
+   argb_output = NULL;
+-  free(scaled_output);
+-  scaled_output = NULL;
+   GrClose();
+ }
+ 
+@@ -221,181 +225,126 @@ void I_UpdateNoBlit (void)
+ //
+ // I_FinishUpdate
+ //
+-void I_FinishUpdate (void)
++static unsigned long long
++timeval_delta_us(const struct timeval *start, const struct timeval *end)
+ {
++    long seconds = end->tv_sec - start->tv_sec;
++    long microseconds = end->tv_usec - start->tv_usec;
+ 
+-    static int	lasttic;
+-    int		tics;
+-    int		i;
+-
+-    // draws little dots on the bottom of the screen
+-    if (devparm) {
+-	i = I_GetTime();
+-	tics = i - lasttic;
+-	lasttic = i;
+-	if (tics > 20) tics = 20;
+-
+-	for (i=0 ; i<tics*2 ; i+=2)
+-	    screens[0][ (SCREENHEIGHT-1)*SCREENWIDTH + i] = 0xff;
+-	for ( ; i<20*2 ; i+=2)
+-	    screens[0][ (SCREENHEIGHT-1)*SCREENWIDTH + i] = 0x0;
++    if (microseconds < 0) {
++        --seconds;
++        microseconds += 1000000;
+     }
++    if (seconds < 0)
++        return 0;
++    return (unsigned long long)seconds * 1000000ULL
++        + (unsigned long long)microseconds;
++}
+ 
+-	// allocate temp buffer for scaling
+-	int outpitch = SCREENWIDTH * multiply;
+-	int outsize = SCREENHEIGHT * multiply * outpitch;
+-	if (!scaled_output) {
+-	    scaled_output = malloc(outsize);
+-	    if (!scaled_output)
+-		I_Error("Couldn't allocate scaled screen memory");
+-	}
+-
+-    // scales the screen size before blitting it
+-    if (multiply == 1)
+-    {
+-	unsigned char *olineptr;
+-	unsigned char *ilineptr;
+-	int y;
+-
+-	ilineptr = (unsigned char *) screens[0];
+-	olineptr = scaled_output;
+-
+-	y = SCREENHEIGHT;
+-	while (y--)
+-	{
+-	    memcpy(olineptr, ilineptr, outpitch);
+-	    ilineptr += SCREENWIDTH;
+-	    olineptr += outpitch;
+-	}
+-    }
+-    else if (multiply == 2)
+-    {
+-	unsigned int *olineptrs[2];
+-	unsigned int *ilineptr;
+-	int x, y, i;
+-	unsigned int twoopixels;
+-	unsigned int twomoreopixels;
+-	unsigned int fouripixels;
+-
+-	ilineptr = (unsigned int *) (screens[0]);
+-	for (i=0 ; i<2 ; i++) {
+-	    olineptrs[i] = (unsigned int *)&scaled_output[i*outpitch];
++static int
++doom_stats_active(void)
++{
++    const char *enabled;
++
++    if (doom_stats_enabled >= 0)
++        return doom_stats_enabled;
++    enabled = getenv("DOOM_STATS");
++    doom_stats_enabled = enabled && enabled[0] && strcmp(enabled, "0");
++    gettimeofday(&doom_stats_last, NULL);
++    return doom_stats_enabled;
++}
++
++static void
++render_scaled_frame(void)
++{
++    int source_y;
++    int source_x;
++    int scale_x;
++    int scale_y;
++    int output_width = SCREENWIDTH * multiply;
++    const unsigned char *source;
++    uint32_t *first_row;
++    uint32_t *output;
++
++    for (source_y = 0; source_y < SCREENHEIGHT; ++source_y) {
++        source = screens[0] + source_y * SCREENWIDTH;
++        first_row = argb_output + source_y * multiply * output_width;
++        output = first_row;
++        for (source_x = 0; source_x < SCREENWIDTH; ++source_x) {
++            uint32_t color = argb_palette[source[source_x]];
++            for (scale_x = 0; scale_x < multiply; ++scale_x)
++                *output++ = color;
+         }
++        for (scale_y = 1; scale_y < multiply; ++scale_y)
++            memcpy(first_row + scale_y * output_width, first_row,
++                   output_width * sizeof(*first_row));
++    }
++}
+ 
+-	y = SCREENHEIGHT;
+-	while (y--)
+-	{
+-	    x = SCREENWIDTH;
+-	    do
+-	    {
+-		fouripixels = *ilineptr++;
+-		twoopixels =	(fouripixels & 0xff000000)
+-		    |	((fouripixels>>8) & 0xffff00)
+-		    |	((fouripixels>>16) & 0xff);
+-		twomoreopixels =	((fouripixels<<16) & 0xff000000)
+-		    |	((fouripixels<<8) & 0xffff00)
+-		    |	(fouripixels & 0xff);
+-#ifdef __BIG_ENDIAN__
+-		*olineptrs[0]++ = twoopixels;
+-		*olineptrs[1]++ = twoopixels;
+-		*olineptrs[0]++ = twomoreopixels;
+-		*olineptrs[1]++ = twomoreopixels;
+-#else
+-		*olineptrs[0]++ = twomoreopixels;
+-		*olineptrs[1]++ = twomoreopixels;
+-		*olineptrs[0]++ = twoopixels;
+-		*olineptrs[1]++ = twoopixels;
+-#endif
+-	    } while (x-=4);
+-	    olineptrs[0] += outpitch/4;
+-	    olineptrs[1] += outpitch/4;
+-	}
++void I_FinishUpdate (void)
++{
++    static int lasttic;
++    int tics;
++    int i;
++    int pixel_count;
++    int stats;
++    struct timeval started;
++    struct timeval converted;
++    struct timeval submitted;
+ 
++    if (devparm) {
++        i = I_GetTime();
++        tics = i - lasttic;
++        lasttic = i;
++        if (tics > 20) tics = 20;
++
++        for (i = 0; i < tics * 2; i += 2)
++            screens[0][(SCREENHEIGHT - 1) * SCREENWIDTH + i] = 0xff;
++        for (; i < 20 * 2; i += 2)
++            screens[0][(SCREENHEIGHT - 1) * SCREENWIDTH + i] = 0x0;
+     }
+-    else if (multiply == 3)
+-    {
+-	unsigned int *olineptrs[3];
+-	unsigned int *ilineptr;
+-	int x, y, i;
+-	unsigned int fouropixels[3];
+-	unsigned int fouripixels;
+-
+-	ilineptr = (unsigned int *) (screens[0]);
+-	for (i=0 ; i<3 ; i++) {
+-	    olineptrs[i] = 
+-		(unsigned int *)&scaled_output[i*outpitch];
+-        }
+-
+-	y = SCREENHEIGHT;
+-	while (y--)
+-	{
+-	    x = SCREENWIDTH;
+-	    do
+-	    {
+-		fouripixels = *ilineptr++;
+-		fouropixels[0] = (fouripixels & 0xff000000)
+-		    |	((fouripixels>>8) & 0xff0000)
+-		    |	((fouripixels>>16) & 0xffff);
+-		fouropixels[1] = ((fouripixels<<8) & 0xff000000)
+-		    |	(fouripixels & 0xffff00)
+-		    |	((fouripixels>>8) & 0xff);
+-		fouropixels[2] = ((fouripixels<<16) & 0xffff0000)
+-		    |	((fouripixels<<8) & 0xff00)
+-		    |	(fouripixels & 0xff);
+-#ifdef __BIG_ENDIAN__
+-		*olineptrs[0]++ = fouropixels[0];
+-		*olineptrs[1]++ = fouropixels[0];
+-		*olineptrs[2]++ = fouropixels[0];
+-		*olineptrs[0]++ = fouropixels[1];
+-		*olineptrs[1]++ = fouropixels[1];
+-		*olineptrs[2]++ = fouropixels[1];
+-		*olineptrs[0]++ = fouropixels[2];
+-		*olineptrs[1]++ = fouropixels[2];
+-		*olineptrs[2]++ = fouropixels[2];
+-#else
+-		*olineptrs[0]++ = fouropixels[2];
+-		*olineptrs[1]++ = fouropixels[2];
+-		*olineptrs[2]++ = fouropixels[2];
+-		*olineptrs[0]++ = fouropixels[1];
+-		*olineptrs[1]++ = fouropixels[1];
+-		*olineptrs[2]++ = fouropixels[1];
+-		*olineptrs[0]++ = fouropixels[0];
+-		*olineptrs[1]++ = fouropixels[0];
+-		*olineptrs[2]++ = fouropixels[0];
+-#endif
+-	    } while (x-=4);
+-	    olineptrs[0] += 2*outpitch/4;
+-	    olineptrs[1] += 2*outpitch/4;
+-	    olineptrs[2] += 2*outpitch/4;
+-	}
+ 
++    pixel_count = SCREENWIDTH * multiply * SCREENHEIGHT * multiply;
++    if (!argb_output) {
++        argb_output = malloc(pixel_count * sizeof(*argb_output));
++        if (!argb_output)
++            I_Error("Couldn't allocate ARGB screen memory");
+     }
+ 
+-#if MWPIXEL_FORMAT == MWPF_TRUECOLORARGB
+-	/* convert palette screen to 32-bit ARGB and display*/
+-	int size = SCREENHEIGHT * multiply * SCREENWIDTH * multiply;
+-	uint32_t *argb;
+-	if (!argb_output) {
+-	    argb_output = malloc(size * sizeof(*argb_output));
+-	    if (!argb_output)
+-		I_Error("Couldn't allocate ARGB screen memory");
+-	}
+-	argb = argb_output;
+-
+-#define CONVPAL(c)  RGB2PIXEL8888(pal.palette[c].r, pal.palette[c].g, pal.palette[c].b)
+-	unsigned char *input = scaled_output;
+-	for (i=0; i<size; i++)
+-	{
+-		*argb++ = CONVPAL(*input);
+-		input++;
+-	}
+-	GrArea(win, gc, 0, 0, SCREENWIDTH*multiply, SCREENHEIGHT*multiply,
+-		argb_output, MWPF_TRUECOLORARGB);
+-#elif MWPIXEL_FORMAT == MWPF_PALETTE
+-    GrArea(win, gc, 0, 0, SCREENWIDTH*multiply, SCREENHEIGHT*multiply, scaled_output, MWPF_PALETTE);
+-#else
+-#error MWPIXEL_FORMAT not supported.
+-#endif
++    stats = doom_stats_active();
++    if (stats)
++        gettimeofday(&started, NULL);
++    render_scaled_frame();
++    if (stats)
++        gettimeofday(&converted, NULL);
++
++    GrArea(win, gc, 0, 0, SCREENWIDTH * multiply, SCREENHEIGHT * multiply,
++           argb_output, MWPF_TRUECOLORARGB);
++    /* With Nano-X shared command buffers this is the per-frame boundary:
++     * all Area chunks are consumed before the server presents one dirty rect. */
++    GrFlush();
++
++    if (stats) {
++        unsigned long long interval_us;
++        unsigned long long fps_x10;
++
++        gettimeofday(&submitted, NULL);
++        ++doom_stats_frames;
++        doom_stats_convert_us += timeval_delta_us(&started, &converted);
++        doom_stats_submit_us += timeval_delta_us(&converted, &submitted);
++        interval_us = timeval_delta_us(&doom_stats_last, &submitted);
++        if (interval_us >= 1000000ULL) {
++            fps_x10 = doom_stats_frames * 10000000ULL / interval_us;
++            printf("[doom-fps] fps=%llu.%llu frames=%lu convert_us=%llu submit_us=%llu\n",
++                   fps_x10 / 10, fps_x10 % 10, doom_stats_frames,
++                   doom_stats_convert_us / doom_stats_frames,
++                   doom_stats_submit_us / doom_stats_frames);
++            doom_stats_frames = 0;
++            doom_stats_convert_us = 0;
++            doom_stats_submit_us = 0;
++            doom_stats_last = submitted;
++        }
++    }
+ }
+ 
+ 
+@@ -414,18 +363,24 @@ void I_ReadScreen (byte* scr)
+ void I_SetPalette (byte* palette)
+ {
+     int i;
+-	static int firsttime = 1;
++    static int firsttime = 1;
+ 
+-	if (!firsttime)		/* only set palette once to avoid flicker*/
+-		return;
+-	firsttime = 0;
+     pal.count = 256;
+     for ( i=0; i<256; ++i ) {
+ 	pal.palette[i].r = gammatable[usegamma][*palette++];
+ 	pal.palette[i].g = gammatable[usegamma][*palette++];
+ 	pal.palette[i].b = gammatable[usegamma][*palette++];
++	argb_palette[i] = RGB2PIXEL8888(pal.palette[i].r,
++	                                  pal.palette[i].g,
++	                                  pal.palette[i].b);
++    }
++    /* True-color rendering uses argb_palette directly.  The system palette
++     * only needs its one-time initialization, while Doom's later palette
++     * changes still update pain/pickup effects in the lookup table above. */
++    if (firsttime) {
++	firsttime = 0;
++	GrSetSystemPalette(0, &pal);
+     }
+-    GrSetSystemPalette(0, &pal);
+ }
+ 
+ 
+diff --git a/src/drivers/kbd_wateros_evdev.c b/src/drivers/kbd_wateros_evdev.c
+index 75d9948..6e67a34 100644
+--- a/src/drivers/kbd_wateros_evdev.c
++++ b/src/drivers/kbd_wateros_evdev.c
+@@ -55,6 +55,15 @@ static MWKEY special_key(unsigned code)
+ 
+ static MWKEY printable_key(unsigned code)
+ {
++    static const char letters[] = {
++        [KEY_Q] = 'q', [KEY_W] = 'w', [KEY_E] = 'e', [KEY_R] = 'r',
++        [KEY_T] = 't', [KEY_Y] = 'y', [KEY_U] = 'u', [KEY_I] = 'i',
++        [KEY_O] = 'o', [KEY_P] = 'p', [KEY_A] = 'a', [KEY_S] = 's',
++        [KEY_D] = 'd', [KEY_F] = 'f', [KEY_G] = 'g', [KEY_H] = 'h',
++        [KEY_J] = 'j', [KEY_K] = 'k', [KEY_L] = 'l', [KEY_Z] = 'z',
++        [KEY_X] = 'x', [KEY_C] = 'c', [KEY_V] = 'v', [KEY_B] = 'b',
++        [KEY_N] = 'n', [KEY_M] = 'm'
++    };
+     static const char normal[] = {
+         [KEY_1] = '1', [KEY_2] = '2', [KEY_3] = '3', [KEY_4] = '4',
+         [KEY_5] = '5', [KEY_6] = '6', [KEY_7] = '7', [KEY_8] = '8',
+@@ -72,18 +81,44 @@ static MWKEY printable_key(unsigned code)
+         [KEY_COMMA] = '<', [KEY_DOT] = '>', [KEY_SLASH] = '?', [KEY_SPACE] = ' '
+     };
+     int shift = (modifiers & MWKMOD_SHIFT) != 0;
+-    if (code >= KEY_A && code <= KEY_Z) {
++    if (code < sizeof(letters) && letters[code]) {
+         int upper = shift ^ caps_lock;
+-        return (MWKEY)((upper ? 'A' : 'a') + (code - KEY_A));
++        char letter = letters[code];
++        return (MWKEY)(upper ? letter - ('a' - 'A') : letter);
+     }
+     if (code < sizeof(normal) && normal[code])
+         return (MWKEY)(shift ? shifted[code] : normal[code]);
+     return special_key(code);
+ }
+ 
+-static void update_modifier(unsigned code, int down)
++static MWKEY keypad_key(unsigned code)
++{
++    switch (code) {
++    case KEY_KP0: return MWKEY_KP0;
++    case KEY_KP1: return MWKEY_KP1;
++    case KEY_KP2: return MWKEY_KP2;
++    case KEY_KP3: return MWKEY_KP3;
++    case KEY_KP4: return MWKEY_KP4;
++    case KEY_KP5: return MWKEY_KP5;
++    case KEY_KP6: return MWKEY_KP6;
++    case KEY_KP7: return MWKEY_KP7;
++    case KEY_KP8: return MWKEY_KP8;
++    case KEY_KP9: return MWKEY_KP9;
++    case KEY_KPDOT: return MWKEY_KP_PERIOD;
++    case KEY_KPSLASH: return MWKEY_KP_DIVIDE;
++    case KEY_KPASTERISK: return MWKEY_KP_MULTIPLY;
++    case KEY_KPMINUS: return MWKEY_KP_MINUS;
++    case KEY_KPPLUS: return MWKEY_KP_PLUS;
++    case KEY_KPENTER: return MWKEY_KP_ENTER;
++    case KEY_KPEQUAL: return MWKEY_KP_EQUALS;
++    default: return MWKEY_UNKNOWN;
++    }
++}
++
++static void update_modifier(unsigned code, int value)
+ {
+     MWKEYMOD mask = 0;
++    int down = value != 0;
+     switch (code) {
+     case KEY_LEFTSHIFT: mask = MWKMOD_LSHIFT; break;
+     case KEY_RIGHTSHIFT: mask = MWKMOD_RSHIFT; break;
+@@ -99,13 +134,18 @@ static void update_modifier(unsigned code, int down)
+         if (down) modifiers |= mask;
+         else modifiers &= ~mask;
+     }
+-    if (code == KEY_CAPSLOCK && down) {
++    if (code == KEY_CAPSLOCK && value == 1) {
+         caps_lock = !caps_lock;
+         if (caps_lock) modifiers |= MWKMOD_CAPS;
+         else modifiers &= ~MWKMOD_CAPS;
+     }
+ }
+ 
++static void reset_transient_modifiers(void)
++{
++    modifiers &= MWKMOD_CAPS;
++}
++
+ static int KBD_Open(KBDDEVICE *pkd)
+ {
+     (void)pkd;
+@@ -135,9 +175,14 @@ static int KBD_Read(MWKEY *key, MWKEYMOD *mods, MWSCANCODE *scancode)
+         ssize_t count = read(keyboard_fd, &event, sizeof(event));
+         if (count < 0 && (errno == EAGAIN || errno == EINTR)) return KBD_NODATA;
+         if (count != sizeof(event)) return count < 0 ? KBD_FAIL : KBD_NODATA;
+-        if (event.type != EV_KEY) continue;
+-        update_modifier(event.code, event.value != 0);
++        if (event.type == EV_SYN && event.code == SYN_DROPPED) {
++            reset_transient_modifiers();
++            continue;
++        }
++        if (event.type != EV_KEY || event.value < 0 || event.value > 2) continue;
++        update_modifier(event.code, event.value);
+         *key = printable_key(event.code);
++        if (*key == MWKEY_UNKNOWN) *key = keypad_key(event.code);
+         *mods = modifiers;
+         *scancode = (MWSCANCODE)event.code;
+         if (*key == MWKEY_UNKNOWN) continue;
+diff --git a/src/drivers/scr_fb.c b/src/drivers/scr_fb.c
+index 92b56ac..d431b24 100644
+--- a/src/drivers/scr_fb.c
++++ b/src/drivers/scr_fb.c
+@@ -10,6 +10,7 @@
+  * Note: modify select_fb_driver() to add new framebuffer subdrivers
+  */
+ #define _GNU_SOURCE 1
++#include <errno.h>
+ #include <fcntl.h>
+ #include <limits.h>
+ #if LINUX
+@@ -18,6 +19,7 @@
+ #include <linux/vt.h>
+ #endif
+ #include <stdarg.h>
++#include <stdint.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -56,6 +58,29 @@ static struct fb_fix_screeninfo  fb_fix;
+ static struct fb_var_screeninfo fb_var;
+ #endif
+ 
++#if WATEROS_NANOX
++struct wos_fb_rect {
++	uint32_t x;
++	uint32_t y;
++	uint32_t width;
++	uint32_t height;
++};
++
++#define WOSFBIO_FLUSH_RECT _IOW('W', 0x01, struct wos_fb_rect)
++
++static int fb_dirty;
++static MWCOORD fb_dirty_x1;
++static MWCOORD fb_dirty_y1;
++static MWCOORD fb_dirty_x2;
++static MWCOORD fb_dirty_y2;
++static int fb_stats_enabled = -1;
++static unsigned long long fb_update_count;
++static unsigned long long fb_region_present_count;
++static unsigned long long fb_full_present_count;
++static unsigned long long fb_present_pixels;
++static struct timeval fb_stats_last;
++#endif
++
+ SCREENDEVICE	scrdev = {
+ 	0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0,
+ 	gen_fonts,
+@@ -268,6 +293,11 @@ open_linuxfb(PSD psd)
+ 
+ #if WATEROS_NANOX
+ 	psd->flags |= PSF_DELAYUPDATE;
++	fb_dirty = 1;
++	fb_dirty_x1 = 0;
++	fb_dirty_y1 = 0;
++	fb_dirty_x2 = psd->xres;
++	fb_dirty_y2 = psd->yres;
+ #endif
+ 	/* save original palette*/
+ 	ioctl_getpalette(0, 16, saved_red, saved_green, saved_blue);
+@@ -286,24 +316,95 @@ fail:
+ }
+ 
+ #if WATEROS_NANOX
+-static int fb_dirty;
++static void
++fb_report_stats(void)
++{
++	struct timeval now;
++	const char *enabled;
++
++	if (fb_stats_enabled < 0) {
++		enabled = getenv("NANOX_STATS");
++		fb_stats_enabled = enabled && enabled[0] && strcmp(enabled, "0");
++		gettimeofday(&fb_stats_last, NULL);
++	}
++	if (!fb_stats_enabled)
++		return;
++	gettimeofday(&now, NULL);
++	if (now.tv_sec <= fb_stats_last.tv_sec)
++		return;
++	fb_stats_last = now;
++	EPRINTF("[nanox-fb] updates=%llu region=%llu full=%llu pixels=%llu\n",
++		fb_update_count, fb_region_present_count, fb_full_present_count,
++		fb_present_pixels);
++}
+ 
+ static void
+ fb_update(PSD psd, MWCOORD x, MWCOORD y, MWCOORD width, MWCOORD height)
+ {
+-	(void)psd; (void)x; (void)y; (void)width; (void)height;
+-	fb_dirty = 1;
++	long x1 = x;
++	long y1 = y;
++	long x2;
++	long y2;
++
++	if (width <= 0 || height <= 0)
++		return;
++	x2 = x1 + (long)width;
++	y2 = y1 + (long)height;
++	if (x2 <= 0 || y2 <= 0 || x1 >= psd->xres || y1 >= psd->yres)
++		return;
++	if (x1 < 0) x1 = 0;
++	if (y1 < 0) y1 = 0;
++	if (x2 > psd->xres) x2 = psd->xres;
++	if (y2 > psd->yres) y2 = psd->yres;
++	if (!fb_dirty) {
++		fb_dirty_x1 = (MWCOORD)x1;
++		fb_dirty_y1 = (MWCOORD)y1;
++		fb_dirty_x2 = (MWCOORD)x2;
++		fb_dirty_y2 = (MWCOORD)y2;
++		fb_dirty = 1;
++	} else {
++		if (x1 < fb_dirty_x1) fb_dirty_x1 = (MWCOORD)x1;
++		if (y1 < fb_dirty_y1) fb_dirty_y1 = (MWCOORD)y1;
++		if (x2 > fb_dirty_x2) fb_dirty_x2 = (MWCOORD)x2;
++		if (y2 > fb_dirty_y2) fb_dirty_y2 = (MWCOORD)y2;
++	}
++	++fb_update_count;
+ }
+ 
+ static int
+ fb_preselect(PSD psd)
+ {
++	struct wos_fb_rect rect;
++	int result;
++	int full_fallback = 0;
++
+ 	(void)psd;
+ 	if (fb_dirty) {
+-		fb_dirty = 0;
+-		if (ioctl(fb, FBIOPAN_DISPLAY, &fb_var) < 0)
++		rect.x = (uint32_t)fb_dirty_x1;
++		rect.y = (uint32_t)fb_dirty_y1;
++		rect.width = (uint32_t)(fb_dirty_x2 - fb_dirty_x1);
++		rect.height = (uint32_t)(fb_dirty_y2 - fb_dirty_y1);
++		result = ioctl(fb, WOSFBIO_FLUSH_RECT, &rect);
++		if (result < 0 && errno == ENOTTY) {
++			full_fallback = 1;
++			result = ioctl(fb, FBIOPAN_DISPLAY, &fb_var);
++		}
++		if (result < 0) {
+ 			EPRINTF("WaterOS framebuffer flush failed: %m\n");
++		} else {
++			fb_dirty = 0;
++			if (full_fallback) {
++				++fb_full_present_count;
++				fb_present_pixels +=
++					(unsigned long long)psd->xres * psd->yres;
++			} else {
++				++fb_region_present_count;
++				fb_present_pixels +=
++					(unsigned long long)rect.width * rect.height;
++			}
++		}
+ 	}
++	fb_report_stats();
+ 	return 0;
+ }
+ #endif
+diff --git a/src/nanox/srvnet.c b/src/nanox/srvnet.c
+index 1f106c0..d7bff84 100644
+--- a/src/nanox/srvnet.c
++++ b/src/nanox/srvnet.c
+@@ -1811,8 +1811,11 @@ GrShmCmdsFlushWrapper(void *r)
+ 	nxReq 		*pr;
+ 	int 		length;
+ 	unsigned char 	*do_req, *do_req_last;
++	size_t		remaining;
++	int		valid = 1;
+ 
+-	if ( current_shm_cmds == 0 || current_shm_cmds_size < req->size ) {
++	if ( current_shm_cmds == 0 || req->size == 0 ||
++	     current_shm_cmds_size < req->size ) {
+ 		/* No or short shm present serverside, bug or mischief */
+ 		EPRINTF("nano-X: Ill behaved client assumes shm ok\n");
+ 		if ( req->reply ) {
+@@ -1826,15 +1829,31 @@ GrShmCmdsFlushWrapper(void *r)
+ 	do_req_last = (unsigned char *)current_shm_cmds + req->size;
+ 
+ 	while ( do_req < do_req_last ) {
++		remaining = (size_t)(do_req_last - do_req);
++		if (remaining < sizeof(nxReq)) {
++			valid = 0;
++			break;
++		}
+ 		pr = (nxReq *)do_req;
+ 		length = GetReqAlignedLen(pr);
+-		if ( pr->reqType < GrTotalNumCalls ) {
+-			GrFunctions[pr->reqType].func(pr);
+-		} else {
+-			EPRINTF("nano-X: Error bad shm function!\n");
++		if (length < (int)sizeof(nxReq) || (length & (ALIGNSZ - 1)) != 0 ||
++		    (size_t)length > remaining || pr->reqType >= GrTotalNumCalls ||
++		    pr->reqType == GrNumReqShmCmds ||
++		    pr->reqType == GrNumShmCmdsFlush) {
++			valid = 0;
++			break;
+ 		}
++		GrFunctions[pr->reqType].func(pr);
+ 		do_req += length;
+ 	}
++	if (!valid) {
++		EPRINTF("nano-X: rejected malformed shared command buffer\n");
++		if (req->reply) {
++			reply = 0;
++			GsWrite(current_fd, &reply, 1);
++		}
++		return;
++	}
+ 
+ 	if ( req->reply ) {
+ 		reply = 1;

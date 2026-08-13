@@ -29,7 +29,7 @@ pub use fd::{
 };
 pub use handle::{
     VfsCopyProgress, VfsDeviceMapping, VfsDeviceMappingLease, VfsFileHandle,
-    VfsFileContentIdentity, VfsFramebufferInfo, VfsInputDeviceInfo, VfsIoHandle,
+    VfsFileContentIdentity, VfsFramebufferInfo, VfsFramebufferRegion, VfsInputDeviceInfo, VfsIoHandle,
     VfsOpenDescriptionState, VfsOpenFlags, VfsOpenOps, VfsPreparedRead, VfsReadFinish,
     VfsReadLease, VfsReadReservation, VfsSeekWhence, VfsSpecialDeviceInfo,
 };

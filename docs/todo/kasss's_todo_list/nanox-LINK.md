@@ -24,7 +24,7 @@
 
 ### 1. QEMU 添加虚拟设备
 
-[qemu_run.py](/home/kasss/WaterOS/os/scripts/qemu_run.py:96)
+[qemu_run.py:96](/home/kasss/WaterOS/os/scripts/run/qemu_run.py)
 
 关键函数：
 
@@ -41,7 +41,7 @@
 
 Feature 定义位于：
 
-[Cargo.toml](/home/kasss/WaterOS/os/Cargo.toml:70)
+[Cargo.toml:70](/home/kasss/WaterOS/os/Cargo.toml)
 
 ```text
 user-graphics
@@ -52,7 +52,7 @@ user-graphics
 
 ### 2. 内核启动图形链路
 
-[main.rs](/home/kasss/WaterOS/os/src/main.rs:114)
+[main.rs:114](/home/kasss/WaterOS/os/src/main.rs)
 
 关键函数：
 
@@ -80,7 +80,7 @@ wateros_kernel_main()
 
 ### 1. RISC-V 驱动总入口
 
-[impl-qemu-riscv64-virt/src/lib.rs](/home/kasss/WaterOS/os/components/wateros-driver/driver-impl/impl-qemu-riscv64-virt/src/lib.rs:35)
+[impl-qemu-riscv64-virt/src/lib.rs:35](/home/kasss/WaterOS/os/components/wateros-driver/driver-impl/impl-qemu-riscv64-virt/src/lib.rs)
 
 关键函数：
 
@@ -98,14 +98,14 @@ wateros_kernel_main()
 
 顶层统一接口：
 
-[wateros-driver/src/lib.rs](/home/kasss/WaterOS/os/components/wateros-driver/src/lib.rs:43)
+[wateros-driver/src/lib.rs:43](/home/kasss/WaterOS/os/components/wateros-driver/src/lib.rs)
 
 - `machine()`
 - `init_after_boot()`
 
 ### 2. 识别 VirtIO 设备类型
 
-[enumerate.rs](/home/kasss/WaterOS/os/components/wateros-driver/driver-impl/impl-qemu-riscv64-virt/src/enumerate.rs:20)
+[enumerate.rs:20](/home/kasss/WaterOS/os/components/wateros-driver/driver-impl/impl-qemu-riscv64-virt/src/enumerate.rs)
 
 关键函数：
 
@@ -125,7 +125,7 @@ device_id = 18 → Input
 
 ### 3. 创建设备实例并注册
 
-[register.rs](/home/kasss/WaterOS/os/components/wateros-driver/driver-impl/impl-qemu-riscv64-virt/src/register.rs:38)
+[register.rs:38](/home/kasss/WaterOS/os/components/wateros-driver/driver-impl/impl-qemu-riscv64-virt/src/register.rs)
 
 关键函数：
 
@@ -167,7 +167,7 @@ Nano-X 软件绘制
 
 ### 1. 显示驱动公共接口
 
-[display-api/lib.rs](/home/kasss/WaterOS/os/components/wateros-driver/driver-display/display-api/api-v0/src/lib.rs:24)
+[display-api/lib.rs:24](/home/kasss/WaterOS/os/components/wateros-driver/driver-display/display-api/api-v0/src/lib.rs)
 
 重点数据结构：
 
@@ -198,7 +198,7 @@ Nano-X 软件绘制
 
 ### 2. RISC-V VirtIO GPU 实现
 
-[impl-virtio-mmio/src/lib.rs](/home/kasss/WaterOS/os/components/wateros-driver/driver-display/display-impl/impl-virtio-mmio/src/lib.rs:92)
+[impl-virtio-mmio/src/lib.rs:92](/home/kasss/WaterOS/os/components/wateros-driver/driver-display/display-impl/impl-virtio-mmio/src/lib.rs)
 
 关键函数：
 
@@ -217,7 +217,7 @@ Nano-X 软件绘制
 
 ### 3. LoongArch PCI GPU 实现
 
-[impl-virtio-pci/src/lib.rs](/home/kasss/WaterOS/os/components/wateros-driver/driver-display/display-impl/impl-virtio-pci/src/lib.rs:141)
+[impl-virtio-pci/src/lib.rs:141](/home/kasss/WaterOS/os/components/wateros-driver/driver-display/display-impl/impl-virtio-pci/src/lib.rs)
 
 关键函数：
 
@@ -241,7 +241,7 @@ LoongArch：VirtIO-PCI transport
 
 ### 1. VFS 公共设备接口
 
-[handle.rs](/home/kasss/WaterOS/os/components/wateros-vfs/vfs-api/api-v0/src/handle.rs:15)
+[handle.rs:15](/home/kasss/WaterOS/os/components/wateros-vfs/vfs-api/api-v0/src/handle.rs)
 
 重点数据结构：
 
@@ -262,7 +262,7 @@ LoongArch：VirtIO-PCI transport
 
 ### 2. 创建 `/dev/fb0`
 
-[user_graphics.rs](/home/kasss/WaterOS/os/components/wateros-vfs/vfs-impl/impl-fd-session/src/user_graphics.rs:117)
+[user_graphics.rs:117](/home/kasss/WaterOS/os/components/wateros-vfs/vfs-impl/impl-fd-session/src/user_graphics.rs)
 
 重点类型和函数：
 
@@ -293,15 +293,15 @@ sys_openat()
 
 对应文件：
 
-- [sys_openat()](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/fs/openat.rs:38)
-- [FsBridge open()](/home/kasss/WaterOS/os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/file_handle.rs:58)
-- [open_special_device()](/home/kasss/WaterOS/os/components/wateros-vfs/vfs-impl/impl-fd-session/src/user_graphics.rs:597)
+- [sys_openat():38](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/fs/openat.rs)
+- [FsBridge open():58](/home/kasss/WaterOS/os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/file_handle.rs)
+- [open_special_device():597](/home/kasss/WaterOS/os/components/wateros-vfs/vfs-impl/impl-fd-session/src/user_graphics.rs)
 
 ---
 
 ## 六、fbdev ioctl 实现
 
-[ioctl.rs](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/misc/ioctl.rs:139)
+[ioctl.rs:139](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/misc/ioctl.rs)
 
 重点函数：
 
@@ -341,7 +341,7 @@ Nano-X ioctl(FBIOPAN_DISPLAY)
 
 ### 1. syscall 层
 
-[mmap.rs](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/mem/mmap.rs:90)
+[mmap.rs:90](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/mem/mmap.rs)
 
 核心函数：
 
@@ -359,7 +359,7 @@ Nano-X ioctl(FBIOPAN_DISPLAY)
 
 ### 2. MM 公共接口
 
-[mm-api/mmap.rs](/home/kasss/WaterOS/os/components/wateros-mm/mm-api/api-v0/src/mmap.rs:19)
+[mm-api/mmap.rs:19](/home/kasss/WaterOS/os/components/wateros-mm/mm-api/api-v0/src/mmap.rs)
 
 重点类型：
 
@@ -377,7 +377,7 @@ Nano-X ioctl(FBIOPAN_DISPLAY)
 
 ### 3. RISC-V Sv39 实现
 
-[user_heap_mmap.rs](/home/kasss/WaterOS/os/components/wateros-mm/mm-impl/impl-sv39/src/user_heap_mmap.rs:99)
+[user_heap_mmap.rs:99](/home/kasss/WaterOS/os/components/wateros-mm/mm-impl/impl-sv39/src/user_heap_mmap.rs)
 
 重点函数：
 
@@ -394,7 +394,7 @@ Nano-X ioctl(FBIOPAN_DISPLAY)
 
 页表实现：
 
-[pagetable.rs](/home/kasss/WaterOS/os/components/wateros-mm/mm-impl/impl-sv39/src/pagetable.rs:568)
+[pagetable.rs:568](/home/kasss/WaterOS/os/components/wateros-mm/mm-impl/impl-sv39/src/pagetable.rs)
 
 重点函数：
 
@@ -435,7 +435,7 @@ QEMU keyboard/tablet
 
 ### 1. 输入公共接口
 
-[input-api/lib.rs](/home/kasss/WaterOS/os/components/wateros-driver/driver-input/input-api/api-v0/src/lib.rs:11)
+[input-api/lib.rs:11](/home/kasss/WaterOS/os/components/wateros-driver/driver-input/input-api/api-v0/src/lib.rs)
 
 重点数据结构：
 
@@ -455,7 +455,7 @@ QEMU keyboard/tablet
 
 ### 2. RISC-V VirtIO input
 
-[impl-virtio-mmio/src/lib.rs](/home/kasss/WaterOS/os/components/wateros-driver/driver-input/input-impl/impl-virtio-mmio/src/lib.rs:66)
+[impl-virtio-mmio/src/lib.rs:66](/home/kasss/WaterOS/os/components/wateros-driver/driver-input/input-impl/impl-virtio-mmio/src/lib.rs)
 
 关键函数：
 
@@ -471,7 +471,7 @@ QEMU keyboard/tablet
 
 ### 3. 内核 evdev worker
 
-[user_graphics.rs](/home/kasss/WaterOS/os/components/wateros-vfs/vfs-impl/impl-fd-session/src/user_graphics.rs:508)
+[user_graphics.rs:508](/home/kasss/WaterOS/os/components/wateros-vfs/vfs-impl/impl-fd-session/src/user_graphics.rs)
 
 初始化：
 
@@ -499,11 +499,11 @@ QEMU keyboard/tablet
 
 用户态 `read` 总入口：
 
-[sys_read()](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/fs/io.rs:55)
+[sys_read():55](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/fs/io.rs)
 
 ### 4. evdev ioctl
 
-[ioctl.rs](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/misc/ioctl.rs:223)
+[ioctl.rs:223](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/misc/ioctl.rs)
 
 重点函数：
 
@@ -531,7 +531,7 @@ EVIOCGABS
 
 基础源码：
 
-[scr_fb.c](/home/kasss/WaterOS/user/vendor/microwindows/src/drivers/scr_fb.c:80)
+[scr_fb.c:80](/home/kasss/WaterOS/user/vendor/microwindows/src/drivers/scr_fb.c)
 
 重点函数：
 
@@ -549,7 +549,7 @@ EVIOCGABS
 
 WaterOS 强制刷新补丁：
 
-[0003-wateros-present-every-loop.patch](/home/kasss/WaterOS/user/packages/microwindows/patches/0003-wateros-present-every-loop.patch:1)
+[0005-wateros-input-present-doom-performance.patch](/home/kasss/WaterOS/user/packages/microwindows/patches/0005-wateros-input-present-doom-performance.patch)
 
 重点修改：
 
@@ -560,7 +560,7 @@ fb_preselect()
 
 ### 2. Nano-X 键盘后端
 
-[0001-wateros-fbdev-evdev.patch](/home/kasss/WaterOS/user/packages/microwindows/patches/0001-wateros-fbdev-evdev.patch:22)
+[0001-wateros-fbdev-evdev.patch:22](/home/kasss/WaterOS/user/packages/microwindows/patches/0001-wateros-fbdev-evdev.patch)
 
 新增函数：
 
@@ -599,7 +599,7 @@ fb_preselect()
 
 ### 1. Server 主循环
 
-[srvmain.c](/home/kasss/WaterOS/user/vendor/microwindows/src/nanox/srvmain.c:104)
+[srvmain.c:104](/home/kasss/WaterOS/user/vendor/microwindows/src/nanox/srvmain.c)
 
 重点函数：
 
@@ -617,7 +617,7 @@ fb_preselect()
 
 输入分发：
 
-[srvevent.c](/home/kasss/WaterOS/user/vendor/microwindows/src/nanox/srvevent.c:113)
+[srvevent.c:113](/home/kasss/WaterOS/user/vendor/microwindows/src/nanox/srvevent.c)
 
 - `GsCheckMouseEvent()`
 - `GsCheckKeyboardEvent()`
@@ -626,7 +626,7 @@ fb_preselect()
 
 ### 2. Server socket
 
-[srvnet.c](/home/kasss/WaterOS/user/vendor/microwindows/src/nanox/srvnet.c:1857)
+[srvnet.c:1857](/home/kasss/WaterOS/user/vendor/microwindows/src/nanox/srvnet.c)
 
 重点函数：
 
@@ -642,7 +642,7 @@ fb_preselect()
 
 ### 1. Nano-X 客户端库
 
-[client.c](/home/kasss/WaterOS/user/vendor/microwindows/src/nanox/client.c:298)
+[client.c:298](/home/kasss/WaterOS/user/vendor/microwindows/src/nanox/client.c)
 
 重点函数：
 
@@ -670,7 +670,7 @@ fb_preselect()
 
 ### 2. WaterOS AF_UNIX 实现
 
-[unix_sock.rs](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/unix_sock.rs:458)
+[unix_sock.rs:458](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/unix_sock.rs)
 
 重点函数：
 
@@ -689,13 +689,13 @@ fb_preselect()
 
 相应 syscall 入口：
 
-- [sys_socket()](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/net/socket.rs:18)
-- [sys_bind()](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/net/bind.rs:26)
-- [sys_listen()](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/net/listen.rs:11)
-- [sys_connect()](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/net/connect.rs:29)
-- [sys_accept()](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/net/accept.rs:38)
-- [sys_poll()](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/poll/poll.rs:10)
-- [sys_select()](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/poll/poll_multiplex.rs:78)
+- [sys_socket():18](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/net/socket.rs)
+- [sys_bind():26](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/net/bind.rs)
+- [sys_listen():11](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/net/listen.rs)
+- [sys_connect():29](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/net/connect.rs)
+- [sys_accept():38](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/net/accept.rs)
+- [sys_poll():10](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/poll/poll.rs)
+- [sys_select():78](/home/kasss/WaterOS/os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/poll/poll_multiplex.rs)
 
 ---
 
@@ -703,7 +703,7 @@ fb_preselect()
 
 ### 1. Doom 进程入口
 
-[i_main.c](/home/kasss/WaterOS/user/vendor/microwindows/src/contrib/doom/i_main.c:35)
+[i_main.c:35](/home/kasss/WaterOS/user/vendor/microwindows/src/contrib/doom/i_main.c)
 
 调用：
 
@@ -715,7 +715,7 @@ main()
 
 主要实现：
 
-[d_main.c](/home/kasss/WaterOS/user/vendor/microwindows/src/contrib/doom/d_main.c:795)
+[d_main.c:795](/home/kasss/WaterOS/user/vendor/microwindows/src/contrib/doom/d_main.c)
 
 - `D_DoomMain()`
 - `D_DoomLoop()`
@@ -726,7 +726,7 @@ main()
 
 ### 2. Doom 的 Nano-X 视频后端
 
-[i_video.c](/home/kasss/WaterOS/user/vendor/microwindows/src/contrib/doom/i_video.c:432)
+[i_video.c:432](/home/kasss/WaterOS/user/vendor/microwindows/src/contrib/doom/i_video.c)
 
 重点函数：
 
@@ -744,11 +744,11 @@ main()
 
 RV64 framebuffer 栈溢出修复：
 
-[0004-doom-rv64-frame-buffers.patch](/home/kasss/WaterOS/user/packages/microwindows/patches/0004-doom-rv64-frame-buffers.patch:1)
+[0004-doom-rv64-frame-buffers.patch](/home/kasss/WaterOS/user/packages/microwindows/patches/0004-doom-rv64-frame-buffers.patch)
 
 ### 3. Doom 启动包装
 
-[start-doom](/home/kasss/WaterOS/user/packages/microwindows/scripts/start-doom:1)
+[start-doom](/home/kasss/WaterOS/user/packages/microwindows/scripts/start-doom)
 
 负责：
 
@@ -761,7 +761,7 @@ RV64 framebuffer 栈溢出修复：
 
 ## 十三、用户镜像构建
 
-[build.py](/home/kasss/WaterOS/user/packages/microwindows/build.py:37)
+[build.py:37](/home/kasss/WaterOS/user/packages/microwindows/build.py)
 
 关键函数：
 
@@ -779,7 +779,7 @@ RV64 framebuffer 栈溢出修复：
 
 Nano-X 启动脚本：
 
-[start-nanox](/home/kasss/WaterOS/user/packages/microwindows/scripts/start-nanox:1)
+[start-nanox](/home/kasss/WaterOS/user/packages/microwindows/scripts/start-nanox)
 
 关键 shell 函数：
 

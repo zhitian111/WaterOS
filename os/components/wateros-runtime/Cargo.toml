@@ -9,6 +9,9 @@
         "runtime-heap-allocator",
         "runtime-serial",
     ]
+
+[patch.crates-io]
+    virtio-drivers = { path = "../../vendor/virtio-drivers" }
 [package]
     name = "wateros-runtime"
     version = "0.1.0"

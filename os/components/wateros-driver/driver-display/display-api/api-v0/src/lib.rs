@@ -57,7 +57,7 @@ pub type SharedDisplayDevice = Arc<Mutex<Box<dyn DisplayDevice>>>;
 
 static DISPLAY_DEVICES : Mutex<Vec<SharedDisplayDevice>> = Mutex::new(Vec::new());
 
-/// 显示设备契约。首版仅支持单个线性 framebuffer 与主动全屏刷新。
+/// 显示设备契约。当前支持单个线性 framebuffer、全屏刷新和可选区域刷新。
 pub trait DisplayDevice: Send {
     /// 查询分辨率、步长与像素格式。
     fn info(&self) -> FramebufferInfo;
@@ -68,8 +68,8 @@ pub trait DisplayDevice: Send {
     /// 将软件写入的 framebuffer 提交到显示设备。
     fn flush(&mut self) -> DriverResult<()>;
 
-    /// 提交一个矩形区域。首版 VirtIO GPU 仍会退化为全屏刷新；提供此接口是为了让
-    /// GUI 的脏矩形策略不依赖具体设备，后续驱动可直接覆盖为区域传输。
+    /// 提交一个矩形区域。不支持区域传输的设备默认安全退化为全屏刷新；VirtIO GPU
+    /// 实现会覆盖此方法，只传输和提交指定区域。
     fn flush_region(&mut self, _region : FramebufferRegion) -> DriverResult<()> { self.flush() }
 }
 

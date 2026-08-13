@@ -31,6 +31,7 @@
 [patch.crates-io]
     ext4_rs = { path = "vendor/ext4_rs" }
     ext4plus = { path = "vendor/ext4plus" }
+    virtio-drivers = { path = "vendor/virtio-drivers" }
 
 [profile.dev]
     panic = "abort"

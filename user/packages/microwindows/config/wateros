@@ -34,7 +34,7 @@ VNCSERVER_PTHREADED      = N
 
 LINK_APP_INTO_SERVER     = N
 NANOWM                   = Y
-HAVE_SHAREDMEM_SUPPORT   = N
+HAVE_SHAREDMEM_SUPPORT   = Y
 HAVE_FILEIO              = Y
 
 # 只使用无需外部库的图像格式和内置字体。
@@ -72,7 +72,7 @@ FBREVERSE                = N
 GRAYPALETTE              = N
 HAVETEXTMODE             = N
 
-# 由 WaterOS patch 消费：限制 demo 集、启用 evdev 和延迟全屏刷新。
+# 由 WaterOS patch 消费：限制 demo 集、启用 evdev 和脏矩形刷新。
 WATEROS_NANOX            = Y
 EXTRAFLAGS               = -DWATEROS_NANOX=1
 LDFLAGS                  = -static

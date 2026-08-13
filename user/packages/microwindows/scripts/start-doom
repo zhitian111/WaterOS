@@ -17,7 +17,7 @@ fi
 
 export DOOMWADDIR="$wad_dir"
 
-# 该 Nano-X Doom 端口原生画布很小，默认放大三倍。当前 doom1.wad 的
+# 该 Nano-X Doom 端口原生画布很小，默认放大两倍以兼顾可读性和帧率。当前 doom1.wad 的
 # 内置 demo 与这个老端口的录像版本不同，因此默认直接进入 E1M1，避免
 # server 启动成功后又在自动 demo 阶段退出。显式参数始终优先。
 has_scale=0
@@ -28,7 +28,7 @@ for argument in "$@"; do
         -warp) has_warp=1 ;;
     esac
 done
-[ "$has_scale" -eq 1 ] || set -- -3 "$@"
+[ "$has_scale" -eq 1 ] || set -- -2 "$@"
 [ "$has_warp" -eq 1 ] || set -- "$@" -warp 1 1
 
 exec /usr/bin/doom "$@"
