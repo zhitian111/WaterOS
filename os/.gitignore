@@ -1,38 +1,59 @@
-/target
-/.git
-/.idea
+# Rust 构建产物
+/target/
+**/target/
+
+# 内核镜像与调试产物
 /kernel-rv
 /kernel-la
 /kernel-*-gdb
+/kernel-la-ltp-musl
+/kernel-rv-ltp-musl
+/kernel-la-ltp-glibc
+/kernel-rv-ltp-glibc
+/kernel-rv-final
+/kernel-rv-final-smp-test
+/kernel-rv-final-stats
+/kernel-rv-pre
+/kernel-la-final
+/kernel-la-pre
+/kernel-la-linux-baseline-6.12.102
+/kernel-rv-linux-baseline-6.12.102
+/kernel-la-linux-baseline-6.12.102.config
+/kernel-rv-linux-baseline-6.12.102.config
 /debug-reports/
+
+# 磁盘镜像与备份文件
 /sdcard-rv.img
 /sdcard-la.img
-__pycache__/
-*.py[cod]
-*.pyc
+*.img
+*.wosbak
+*backup*
+
+# 日志与缓存文件
 *.log
 *log/
-# `wateros-klog` is source code, not a generated log directory.  Keep its
-# newly added modules and module documentation visible to Git.
+*log.txt
+cache*
+
+# `wateros-klog` 是源码目录，不是生成的日志目录
 !components/
 !components/wateros-klog/
 !components/wateros-klog/**
-*log.txt
-cache*
+
+# 子 crate 不提交锁文件，仅保留 os 顶层锁文件
 **/Cargo.lock
 !/Cargo.lock
-config.conf
-./feature-tree.txt
-**/target/
-*.wosbak
-*backup*
-*.img
-./.DS_Store
-kernel-la-ltp-musl
-kernel-rv-ltp-musl
-kernel-la-ltp-glibc
-kernel-rv-ltp-glibc
-kernel-rv-final
-kernel-rv-pre
-kernel-la-final
-kernel-la-pre
+
+# 本地运行配置
+/config.conf
+/feature-tree.txt
+
+# Python 运行垃圾
+__pycache__/
+*.py[cod]
+*.pyc
+
+# 项目工具与系统文件
+/.git
+/.idea
+/.DS_Store

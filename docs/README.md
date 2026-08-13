@@ -7,6 +7,7 @@
   <p>
     <a href="../README.md">项目首页</a> ·
     <a href="../os/README.md">内核工程</a> ·
+    <a href="../user/README.md">用户空间</a> ·
     <a href="./tools/README.md">工具文档</a> ·
     <a href="./workflows/README.md">标准流程</a>
   </p>
@@ -23,17 +24,19 @@
 - `tools/`：项目脚本、调试和测试工具的使用入口。
 - `workflows/`：构建、调试、性能分析等可重复执行的标准流程。
 - `technical_document/`：LaTeX 技术文档及其分章写作说明。
+- `assert/`：README、技术文档和演示材料共用的图片、SVG 及图表源码。
 
 当前仓库仍保留旧版文档，例如 `WORKFLOW.md`、`COMMIT_CONVENTION.md`、`TASKS.md`、`KERNEL_INTERFACE_TODOLIST.md`。新体系优先使用本目录下的新结构，旧文件作为迁移期间的历史参考。
 
 ## 推荐阅读顺序
 
 1. 构建、运行和调试内核时，先看 [`../os/README.md`](../os/README.md)。
-2. 查找工具时，从 [`tools/README.md`](./tools/README.md) 进入。
-3. 执行可重复操作时，遵循 [`workflows/README.md`](./workflows/README.md)。
-4. 接手开发任务时，查看 [`tasks/README.md`](./tasks/README.md) 和对应交接记录。
-5. 自动化 Agent 在工作前阅读 [`agents/README.md`](./agents/README.md)。
-6. 需要项目技术文稿时进入 [`technical_document/README.md`](./technical_document/README.md)。
+2. 构建自有 rootfs、Nano-X 或 EXT4 镜像时，查看 [`../user/README.md`](../user/README.md)。
+3. 查找工具时，从 [`tools/README.md`](./tools/README.md) 进入。
+4. 执行可重复操作时，遵循 [`workflows/README.md`](./workflows/README.md)。
+5. 接手开发任务时，查看 [`tasks/README.md`](./tasks/README.md) 和对应交接记录。
+6. 自动化 Agent 在工作前阅读 [`agents/README.md`](./agents/README.md)。
+7. 需要项目技术文稿时进入 [`technical_document/README.md`](./technical_document/README.md)。
 
 README 的分级页头、导航和事实引用约定见
 [`guides/readme-style.md`](./guides/readme-style.md)。

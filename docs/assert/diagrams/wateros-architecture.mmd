@@ -20,6 +20,7 @@ flowchart TB
     direction LR
     fs["wateros-fs<br/>（文件系统）"]
     tty["wateros-tty<br/>（终端设备）"]
+    gui["wateros-gui<br/>（图形与输入）"]
     driver["wateros-driver<br/>（设备驱动）"]
   end
 
@@ -45,6 +46,7 @@ flowchart TB
 
   vfs --> fs
   vfs --> tty
+  gui --> driver
   network --> vfs
   cred --> task
   fs --> driver
@@ -58,11 +60,11 @@ flowchart TB
   driver --> base
 
   task ~~~ mm ~~~ vfs ~~~ ipc ~~~ cred ~~~ network
-  fs ~~~ tty ~~~ driver
+  fs ~~~ tty ~~~ gui ~~~ driver
   runtime ~~~ klog ~~~ platform ~~~ base ~~~ utils
 
   class wateros boundary;
   class syscall configuration;
   class task,mm,vfs,ipc,cred,network service;
-  class fs,tty,driver interface;
+  class fs,tty,gui,driver interface;
   class runtime,klog,platform,base,utils foundation;

@@ -6,6 +6,7 @@
   <p>双架构内核工程、构建入口与开发导航</p>
   <p>
     <a href="../README.md">项目首页</a> ·
+    <a href="../user/README.md">用户空间</a> ·
     <a href="../docs/tools/makefile.md">Makefile</a> ·
     <a href="./scripts/README.md">脚本工具</a> ·
     <a href="../docs/README.md">项目文档</a>
@@ -99,7 +100,8 @@ make shell ARCH=rv PROFILE=pre \
 ```
 
 不要同时启用 `gui` 和 `user-graphics`。完整说明见
-[`Nano-X 支持文档`](../docs/todo/kasss's_todo_list/nanox.md)。
+[`Nano-X 支持文档`](../docs/todo/kasss's_todo_list/nanox.md)与
+[`用户空间构建说明`](../user/README.md#nano-x-图形镜像)。
 
 ### 调试与停滞分析
 

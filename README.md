@@ -149,6 +149,13 @@ WaterOS/
 │   ├── tools/                # 工具与脚本使用说明
 │   └── workflows/            # 开发和验证工作流程
 ├── user/                     # 自有用户空间与 EXT4 镜像构建工程
+│   ├── Makefile              # 用户空间构建、镜像与检查入口
+│   ├── configs/              # 架构工具链与 rootfs profile 配置
+│   ├── rootfs/base/          # 架构无关的基础根文件系统布局
+│   ├── packages/             # BusyBox、Nano-X 与现场工具包定义
+│   ├── tools/                # Package 编排、工具链与 EXT4 镜像工具
+│   ├── tests/                # 用户空间构建系统的宿主测试
+│   └── vendor/               # 固定版本的用户态上游源码与许可证
 └── os/                       # WaterOS 内核工程
     ├── Cargo.toml            # 顶层 crate 与 Cargo feature 组合
     ├── Cargo.lock            # Rust 依赖版本锁定
@@ -502,13 +509,20 @@ make la_symbol_at ADDR=0x9000000000200000
 
 ## 开源项目与第三方依赖
 
-WaterOS 的核心架构和 `wateros-*` 组件由团队维护，同时使用 Rust 生态中的基础库完成
-设备访问、网络协议、数据结构和底层解析。较关键的依赖包括 `virtio-drivers`、
-`smoltcp`、`fdt`、`riscv`、`sbi-rt`、`spin` 与 `rlsf`。
+WaterOS 的核心架构、`wateros-*` 组件和用户空间构建系统由团队维护，同时使用 Rust
+生态中的基础库完成设备访问、网络协议、数据结构和底层解析。较关键的内核依赖包括
+`virtio-drivers`、`smoltcp`、`fdt`、`riscv`、`sbi-rt`、`spin` 与 `rlsf`。
 
 `os/vendor/` 保存项目直接维护的文件系统依赖：`another_ext4` 作为当前 ext4 后端，
 `ext4_rs` 与 `ext4plus` 通过 `[patch.crates-io]` 指向本地版本。对这些代码的修改保留在
 vendor 目录中，并继续遵守各上游项目的许可证。
+
+`user/vendor/` 保存用户空间构建所需的固定版本源码。目前包括以 GPL-2.0 许可发布的
+BusyBox 1.33.1，以及以 MPL-1.1 许可发布的 Microwindows/Nano-X。构建器始终在
+`user/build/` 中复制、打补丁并编译上游源码，不会原地修改 vendor 内容。具体来源、
+版本和补丁基线见 [`BUSYBOX_SOURCE.md`](./user/vendor/BUSYBOX_SOURCE.md) 与
+[`MICROWINDOWS_SOURCE.md`](./user/vendor/MICROWINDOWS_SOURCE.md)，许可证原文分别保留在
+对应源码目录中。
 
 <details>
 <summary><strong>完整第三方依赖与许可证</strong></summary>
@@ -628,5 +642,6 @@ WaterOS 由山东大学 **OuterSystems** 队设计与开发。感谢两位指导
 
 ## 开源许可证
 
-WaterOS 源代码以 [MIT License](./LICENSE) 开源。第三方依赖与 `os/vendor/` 中代码的
-版权仍归各自作者所有，并分别遵守其原始许可证。
+WaterOS 团队编写的源代码以 [MIT License](./LICENSE) 开源。Cargo 依赖以及
+`os/vendor/`、`user/vendor/` 中第三方代码的版权仍归各自作者所有，并分别遵守其
+原始许可证。

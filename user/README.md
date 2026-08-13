@@ -1,4 +1,17 @@
-# WaterOS 用户空间与 EXT4 镜像工程
+<div align="center">
+  <a href="../README.md">
+    <img src="../docs/assert/cover.jpg" height="72" alt="山东大学" />
+  </a>
+  <h1>WaterOS Userland</h1>
+  <p>双架构用户空间、Package 组合与 EXT4 镜像构建工程</p>
+  <p>
+    <a href="../README.md">项目首页</a> ·
+    <a href="../os/README.md">内核工程</a> ·
+    <a href="../docs/README.md">项目文档</a>
+  </p>
+</div>
+
+---
 
 `user/` 是 WaterOS 自己维护的用户空间构建工程，不再是 Git 子模块。它负责将固定版本的
 BusyBox 和若干可组合 package 构建为双架构静态用户空间，再生成无分区表的 EXT4 rootfs，
@@ -39,7 +52,7 @@ make shell ARCH=rv PROFILE=pre \
 进入串口 shell 后执行 `start-nanox`。图形窗口和串口 shell 是两个独立界面；
 `start-nanox` 会检查 `/dev/fb0`、keyboard/pointer evdev 节点，并管理 server、客户端和
 `/tmp/.nano-X` 的生命周期。详细实现与排查见
-[`docs/kasss's_todo_list/nanox.md`](../docs/kasss's_todo_list/nanox.md)。
+[`Nano-X 支持文档`](../docs/todo/kasss's_todo_list/nanox.md)。
 
 `nanox` 镜像同时包含静态 Nano-X Doom 和仓库中的 `doom1.wad`。启动桌面后可在
 `nxlaunch` 中点击 `Doom`，也可从串口执行：
