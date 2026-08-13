@@ -3,7 +3,7 @@
 //! 本模块代码由AI完成
 extern crate alloc;
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, sync::Arc};
 
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
@@ -11,14 +11,20 @@ use api_v0::UserRet;
 use mm::api::addr::PAGE_SIZE;
 use mm::api::error::{MmError, MmResult};
 use mm::api::flags::MapFlags;
-use mm::api::mmap::{DemandPageLoader, MmapKind, MmapOps};
+use mm::api::mmap::{DemandPageLoader, DeviceMapping, MmapKind, MmapOps};
 
 use crate::mm_util::{
     linux_mmap_flags_to_map_flags, linux_mmap_is_anonymous, linux_mmap_prot_to_perm,
     mm_err_to_errno, require_user_aspace,
 };
 use crate::vfs_util::vfs_error_to_errno;
-use vfs::api::{VfsError, VfsFileContentIdentity, VfsIoHandle, VfsNodeType};
+use vfs::api::{
+    VfsDeviceMappingLease, VfsError, VfsFileContentIdentity, VfsIoHandle, VfsNodeType,
+    VfsSpecialDeviceInfo,
+};
+
+/// 将 VFS 的设备生命周期令牌适配到 MM 公共 API，不让 MM 依赖 VFS。
+struct MmDeviceLease(#[allow(dead_code)] Arc<dyn VfsDeviceMappingLease>);
 
 struct VfsMmapPageLoader {
     handle : Box<dyn VfsIoHandle>,
@@ -171,6 +177,45 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
         };
         if accmode & O_ACCMODE == O_WRONLY {
             return UserRet::from_error(ErrNo::EACCES);
+        }
+        let framebuffer_mapping = vfs::fd::with_current_io(fd as usize, |handle| {
+            match handle.special_device_info() {
+                Some(VfsSpecialDeviceInfo::Framebuffer(_)) => handle.device_mapping().map(Some),
+                Some(VfsSpecialDeviceInfo::InputEvent(_)) => Err(VfsError::Unsupported),
+                None => Ok(None),
+            }
+        });
+        match framebuffer_mapping {
+            Ok(Some(mapping)) => {
+                if !mf.contains(MapFlags::SHARED) || mf.contains(MapFlags::PRIVATE) ||
+                   perm.executable() || (perm.writable() && accmode & O_ACCMODE != 2) ||
+                   mapping.phys_start % PAGE_SIZE != 0
+                {
+                    return UserRet::from_error(ErrNo::EINVAL);
+                }
+                let lease : Arc<dyn mm::api::mmap::DeviceMappingLease> =
+                    Arc::new(MmDeviceLease(mapping.lease));
+                let device = DeviceMapping {
+                    phys_start : mm::api::addr::PhysPageNum(mapping.phys_start / PAGE_SIZE),
+                    len : mapping.len,
+                    lease,
+                };
+                let request = MmapRequest { addr_hint,
+                                            len,
+                                            prot : perm,
+                                            flags : mf,
+                                            kind : MmapKind::Device { offset } };
+                return match mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
+                    let mut alloc = GlobalPhysFrameAllocator;
+                    MmapOps::mmap_device(aspace, &mut alloc, request, device).map(|base| base.0)
+                }) {
+                    Ok(base) => UserRet::from_success(base),
+                    Err(error) => UserRet::from_error(mm_err_to_errno(error)),
+                };
+            }
+            Ok(None) => {}
+            Err(VfsError::Unsupported) => return UserRet::from_error(ErrNo::ENXIO),
+            Err(error) => return UserRet::from_error(vfs_error_to_errno(error)),
         }
         let size = match file_size_for_mmap(fd as usize) {
             Ok(size) => size,

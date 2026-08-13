@@ -4,10 +4,10 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use vfs::api::VfsError;
+use vfs::api::{VfsError, VfsFramebufferInfo, VfsInputDeviceInfo, VfsSpecialDeviceInfo};
 
 use crate::sys::time::rtc::sys_rtc_ioctl;
-use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
+use crate::user_copy::{copy_from_user_struct, copy_to_user, copy_to_user_struct};
 use crate::vfs_util::vfs_error_to_errno;
 
 const TCGETS: u32 = 0x5401;
@@ -25,9 +25,255 @@ const TIOCNOTTY: u32 = 0x5422;
 const TIOCGSID: u32 = 0x5429;
 const RTC_RD_TIME: u32 = 0x8024_7009;
 const RTC_SET_TIME: u32 = 0x4024_700a;
+const FBIOGET_VSCREENINFO : u32 = 0x4600;
+const FBIOPUT_VSCREENINFO : u32 = 0x4601;
+const FBIOGET_FSCREENINFO : u32 = 0x4602;
+const FBIOGETCMAP : u32 = 0x4604;
+const FBIOPUTCMAP : u32 = 0x4605;
+const FBIOPAN_DISPLAY : u32 = 0x4606;
+
+const EVDEV_IOCTL_TYPE : u32 = b'E' as u32;
+const EVIOCGVERSION_NR : u32 = 0x01;
+const EVIOCGID_NR : u32 = 0x02;
+const EVIOCGNAME_NR : u32 = 0x06;
+const EVIOCGBIT_BASE_NR : u32 = 0x20;
+const EVIOCGABS_BASE_NR : u32 = 0x40;
 
 fn ioctl_req(raw: usize) -> u32 {
     raw as u32
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct LinuxFbBitfield { offset : u32, length : u32, msb_right : u32 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct LinuxFbFixScreenInfo {
+    id : [u8; 16],
+    smem_start : usize,
+    smem_len : u32,
+    fb_type : u32,
+    type_aux : u32,
+    visual : u32,
+    xpanstep : u16,
+    ypanstep : u16,
+    ywrapstep : u16,
+    line_length : u32,
+    mmio_start : usize,
+    mmio_len : u32,
+    accel : u32,
+    capabilities : u16,
+    reserved : [u16; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct LinuxFbVarScreenInfo {
+    xres : u32,
+    yres : u32,
+    xres_virtual : u32,
+    yres_virtual : u32,
+    xoffset : u32,
+    yoffset : u32,
+    bits_per_pixel : u32,
+    grayscale : u32,
+    red : LinuxFbBitfield,
+    green : LinuxFbBitfield,
+    blue : LinuxFbBitfield,
+    transp : LinuxFbBitfield,
+    nonstd : u32,
+    activate : u32,
+    height : u32,
+    width : u32,
+    accel_flags : u32,
+    pixclock : u32,
+    left_margin : u32,
+    right_margin : u32,
+    upper_margin : u32,
+    lower_margin : u32,
+    hsync_len : u32,
+    vsync_len : u32,
+    sync : u32,
+    vmode : u32,
+    rotate : u32,
+    colorspace : u32,
+    reserved : [u32; 4],
+}
+
+const _ : () = assert!(core::mem::size_of::<LinuxFbFixScreenInfo>() == 80);
+const _ : () = assert!(core::mem::size_of::<LinuxFbVarScreenInfo>() == 160);
+
+fn fb_var(info : VfsFramebufferInfo) -> LinuxFbVarScreenInfo {
+    LinuxFbVarScreenInfo { xres : info.width,
+                           yres : info.height,
+                           xres_virtual : info.width,
+                           yres_virtual : info.height,
+                           xoffset : 0,
+                           yoffset : 0,
+                           bits_per_pixel : 32,
+                           grayscale : 0,
+                           red : LinuxFbBitfield { offset : 16, length : 8, msb_right : 0 },
+                           green : LinuxFbBitfield { offset : 8, length : 8, msb_right : 0 },
+                           blue : LinuxFbBitfield { offset : 0, length : 8, msb_right : 0 },
+                           transp : LinuxFbBitfield { offset : 24, length : 8, msb_right : 0 },
+                           nonstd : 0,
+                           activate : 0,
+                           height : u32::MAX,
+                           width : u32::MAX,
+                           accel_flags : 0,
+                           pixclock : 0,
+                           left_margin : 0,
+                           right_margin : 0,
+                           upper_margin : 0,
+                           lower_margin : 0,
+                           hsync_len : 0,
+                           vsync_len : 0,
+                           sync : 0,
+                           vmode : 0,
+                           rotate : 0,
+                           colorspace : 0,
+                           reserved : [0; 4] }
+}
+
+fn framebuffer_ioctl(fd : usize,
+                      request : u32,
+                      argp : usize,
+                      info : VfsFramebufferInfo)
+                      -> UserRet {
+    if argp == 0 { return UserRet::from_error(ErrNo::EFAULT); }
+    match request {
+        FBIOGET_FSCREENINFO => {
+            let mut id = [0u8; 16];
+            id[..14].copy_from_slice(b"WaterOS VirtIO");
+            let fix = LinuxFbFixScreenInfo { id,
+                                             smem_start : info.phys_base,
+                                             smem_len : info.byte_len.min(u32::MAX as usize) as u32,
+                                             fb_type : 0,
+                                             type_aux : 0,
+                                             visual : 2,
+                                             xpanstep : 0,
+                                             ypanstep : 0,
+                                             ywrapstep : 0,
+                                             line_length : info.stride.min(u32::MAX as usize) as u32,
+                                             mmio_start : 0,
+                                             mmio_len : 0,
+                                             accel : 0,
+                                             capabilities : 0,
+                                             reserved : [0; 2] };
+            copy_to_user_struct(argp, &fix).map_or_else(UserRet::from_error,
+                                                        |_| UserRet::from_success(0))
+        }
+        FBIOGET_VSCREENINFO => copy_to_user_struct(argp, &fb_var(info))
+            .map_or_else(UserRet::from_error, |_| UserRet::from_success(0)),
+        FBIOPUT_VSCREENINFO | FBIOPAN_DISPLAY => {
+            let requested = match copy_from_user_struct::<LinuxFbVarScreenInfo>(argp) {
+                Ok(value) => value,
+                Err(error) => return UserRet::from_error(error),
+            };
+            if requested.xres != info.width || requested.yres != info.height ||
+               requested.xres_virtual != info.width || requested.yres_virtual != info.height ||
+               requested.xoffset != 0 || requested.yoffset != 0 || requested.bits_per_pixel != 32
+            {
+                return UserRet::from_error(ErrNo::EINVAL);
+            }
+            if request == FBIOPUT_VSCREENINFO {
+                UserRet::from_success(0)
+            } else {
+                match vfs::fd::with_current_io(fd, |handle| handle.flush_device()) {
+                    Ok(()) => UserRet::from_success(0),
+                    Err(error) => UserRet::from_error(vfs_error_to_errno(error)),
+                }
+            }
+        }
+        FBIOGETCMAP | FBIOPUTCMAP => UserRet::from_error(ErrNo::ENOTTY),
+        _ => UserRet::from_error(ErrNo::ENOTTY),
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct LinuxInputId { bustype : u16, vendor : u16, product : u16, version : u16 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct LinuxInputAbsInfo {
+    value : i32,
+    minimum : i32,
+    maximum : i32,
+    fuzz : i32,
+    flat : i32,
+    resolution : i32,
+}
+
+fn set_bit(bytes : &mut [u8], bit : usize) {
+    if bit / 8 < bytes.len() { bytes[bit / 8] |= 1u8 << (bit % 8); }
+}
+
+fn copy_evdev_bits(argp : usize, requested_len : usize, bits : impl IntoIterator<Item = usize>) -> UserRet {
+    let len = requested_len.min(128);
+    let mut bytes = alloc::vec![0u8; len];
+    for bit in bits { set_bit(&mut bytes, bit); }
+    match copy_to_user(argp, &bytes) {
+        Ok(copied) => UserRet::from_success(copied),
+        Err(error) => UserRet::from_error(error),
+    }
+}
+
+fn evdev_ioctl(request : u32, argp : usize, info : VfsInputDeviceInfo) -> UserRet {
+    if argp == 0 { return UserRet::from_error(ErrNo::EFAULT); }
+    let ioctl_type = (request >> 8) & 0xff;
+    let nr = request & 0xff;
+    let size = ((request >> 16) & 0x3fff) as usize;
+    if ioctl_type != EVDEV_IOCTL_TYPE { return UserRet::from_error(ErrNo::ENOTTY); }
+    match nr {
+        EVIOCGVERSION_NR => copy_to_user_struct(argp, &0x0001_0001i32)
+            .map_or_else(UserRet::from_error, |_| UserRet::from_success(0)),
+        EVIOCGID_NR => {
+            let id = LinuxInputId { bustype : 0x06, vendor : 0, product : 0, version : 1 };
+            copy_to_user_struct(argp, &id)
+                .map_or_else(UserRet::from_error, |_| UserRet::from_success(0))
+        }
+        EVIOCGNAME_NR => {
+            let mut name = info.name.as_bytes().to_vec();
+            name.push(0);
+            name.truncate(size);
+            match copy_to_user(argp, &name) {
+                Ok(copied) => UserRet::from_success(copied),
+                Err(error) => UserRet::from_error(error),
+            }
+        }
+        nr if nr >= EVIOCGBIT_BASE_NR && nr < EVIOCGABS_BASE_NR => {
+            let event_type = nr - EVIOCGBIT_BASE_NR;
+            match event_type {
+                0 => {
+                    let mut events = alloc::vec![0usize, 1];
+                    if info.pointer { events.push(3); }
+                    if info.keyboard { events.push(4); events.push(20); }
+                    copy_evdev_bits(argp, size, events)
+                }
+                1 if info.keyboard => copy_evdev_bits(argp, size, 1usize..=255),
+                1 if info.pointer => copy_evdev_bits(argp, size, [0x110usize, 0x14a]),
+                3 if info.pointer => copy_evdev_bits(argp, size, [0usize, 1usize]),
+                _ => copy_evdev_bits(argp, size, core::iter::empty()),
+            }
+        }
+        nr if nr == EVIOCGABS_BASE_NR || nr == EVIOCGABS_BASE_NR + 1 => {
+            let range = if nr == EVIOCGABS_BASE_NR { info.absolute_x } else { info.absolute_y };
+            let Some((minimum, maximum)) = range else {
+                return UserRet::from_error(ErrNo::EINVAL);
+            };
+            let abs = LinuxInputAbsInfo { value : minimum,
+                                          minimum,
+                                          maximum,
+                                          fuzz : 0,
+                                          flat : 0,
+                                          resolution : 0 };
+            copy_to_user_struct(argp, &abs)
+                .map_or_else(UserRet::from_error, |_| UserRet::from_success(0))
+        }
+        _ => UserRet::from_error(ErrNo::ENOTTY),
+    }
 }
 
 #[repr(C)]
@@ -237,12 +483,27 @@ pub(crate) fn sys_ioctl(args: SyscallArgs) -> UserRet {
     let request = ioctl_req(args.arg(1));
     let argp = args.arg(2);
 
-    if vfs::fd::current_fd_is_rtc(fd).unwrap_or(false) {
-        return sys_rtc_ioctl(request, argp);
-    }
-
+    // FIONBIO 是所有打开文件描述都可使用的通用状态操作，必须先于
+    // framebuffer/evdev 的设备专用 ioctl 分派。
     if request == FIONBIO {
         return fd_fionbio(fd, argp);
+    }
+
+    let special = vfs::fd::with_current_io(fd, |handle| Ok(handle.special_device_info()))
+        .ok()
+        .flatten();
+    match special {
+        Some(VfsSpecialDeviceInfo::Framebuffer(info)) => {
+            return framebuffer_ioctl(fd, request, argp, info);
+        }
+        Some(VfsSpecialDeviceInfo::InputEvent(info)) => {
+            return evdev_ioctl(request, argp, info);
+        }
+        None => {}
+    }
+
+    if vfs::fd::current_fd_is_rtc(fd).unwrap_or(false) {
+        return sys_rtc_ioctl(request, argp);
     }
 
     if vfs::fd::current_fd_is_tty_char(fd).unwrap_or(false) {

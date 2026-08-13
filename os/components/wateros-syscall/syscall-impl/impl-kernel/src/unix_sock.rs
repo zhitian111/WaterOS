@@ -877,13 +877,36 @@ impl VfsIoHandle for UnixSocketHandle {
         const POLLOUT: i16 = 0x004;
         let mut revents = 0i16;
         if events & POLLIN != 0 {
+            // `select`/`poll` 必须在监听 socket 存在待 accept 连接时报告
+            // 可读。Nano-X 等事件循环先等待监听 fd，收到 POLLIN 后才会
+            // 调用 accept；若这里只检查数据报收件箱，连接已经排入
+            // `accept_queue` 也永远不会被服务端取走。
+            //
+            // 先复制监听键并释放 socket 锁，再读取全局绑定表，避免把
+            // `UnixSockInner -> BOUND` 的嵌套锁扩散到 poll 热路径。
+            let listening_key = if inner.listening {
+                inner.bound_key.clone()
+            } else {
+                None
+            };
             let has_data = inner
                 .dgram_inbox
                 .as_ref()
                 .is_some_and(|inbox| inbox.has_data());
-            if has_data {
+            drop(inner);
+            let has_pending_accept = listening_key.as_ref().is_some_and(|key| {
+                BOUND.lock()
+                     .get(key)
+                     .is_some_and(|entry| !entry.accept_queue.is_empty())
+            });
+            if has_data || has_pending_accept {
                 revents |= POLLIN;
             }
+            // 后续 POLLOUT 判断不需要再次访问 inner。
+            if events & POLLOUT != 0 {
+                revents |= POLLOUT;
+            }
+            return Ok(revents);
         }
         if events & POLLOUT != 0 {
             revents |= POLLOUT;

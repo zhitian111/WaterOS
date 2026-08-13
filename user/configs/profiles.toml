@@ -1,0 +1,23 @@
+[profiles.minimal]
+packages = ["base-layout", "busybox"]
+allow_overwrite = []
+overlay_replace_prefixes = [
+    "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/etc/wateros",
+    "/opt/wateros", "/root", "/var/lib/wateros",
+]
+
+[profiles.operator]
+packages = ["base-layout", "busybox", "operator-tools"]
+allow_overwrite = []
+overlay_replace_prefixes = [
+    "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/etc/wateros",
+    "/opt/wateros", "/root", "/var/lib/wateros",
+]
+
+[profiles.nanox]
+packages = ["base-layout", "busybox", "operator-tools", "microwindows"]
+allow_overwrite = []
+overlay_replace_prefixes = [
+    "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/etc/wateros",
+    "/opt/wateros", "/root", "/var/lib/wateros",
+]

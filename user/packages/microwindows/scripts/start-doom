@@ -1,0 +1,34 @@
+#!/bin/sh
+# 启动 Nano-X Doom，并统一指定镜像内的共享版 WAD 目录。
+set -u
+
+socket=/tmp/.nano-X
+wad_dir=/usr/share/games/doom
+wad=$wad_dir/doom1.wad
+
+if [ ! -S "$socket" ]; then
+    echo "start-doom: Nano-X is not running; run start-nanox first" >&2
+    exit 1
+fi
+if [ ! -r "$wad" ]; then
+    echo "start-doom: missing $wad" >&2
+    exit 1
+fi
+
+export DOOMWADDIR="$wad_dir"
+
+# 该 Nano-X Doom 端口原生画布很小，默认放大三倍。当前 doom1.wad 的
+# 内置 demo 与这个老端口的录像版本不同，因此默认直接进入 E1M1，避免
+# server 启动成功后又在自动 demo 阶段退出。显式参数始终优先。
+has_scale=0
+has_warp=0
+for argument in "$@"; do
+    case "$argument" in
+        -2|-3) has_scale=1 ;;
+        -warp) has_warp=1 ;;
+    esac
+done
+[ "$has_scale" -eq 1 ] || set -- -3 "$@"
+[ "$has_warp" -eq 1 ] || set -- "$@" -warp 1 1
+
+exec /usr/bin/doom "$@"

@@ -86,6 +86,21 @@ make run ARCH=la PROFILE=pre EXTRA_FEATURES=gui
 无桌面环境可使用 `GRAPHICS_BACKEND=none` 验证设备初始化。GUI 的结构与扩展方式见
 [`wateros-gui`](./components/wateros-gui/README.md)。
 
+### 用户态 Nano-X
+
+Nano-X 与内核 GUI 是两种互斥的 framebuffer 使用方式。先在仓库根目录构建用户镜像，
+再通过 `user-graphics` 向用户态暴露 fbdev/evdev：
+
+```bash
+make -C ../user image ARCH=rv PROFILE=nanox
+make shell ARCH=rv PROFILE=pre \
+  SDCARD=../user/build/images/wateros-rv-nanox.ext4 \
+  EXTRA_FEATURES=user-graphics
+```
+
+不要同时启用 `gui` 和 `user-graphics`。完整说明见
+[`Nano-X 支持文档`](../docs/todo/kasss's_todo_list/nanox.md)。
+
 ### 调试与停滞分析
 
 ```bash

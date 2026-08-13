@@ -27,4 +27,5 @@
         "dep:impl_page_cache",
     ]
     cache-layer-diagnostics = [ "impl_page_cache/diagnostics" ]
+    user-graphics = [ "impl_fd_session/user-graphics" ]
     default = [ "api-v0", "bridge-fs-api" ]

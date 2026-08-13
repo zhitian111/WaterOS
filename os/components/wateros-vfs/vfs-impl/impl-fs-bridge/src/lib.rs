@@ -171,6 +171,9 @@ pub(crate) fn sync_path_filesystem(path : &str) -> VfsResult<()> {
 
 // 本方法代码由AI完成
 fn char_dev_exists(abs : &str) -> bool {
+    if impl_fd_session::special_device_exists(abs) {
+        return true;
+    }
     if is_builtin_dev_path(abs) {
         return true;
     }
@@ -178,7 +181,56 @@ fn char_dev_exists(abs : &str) -> bool {
 }
 
 // 本方法代码由AI完成
-fn char_dev_metadata(abs : &str) -> VfsMetadata { impl_fd_session::metadata_for_devfs_path(abs) }
+fn char_dev_metadata(abs : &str) -> VfsMetadata {
+    impl_fd_session::special_device_metadata(abs)
+        .unwrap_or_else(|| impl_fd_session::metadata_for_devfs_path(abs))
+}
+
+/// 用户图形设备包含 `/dev/input/...` 两级路径；该目录属于虚拟 devfs，
+/// 不要求比赛镜像或自有 rootfs 预先创建实体目录。
+fn special_dev_directory_exists(abs : &str) -> bool {
+    // `/dev` 本身由 devfs/rootfs 提供；这里只补出不存在的中间目录，
+    // 例如 evdev 节点共同依赖的 `/dev/input`。
+    if abs == "/dev" {
+        return false;
+    }
+    let prefix = alloc::format!("{}/", abs.trim_end_matches('/'));
+    impl_fd_session::special_device_paths()
+        .iter()
+        .any(|path| path.starts_with(prefix.as_str()))
+}
+
+fn special_dev_directory_metadata(abs : &str) -> VfsMetadata {
+    let mut inode = 0xD3F5_0000_0000_0000u64;
+    for byte in abs.as_bytes() {
+        inode = inode.rotate_left(5) ^ u64::from(*byte);
+    }
+    VfsMetadata { node_type : VfsNodeType::Directory,
+                  size : 0,
+                  mode : 0o40755,
+                  device_major : 0,
+                  device_minor : 0,
+                  inode,
+                  mount_id : 0,
+                  nlink : 2,
+                  uid : 0,
+                  gid : 0 }
+}
+
+/// 把虚拟设备的直接子项合并到实体 `/dev` 目录视图中。
+fn merge_special_dev_children(abs : &str, entries : &mut Vec<VfsDirEntry>) {
+    let prefix = alloc::format!("{}/", abs.trim_end_matches('/'));
+    for path in impl_fd_session::special_device_paths() {
+        let Some(relative) = path.strip_prefix(prefix.as_str()) else { continue; };
+        if relative.is_empty() { continue; }
+        let (name, node_type) = match relative.split_once('/') {
+            Some((directory, _)) => (directory, VfsNodeType::Directory),
+            None => (relative, VfsNodeType::Special),
+        };
+        if entries.iter().any(|entry| entry.name == name) { continue; }
+        entries.push(VfsDirEntry { name : String::from(name), node_type });
+    }
+}
 
 // 本方法代码由AI完成
 fn is_builtin_dev_path(abs : &str) -> bool {
@@ -264,6 +316,9 @@ impl SingleRootReadView for FsBridge {
         if char_dev_exists(abs.as_str()) {
             return Ok(true);
         }
+        if special_dev_directory_exists(abs.as_str()) {
+            return Ok(true);
+        }
         match resolve_route(abs.as_str())? {
             FsRoute::PseudoProc { rel, .. } => proc_view().exists(rel.as_str())
                                                           .map_err(map_fs_err),
@@ -288,6 +343,9 @@ impl SingleRootReadView for FsBridge {
         let abs = normalize_absolute_path(path)?;
         if char_dev_exists(abs.as_str()) {
             return Ok(char_dev_metadata(abs.as_str()));
+        }
+        if special_dev_directory_exists(abs.as_str()) {
+            return Ok(special_dev_directory_metadata(abs.as_str()));
         }
         let meta = match resolve_route(abs.as_str())? {
             FsRoute::PseudoProc { rel, identity } => map_meta(proc_view().metadata(rel.as_str())
@@ -367,13 +425,18 @@ impl SingleRootReadView for FsBridge {
     // 本方法代码由AI完成
     fn read_dir(&self, path : &str) -> VfsResult<Vec<VfsDirEntry>> {
         let abs = normalize_absolute_path(path)?;
-        let entries = match resolve_route(abs.as_str())? {
+        let virtual_directory = special_dev_directory_exists(abs.as_str());
+        let entries_result = match resolve_route(abs.as_str())? {
             FsRoute::PseudoProc { rel, .. } => proc_view().read_dir(rel.as_str())
                                                           .map_err(map_fs_err)?,
             FsRoute::PseudoSecurity { rel, .. } => securityfs_read_dir(rel.as_str())?,
-            FsRoute::Root { abs, .. } => root_rw()?.lock()
-                                                   .read_dir(abs.as_str())
-                                                   .map_err(map_fs_err)?,
+            FsRoute::Root { abs, .. } => {
+                match root_rw()?.lock().read_dir(abs.as_str()).map_err(map_fs_err) {
+                    Ok(entries) => entries,
+                    Err(VfsError::NotFound) if virtual_directory => Vec::new(),
+                    Err(error) => return Err(error),
+                }
+            }
             FsRoute::AuxRw { fs, rel, .. } => fs.lock()
                                                 .read_dir(rel.as_str())
                                                 .map_err(map_fs_err)?,
@@ -381,9 +444,13 @@ impl SingleRootReadView for FsBridge {
                                                 .read_dir(rel.as_str())
                                                 .map_err(map_fs_err)?,
         };
-        Ok(entries.into_iter()
-                  .map(map_dir_entry)
-                  .collect())
+        let mut entries = entries_result.into_iter()
+                                        .map(map_dir_entry)
+                                        .collect::<Vec<_>>();
+        if virtual_directory || abs.as_str() == "/dev" {
+            merge_special_dev_children(abs.as_str(), &mut entries);
+        }
+        Ok(entries)
     }
 
     // 本方法代码由AI完成
@@ -659,7 +726,7 @@ pub fn hardlink_path(existing_path : &str, new_path : &str) -> VfsResult<()> {
 // 本方法代码由AI完成
 pub fn read_symlink_path(path : &str) -> VfsResult<Vec<u8>> {
     let abs = normalize_absolute_path(path)?;
-    if char_dev_exists(abs.as_str()) {
+    if char_dev_exists(abs.as_str()) || special_dev_directory_exists(abs.as_str()) {
         return Err(VfsError::NotAFile);
     }
     match resolve_route(abs.as_str())? {
@@ -1167,6 +1234,11 @@ impl VfsDevInventory for FsBridge {
             }
                                                             })
                                                             .collect::<Vec<VfsDevNode>>();
+        for path in impl_fd_session::special_device_paths() {
+            if !nodes.iter().any(|node| node.path == path) {
+                nodes.push(VfsDevNode { path, node_type : VfsDevNodeType::Character });
+            }
+        }
         if !nodes.iter()
                  .any(|n| n.path == "/dev/zero")
         {

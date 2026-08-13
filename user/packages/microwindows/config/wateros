@@ -1,0 +1,78 @@
+####################################################################
+# WaterOS Nano-X 静态构建配置
+####################################################################
+ARCH                     = LINUX-NATIVE
+SHAREDLIBS               = N
+SHAREDLINK               = N
+DEBUG                    = N
+OPTIMIZE                 = Y
+VERBOSE                  = N
+THREADSAFE               = N
+PARALLEL                 = N
+
+SCREEN                   = FB
+MOUSE                    = WATEROS_EVDEV
+KEYBOARD                 = WATEROS_EVDEV
+SCREEN_WIDTH             = 1024
+SCREEN_HEIGHT            = 768
+SCREEN_PIXTYPE           = MWPF_TRUECOLORARGB
+SCREEN_DEPTH             = 32
+
+MICROWIN                 = N
+NANOX                    = Y
+NUKLEARUI                = N
+NX11                     = N
+ENGINE                   = N
+TINYWIDGETS              = N
+
+FBEMULATOR               = N
+MICROWINDEMO             = N
+MICROWINMULTIAPP         = N
+NANOXDEMO                = Y
+HAVE_VNCSERVER_SUPPORT   = N
+VNCSERVER_PTHREADED      = N
+
+LINK_APP_INTO_SERVER     = N
+NANOWM                   = Y
+HAVE_SHAREDMEM_SUPPORT   = N
+HAVE_FILEIO              = Y
+
+# 只使用无需外部库的图像格式和内置字体。
+HAVE_BMP_SUPPORT         = Y
+HAVE_GIF_SUPPORT         = N
+HAVE_PNM_SUPPORT         = Y
+HAVE_XPM_SUPPORT         = N
+HAVE_JPEG_SUPPORT        = N
+HAVE_PNG_SUPPORT         = N
+HAVE_TIFF_SUPPORT        = N
+HAVE_PCF_SUPPORT         = N
+HAVE_PCFGZ_SUPPORT       = N
+HAVE_FREETYPE_2_SUPPORT  = N
+HAVE_HARFBUZZ_SUPPORT    = N
+HAVE_T1LIB_SUPPORT       = N
+HAVE_FNT_SUPPORT         = N
+HAVE_FNTGZ_SUPPORT       = N
+HAVE_HZK_SUPPORT         = N
+HAVE_HBF_SUPPORT         = N
+HAVE_BIG5_SUPPORT        = N
+HAVE_GB2312_SUPPORT      = N
+HAVE_JISX0213_SUPPORT    = N
+HAVE_EUCJP_SUPPORT       = N
+HAVE_KSC5601_SUPPORT     = N
+HAVE_FRIBIDI_SUPPORT     = N
+HAVE_SHAPEJOINING_SUPPORT = N
+
+ERASEMOVE                = Y
+UPDATEREGIONS            = Y
+NOFONTS                  = N
+NOCLIPPING               = N
+USE_EXPOSURE             = Y
+VTSWITCH                 = N
+FBREVERSE                = N
+GRAYPALETTE              = N
+HAVETEXTMODE             = N
+
+# 由 WaterOS patch 消费：限制 demo 集、启用 evdev 和延迟全屏刷新。
+WATEROS_NANOX            = Y
+EXTRAFLAGS               = -DWATEROS_NANOX=1
+LDFLAGS                  = -static

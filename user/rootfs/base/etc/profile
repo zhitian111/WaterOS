@@ -1,0 +1,14 @@
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/opt/wateros/bin
+export HOME=/root
+export USER=root
+export LOGNAME=root
+export SHELL=/bin/sh
+export TERM="${TERM:-vt100}"
+export LANG=C
+export PS1='\w # '
+
+for profile_script in /etc/profile.d/*.sh; do
+    [ -r "$profile_script" ] && . "$profile_script"
+done
+unset profile_script
+

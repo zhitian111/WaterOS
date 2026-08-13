@@ -8,8 +8,9 @@ extern crate alloc;
 
 pub use api_v0 as api;
 pub use api_v0::{
-    Ipv4Endpoint, NetworkConfig, NetworkError, NetworkResult, SocketConnectError, SocketKind,
-    SocketPollSnapshot, SocketRecvError, SocketRecvFinish, SocketSendError, SocketState,
+    Ipv4Endpoint, NetworkConfig, NetworkError, NetworkResult, NetworkSocketSnapshot,
+    SocketConnectError, SocketKind, SocketPollSnapshot, SocketRecvError, SocketRecvFinish,
+    SocketSendError, SocketState,
 };
 
 #[cfg(feature = "impl-smoltcp")]
@@ -19,7 +20,9 @@ pub mod stack {
     //! 这里选择性转发 syscall、VFS 和内核启动路径实际需要的能力，避免把
     //! `impl-smoltcp` 的内部辅助函数整体暴露给上层。
 
-    pub use impl_smoltcp::stack::{init, poll, poll_at_millis, poll_socket_events};
+    pub use impl_smoltcp::stack::{
+        init, network_socket_table_snapshot, poll, poll_at_millis, poll_socket_events,
+    };
 
     pub(crate) use impl_smoltcp::stack::{
         create_tcp_socket, create_udp_socket, socket_accept, socket_bind, socket_close,

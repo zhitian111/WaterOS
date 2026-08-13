@@ -42,6 +42,11 @@
         "dep:tty",
         "impl_fd_session/impl-fd-session",
     ]
+    user-graphics = [
+        "impl-fd-session",
+        "impl_fd_session/user-graphics",
+        "impl_fs_bridge?/user-graphics",
+    ]
 
 [profile.dev]
     panic = "abort"

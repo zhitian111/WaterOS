@@ -1137,6 +1137,7 @@ dependencies = [
  "wateros-fs-api-v0",
  "wateros-fs-procfs-api-v0",
  "wateros-mm-frame-alloctor",
+ "wateros-network",
  "wateros-runtime-logging",
  "wateros-task",
 ]
@@ -1806,6 +1807,8 @@ dependencies = [
  "wateros-base-config",
  "wateros-driver-api-v0",
  "wateros-driver-character-api-v0",
+ "wateros-driver-display-api-v0",
+ "wateros-driver-input-api-v0",
  "wateros-ipc",
  "wateros-platform-arch",
  "wateros-runtime-console",

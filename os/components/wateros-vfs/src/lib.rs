@@ -37,6 +37,18 @@ pub mod fd;
 #[cfg(feature = "impl-fd-session")]
 pub mod cwd;
 
+/// 在平台驱动探测完成后建立 `/dev/input/eventN` 稳定索引。
+#[cfg(feature = "user-graphics")]
+pub fn initialize_user_graphics_devices() -> bool {
+    impl_fd_session::initialize_user_graphics_devices()
+}
+
+/// 用户态图形的低优先级输入汇聚任务入口。
+#[cfg(feature = "user-graphics")]
+pub extern "C" fn user_graphics_input_worker(arg : usize) -> ! {
+    impl_fd_session::user_graphics_input_worker(arg)
+}
+
 /// per-task 挂载命名空间（`impl-fd-session` + `bridge-fs-api`）。
 #[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
 pub mod mount_ns;

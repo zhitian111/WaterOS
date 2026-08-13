@@ -148,6 +148,7 @@ WaterOS/
 │   ├── todo/                 # 项目计划与待办事项
 │   ├── tools/                # 工具与脚本使用说明
 │   └── workflows/            # 开发和验证工作流程
+├── user/                     # 自有用户空间与 EXT4 镜像构建工程
 └── os/                       # WaterOS 内核工程
     ├── Cargo.toml            # 顶层 crate 与 Cargo feature 组合
     ├── Cargo.lock            # Rust 依赖版本锁定
@@ -307,6 +308,23 @@ kernel-la-pre      kernel-la-final      kernel-la
 ```
 
 其中 `kernel-rv` 与 `kernel-la` 是各架构当前 `final` 构建的副本。
+
+### 构建自有用户镜像
+
+`user/` 是仓库内的普通目录，可构建双架构静态 BusyBox rootfs，也可组合 Nano-X 等
+用户程序；根目录和 `os/` 的常规内核构建不会隐式构建它：
+
+```bash
+make -C user setup ARCH=rv
+make -C user doctor ARCH=rv
+make -C user image ARCH=rv PROFILE=minimal
+
+cd os
+make shell ARCH=rv PROFILE=pre \
+  SDCARD=../user/build/images/wateros-rv-minimal.ext4
+```
+
+完整的 package/profile、工具链和镜像说明见 [`user/README.md`](./user/README.md)。
 
 ## 构建配置
 

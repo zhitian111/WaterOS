@@ -562,7 +562,14 @@ impl ReadOnlyFs for AnotherExt4Fs {
     fn mount(&mut self, device : SharedBlockDevice) -> FsResult<()> {
         let io_error_state = Arc::new(AtomicBool::new(false));
         let backend = Arc::new(BlockAdapter { device, io_error : io_error_state.clone() });
-        let fs = Ext4::load(backend).map_err(map_error)?;
+        let fs = Ext4::load(backend).map_err(|error| {
+            log::error!(
+                "[fs::another-ext4] mount failed: code={:?} detail={:?}",
+                error.code(),
+                error
+            );
+            map_error(error)
+        })?;
         let state = Some(io_error_state);
         check_backend_error(&state)?;
         self.io_error_state = state;

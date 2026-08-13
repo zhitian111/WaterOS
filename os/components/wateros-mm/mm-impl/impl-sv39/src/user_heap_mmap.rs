@@ -14,14 +14,16 @@ use api_v0::flags::MapFlags;
 use api_v0::frame_allocator::PhysicalFrameAllocator;
 use alloc::boxed::Box;
 
-use api_v0::mmap::{DemandPageLoader, MmapKind, MmapOps, MmapRequest, PageFaultAccess};
+use api_v0::mmap::{
+    DemandPageLoader, DeviceMapping, MmapKind, MmapOps, MmapRequest, PageFaultAccess,
+};
 use api_v0::perm::PagePerm;
 use impl_common::{
     map_range_from_backing, map_range_from_loader, map_zeroed_page_with_alloc,
     map_zeroed_range_with_alloc, mmap_map_end, mremap_range, MREMAP_FIXED, MREMAP_MAYMOVE,
 };
 
-use crate::pagetable::{LazyFileVma, Sv39AddressSpace};
+use crate::pagetable::{DeviceVma, LazyFileVma, Sv39AddressSpace};
 
 #[inline]
 fn fence_user_ptes() { platform::arch::paging::flush_address_space_translations(); }
@@ -94,6 +96,79 @@ impl HeapBrk for Sv39AddressSpace {
 }
 
 impl Sv39AddressSpace {
+    fn mmap_device_inner<A>(&mut self,
+                            allocator : &mut A,
+                            req : MmapRequest,
+                            mapping : DeviceMapping)
+                            -> MmResult<VirtAddr>
+        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>
+    {
+        if req.len == 0 || !req.flags.contains(MapFlags::SHARED) ||
+           req.flags.contains(MapFlags::PRIVATE) || req.flags.contains(MapFlags::ANONYMOUS) ||
+           req.prot.executable()
+        {
+            return Err(MmError::InvalidAddress);
+        }
+        let offset = match req.kind {
+            MmapKind::Device { offset } => offset,
+            _ => return Err(MmError::InvalidAddress),
+        };
+        if offset % api_v0::addr::PAGE_SIZE != 0 || mapping.len == 0 {
+            return Err(MmError::InvalidAddress);
+        }
+        let rounded_len = req.len.checked_add(api_v0::addr::PAGE_SIZE - 1)
+                                 .ok_or(MmError::InvalidAddress)? /
+                          api_v0::addr::PAGE_SIZE * api_v0::addr::PAGE_SIZE;
+        if offset.checked_add(rounded_len).ok_or(MmError::InvalidAddress)? > mapping.len {
+            return Err(MmError::InvalidAddress);
+        }
+        let base = match req.addr_hint {
+            Some(hint) if req.flags.contains(MapFlags::FIXED) => hint,
+            Some(_) => return Err(MmError::InvalidAddress),
+            None => self.find_free_mmap_base_considering_vmas(self.mmap_file_cursor, req.len)?,
+        };
+        let end = mmap_map_end(base, req.len)?;
+        self.validate_user_mapping_range(base, end)?;
+        if req.flags.contains(MapFlags::FIXED) {
+            self.sync_shared_file_vmas(base, end)?;
+            self.unmap_mmap_range(allocator, base, end)?;
+            self.remove_lazy_file_vmas(base, end)?;
+            self.remove_shared_file_vmas(base, end)?;
+            self.remove_shared_anon_vmas(base, end);
+            self.remove_device_vmas(base, end);
+        }
+        let perm = req.prot | PagePerm::U;
+        let phys_start = PhysPageNum(mapping.phys_start.0 + offset / api_v0::addr::PAGE_SIZE);
+        let mut vpn = base.floor_page();
+        let vpn_end = end.ceil_page();
+        let mut page_index = 0usize;
+        while vpn.0 < vpn_end.0 {
+            if let Err(error) = self.map_page_to_ppn(vpn,
+                                                     PhysPageNum(phys_start.0 + page_index),
+                                                     perm)
+            {
+                let mut rollback = base.floor_page();
+                while rollback.0 < vpn.0 {
+                    let _ = self.unmap_page_to_ppn(rollback);
+                    rollback = VirtPageNum(rollback.0 + 1);
+                }
+                return Err(error);
+            }
+            vpn = VirtPageNum(vpn.0 + 1);
+            page_index += 1;
+        }
+        self.register_device_vma(DeviceVma { start : base,
+                                             end,
+                                             phys_start,
+                                             perm,
+                                             lease : mapping.lease });
+        if req.addr_hint.is_none() {
+            self.mmap_file_cursor = end;
+        }
+        fence_user_ptes();
+        Ok(base)
+    }
+
     fn handle_stack_page_fault<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,
                                                                                    allocator : &mut A,
                                                                                    fault_addr : VirtAddr,
@@ -179,9 +254,11 @@ impl Sv39AddressSpace {
         if req.flags
               .contains(MapFlags::FIXED)
         {
-            self.unmap_range_with_alloc(allocator, base, end)?;
+            self.unmap_mmap_range(allocator, base, end)?;
             self.remove_lazy_file_vmas(base, end)?;
             self.remove_shared_anon_vmas(base, end);
+            self.remove_shared_file_vmas(base, end)?;
+            self.remove_device_vmas(base, end);
         }
         if shared {
             // 共享匿名映射需要稳定的物理帧供 fork 共享，保持饥渴分配。
@@ -241,7 +318,11 @@ impl Sv39AddressSpace {
         if req.flags
               .contains(MapFlags::FIXED)
         {
-            self.unmap_range_with_alloc(allocator, base, end)?;
+            self.unmap_mmap_range(allocator, base, end)?;
+            self.remove_lazy_file_vmas(base, end)?;
+            self.remove_shared_anon_vmas(base, end);
+            self.remove_shared_file_vmas(base, end)?;
+            self.remove_device_vmas(base, end);
         }
         map_range_from_backing(self,
                                allocator,
@@ -274,7 +355,9 @@ impl Sv39AddressSpace {
         }
         let file_offset = match req.kind {
             MmapKind::File { offset, .. } => offset,
-            MmapKind::Anonymous => return Err(MmError::InvalidAddress),
+            MmapKind::Anonymous | MmapKind::Device { .. } => {
+                return Err(MmError::InvalidAddress);
+            }
         };
         let base = match req.addr_hint {
             Some(hint)
@@ -293,9 +376,11 @@ impl Sv39AddressSpace {
               .contains(MapFlags::FIXED)
         {
             self.sync_shared_file_vmas(base, end)?;
-            self.unmap_range_with_alloc(allocator, base, end)?;
+            self.unmap_mmap_range(allocator, base, end)?;
             self.remove_shared_file_vmas(base, end)?;
             self.remove_shared_anon_vmas(base, end);
+            self.remove_lazy_file_vmas(base, end)?;
+            self.remove_device_vmas(base, end);
         }
         map_range_from_loader(self, allocator, base, end, perm, |page_index, page| {
             let offset = file_offset.checked_add(page_index.checked_mul(api_v0::addr::PAGE_SIZE)
@@ -336,6 +421,7 @@ impl MmapOps for Sv39AddressSpace {
                 };
                 self.mmap_file(allocator, req, backing)
             }
+            MmapKind::Device { .. } => Err(MmError::InvalidAddress),
         }
     }
 
@@ -351,7 +437,7 @@ impl MmapOps for Sv39AddressSpace {
         }
         match req.kind {
             MmapKind::File { .. } => self.mmap_file_shared_inner(allocator, req, loader),
-            MmapKind::Anonymous => Err(MmError::InvalidAddress),
+            MmapKind::Anonymous | MmapKind::Device { .. } => Err(MmError::InvalidAddress),
         }
     }
 
@@ -395,12 +481,17 @@ impl MmapOps for Sv39AddressSpace {
         if req.flags
               .contains(MapFlags::FIXED)
         {
-            self.unmap_range_with_alloc(allocator, base, end)?;
+            self.unmap_mmap_range(allocator, base, end)?;
             self.remove_lazy_file_vmas(base, end)?;
+            self.remove_shared_anon_vmas(base, end);
+            self.remove_shared_file_vmas(base, end)?;
+            self.remove_device_vmas(base, end);
         }
         let file_offset = match req.kind {
             MmapKind::File { offset, .. } => offset,
-            MmapKind::Anonymous => return Err(MmError::InvalidAddress),
+            MmapKind::Anonymous | MmapKind::Device { .. } => {
+                return Err(MmError::InvalidAddress);
+            }
         };
         self.register_lazy_file_vma(base, end, perm, file_offset, file_size, loader)?;
         if req.addr_hint
@@ -409,6 +500,16 @@ impl MmapOps for Sv39AddressSpace {
             self.mmap_file_cursor = end;
         }
         Ok(base)
+    }
+
+    fn mmap_device<A>(&mut self,
+                      allocator : &mut A,
+                      req : MmapRequest,
+                      mapping : DeviceMapping)
+                      -> MmResult<VirtAddr>
+        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>
+    {
+        self.mmap_device_inner(allocator, req, mapping)
     }
 
     fn handle_page_fault<A>(&mut self,
@@ -446,7 +547,7 @@ impl MmapOps for Sv39AddressSpace {
         let page_start = addr.floor_page().start_addr();
         let page_end = end.ceil_page().start_addr();
         self.sync_shared_file_vmas(page_start, page_end)?;
-        self.unmap_range_with_alloc(allocator, addr, end)?;
+        self.unmap_mmap_range(allocator, addr, end)?;
         self.remove_lazy_file_vmas(addr.floor_page()
                                        .start_addr(),
                                    end.ceil_page()
@@ -456,6 +557,7 @@ impl MmapOps for Sv39AddressSpace {
                                      end.ceil_page()
                                         .start_addr());
         self.remove_shared_file_vmas(page_start, page_end)?;
+        self.remove_device_vmas(page_start, page_end);
         fence_user_ptes();
         Ok(())
     }
@@ -481,6 +583,11 @@ impl MmapOps for Sv39AddressSpace {
         {
             return Err(MmError::InvalidAddress);
         }
+        let page_start = addr.floor_page().start_addr();
+        let page_end = end.ceil_page().start_addr();
+        if perm.executable() && self.device_vma_overlaps(page_start, page_end) {
+            return Err(MmError::AccessViolation);
+        }
         let perm_u = perm | PagePerm::U;
         self.protect_lazy_file_vmas(addr.floor_page()
                                         .start_addr(),
@@ -501,7 +608,10 @@ impl MmapOps for Sv39AddressSpace {
             };
             let old_perm = self.leaf_page_perm(vpn)?
                                .ok_or(MmError::NotMapped)?;
-            if perm_u.writable() {
+            let device_page = self.device_vmas
+                                  .iter()
+                                  .any(|vma| vma.contains_page(vpn.start_addr()));
+            if perm_u.writable() && !device_page {
                 if !self.ensure_private_for_write(vpn)? {
                     return Err(MmError::NotMapped);
                 }
@@ -515,6 +625,7 @@ impl MmapOps for Sv39AddressSpace {
             }
             vpn = VirtPageNum(vpn.0 + 1);
         }
+        self.protect_device_vmas(page_start, page_end, perm_u);
         Ok(ptes_changed)
     }
 
@@ -532,6 +643,9 @@ impl MmapOps for Sv39AddressSpace {
         let old_start = old_addr.floor_page()
                                 .start_addr();
         let old_end = mmap_map_end(old_addr, old_size)?;
+        if self.device_vma_overlaps(old_start, old_end) {
+            return Err(MmError::Unsupported);
+        }
         if old_end.0 > crate::pagetable::USER_VA_LIMIT ||
            self.range_overlaps_stack(old_addr, old_end) ||
            self.range_overlaps_kernel_reserved(old_addr, old_end)
@@ -543,6 +657,10 @@ impl MmapOps for Sv39AddressSpace {
             self.validate_user_mapping_range(new_address, end)?;
             if new_address.0 < old_end.0 && end.0 > old_start.0 {
                 return Err(MmError::InvalidAddress);
+            }
+            if self.device_vma_overlaps(new_address, end) {
+                self.unmap_mmap_range(allocator, new_address, end)?;
+                self.remove_device_vmas(new_address, end);
             }
         } else {
             let end = mmap_map_end(old_addr, new_size)?;
@@ -674,7 +792,10 @@ impl Sv39AddressSpace {
                              .any(|vma| vma.contains_page(page)) ||
                          self.shared_file_vmas
                              .iter()
-                             .any(|vma| vma.start.0 <= page.0 && page.0 < vma.end.0);
+                             .any(|vma| vma.start.0 <= page.0 && page.0 < vma.end.0) ||
+                         self.device_vmas
+                             .iter()
+                             .any(|vma| vma.contains_page(page));
             let in_stack = self.user_stack_bottom.0 <= page.0 &&
                            page.0 < self.user_stack_top.0;
             let in_brk = self.user_brk_start.0 <= page.0 &&
@@ -701,6 +822,9 @@ impl Sv39AddressSpace {
             .iter()
             .any(|vma| vma.overlaps(addr, end)) ||
         self.shared_anon_vmas
+            .iter()
+            .any(|vma| vma.overlaps(addr, end)) ||
+        self.device_vmas
             .iter()
             .any(|vma| vma.overlaps(addr, end))
     }

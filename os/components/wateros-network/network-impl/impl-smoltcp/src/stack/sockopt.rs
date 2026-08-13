@@ -16,11 +16,13 @@ const SOL_IP : usize = 0;
 const IPPROTO_IP : usize = 0;
 const SOL_SOCKET : usize = 1;
 const IPPROTO_TCP : usize = 6;
+const IP_TOS : usize = 1;
 const SO_REUSEADDR : usize = 2;
 const SO_ERROR : usize = 4;
 const SO_DONTROUTE : usize = 5;
 const SO_SNDBUF : usize = 7;
 const SO_RCVBUF : usize = 8;
+const SO_KEEPALIVE : usize = 9;
 const SO_REUSEPORT : usize = 15;
 const SO_RCVTIMEO_OLD : usize = 20;
 const SO_SNDTIMEO_OLD : usize = 21;
@@ -36,6 +38,8 @@ const TCP_MAXSEG : usize = 2;
 const TCP_INFO : usize = 11;
 const ETIMEDOUT : i32 = 110;
 const ECONNREFUSED : i32 = 111;
+/// Linux 未调整 keepalive 参数时使用的默认空闲时间。
+const TCP_KEEPALIVE_DEFAULT_SECS : u64 = 2 * 60 * 60;
 
 fn timeval_to_millis(optval : &[u8]) -> Result<Option<u64>, NetworkError> {
     if optval.len() >= 16 {
@@ -166,6 +170,12 @@ impl NetworkStack {
                    optname : usize,
                    optval : &[u8])
                    -> Result<bool, NetworkError> {
+        if (level == SOL_IP || level == IPPROTO_IP) && optname == IP_TOS {
+            // OpenSSH 会根据会话阶段设置 IP_TOS。smoltcp 暂无逐 socket 的
+            // IPv4 TOS 接口，因此校验参数后兼容接受，不改变实际报文优先级。
+            let _tos = sockopt_i32(optval)?;
+            return Ok(false);
+        }
         if (level == SOL_IP || level == IPPROTO_IP) &&
            matches!(optname,
                     IP_ADD_MEMBERSHIP | MCAST_JOIN_GROUP)
@@ -194,6 +204,23 @@ impl NetworkStack {
         }
         if level == SOL_SOCKET && optname == SO_DONTROUTE {
             let _enabled = sockopt_bool(optval)?;
+            return Ok(false);
+        }
+        if level == SOL_SOCKET && optname == SO_KEEPALIVE {
+            let enabled = sockopt_bool(optval)?;
+            if self.socket_meta(handle)?
+                   .kind !=
+               SocketKind::Tcp
+            {
+                return Err(NetworkError::WrongSocketType);
+            }
+            self.sockets
+                .get_mut::<tcp::Socket>(handle)
+                .set_keep_alive(if enabled {
+                                    Some(Duration::from_secs(TCP_KEEPALIVE_DEFAULT_SECS))
+                                } else {
+                                    None
+                                });
             return Ok(false);
         }
         if level == SOL_SOCKET && optname == SO_SNDBUF {
@@ -324,6 +351,20 @@ impl NetworkStack {
                           .rcv_buf_size
                           .to_ne_bytes()
                           .to_vec());
+        }
+        if level == SOL_SOCKET && optname == SO_KEEPALIVE {
+            if self.socket_meta(handle)?
+                   .kind !=
+               SocketKind::Tcp
+            {
+                return Err(NetworkError::WrongSocketType);
+            }
+            let enabled = self.sockets
+                              .get::<tcp::Socket>(handle)
+                              .keep_alive()
+                              .is_some();
+            return Ok((enabled as i32).to_ne_bytes()
+                                      .to_vec());
         }
         if level == SOL_SOCKET &&
            matches!(optname,

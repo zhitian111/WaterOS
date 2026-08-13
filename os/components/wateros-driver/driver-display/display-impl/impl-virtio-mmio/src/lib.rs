@@ -104,6 +104,9 @@ impl VirtioGpuMmioDevice {
         let stride = width as usize * 4;
         let byte_len = stride.checked_mul(height as usize)
                              .ok_or(DriverError::InvalidParam)?;
+        let mapped_len = byte_len.checked_add(PAGE_SIZE - 1)
+                                 .ok_or(DriverError::InvalidParam)? /
+                         PAGE_SIZE * PAGE_SIZE;
         if framebuffer.len() < byte_len {
             return Err(DriverError::IoError);
         }
@@ -112,6 +115,8 @@ impl VirtioGpuMmioDevice {
                                      stride,
                                      format : PixelFormat::Bgra8888,
                                      byte_len,
+                                     phys_base : framebuffer.as_mut_ptr() as usize,
+                                     mapped_len,
                                      base : framebuffer.as_mut_ptr() as usize };
         Ok(Self { inner, info })
     }

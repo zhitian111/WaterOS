@@ -1,0 +1,10 @@
+[package]
+name = "busybox"
+version = "1.33.1-wateros1"
+source = "vendor/busybox"
+architectures = ["rv", "la"]
+dependencies = ["base-layout"]
+build = "build.py"
+install_prefix = "/"
+allow_overwrite = []
+inputs = []
