@@ -2,118 +2,178 @@
 
 [项目首页](../../../../README.md) · [内核工程](../../../README.md) · [wateros-task](../readme.md)
 
-`wateros-task-scheduler` 是 WaterOS 的多类、每 CPU 调度器。当前实现支持五种 Linux 调度
-策略：`SCHED_OTHER`、`SCHED_BATCH`、`SCHED_IDLE`、`SCHED_FIFO`、`SCHED_RR`；并为每个配置
-CPU 维护 idle task、current task、runnable 队列、timer/switch 统计与重调度状态。
+`wateros-task-scheduler` 是 WaterOS 的多类、每 CPU 调度器。它维护 TCB、就绪队列、等待队列
+和每 CPU 调度状态，并负责把任务生命周期变化转换成安全的队列迁移、调度决策和上下文切换。
 
-## 分层
+## 模块分层
 
 | 层 | 路径 | 职责 |
 | --- | --- | --- |
-| 聚合 | `src/lib.rs` | 选择 `impl-multi-class` 并直接导出。 |
-| API | `scheduler-api/api-v0/` | task registry、CPU state、五类 runnable 队列、wait queue 数据结构。 |
-| 实现 | `scheduler-impl/impl-multi-class/` | 调度决策、上下文切换、SMP 放置、生命周期与 wait 操作。 |
-| 外层 | `wateros-task` | syscall/trap/IPC 可调用的门面与 process 协调。 |
+| 聚合层 | `src/lib.rs` | 选择并导出当前的多类调度器实现。 |
+| 调度器 API | `scheduler-api/api-v0/` | 定义并实现 TaskRegistry、CPUState、CFS/FIFO/RR 队列和 WaitQueues。 |
+| 调度器实现 | `scheduler-impl/impl-multi-class/` | 实现调度决策、任务放置、生命周期转换、上下文切换和 SMP 重调度。 |
+| 任务门面 | `wateros-task/src/` | 协调 scheduler 与 process，并向 syscall、trap 和 IPC 提供稳定接口。 |
 
-实现文件按领域拆分：
+多类调度器实现按职责拆分如下：
 
 | 文件 | 内容 |
 | --- | --- |
-| `scheduler.rs` | `MultiClassScheduler`、首次切换、普通调度、tick 与地址空间切换通知。 |
-| `scheduler/cpu.rs` | CPU online、timekeeper、snapshot、CPU 负载与重调度请求。 |
-| `scheduler/tasks.rs` | spawn、fork、clone、exec、task 查询与 affinity。 |
-| `scheduler/lifecycle.rs` | yield/block/sleep/exit、ready placement、运行队列状态转换。 |
-| `scheduler/policy.rs` | 调度策略、优先级和 nice 相关入口。 |
-| `scheduler/wait.rs` | wait queue 分配、等待、唤醒和 requeue。 |
+| `src/lib.rs` | 全局 scheduler 容器、锁外 IPI 派发和 yield/block/sleep/exit 等入口。 |
+| `src/scheduler.rs` | `MultiClassScheduler`、首次运行、普通调度和上下文切换准备。 |
+| `src/scheduler/cpu.rs` | CPU online、timekeeper、负载统计、快照和重调度请求。 |
+| `src/scheduler/tasks.rs` | task 创建、发布、查询、exec 和 affinity。 |
+| `src/scheduler/policy.rs` | policy、priority、nice 和抢占判断。 |
+| `src/scheduler/runqueue.rs` | 就绪队列选择、入队、出队和 CPU 放置。 |
+| `src/scheduler/wait.rs` | wait queue 分配、条件等待、唤醒、timeout 和 requeue。 |
+| `src/scheduler/query.rs` | task/CPU 查询以及调度停滞诊断。 |
 
-## 关键数据结构
+## 实现说明
+
+- 调度器支持五种策略：`SCHED_OTHER`、`SCHED_BATCH`、`SCHED_IDLE`、`SCHED_FIFO` 和
+  `SCHED_RR`。
+- 每个配置 CPU 都拥有独立的 current task、物理 idle task、五类就绪队列、`need_resched`
+  状态及 timer/context-switch 统计；当前不实现运行中任务迁移和 work stealing。
+- `SCHED_OTHER`、`SCHED_BATCH` 和 `SCHED_IDLE` 使用 vruntime 公平队列。Other 与 Batch
+  共享公平类选择次序，SchedIdle 仅在其它策略没有 runnable task 时参与选择。
+- FIFO 和 RR 是实时策略，使用 1 到 99 的 priority 分桶。FIFO 不因普通时间片轮转，RR
+  达到时间片后重新排队；更高实时优先级仍可抢占当前任务。
+- 每 CPU 的物理 idle task 是实际存在且能够切换到的内核任务，不等同于 `None`，也不同于
+  用户可设置的 `SCHED_IDLE` 策略。
+- 全局 `MultiClassScheduler` 由一把多核安全锁保护。TaskState、队列归属、ready/running CPU
+  和 CPU current 必须在这把锁内一起更新。
+- 新任务优先放到符合 affinity 的最空 online CPU；唤醒任务优先回到 `last_cpu_id`，目标离线
+  或过载时再重新选择。
+- 只有 timekeeper CPU 推进全局 sleep/wait timeout；其它 CPU 的 timer 只处理本地 vruntime、
+  时间片、统计和抢占，避免 CPU 数量改变超时速度。
+- 远端任务入队后只通知实际目标 CPU。IPI 只触发重调度判断，不推进 scheduler tick。
+
+## 调用链路
+
+初始化流程：
 
 ```text
-MultiClassScheduler（唯一 scheduler 锁保护）
- ├─ TaskRegistry       : TCB、TaskState、上下文、父子关系、ready/last/running CPU
- ├─ WaitQueues         : WaitQueueId -> waiter、sleep deadline、woken/timeout 集合
- ├─ CPUState[MAX_CPUS] : online/current/idle、Other/Batch/Idle/FIFO/RR 队列、need_resched、统计
- ├─ timekeeper_cpu     : 唯一推进全局 timeout 的 CPU
- └─ pending_reschedule_cpus : 锁内积累、锁外发送的定向 IPI 目标
+scheduler::init()
+  -> 创建 MultiClassScheduler、TaskRegistry 和 WaitQueues
+  -> 为每个配置 CPU 创建 CPUState 与物理 idle TCB
+  -> 将启动 CPU 标记 online，并指定全局 timekeeper CPU
 ```
 
-`CPUState` 中的 idle task 是实际可切换的内核任务，不是 `None`。`current_task_id ==
-idle_task_id` 表示 CPU 正在 idle；只有 CPU 尚未完成 `run_first_task` 或 offline snapshot
-才可能没有 current task。
-
-## 调度流程
+任务创建和发布分为两个阶段：
 
 ```text
-timer tick / yield / block / sleep / exit / remote IPI
-  -> scheduler 锁内更新当前任务状态与队列归属
-  -> 选当前 CPU 上最高类别的下一个 runnable task，空时选择 idle
-  -> 更新 current_task、`Running` + `running_cpu_id`、地址空间 active CPU 状态
-  -> 释放 scheduler lock 与 interrupt guard
+create_*_task()
+  -> 在 TaskRegistry 中创建尚未入队的 Ready TCB
+  -> 上层完成 PCB、fd、credential、signal 等资源初始化
+activate_ready_task()
+  -> 按 affinity、online 状态和负载选择目标 CPU
+  -> 更新 ready_cpu_id，并加入目标 CPU 的唯一就绪队列
+  -> 设置 need_resched 和 pending_reschedule_cpus
+  -> 释放 scheduler 锁后向远端目标发送定向 IPI
+```
+
+普通调度流程：
+
+```text
+tick / yield / block / sleep / exit / reschedule
+  -> 锁内同步当前任务快照和运行统计
+  -> 按调度原因更新当前任务状态及所属容器
+  -> 从本 CPU 选择下一任务；无普通任务时选择物理 idle task
+  -> 将下一任务出队，标记 Running，并更新 CPU current
+  -> 准备地址空间和 TaskContext 切换
+  -> 释放 scheduler 锁
   -> __switch(current_context, next_context)
+  -> 旧任务以后恢复时释放中断 guard，并处理延迟发布的迁移任务
 ```
 
-选择顺序与队列语义如下：
+调度锁会在 `__switch` 前释放，但中断 guard 有意跨越实际上下文切换：这样可以避免调度器已将
+另一任务登记为 current、CPU 却仍在旧任务栈上时响应调度中断。被切走的旧任务恢复后才释放
+自己的 guard；第一次运行的任务由任务入口完成对应收尾。
 
-1. `SCHED_FIFO` 与 `SCHED_RR` 是实时类，按 priority `99 → 1` 扫描；同一 priority 下 FIFO
-   先于 RR。
-2. `SCHED_OTHER` 和 `SCHED_BATCH` 共用 fair class，跨队列选择最小 vruntime；相等时 Other
-   优先，Batch 因此轻微劣后但不会被饿死。
-3. `SCHED_IDLE` 使用独立的 vruntime 基线，仅在前述 runnable 队列为空后运行。
-4. 所有用户/内核 runnable 队列为空时，运行每 CPU 专属的物理 idle task。
+等待与唤醒流程：
 
-RR 受时间片驱动轮转；FIFO 不因本地时间片强制轮转。无论策略如何，任务被选中后都必须先从
-ready queue 取出，再标记 `Running` 并记录 `running_cpu_id`；运行中任务不能同时保留在 ready
-queue。
+```text
+wait_current_while()
+  -> scheduler 临界区内再次检查条件
+  -> 条件仍成立时将当前任务放入 WaitQueues，并切走
 
-## 状态与队列原子性
-
-下列动作必须在**同一把 scheduler 锁**内完成：
-
-1. 从旧 ready/wait/sleep 容器移除任务；
-2. 更新 `TaskState`；
-3. 更新 `ready_cpu`、`last_cpu`、`running_cpu` 与 CPU 的 `current_task_id`；
-4. 将任务加入唯一的新容器，或标记为 `Running`（连同 `running_cpu_id`）/`Exited`；
-5. 若远端 CPU 需要观察新工作，写入 `pending_reschedule_cpus`。
-
-实际 IPI 发送、日志、MM 回调和 `__switch` 都在锁外。禁止持 scheduler 锁等待、调用 VFS/IPC
-回调或进入用户内存路径。
-
-## Wait queue 与 timeout
-
-`WaitQueues` 是 scheduler 的一部分，而不是独立 IPC scheduler。`WaitQueueId` 可被
-`wateros-task::WaitQueue` 和 `ipc-waitqueue` 引用。
-
-- 条件等待由 `wait_current_while` 在 scheduler 临界区复查条件；条件已改变时不会阻塞。
-- `wake_one` / `wake_all` 只激活仍处于匹配 `Blocking(WaitQueue(id))` 状态的任务，陈旧项会被
-  丢弃，避免重复 Running。
-- requeue 同时修改 waiter 容器和任务的 `Blocking` target。
-- `try_release_wait_queue` 仅能在没有 waiter 且无上层并发句柄时调用；futex 等动态队列还需要
-  自己的引用使用计数，避免 ID 复用。
-
-全局 tick 由 `timekeeper_cpu` 单独推进 timeout。其他 CPU 的 timer tick 不推进 sleep/wait
-deadline，只更新本 CPU 的时间片、统计和抢占判断。
-
-## SMP 放置与 IPI
-
-- CPU online 后有自己的 idle/current state 与五类 runnable 队列。
-- `LeastLoaded` 为新任务选择 runnable 最少的 online 且符合 affinity 的 CPU，平局按轮转起点
-  打散；`LastCpu` 用于唤醒时尽量保持 cache locality。
-- 远端 ready queue 入队会设置目标 CPU `need_resched` 和 pending CPU mask；锁外只向目标
-  online CPU 发 IPI。
-- 软中断 IPI 只消费控制原因并触发重调度判断，不能当作 timer tick 推进全局时间。
-
-## 扩展与测试
-
-新增调度策略或队列时，要同时修改 scheduler API 的 queue/registry、`CPUState`、调度选择、
-任务入队/出队、snapshot 以及本文件。新增跨 CPU 行为还必须说明锁顺序、IPI 目标和 timeout
-归属。
-
-基础验证：
-
-```sh
-make -C os rv_check
-make -C os la_check
+wake_one() / wake_all()
+  -> 从 WaitQueues 取出仍匹配等待目标的任务
+  -> 写入 wait result，并按 LastCpu/LeastLoaded 重新发布
+  -> 锁外向实际远端 CPU 发送重调度 IPI
 ```
 
-运行时排障可调用 `cpu_states()` / `print_cpu_states()`，结合每 CPU 的 current、队列长度、
-`need_resched`、switch/timer 计数判断任务是否错误地滞留在 ready、wait 或 idle 路径。
+## TaskRegistry实现功能
+
+`TaskRegistry` 的主要实现在 `scheduler-api/api-v0/src/registry.rs`，内部使用
+`BTreeMap<TaskId, Box<TaskControlBlock>>` 保存所有调度实体。
+
+- 为物理 idle、内核任务和用户任务分配 TaskId 并保存 TCB。
+- 支持创建初始用户任务，以及 fork、clone 和 exec 所需的 TCB 操作。
+- 维护 `Ready`、`Running`、`Blocking`、`Sleeping`、`Exited` 状态。
+- 维护 `ready_cpu_id`、`running_cpu_id` 和 `last_cpu_id`，供队列归属检查、唤醒放置和诊断使用。
+- 保存 policy、priority、nice、vruntime、运行统计、等待结果和 TaskContext。
+- 提供稳定的 `TaskSnapshot`，避免 dashboard 和诊断代码直接长期借用 TCB。
+- 任务退出后先保留 Exited TCB 供 wait/reap 观察，确认回收时再从 registry 移除。
+
+新建但尚未发布的任务可以是 `Ready + ready_cpu_id=None`；一旦正式发布，Ready 任务必须恰好
+位于一个 CPU 的一个就绪队列中。Running 任务必须已经出队，且其 `running_cpu_id` 与对应
+CPU 的 current task 一致。
+
+## CPUState与就绪队列实现功能
+
+`CPUState` 及各队列主要位于 `scheduler-api/api-v0/src/cpu.rs`、`cfs_queue.rs`、
+`fifo_queue.rs` 和 `rr_queue.rs`。
+
+- `CPUState` 保存 online、current、物理 idle task、`need_resched`、调度统计和延迟发布任务。
+- current task 使用独立快照缓存热路径数据；tick 更新缓存中的 vruntime 和统计，任务离开 CPU
+  时再同步回 TaskRegistry。
+- Other、Batch 和 SchedIdle 各有一条 `CfsQueue`。队列使用
+  `BTreeMap<VRunTime, VecDeque<TaskId>>`，优先选择最小 vruntime，同一 vruntime 下保持 FIFO。
+- nice 通过权重影响 vruntime 增长：权重越大，同样运行时间增加的 vruntime 越少，长期获得的
+  CPU 份额越多。任务进入另一 CPU 的公平队列时会按目标队列基线归一化，避免低 vruntime
+  任务长期插队。
+- FIFO 和 RR 按 priority 分桶，并从 99 向 1 选择；相同 priority 下 FIFO 先于 RR。
+- 当前选择顺序为：实时 FIFO/RR → Other/Batch → `SCHED_IDLE` → 物理 idle task。
+- 新任务使用 LeastLoaded 放置，负载相同时通过轮转起点避免总是选择 CPU 0；唤醒任务使用
+  LastCpu 放置以保留缓存局部性，并在目标不合适时回退到 LeastLoaded。
+- affinity 修改不会让正在运行的任务立即出现在远端队列。源 CPU 先将它切走，待 `__switch`
+  已保存旧上下文后再延迟发布，避免同一个 TaskContext 同时在两个 CPU 上运行。
+
+## WaitQueues实现功能
+
+`WaitQueues` 的主要实现在 `scheduler-api/api-v0/src/wait_queues.rs`，调度器侧操作位于
+`scheduler-impl/impl-multi-class/src/scheduler/wait.rs`。
+
+- 分配和释放 `WaitQueueId`，维护显式等待队列、task-exit、child-exit、blocking、sleeping 和
+  exited 等等待容器。
+- 支持无期限等待、带 deadline 等待、wake-one、wake-all 和跨队列 requeue。
+- timeout 队列按 deadline 排序，只由 timekeeper CPU 推进并激活到期任务。
+- 条件等待在 scheduler 锁内复查条件，保证“检查条件”和“登记 waiter”之间不会丢失唤醒。
+- 唤醒时会再次核对任务状态和等待目标；已经退出、已被其它路径唤醒或不再匹配的陈旧 waiter
+  会被丢弃，避免重复入队或重复 Running。
+- requeue 会同时更新 waiter 所在容器和 TCB 的 Blocking target，保持两边语义一致。
+- 动态 wait queue 的上层使用者还必须维护自己的引用生命周期，只有无 waiter、无并发使用者时
+  才能释放 ID，避免编号复用后误唤醒其它对象。
+
+## 调度器实现功能
+
+`MultiClassScheduler` 是所有调度状态的协调者，主要实现在
+`scheduler-impl/impl-multi-class/src/scheduler.rs`。
+
+- 聚合 TaskRegistry、WaitQueues、每 CPU 状态、任务放置轮转点、timekeeper CPU 和待重调度
+  CPU mask。
+- 在同一临界区完成任务状态转换、旧容器移除、新容器加入、CPU current 更新和重调度请求，
+  防止任务同时处于两个队列或两个 CPU。
+- 根据 ScheduleReason 处理 tick、yield、block、sleep、wait、exit 和显式 reschedule；只有确实
+  需要切换时才准备 `__switch`。
+- 维护用户地址空间的 active CPU 状态，使 MM 在页表修改时能够确定 TLB shootdown 目标。
+- 锁内只累计 `pending_reschedule_cpus`；释放 scheduler 锁后，本地目标执行本地重调度判断，
+  远端目标通过平台 SMP 接口发送定向 IPI。
+- IPI 到达后先消费目标 CPU 的 `need_resched`。请求已经被本地一次 schedule 消费时不会递归
+  再调度；IPI 合并或延迟时，本地 timer 仍作为重调度兜底。
+- `cpu_states()`、`task_snapshot()` 和 `log_stall_diagnostics()` 提供 CPU online、current、
+  runqueue、等待目标、timer、switch 和 reschedule 状态，供 dashboard 与 GDB 诊断使用。
+
+调用方通常应使用 `wateros-task` 的聚合接口，不应直接操作全局 scheduler。新增调度路径时必须
+继续保持三条边界：状态与队列在 scheduler 锁内原子更新；IPI 在锁外发送；上下文真正保存完成
+之前，旧任务不得发布到其它 CPU。
