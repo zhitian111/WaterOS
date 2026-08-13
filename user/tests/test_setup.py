@@ -15,9 +15,10 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(len(release.sha256), 64)
         int(release.sha256, 16)
 
-    def test_loongarch_reports_explicit_limitation(self) -> None:
-        with self.assertRaisesRegex(setup.SetupError, "LoongArch"):
-            setup.release_for("la")
+    def test_loongarch_managed_package_set_is_complete(self) -> None:
+        self.assertIn("gcc-14-loongarch64-linux-gnu", setup.LA_DEBIAN_PACKAGES)
+        self.assertIn("libc6-dev-loong64-cross", setup.LA_DEBIAN_PACKAGES)
+        self.assertEqual(setup.LA_COMPILER_PREFIX, "loongarch64-linux-gnu-")
 
     def test_archive_checksum_verification(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

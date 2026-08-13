@@ -2,7 +2,7 @@
 name = "microwindows"
 version = "0.93-wateros-21086753-doom1"
 source = "vendor/microwindows"
-architectures = ["rv"]
+architectures = ["rv", "la"]
 dependencies = ["base-layout", "busybox", "operator-tools"]
 build = "build.py"
 install_prefix = "/usr"

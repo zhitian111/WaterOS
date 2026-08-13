@@ -34,20 +34,27 @@ class ConfigurationTests(unittest.TestCase):
                 str(compiler.parent / "riscv64-buildroot-linux-musl-"),
             )
 
-    def test_profiles_resolve_dependencies_once(self) -> None:
-        profile = userland.load_profile("operator")
-        packages = userland.resolve_packages(profile, "rv")
+    def test_packages_resolve_dependencies_once(self) -> None:
+        packages = userland.resolve_packages(("operator-tools",), "rv")
         self.assertEqual([package.name for package in packages],
                          ["base-layout", "busybox", "operator-tools"])
-        self.assertIn("/var/lib/wateros", profile.overlay_replace_prefixes)
+        self.assertIn("/var/lib/wateros", userland.OVERLAY_REPLACE_PREFIXES)
 
-    def test_nanox_profile_is_riscv_only_and_dependency_ordered(self) -> None:
-        profile = userland.load_profile("nanox")
-        packages = userland.resolve_packages(profile, "rv")
+    def test_graphics_package_is_supported_and_dependency_ordered_on_both_arches(self) -> None:
+        packages = userland.resolve_packages(("microwindows",), "rv")
         self.assertEqual([package.name for package in packages],
                          ["base-layout", "busybox", "operator-tools", "microwindows"])
-        with self.assertRaisesRegex(userland.UserlandError, "does not support la"):
-            userland.resolve_packages(profile, "la")
+        la_packages = userland.resolve_packages(("microwindows",), "la")
+        self.assertEqual([package.name for package in la_packages],
+                         ["base-layout", "busybox", "operator-tools", "microwindows"])
+
+    def test_all_selects_every_package_supported_by_architecture(self) -> None:
+        rv = userland.parse_package_names("all", "rv")
+        la = userland.parse_package_names("all", "la")
+        self.assertIn("microwindows", rv)
+        self.assertIn("microwindows", la)
+        self.assertEqual(userland.parse_package_names("busybox, operator-tools", "rv"),
+                         ("busybox", "operator-tools"))
 
     def test_nanox_doom_payload_and_launcher_are_present(self) -> None:
         wad = (userland.USER_ROOT / "vendor/microwindows/src/contrib/doom/"
@@ -65,19 +72,15 @@ class ConfigurationTests(unittest.TestCase):
             return userland.Package(name, "1", Path("."), None, ("rv",),
                                     (dependency,), Path(__file__), "/", (), ())
 
-        profile = userland.Profile("cycle", ("left",), (), ())
         with mock.patch.object(userland, "load_package", side_effect=package):
             with self.assertRaisesRegex(userland.UserlandError, "dependency cycle"):
-                userland.resolve_packages(profile, "rv")
+                userland.resolve_packages(("left",), "rv")
 
 
 class CompositionTests(unittest.TestCase):
     def package(self, name: str, overwrite: tuple[str, ...] = ()) -> userland.Package:
         return userland.Package(name, "1", Path("."), None, ("rv",), (),
                                 Path(__file__), "/", overwrite, ())
-
-    def profile(self) -> userland.Profile:
-        return userland.Profile("test", (), (), ())
 
     def test_path_collision_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -90,10 +93,10 @@ class CompositionTests(unittest.TestCase):
                 (source / "bin/tool").write_text(content, encoding="utf-8")
             owners: dict[str, str] = {}
             userland.merge_package(first, staging, package=self.package("first"),
-                                   profile=self.profile(), owners=owners)
+                                   owners=owners)
             with self.assertRaisesRegex(userland.UserlandError, "already owned"):
                 userland.merge_package(second, staging, package=self.package("second"),
-                                       profile=self.profile(), owners=owners)
+                                       owners=owners)
 
     def test_explicit_overwrite_is_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -106,10 +109,10 @@ class CompositionTests(unittest.TestCase):
                 (source / "bin/tool").write_text(content, encoding="utf-8")
             owners: dict[str, str] = {}
             userland.merge_package(first, staging, package=self.package("first"),
-                                   profile=self.profile(), owners=owners)
+                                   owners=owners)
             userland.merge_package(second, staging,
                                    package=self.package("second", ("/bin/tool",)),
-                                   profile=self.profile(), owners=owners)
+                                   owners=owners)
             self.assertEqual((staging / "bin/tool").read_text(encoding="utf-8"), "two")
             self.assertEqual(owners["/bin/tool"], "second")
 

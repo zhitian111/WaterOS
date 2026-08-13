@@ -52,7 +52,7 @@ pub(crate) fn phys_ram_end_exclusive() -> usize {
         v
     } else {
         // 回退值：仓库 QEMU LoongArch64 `virt -m 1G` 高 RAM 段上界。
-        0xB000_0000
+        0xC000_0000
     }
 }
 

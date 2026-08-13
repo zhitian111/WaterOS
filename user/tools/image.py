@@ -38,13 +38,13 @@ class ImageError(RuntimeError):
     """A deterministic image creation or validation error."""
 
 
-def default_image_path(arch: str, profile: str) -> Path:
-    return BUILD_ROOT / "images" / f"wateros-{arch}-{profile}.ext4"
+def default_image_path(arch: str) -> Path:
+    return BUILD_ROOT / "images" / f"wateros-{arch}.ext4"
 
 
-def default_overlay_path(base: Path, arch: str, profile: str) -> Path:
+def default_overlay_path(base: Path, arch: str) -> Path:
     del arch  # The base image name already carries the architecture in normal use.
-    return BUILD_ROOT / "images" / f"{base.stem}-{profile}.ext4"
+    return BUILD_ROOT / "images" / f"{base.stem}-wateros.ext4"
 
 
 def _run(command: list[str], *, env: dict[str, str] | None = None,
@@ -93,11 +93,11 @@ def _inode_metadata_commands(logical: str) -> list[str]:
 
 
 def _normalize_image_metadata(image: Path, staging: Path,
-                              arch: str, profile: str) -> None:
+                              arch: str) -> None:
     # mke2fs randomizes the directory hash seed even when UUID and time are
-    # fixed.  dir_index is disabled for the compatibility profile, but the
+    # fixed.  dir_index is disabled for WaterOS compatibility, but the
     # superblock field must still be normalized for byte-reproducible images.
-    commands: list[str] = [f"set_super_value hash_seed {_fixed_uuid(arch, profile)}"]
+    commands: list[str] = [f"set_super_value hash_seed {_fixed_uuid(arch)}"]
     for field in ("mtime", "wtime", "lastcheck", "mkfs_time"):
         commands.append(f"set_super_value {field} {SOURCE_DATE_EPOCH}")
     for logical in ["/", *("/" + entry.relative_to(staging).as_posix()
@@ -145,15 +145,12 @@ def staging_manifest(root: Path) -> list[dict[str, object]]:
     return result
 
 
-def _fixed_uuid(arch: str, profile: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"https://wateros.local/rootfs/{arch}/{profile}"))
+def _fixed_uuid(arch: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"https://wateros.local/rootfs/{arch}"))
 
 
-def _label(arch: str, profile: str) -> str:
-    abbreviated = {"minimal": "min", "operator": "operator", "nanox": "nanox"}.get(
-        profile, profile
-    )
-    return f"wos-{arch}-{abbreviated}"[:16]
+def _label(arch: str) -> str:
+    return f"wos-{arch}"[:16]
 
 
 def _validate_wateros_ext4_format(image: Path, block_size: int,
@@ -210,7 +207,7 @@ def _validate_image(image: Path, block_size: int, inode_size: int) -> None:
             raise ImageError(f"{path} is not owned by root:root")
 
 
-def create_image(staging: Path, output: Path, arch: str, profile: str,
+def create_image(staging: Path, output: Path, arch: str,
                  image_size_mb: int, block_size: int, inode_size: int) -> Path:
     staging = staging.resolve()
     output = output.resolve()
@@ -233,11 +230,11 @@ def create_image(staging: Path, output: Path, arch: str, profile: str,
     env["E2FSPROGS_FAKE_TIME"] = SOURCE_DATE_EPOCH
     try:
         _run(["mke2fs", "-q", "-F", "-t", "ext4", "-b", str(block_size),
-              "-I", str(inode_size), "-U", _fixed_uuid(arch, profile),
-              "-L", _label(arch, profile), "-O", EXT4_FEATURES,
+              "-I", str(inode_size), "-U", _fixed_uuid(arch),
+              "-L", _label(arch), "-O", EXT4_FEATURES,
               "-E", "lazy_itable_init=0,lazy_journal_init=0",
               "-d", str(staging), str(temporary)], env=env)
-        _normalize_image_metadata(temporary, staging, arch, profile)
+        _normalize_image_metadata(temporary, staging, arch)
         _validate_image(temporary, block_size, inode_size)
         os.replace(temporary, output)
     finally:
@@ -282,7 +279,7 @@ def _copy_reflink(source: Path, destination: Path) -> None:
 
 
 def create_overlay(staging: Path, base_image: Path, output: Path,
-                   replace_prefixes: Iterable[str], arch: str, profile: str) -> Path:
+                   replace_prefixes: Iterable[str], arch: str) -> Path:
     staging = staging.resolve()
     base_image = base_image.resolve()
     output = output.resolve()
@@ -357,7 +354,7 @@ def create_overlay(staging: Path, base_image: Path, output: Path,
         output.unlink(missing_ok=True)
         raise ImageError("BASE_IMAGE changed while creating overlay")
     change_manifest = {
-        "schema": 1, "architecture": arch, "profile": profile,
+        "schema": 2, "architecture": arch,
         "base_image": str(base_image), "base_sha256": base_checksum,
         "output_sha256": _sha256(output), "changes": changes,
     }

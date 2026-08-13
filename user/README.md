@@ -3,7 +3,7 @@
     <img src="../docs/assert/cover.jpg" height="72" alt="山东大学" />
   </a>
   <h1>WaterOS Userland</h1>
-  <p>双架构用户空间、Package 组合与 EXT4 镜像构建工程</p>
+  <p>用户空间 Package 构建与 EXT4 根文件系统生成工具</p>
   <p>
     <a href="../README.md">项目首页</a> ·
     <a href="../os/README.md">内核工程</a> ·
@@ -13,78 +13,315 @@
 
 ---
 
-`user/` 是 WaterOS 自己维护的用户空间构建工程，不再是 Git 子模块。它负责将固定版本的
-BusyBox 和若干可组合 package 构建为双架构静态用户空间，再生成无分区表的 EXT4 rootfs，
-或者把这些文件安全地叠加到比赛镜像的副本中。
+`user/` 是 WaterOS 自己维护的用户空间工程。它负责交叉编译 BusyBox、Nano-X 等
+package，将其组合成 rootfs staging，然后生成可由 QEMU 直接挂载的无分区表 EXT4
+镜像。
 
-它只负责构建期组合，不是运行时包管理器，也不会参与根目录 `make all` 的内核构建。
+它不是运行时包管理器，也不会被根目录的 `make all` 隐式执行。内核与用户镜像可以
+独立构建和替换。
 
-## 快速开始
+## 最快用法
+
+以下命令均在仓库的 `user/` 目录执行：
 
 ```bash
-# 一键下载、校验并安装仓库锁定的 RISC-V musl 工具链
+cd /path/to/WaterOS/user
+
+# 首次使用：安装目标架构的本地交叉工具链
 make setup ARCH=rv
+# 或：make setup ARCH=la
 
-# setup 完成后也可以单独复查工具链及 e2fsprogs
-make doctor ARCH=rv
-
-# 构建 staging，随后生成 256 MiB EXT4 镜像
-make  build ARCH=rv PROFILE=minimal
-make  image ARCH=rv PROFILE=minimal
-
-# LoongArch operator 镜像
-make  image ARCH=la PROFILE=operator
+# 构建当前架构支持的全部 package，并生成 EXT4 镜像
+make image ARCH=rv
 ```
 
-### Nano-X 图形镜像
-
-Nano-X profile 首期支持 RISC-V，包含静态 `nano-X`、内置 `nanowm` 和演示程序：
+如果当前位于仓库根目录，等价写法是在命令前加 `-C user`：
 
 ```bash
-make image ARCH=rv PROFILE=nanox
+make -C user image ARCH=rv
+```
+
+默认产物为：
+
+```text
+build/images/wateros-rv.ext4
+build/images/wateros-rv.ext4.manifest.json
+build/images/wateros-rv.ext4.sha256
+```
+
+其中：
+
+- `.ext4` 是可直接挂载的根文件系统镜像；
+- `.manifest.json` 记录镜像内各路径的类型、权限和摘要；
+- `.sha256` 记录整个镜像的 SHA-256。
+
+## Make 参数
+
+运行 `make help` 可以查看当前入口和默认值。
+
+| 参数 | 默认值 | 作用 |
+| --- | --- | --- |
+| `ARCH` | `rv` | 目标架构，可选 `rv`、`la` |
+| `PACKAGE` | `all` | 要组合的 package 预设或自定义列表 |
+| `IMAGE_SIZE_MB` | `256` | EXT4 镜像容量，单位 MiB |
+| `BLOCK_SIZE` | `4096` | EXT4 块大小 |
+| `INODE_SIZE` | `256` | EXT4 inode 大小 |
+| `JOBS` | 宿主 CPU 数 | 并行编译任务数 |
+| `OUTPUT` | `build/images/wateros-<arch>.ext4` | 自定义输出路径 |
+| `BASE_IMAGE` | 无 | `overlay` 使用的基础镜像 |
+
+`PACKAGE` 提供四个预设：
+
+| 选项 | 实际内容 | 适用场景 |
+| --- | --- | --- |
+| `all` | 当前架构支持的全部 package | 默认完整用户空间 |
+| `minimal` | `base-layout,busybox` | 最小静态 shell/rootfs |
+| `operator` | minimal + `operator-tools` | shell 与现场诊断工具 |
+| `graphics` | `microwindows` 及其依赖 | 双架构 Nano-X、演示程序与 Doom |
+
+例如：
+
+```bash
+# 默认完整镜像
+make image ARCH=rv
+
+# 最小镜像
+make image ARCH=rv PACKAGE=minimal
+
+# Nano-X 与 Doom；依赖会自动补齐
+make image ARCH=rv PACKAGE=graphics
+
+# 用户自定义组合，名称用逗号分隔
+make image ARCH=rv PACKAGE=base-layout,busybox,operator-tools
+```
+
+所有组合默认写入同一个架构产物，例如 `wateros-rv.ext4`。后一次构建会替换前一次
+生成的镜像。需要同时保留多个组合时使用 `OUTPUT`：
+
+```bash
+make image ARCH=rv PACKAGE=minimal \
+  OUTPUT=build/images/wateros-rv-minimal.ext4
+
+make image ARCH=rv PACKAGE=graphics \
+  OUTPUT=build/images/wateros-rv-graphics.ext4
+```
+
+`PACKAGE=all` 会扫描 `packages/*/package.toml`，只选择声明支持当前 `ARCH` 的 package。
+当前 `microwindows` 已同时支持 RV 与 LA，因此两个架构的默认完整镜像都包含 Nano-X、
+演示程序、Doom 和 `doom1.wad`。
+
+## 常用命令
+
+```bash
+# 安装并检查交叉工具链
+make setup ARCH=rv
+
+# 只检查环境，不构建
+make doctor ARCH=rv
+
+# 只生成合并后的 staging，不制作 EXT4
+make build ARCH=rv
+
+# 构建 package、合并 staging 并制作 EXT4
+make image ARCH=rv
+
+# 查看镜像的 EXT4 信息和内嵌 package 元数据
+make inspect ARCH=rv
+
+# 运行宿主单元测试与 EXT4 集成测试
+make test
+
+# 删除镜像、staging 和 package 缓存，保留工具链及下载缓存
+make clean
+
+# 删除整个 build，包括已安装工具链和下载缓存
+make distclean
+```
+
+`build` 与 `image` 的区别是：`build` 到 staging 为止，`image` 会继续运行 `mke2fs`、
+`e2fsck` 和 `debugfs`，最终生成可挂载镜像。通常直接使用 `make image` 即可。
+
+## 在 WaterOS 中启动
+
+先构建用户镜像：
+
+```bash
+cd /path/to/WaterOS/user
+make image ARCH=rv
+```
+
+再进入内核目录启动 operator shell：
+
+```bash
+cd ../os
+make shell ARCH=rv PROFILE=pre \
+  SDCARD=../user/build/images/wateros-rv.ext4
+```
+
+这里的 `PROFILE=pre` 是 `os/Makefile` 的内核构建配置，用于选择内核的 pre/final
+feature；它与用户镜像无关。`user/Makefile` 已经不再使用 `PROFILE`。
+
+自有镜像不包含比赛镜像中的 `/glibc`、`/musl` 测试目录，因此不要直接用它替换自动
+bringup 所需的比赛测试镜像。如需在比赛镜像中加入自有工具，应使用 `overlay`。
+
+## Nano-X 与 Doom
+
+RV 与 LA 的默认完整镜像均包含 Nano-X、演示程序、Doom 和 `doom1.wad`。启动时还需要
+让内核向用户态暴露 framebuffer 和输入设备。RISC-V：
+
+```bash
+cd /path/to/WaterOS/user
+make image ARCH=rv
 
 cd ../os
 make shell ARCH=rv PROFILE=pre \
-  SDCARD=../user/build/images/wateros-rv-nanox.ext4 \
+  SDCARD=../user/build/images/wateros-rv.ext4 \
   EXTRA_FEATURES=user-graphics
 ```
 
-进入串口 shell 后执行 `start-nanox`。图形窗口和串口 shell 是两个独立界面；
-`start-nanox` 会检查 `/dev/fb0`、keyboard/pointer evdev 节点，并管理 server、客户端和
-`/tmp/.nano-X` 的生命周期。详细实现与排查见
-[`Nano-X 支持文档`](../docs/todo/kasss's_todo_list/nanox.md)。
+LoongArch：
 
-`nanox` 镜像同时包含静态 Nano-X Doom 和仓库中的 `doom1.wad`。启动桌面后可在
-`nxlaunch` 中点击 `Doom`，也可从串口执行：
+```bash
+cd /path/to/WaterOS/user
+make setup ARCH=la
+make image ARCH=la
+
+cd ../os
+make shell ARCH=la PROFILE=pre \
+  SDCARD=../user/build/images/wateros-la.ext4 \
+  EXTRA_FEATURES=user-graphics
+```
+
+进入串口 shell 后启动 Nano-X：
 
 ```sh
 start-nanox >/tmp/nanox.log 2>&1 &
+```
+
+图形窗口和串口 shell 是两个独立界面。`start-nanox` 会检查 `/dev/fb0`、
+`/dev/input/keyboard0` 和 `/dev/input/pointer0`，并管理 Nano-X server、客户端及
+`/tmp/.nano-X` socket 的生命周期。
+
+可以在 `nxlaunch` 中点击 Doom，也可以从串口启动：
+
+```sh
 start-doom
 ```
 
-程序安装在 `/usr/bin/doom`，WAD 安装在
-`/usr/share/games/doom/doom1.wad`。`start-doom` 默认使用三倍窗口缩放并直接进入
-E1M1；可用 `start-doom -2` 改为两倍缩放，或用
-`start-doom -3 -warp 1 2` 选择其他地图。
+Doom 安装位置：
 
-`setup` 把工具链安装在 `user/build/toolchains/rv/`，后续命令会自动发现，不需要
-配置 `RV_CROSS_COMPILE`。它是显式的联网安装步骤，不会执行 `sudo`；`build/image`
-本身仍然完全离线。已经下载官方归档时可以避免再次联网：
+```text
+/usr/bin/doom
+/usr/share/games/doom/doom1.wad
+```
+
+`start-doom` 默认使用三倍窗口并直接进入 E1M1。要进入标题画面和菜单，可执行：
+
+```sh
+start-doom -3
+```
+
+指定其他地图：
+
+```sh
+start-doom -3 -warp 1 2
+```
+
+完整图形链路和排查方式见
+[`Nano-X 支持文档`](../docs/todo/kasss's_todo_list/nanox.md)。
+
+## 叠加到比赛或测试镜像
+
+`overlay` 会复制基础镜像，再把选中的 package 写入副本，不会修改原始镜像：
 
 ```bash
-make  setup ARCH=rv \
+make overlay \
+  ARCH=rv \
+  PACKAGE=operator \
+  BASE_IMAGE=../os/sdcard-rv.img
+```
+
+默认输出：
+
+```text
+build/images/sdcard-rv-wateros.ext4
+build/images/sdcard-rv-wateros.ext4.changes.json
+build/images/sdcard-rv-wateros.ext4.sha256
+```
+
+需要自定义输出时：
+
+```bash
+make overlay \
+  ARCH=rv \
+  PACKAGE=operator \
+  BASE_IMAGE=../os/sdcard-rv.img \
+  OUTPUT=/tmp/sdcard-rv-with-tools.ext4
+```
+
+叠加写入范围被限制为：
+
+- `/bin`、`/sbin`、`/usr/bin`、`/usr/sbin`；
+- `/etc/wateros`、`/opt/wateros`；
+- `/root`、`/var/lib/wateros`。
+
+`/glibc` 和 `/musl` 被硬性保护。基础镜像和输出路径相同也会被拒绝。完成后工具会运行
+只读 `e2fsck -fn`，并生成变更清单。
+
+## 工具链
+
+架构配置位于 `configs/architectures.toml`：
+
+| `ARCH` | 默认工具链前缀 | ABI |
+| --- | --- | --- |
+| `rv` | `riscv64-buildroot-linux-musl-` | 静态 musl，`rv64gc/lp64d` |
+| `la` | `loongarch64-linux-gnu-` | 静态 glibc，`lp64d` |
+
+双架构都可以一键准备：
+
+```bash
+make setup ARCH=rv
+make setup ARCH=la
+```
+
+工具链分别安装到 `build/toolchains/rv/`、`build/toolchains/la/`，后续构建会自动发现。
+`setup` 是显式联网步骤，不会运行 `sudo`；`build` 和 `image` 本身不会下载依赖。
+
+- RV 下载并校验仓库锁定的 Bootlin 静态 musl 工具链归档；
+- LA 在 Debian/Ubuntu 上通过 `apt-get download` 下载交叉编译器 deb，再解包到
+  `user/build`，不会安装宿主软件包。LA 产物静态链接 glibc，镜像仍不需要动态加载器。
+
+已经持有仓库锁定的工具链归档时可以离线安装：
+
+```bash
+make setup ARCH=rv \
   TOOLCHAIN_ARCHIVE=/path/to/riscv64-lp64d--musl--stable-2025.08-1.tar.xz
 ```
 
-归档会按仓库锁定的 SHA-256 校验。`make clean` 保留下载缓存和工具链；只有
-`make distclean` 会连同二者删除。当前自动安装器只锁定了 RISC-V 工具链，
-LoongArch 暂时仍需设置 `LA_CROSS_COMPILE`。
+也可以使用环境变量覆盖工具链：
 
-### macOS（Docker Desktop）
+```bash
+RV_CROSS_COMPILE=/opt/rv/bin/riscv64-linux-musl- \
+  make doctor ARCH=rv
 
-仓库锁定的 Bootlin RISC-V 工具链是 Linux x86_64 可执行文件，不能在 macOS
-宿主机直接运行；请在 Docker Desktop 的 Linux 容器中构建。Apple Silicon 同样必须
-使用 `--platform linux/amd64`。启动 Docker Desktop 后，在本 `user/` 目录运行：
+LA_CROSS_COMPILE=/opt/la/bin/loongarch64-linux-gnu- \
+  make image ARCH=la
+```
+
+前缀必须能找到 `gcc`、`ar` 和 `strip`。`doctor` 会实际静态链接一个目标程序，并用
+`readelf` 检查 ELF 架构、`PT_INTERP` 和动态依赖。宿主还需要：
+
+- Python 3.11 或更高版本；
+- GNU Make、patch；
+- e2fsprogs 提供的 `mke2fs`、`debugfs`、`e2fsck`、`dumpe2fs`。
+
+非 Debian/Ubuntu 宿主无法使用 LA 的 deb 解包后端，此时需自行提供带静态 libc 的
+LoongArch 工具链并设置 `LA_CROSS_COMPILE`。
+
+### macOS 与 Docker Desktop
+
+仓库锁定的 RISC-V 工具链是 Linux x86_64 程序，macOS 不能直接执行。请在
+Docker Desktop 的 Linux/amd64 容器内构建：
 
 ```bash
 docker run --rm --platform linux/amd64 \
@@ -97,159 +334,86 @@ docker run --rm --platform linux/amd64 \
       --no-install-recommends build-essential e2fsprogs make patch \
       ca-certificates xz-utils file
     make setup ARCH=rv
-    make image ARCH=rv PROFILE=minimal JOBS=2
+    make image ARCH=rv JOBS=2
   '
 ```
 
-容器把当前目录挂载为工作目录，因此镜像仍输出到宿主机的
-`build/images/wateros-rv-minimal.ext4`。首次运行会下载 Docker 镜像、Debian 依赖
-和工具链；以后会复用 `build/downloads/` 与 `build/toolchains/` 中的缓存。
-
-输出位于：
-
-```text
-user/build/images/wateros-rv-minimal.ext4
-user/build/images/wateros-rv-minimal.ext4.manifest.json
-user/build/images/wateros-rv-minimal.ext4.sha256
-```
-
-在 WaterOS operator 模式中使用自有镜像：
-
-```bash
-cd os
-make shell ARCH=rv PROFILE=pre \
-  SDCARD=../user/build/images/wateros-rv-minimal.ext4
-```
-
-LoongArch 将 `ARCH` 和镜像名改为 `la`。minimal/operator 镜像不含比赛的
-`/glibc`、`/musl` 测试目录，因此不要把它们用于现有自动 bringup 队列。
-
-## 工具链
-
-默认工具链配置在 `configs/architectures.toml`：
-
-
-| `ARCH` | 默认前缀                        | 目标/ABI       |
-| -------- | --------------------------------- | ---------------- |
-| `rv`   | `riscv64-buildroot-linux-musl-` | `rv64gc/lp64d` |
-| `la`   | `loongarch64-linux-musl-`       | `lp64d`        |
-
-可以覆盖工具链前缀，不需要修改仓库文件：
-
-```bash
-RV_CROSS_COMPILE=/opt/toolchains/rv/bin/riscv64-linux-musl- \
-  make  doctor ARCH=rv
-
-LA_CROSS_COMPILE=/opt/toolchains/la/bin/loongarch64-linux-musl- \
-  make  image ARCH=la PROFILE=minimal
-```
-
-前缀必须能找到 `gcc`、`ar`、`strip`；`doctor` 还会实际编译一个静态程序并用
-`readelf` 检查目标架构和 `PT_INTERP`。宿主机需要 Python 3.11+、GNU make、patch，
-以及 e2fsprogs 提供的 `mke2fs/debugfs/e2fsck/dumpe2fs`。检查失败只报告缺少的
-工具，不联网，也不会执行 `sudo`。
-
-## Profile 与根文件系统
-
-
-| Profile    | Package                   | 用途                                |
-| ------------ | --------------------------- | ------------------------------------- |
-| `minimal`  | `base-layout`、`busybox`  | 最小静态 shell/rootfs               |
-| `operator` | minimal +`operator-tools` | 增加`wos-help`、`wos-info` 现场脚本 |
-| `nanox` | operator +`microwindows` | RISC-V Nano-X server、窗口管理器和演示程序 |
-
-`base-layout` 提供标准目录、账号、网络基础配置、`/etc/profile` 和预留的
-`/etc/init.d/rcS`。当前内核 operator supervisor 直接装载 `/bin/sh`，不会把
-`rcS` 当作传统 PID 1。`/dev`、`/proc`、`/tmp` 等只在镜像中创建挂载点，运行时
-仍由 WaterOS 的 devfs/procfs/tmpfs 初始化。
-
-BusyBox 固定为 1.33.1，并以静态 musl 方式构建。安装完成后构建器检查 ELF 架构、
-`PT_INTERP` 和动态 `NEEDED` 项；`/bin/sh` 及其他 applet 是指向 `/bin/busybox`
-的符号链接。vendored 源码来源及提交见 `vendor/BUSYBOX_SOURCE.md`，许可证保留在
-`vendor/busybox/LICENSE`。
+当前 `user/` 目录被挂载到 `/workspace`，所以产物仍会出现在宿主的
+`build/images/wateros-rv.ext4`。
 
 ## Package 模型
 
-一个 package 的结构如下：
+每个 package 位于独立目录：
 
 ```text
 packages/<name>/
 ├── package.toml
 ├── build.py
 ├── config/
-└── patches/
+├── patches/
+└── scripts/
 ```
 
-`package.toml` 声明名称、版本、架构、依赖、源码目录、构建入口和覆盖权限。
-`tools/userland.py` 会：
+目录只需包含实际用到的子项。`package.toml` 声明：
 
-1. 拓扑排序依赖并拒绝依赖环；
-2. 将源码复制到 `build/work`，按文件名顺序应用 patch；
-3. 给 `build.py` 传入 JSON context，并要求它只安装到独立 `DESTDIR`；
-4. 依据架构、源码、package 配置、patch、额外输入和工具链版本计算缓存键；
-5. 合并 profile staging，同一路径冲突默认报错；
-6. 写入 `/var/lib/wateros/packages.json` 和宿主侧文件清单。
+- 名称与版本；
+- 支持架构；
+- package 依赖；
+- vendored 源码位置；
+- 构建入口；
+- 安装前缀和允许覆盖的路径。
 
-新增 Vim、Lua 或其他用户项目时，只需新增 package 并把名称加入 profile，无需修改
-EXT4 生成器。package 构建不得修改 `vendor/` 源码，也不得从网络下载依赖。
+构建器会：
 
-## EXT4 镜像
+1. 解析依赖、拓扑排序并拒绝依赖环；
+2. 将源码复制到 `build/work`，不修改 `vendor/`；
+3. 按文件名顺序应用 `patches/*.patch`；
+4. 运行 package 的 `build.py`，安装到独立 `DESTDIR`；
+5. 根据架构、工具链、源码、patch 和配置计算缓存键；
+6. 合并 package 输出，同一路径冲突默认报错；
+7. 写入 `/var/lib/wateros/packages.json` 和宿主侧 manifest。
 
-默认参数可在 Make 命令行覆盖：
+新增用户程序时只需增加 package。只要它在 `package.toml` 中声明支持目标架构，默认的
+`PACKAGE=all` 就会自动发现，无需修改镜像生成器或新增组合配置文件。
 
-```bash
-make  image ARCH=rv PROFILE=minimal \
-  IMAGE_SIZE_MB=512 BLOCK_SIZE=4096 INODE_SIZE=256 \
-  OUTPUT=/tmp/wateros.ext4
-```
+当前 package：
 
-镜像由 `mke2fs -d` 直接从 staging 生成，不需要 root、loop mount 或分区表。构建器
-使用固定 UUID、label 和时间基准，启用 `64bit`，关闭 `metadata_csum`、`dir_index`、`orphan_file`、
-`encrypt`、`casefold`，完成后运行只读 `e2fsck -fn`，再用 `debugfs` 检查关键文件。
-这里启用 `64bit` 不是为了生成超大镜像，而是为了生成 WaterOS 当前
-`another_ext4` 后端要求的 64 字节块组描述符。生成器会同时校验 4096 字节块、
-256 字节 inode 和 64 字节描述符，避免产出 Linux 可读但 WaterOS 无法挂载的镜像。
-`.manifest.json` 是逐路径内容清单，`.sha256` 是完整镜像摘要。
+| 名称 | 作用 | 架构 |
+| --- | --- | --- |
+| `base-layout` | 目录、账号、环境与基础配置 | RV、LA |
+| `busybox` | 静态 shell 与常用 applet | RV、LA |
+| `operator-tools` | WaterOS 现场诊断脚本 | RV、LA |
+| `microwindows` | Nano-X、演示程序、Doom | RV、LA |
 
-## 叠加比赛/测试镜像
+`base-layout` 只创建 `/dev`、`/proc`、`/tmp` 等挂载点。运行时实际内容仍由 WaterOS 的
+devfs、procfs 和 tmpfs 提供。内核 operator supervisor 直接启动 `/bin/sh`，当前不会
+把 `/etc/init.d/rcS` 作为传统 PID 1 执行。
 
-```bash
-make  overlay \
-  ARCH=rv PROFILE=operator \
-  BASE_IMAGE=../os/sdcard-rv.img
-```
+## EXT4 生成规则
 
-默认输出 `user/build/images/sdcard-rv-operator.ext4`。也可显式传 `OUTPUT`。
-流程优先使用 reflink，不支持时普通复制；绝不会原地修改 `BASE_IMAGE`。叠加只接受：
+镜像通过 `mke2fs -d <staging>` 直接生成，不需要 root、loop mount 或分区表。为适配
+WaterOS 当前的 `another_ext4` 后端，生成器会：
 
-- `/bin`、`/sbin`、`/usr/bin`、`/usr/sbin`
-- `/etc/wateros`、`/opt/wateros`、`/root`、`/var/lib/wateros`
+- 使用固定 UUID、label 和时间基准；
+- 使用 4096 字节块和 256 字节 inode；
+- 启用 `64bit` 以生成 64 字节块组描述符；
+- 关闭 `metadata_csum`、`dir_index`、`orphan_file`、`encrypt` 和 `casefold`；
+- 运行 `e2fsck -fn`；
+- 使用 `debugfs` 检查 `/bin/busybox`、`/bin/sh`、权限与 package 元数据。
 
-`/glibc` 和 `/musl` 被硬性保护。目标路径已存在时，只有 profile 的
-`overlay_replace_prefixes` 明确允许才会替换；其余冲突立即失败。完成后会生成
-`.changes.json`，记录基础镜像摘要、输出摘要和所有写入路径。
+这里的 `64bit` 是 EXT4 布局 feature，不表示 WaterOS 镜像必须大于 2 TiB。
 
-## 测试与排查
-
-```bash
-make  test
-make  inspect ARCH=rv PROFILE=minimal
-make  clean
-```
-
-测试覆盖 TOML 配置、依赖排序/环、文件冲突、显式覆盖、缓存键、manifest、实际 EXT4
-生成、符号链接、权限和基础镜像不变性。若 `doctor` 报缺少交叉编译器，镜像工具的
-宿主单元测试仍可运行，但不能把测试中的合成文件当成可启动 BusyBox。
-
-## 目录
+## 目录结构
 
 ```text
 user/
-├── configs/       # 架构、profile
-├── rootfs/base/   # 架构无关基础文件
-├── packages/      # package 元数据、配置、patch、构建入口
-├── vendor/        # 固定版本源码与许可证
-├── tools/         # package 编排与 EXT4 工具
-├── tests/         # Python 单元/集成测试
-└── build/         # 缓存、work、staging、镜像（不提交）
+├── Makefile              # 推荐入口
+├── README.md
+├── configs/              # 架构和交叉工具链配置
+├── rootfs/base/          # 架构无关基础文件
+├── packages/             # package 元数据、配置、patch 和构建脚本
+├── vendor/               # 固定版本上游源码及许可证
+├── tools/                # package 编排、工具链安装和 EXT4 工具
+├── tests/                # Python 单元测试和 EXT4 集成测试
+└── build/                # 工具链、缓存、staging 和镜像，不提交
 ```

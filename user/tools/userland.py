@@ -56,12 +56,10 @@ class Package:
     inputs: tuple[Path, ...]
 
 
-@dataclasses.dataclass(frozen=True)
-class Profile:
-    name: str
-    packages: tuple[str, ...]
-    allow_overwrite: tuple[str, ...]
-    overlay_replace_prefixes: tuple[str, ...]
+OVERLAY_REPLACE_PREFIXES = (
+    "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/etc/wateros",
+    "/opt/wateros", "/root", "/var/lib/wateros",
+)
 
 
 def load_toml(path: Path) -> dict:
@@ -89,16 +87,6 @@ def load_architecture(name: str) -> Architecture:
                         kernel_arch=entry["kernel_arch"],
                         cflags=tuple(entry.get("cflags", ())),
                         elf_machine=entry["elf_machine"])
-
-
-def load_profile(name: str) -> Profile:
-    raw = load_toml(CONFIG_ROOT / "profiles.toml").get("profiles", {})
-    if name not in raw:
-        raise UserlandError(f"unknown profile {name!r}; choose one of {sorted(raw)}")
-    entry = raw[name]
-    return Profile(name=name, packages=tuple(entry.get("packages", ())),
-                   allow_overwrite=tuple(entry.get("allow_overwrite", ())),
-                   overlay_replace_prefixes=tuple(entry.get("overlay_replace_prefixes", ())))
 
 
 def _safe_relative(path: str, *, field: str) -> Path:
@@ -133,7 +121,31 @@ def load_package(name: str) -> Package:
     return package
 
 
-def resolve_packages(profile: Profile, architecture: str) -> list[Package]:
+def available_package_names(architecture: str) -> tuple[str, ...]:
+    """返回当前架构支持的全部顶层 package，供默认的 `all` 选择使用。"""
+    result: list[str] = []
+    for metadata in sorted(PACKAGE_ROOT.glob("*/package.toml")):
+        name = metadata.parent.name
+        if architecture in load_package(name).architectures:
+            result.append(name)
+    if not result:
+        raise UserlandError(f"no packages support architecture {architecture}")
+    return tuple(result)
+
+
+def parse_package_names(value: str, architecture: str) -> tuple[str, ...]:
+    """解析 `all` 或逗号/空白分隔的自定义 package 列表。"""
+    normalized = value.replace(",", " ").split()
+    if not normalized:
+        raise UserlandError("package selection must not be empty")
+    if "all" in normalized:
+        if len(normalized) != 1:
+            raise UserlandError("'all' cannot be combined with explicit package names")
+        return available_package_names(architecture)
+    return tuple(dict.fromkeys(normalized))
+
+
+def resolve_packages(package_names: Iterable[str], architecture: str) -> list[Package]:
     result: list[Package] = []
     visiting: list[str] = []
     complete: set[str] = set()
@@ -154,7 +166,7 @@ def resolve_packages(profile: Profile, architecture: str) -> list[Package]:
         complete.add(name)
         result.append(package)
 
-    for package_name in profile.packages:
+    for package_name in package_names:
         visit(package_name)
     return result
 
@@ -358,8 +370,8 @@ def _lexists(path: Path) -> bool:
 
 
 def merge_package(source: Path, staging: Path, *, package: Package,
-                  profile: Profile, owners: dict[str, str]) -> None:
-    allowed = set(profile.allow_overwrite) | set(package.allow_overwrite)
+                  owners: dict[str, str]) -> None:
+    allowed = set(package.allow_overwrite)
     for entry in iter_entries(source):
         relative = entry.relative_to(source)
         logical = "/" + relative.as_posix()
@@ -401,29 +413,30 @@ def file_manifest(root: Path) -> list[dict[str, object]]:
     return manifest
 
 
-def build_profile(architecture: Architecture, profile: Profile, jobs: int) -> Path:
+def build_packages(architecture: Architecture, package_names: tuple[str, ...],
+                   jobs: int) -> Path:
     errors = doctor(architecture)
     if errors:
         raise UserlandError("environment check failed:\n  - " + "\n  - ".join(errors))
     toolchain = compiler_version(architecture)
-    packages = resolve_packages(profile, architecture.name)
+    packages = resolve_packages(package_names, architecture.name)
     outputs: list[tuple[Package, Path, str]] = []
     for package in packages:
         root, key = build_package(package, architecture, jobs, toolchain)
         outputs.append((package, root, key))
-    staging = BUILD_ROOT / "staging" / architecture.name / profile.name
+    staging = BUILD_ROOT / "staging" / architecture.name / "rootfs"
     _remove(staging)
     staging.mkdir(parents=True)
     owners: dict[str, str] = {}
     for package, root, _ in outputs:
-        merge_package(root, staging, package=package, profile=profile, owners=owners)
+        merge_package(root, staging, package=package, owners=owners)
     metadata_dir = staging / "var/lib/wateros"
     metadata_dir.mkdir(parents=True, exist_ok=True)
     package_metadata = {
-        "schema": 1,
+        "schema": 2,
         "architecture": architecture.name,
         "triple": architecture.triple,
-        "profile": profile.name,
+        "requested_packages": list(package_names),
         "toolchain": toolchain,
         "packages": [
             {
@@ -441,7 +454,7 @@ def build_profile(architecture: Architecture, profile: Profile, jobs: int) -> Pa
     (metadata_dir / "packages.json").write_text(
         json.dumps(package_metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     manifest = file_manifest(staging)
-    manifest_path = BUILD_ROOT / "manifests" / f"wateros-{architecture.name}-{profile.name}.json"
+    manifest_path = BUILD_ROOT / "manifests" / f"wateros-{architecture.name}.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n",
                              encoding="utf-8")
@@ -456,9 +469,8 @@ def default_jobs() -> int:
 
 def add_build_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--arch", choices=("rv", "la"), required=True)
-    profiles = tuple(sorted(load_toml(CONFIG_ROOT / "profiles.toml")
-                            .get("profiles", {})))
-    parser.add_argument("--profile", choices=profiles, required=True)
+    parser.add_argument("--packages", default="all",
+                        help="all or a comma-separated package list")
     parser.add_argument("--jobs", type=int, default=default_jobs())
 
 
@@ -499,32 +511,30 @@ def main() -> int:
             print(f"[userland] doctor passed: arch={architecture.name} "
                   f"cross={architecture.cross_compile}")
             return 0
-        profile = load_profile(args.profile)
+        package_names = parse_package_names(args.packages, architecture.name)
         if args.jobs < 1:
             raise UserlandError("--jobs must be positive")
         if args.command == "build":
-            build_profile(architecture, profile, args.jobs)
+            build_packages(architecture, package_names, args.jobs)
             return 0
         # Local import keeps package/config unit tests independent from e2fsprogs.
         import image as image_tool
         if args.command == "image":
-            staging = build_profile(architecture, profile, args.jobs)
-            output = args.output or image_tool.default_image_path(architecture.name, profile.name)
-            image_tool.create_image(staging, output, architecture.name, profile.name,
+            staging = build_packages(architecture, package_names, args.jobs)
+            output = args.output or image_tool.default_image_path(architecture.name)
+            image_tool.create_image(staging, output, architecture.name,
                                     args.image_size_mb, args.block_size, args.inode_size)
             return 0
         if args.command == "overlay":
-            staging = build_profile(architecture, profile, args.jobs)
+            staging = build_packages(architecture, package_names, args.jobs)
             output = args.output or image_tool.default_overlay_path(args.base_image,
-                                                                    architecture.name,
-                                                                    profile.name)
+                                                                    architecture.name)
             image_tool.create_overlay(staging, args.base_image, output,
-                                      profile.overlay_replace_prefixes,
-                                      architecture.name, profile.name)
+                                      OVERLAY_REPLACE_PREFIXES,
+                                      architecture.name)
             return 0
         if args.command == "inspect":
-            image_path = args.image or image_tool.default_image_path(architecture.name,
-                                                                     profile.name)
+            image_path = args.image or image_tool.default_image_path(architecture.name)
             image_tool.inspect_image(image_path)
             return 0
         raise UserlandError(f"unhandled command {args.command}")

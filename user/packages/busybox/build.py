@@ -61,6 +61,16 @@ def main() -> int:
     env["SOURCE_DATE_EPOCH"] = context["source_date_epoch"]
     env["KBUILD_BUILD_TIMESTAMP"] = context["source_date_epoch"]
     shutil.copy2(package / "config/wateros_defconfig", work / ".config")
+    if context["arch"] == "la":
+        # Ubuntu 的 LoongArch UAPI 已删除旧 CBQ traffic-control 结构，而
+        # BusyBox 1.33 的 `tc` applet 仍直接引用它们。Nano-X/rootfs 不依赖
+        # 该 applet；仅在 LA 工作副本中关闭，保留 tcpsvd 和通用网络工具。
+        config = work / ".config"
+        text = config.read_text(encoding="utf-8")
+        text = text.replace("CONFIG_TC=y", "# CONFIG_TC is not set")
+        text = text.replace("CONFIG_FEATURE_TC_INGRESS=y",
+                            "# CONFIG_FEATURE_TC_INGRESS is not set")
+        config.write_text(text, encoding="utf-8")
 
     # BusyBox consumes CONFIG_EXTRA_CFLAGS in Makefile.flags.  Passing it as a
     # make command-line variable keeps the vendored source/config immutable and

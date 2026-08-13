@@ -93,15 +93,25 @@ Nano-X 与内核 GUI 是两种互斥的 framebuffer 使用方式。先在仓库�
 再通过 `user-graphics` 向用户态暴露 fbdev/evdev：
 
 ```bash
-make -C ../user image ARCH=rv PROFILE=nanox
+make -C ../user image ARCH=rv
 make shell ARCH=rv PROFILE=pre \
-  SDCARD=../user/build/images/wateros-rv-nanox.ext4 \
+  SDCARD=../user/build/images/wateros-rv.ext4 \
+  EXTRA_FEATURES=user-graphics
+```
+
+LoongArch 使用相同流程，只需切换架构和镜像：
+
+```bash
+make -C ../user setup ARCH=la
+make -C ../user image ARCH=la
+make shell ARCH=la PROFILE=pre \
+  SDCARD=../user/build/images/wateros-la.ext4 \
   EXTRA_FEATURES=user-graphics
 ```
 
 不要同时启用 `gui` 和 `user-graphics`。完整说明见
 [`Nano-X 支持文档`](../docs/todo/kasss's_todo_list/nanox.md)与
-[`用户空间构建说明`](../user/README.md#nano-x-图形镜像)。
+[`用户空间构建说明`](../user/README.md#nano-x-与-doom)。
 
 ### 调试与停滞分析
 

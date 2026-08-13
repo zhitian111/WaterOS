@@ -54,7 +54,7 @@ class Ext4IntegrationTests(unittest.TestCase):
             staging.mkdir()
             make_rootfs(staging)
             output = root / "wateros.ext4"
-            image.create_image(staging, output, "rv", "minimal", 32, 4096, 256)
+            image.create_image(staging, output, "rv", 32, 4096, 256)
             self.assertTrue(output.is_file())
             self.assertTrue(output.with_suffix(".ext4.manifest.json").is_file())
             self.assertTrue(output.with_suffix(".ext4.sha256").is_file())
@@ -68,7 +68,7 @@ class Ext4IntegrationTests(unittest.TestCase):
                                          if line.startswith("Filesystem features:")))
             self.assertIn("Group descriptor size:    64", features)
             second = root / "wateros-second.ext4"
-            image.create_image(staging, second, "rv", "minimal", 32, 4096, 256)
+            image.create_image(staging, second, "rv", 32, 4096, 256)
             first_hash = sha256(output)
             second_hash = sha256(second)
             headers = "\n--- second image ---\n".join(
@@ -85,7 +85,7 @@ class Ext4IntegrationTests(unittest.TestCase):
             base_staging.mkdir()
             make_rootfs(base_staging)
             base = root / "base.ext4"
-            image.create_image(base_staging, base, "rv", "minimal", 32, 4096, 256)
+            image.create_image(base_staging, base, "rv", 32, 4096, 256)
             original = sha256(base)
 
             overlay_staging = root / "overlay-staging"
@@ -97,7 +97,7 @@ class Ext4IntegrationTests(unittest.TestCase):
             spaced = tool.parent / "hello world"
             spaced.write_text("spaces are supported\n", encoding="utf-8")
             output = root / "overlay.ext4"
-            image.create_overlay(overlay_staging, base, output, (), "rv", "operator")
+            image.create_overlay(overlay_staging, base, output, (), "rv")
             self.assertEqual(sha256(base), original)
             stat = self.debugfs(output, "stat /opt/wateros/bin/hello")
             self.assertIn("Type: regular", stat)
@@ -119,8 +119,7 @@ class Ext4IntegrationTests(unittest.TestCase):
             protected.write_text("forbidden", encoding="utf-8")
             rejected_output = root / "rejected.ext4"
             with self.assertRaisesRegex(image.ImageError, "protected path"):
-                image.create_overlay(protected_staging, base, rejected_output, (),
-                                     "rv", "operator")
+                image.create_overlay(protected_staging, base, rejected_output, (), "rv")
             self.assertFalse(rejected_output.exists())
             self.assertEqual(sha256(base), original)
 
@@ -132,11 +131,14 @@ class Ext4IntegrationTests(unittest.TestCase):
             base = root / "base.ext4"
             base.write_bytes(b"not used")
             with self.assertRaisesRegex(image.ImageError, "must differ"):
-                image.create_overlay(staging, base, base, (), "rv", "operator")
+                image.create_overlay(staging, base, base, (), "rv")
 
     def test_default_overlay_name_does_not_duplicate_architecture(self) -> None:
-        result = image.default_overlay_path(Path("sdcard-rv.img"), "rv", "operator")
-        self.assertEqual(result.name, "sdcard-rv-operator.ext4")
+        result = image.default_overlay_path(Path("sdcard-rv.img"), "rv")
+        self.assertEqual(result.name, "sdcard-rv-wateros.ext4")
+
+    def test_default_image_has_no_package_suffix(self) -> None:
+        self.assertEqual(image.default_image_path("rv").name, "wateros-rv.ext4")
 
 
 if __name__ == "__main__":

@@ -105,7 +105,7 @@ Nano-X 客户端
 
 | 层次 | 主要位置 | 职责 |
 |---|---|---|
-| QEMU 参数 | [`os/scripts/qemu_run.py`](../../os/scripts/qemu_run.py) | 挂载 GPU、keyboard、tablet 并打开图形窗口 |
+| QEMU 参数 | [`qemu_run.py`](../../os/scripts/run/qemu_run.py) | 挂载 GPU、keyboard、tablet 并打开图形窗口 |
 | RISC-V 设备枚举 | [`enumerate.rs`](../../os/components/wateros-driver/driver-impl/impl-qemu-riscv64-virt/src/enumerate.rs) | 从 DTB 枚举 VirtIO-MMIO，设备 ID 16/18 对应 display/input |
 | RISC-V 驱动注册 | [`register.rs`](../../os/components/wateros-driver/driver-impl/impl-qemu-riscv64-virt/src/register.rs) | 创建并注册显示与输入设备 |
 | 显示公共 API | [`driver-display/.../lib.rs`](../../os/components/wateros-driver/driver-display/display-api/api-v0/src/lib.rs) | `FramebufferInfo`、`DisplayDevice`、设备注册表 |
@@ -145,12 +145,20 @@ user-graphics
 ### 5.2 QEMU 创建设备
 
 运行命令包含 `EXTRA_FEATURES=user-graphics` 时，Make 会启用图形输出，
-[`qemu_run.py`](../../os/scripts/qemu_run.py) 为 RISC-V 添加：
+[`qemu_run.py`](../../os/scripts/run/qemu_run.py) 为 RISC-V 添加：
 
 ```text
 -device virtio-gpu-device
 -device virtio-keyboard-device
 -device virtio-tablet-device
+```
+
+LoongArch 使用相同设备类型的 PCI transport：
+
+```text
+-device virtio-gpu-pci
+-device virtio-keyboard-pci
+-device virtio-tablet-pci
 ```
 
 串口仍通过 `-serial stdio` 保留，所以会同时看到两个界面：
@@ -449,7 +457,7 @@ DOOMWADDIR=/usr/share/games/doom
 
 Nano-X 不编进内核，而是由 `user/` 用户空间构建系统交叉编译并安装到 EXT4 根文件系统。
 
-`nanox` profile 包含：
+默认 `PACKAGE=all` 在 RV 和 LA 上都会选择：
 
 ```text
 base-layout + busybox + operator-tools + microwindows
@@ -458,7 +466,7 @@ base-layout + busybox + operator-tools + microwindows
 Microwindows 固定使用 vendored 源码，WaterOS 修改全部位于 package patches，不直接污染
 上游源码。构建配置：
 
-- 静态 musl；
+- 静态链接（RV 使用 musl，LA 使用 glibc）；
 - `SCREEN=FB`；
 - `MOUSE/KEYBOARD=WATEROS_EVDEV`；
 - `NANOX=Y`、`NANOWM=Y`；
@@ -530,18 +538,21 @@ syscall 和 MM 能力，使依赖关系更复杂。
 
 ```bash
 make -C user setup ARCH=rv
+# LoongArch 使用：make -C user setup ARCH=la
 ```
 
 ### 13.2 生成 Nano-X 根文件系统
 
 ```bash
-make -C user image ARCH=rv PROFILE=nanox
+make -C user image ARCH=rv
+# LoongArch 使用：make -C user image ARCH=la
 ```
 
 输出：
 
 ```text
-user/build/images/wateros-rv-nanox.ext4
+user/build/images/wateros-rv.ext4
+user/build/images/wateros-la.ext4
 ```
 
 ### 13.3 启动 WaterOS
@@ -551,7 +562,18 @@ cd os
 make shell \
   ARCH=rv \
   PROFILE=pre \
-  SDCARD=../user/build/images/wateros-rv-nanox.ext4 \
+  SDCARD=../user/build/images/wateros-rv.ext4 \
+  EXTRA_FEATURES=user-graphics
+```
+
+LoongArch 对应命令：
+
+```bash
+cd os
+make shell \
+  ARCH=la \
+  PROFILE=pre \
+  SDCARD=../user/build/images/wateros-la.ext4 \
   EXTRA_FEATURES=user-graphics
 ```
 
@@ -710,16 +732,17 @@ rm -f /tmp/.nano-X
 
 当前已经完成：
 
-- RISC-V QEMU VirtIO GPU、键盘和平板；
+- RISC-V QEMU VirtIO-MMIO GPU、键盘和平板；
+- LoongArch QEMU VirtIO-PCI GPU、键盘和平板；
 - Linux fbdev/evdev 兼容子集；
 - framebuffer 设备页 mmap；
 - Nano-X、内置 nanowm 和多个客户端；
 - Doom 图形运行；
-- LoongArch 内核侧 PCI display/input 与相同 ABI 接线。
+- RV/LA 静态 Nano-X 用户包、演示程序和 Doom 均可运行；
+- SMP 1/8 下已验证 LA `nano-X`、`nxlaunch`、`nxclock`、`nxeyes` 和 Doom 启动。
 
 当前限制：
 
-- Nano-X 用户包首期只开放 RISC-V；
 - 单显示器、固定启动分辨率；
 - CPU 软件渲染，无 3D 加速；
 - 首版全屏刷新，性能仍可优化；
@@ -732,7 +755,7 @@ rm -f /tmp/.nano-X
 
 1. 实现可靠脏矩形并调用 `flush_region()`；
 2. 将 VirtIO input 接入中断，减少轮询延迟和空闲唤醒；
-3. 完善 LoongArch musl 用户工具链并开放 `nanox` package；
+3. 如需统一 libc，再补充可复现的 LoongArch musl 工具链；
 4. 支持显示模式变更和更通用的像素格式；
 5. 若需要更复杂桌面，再评估 PTY、字体、剪贴板和多进程会话管理。
 

@@ -1,5 +1,7 @@
 ARCH ?= rv
-PROFILE ?= minimal
+# Package 组合。all 会由构建器自动选择当前架构支持的全部 package。
+# 预设只负责展开为实际列表；也可以直接传逗号分隔的自定义列表。
+PACKAGE ?= all
 IMAGE_SIZE_MB ?= 256
 BLOCK_SIZE ?= 4096
 INODE_SIZE ?= 256
@@ -11,7 +13,20 @@ FORCE ?=0
 
 PYTHON ?= python3
 TOOL := $(PYTHON) ./tools/userland.py
-COMMON := --arch $(ARCH) --profile $(PROFILE)
+
+ifeq ($(PACKAGE),all)
+PACKAGE_LIST := all
+else ifeq ($(PACKAGE),minimal)
+PACKAGE_LIST := base-layout,busybox
+else ifeq ($(PACKAGE),operator)
+PACKAGE_LIST := base-layout,busybox,operator-tools
+else ifeq ($(PACKAGE),graphics)
+PACKAGE_LIST := microwindows
+else
+PACKAGE_LIST := $(PACKAGE)
+endif
+
+COMMON := --arch $(ARCH) --packages "$(PACKAGE_LIST)"
 ifneq ($(strip $(JOBS)),)
 COMMON += --jobs $(JOBS)
 endif
@@ -21,22 +36,31 @@ endif
 help:
 	@echo "WaterOS userland / EXT4 image builder"
 	@echo
-	@echo "  make setup   ARCH=rv              # download and install the pinned toolchain"
+	@echo "  make setup   ARCH=rv              # install the pinned RISC-V musl toolchain"
+	@echo "  make setup   ARCH=la              # install the local LoongArch glibc toolchain"
 	@echo "  make doctor ARCH=rv"
-	@echo "  make build  ARCH=rv PROFILE=minimal"
-	@echo "  make image  ARCH=rv PROFILE=minimal IMAGE_SIZE_MB=256"
-	@echo "  make image  ARCH=rv PROFILE=nanox    # Nano-X graphical rootfs"
-	@echo "  make overlay ARCH=rv PROFILE=operator BASE_IMAGE=../os/sdcard-rv.img"
-	@echo "  make inspect ARCH=rv PROFILE=minimal"
+	@echo "  make image  ARCH=rv               # all supported packages (default)"
+	@echo "  make image  ARCH=rv PACKAGE=minimal"
+	@echo "  make image  ARCH=rv PACKAGE=operator"
+	@echo "  make image  ARCH=rv PACKAGE=graphics  # Nano-X + Doom"
+	@echo "  make image  ARCH=rv PACKAGE=base-layout,busybox,operator-tools"
+	@echo "  make overlay ARCH=rv PACKAGE=operator BASE_IMAGE=../os/sdcard-rv.img"
+	@echo "  make inspect ARCH=rv"
 	@echo "  make test"
 	@echo
 	@echo "Defaults:"
 	@echo "  ARCH=rv"
-	@echo "  PROFILE=minimal"
+	@echo "  PACKAGE=all"
 	@echo "  IMAGE_SIZE_MB=256 BLOCK_SIZE=4096 INODE_SIZE=256"
-	@echo "  JOBS=<host CPU count> OUTPUT=<derived from arch/profile>"
+	@echo "  JOBS=<host CPU count> OUTPUT=build/images/wateros-<arch>.ext4"
+	@echo "Package presets:"
+	@echo "  all       = every package supported by ARCH"
+	@echo "  minimal   = base-layout,busybox"
+	@echo "  operator  = base-layout,busybox,operator-tools"
+	@echo "  graphics  = microwindows (dependencies add the base packages)"
+	@echo "  other     = a comma-separated custom package list"
 	@echo "Toolchain overrides: RV_CROSS_COMPILE=... LA_CROSS_COMPILE=..."
-	@echo "Offline setup: TOOLCHAIN_ARCHIVE=/path/to/pinned-toolchain.tar.xz"
+	@echo "Offline setup (RV only): TOOLCHAIN_ARCHIVE=/path/to/pinned-toolchain.tar.xz"
 
 setup:
 	$(PYTHON) ./tools/setup.py --arch $(ARCH) \

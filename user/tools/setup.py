@@ -45,14 +45,117 @@ RV_RELEASE = ToolchainRelease(
     compiler_prefix="riscv64-buildroot-linux-musl-",
 )
 
+# Ubuntu 24.04 提供完整的 LoongArch64 GNU 交叉编译器，但没有对应的 musl 包。
+# setup 将这些 deb 解包到 user/build/toolchains/la，不修改宿主系统。最终用户程序
+# 使用静态 glibc，因此运行时同样不依赖镜像中的动态加载器或共享库。
+LA_DEBIAN_PACKAGES = (
+    "binutils-loongarch64-linux-gnu",
+    "cpp-14-loongarch64-linux-gnu",
+    "gcc-14-loongarch64-linux-gnu",
+    "gcc-14-loongarch64-linux-gnu-base",
+    "libc6-loong64-cross",
+    "libc6-dev-loong64-cross",
+    "libgcc-14-dev-loong64-cross",
+    "linux-libc-dev-loong64-cross",
+)
+LA_COMPILER_PREFIX = "loongarch64-linux-gnu-"
+
 
 def release_for(architecture: str) -> ToolchainRelease:
     if architecture == "rv":
         return RV_RELEASE
-    raise SetupError(
-        "no pinned LoongArch musl binary toolchain is available yet; "
-        "install one separately and set LA_CROSS_COMPILE=/path/to/prefix-"
+    raise SetupError(f"{architecture} uses a managed Debian toolchain, not a tar release")
+
+
+def _write_launcher(path: Path, body: str) -> None:
+    path.write_text("#!/bin/sh\nset -eu\n" + body, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def _loongarch_tool_root(destination: Path) -> Path:
+    return destination / "usr/bin"
+
+
+def create_loongarch_launchers(destination: Path) -> Path:
+    """为解包后的 Ubuntu cross toolchain 创建可搬移的统一前缀。"""
+    compiler = _loongarch_tool_root(destination) / "loongarch64-linux-gnu-gcc-14"
+    if not compiler.is_file():
+        raise SetupError(f"LoongArch compiler is missing after extraction: {compiler}")
+    launchers = destination / "bin"
+    launchers.mkdir(parents=True, exist_ok=True)
+    prefix = launchers / LA_COMPILER_PREFIX
+    _write_launcher(
+        Path(f"{prefix}gcc"),
+        'root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)\n'
+        'exec "$root/usr/bin/loongarch64-linux-gnu-gcc-14" '
+        '--sysroot="$root/usr/loongarch64-linux-gnu" '
+        '-B"$root/usr/lib/gcc-cross/loongarch64-linux-gnu/14/" '
+        '-B"$root/usr/loongarch64-linux-gnu/bin/" "$@"\n',
     )
+    # Makefile 会通过 CROSS_COMPILE 调用其中多个 binutils。全部创建 launcher，
+    # 避免依赖宿主恰好安装了同名工具或解包目录中的绝对符号链接。
+    for tool in ("ar", "as", "ld", "nm", "objcopy", "objdump", "ranlib",
+                 "readelf", "size", "strings", "strip"):
+        target = _loongarch_tool_root(destination) / f"loongarch64-linux-gnu-{tool}"
+        if not target.exists():
+            raise SetupError(f"LoongArch binutils tool is missing: {target}")
+        _write_launcher(
+            Path(f"{prefix}{tool}"),
+            'root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)\n'
+            f'exec "$root/usr/bin/loongarch64-linux-gnu-{tool}" "$@"\n',
+        )
+    return prefix
+
+
+def validate_loongarch_install(destination: Path) -> Path:
+    prefix = create_loongarch_launchers(destination)
+    compiler = Path(f"{prefix}gcc")
+    result = subprocess.run([str(compiler), "-dumpmachine"], check=True,
+                            text=True, capture_output=True).stdout.strip()
+    if "loongarch64" not in result:
+        raise SetupError(f"installed compiler has unexpected target: {result}")
+    return prefix
+
+
+def install_loongarch_debian(force: bool) -> Path:
+    """无 root 权限下载并解包 Ubuntu 的 LoongArch64 静态 GNU 工具链。"""
+    destination = BUILD_ROOT / "toolchains/la"
+    if destination.exists() and not force:
+        try:
+            prefix = validate_loongarch_install(destination)
+            print(f"[setup] already installed: {destination}")
+            return prefix
+        except (SetupError, subprocess.CalledProcessError):
+            raise SetupError(f"incomplete installation exists at {destination}; rerun with FORCE=1")
+    if force:
+        shutil.rmtree(destination, ignore_errors=True)
+    apt_get = shutil.which("apt-get")
+    dpkg_deb = shutil.which("dpkg-deb")
+    if apt_get is None or dpkg_deb is None:
+        raise SetupError(
+            "automatic LoongArch setup requires Debian/Ubuntu apt-get and dpkg-deb; "
+            "otherwise install a static cross toolchain and set LA_CROSS_COMPILE"
+        )
+    download_dir = BUILD_ROOT / "downloads/la-debian"
+    download_dir.mkdir(parents=True, exist_ok=True)
+    # apt-get download 无需 sudo，只把 deb 保存到当前目录，也不会修改宿主包数据库。
+    print("[setup] download LoongArch cross packages without sudo", flush=True)
+    subprocess.run([apt_get, "download", *LA_DEBIAN_PACKAGES],
+                   cwd=download_dir, check=True)
+    archives = sorted(download_dir.glob("*.deb"))
+    if not archives:
+        raise SetupError("apt-get did not download any LoongArch cross packages")
+    destination.mkdir(parents=True)
+    try:
+        for archive in archives:
+            print(f"[setup] extract: {archive.name}", flush=True)
+            subprocess.run([dpkg_deb, "-x", str(archive), str(destination)], check=True)
+        prefix = validate_loongarch_install(destination)
+    except Exception:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise
+    print(f"[setup] installed static glibc compiler prefix: {prefix}")
+    return prefix
 
 
 def sha256_file(path: Path) -> str:
@@ -218,7 +321,12 @@ def parse_arguments() -> argparse.Namespace:
 def main() -> int:
     args = parse_arguments()
     try:
-        install(release_for(args.arch), args.archive, args.force)
+        if args.arch == "la":
+            if args.archive is not None:
+                raise SetupError("TOOLCHAIN_ARCHIVE is currently supported only for ARCH=rv")
+            install_loongarch_debian(args.force)
+        else:
+            install(release_for(args.arch), args.archive, args.force)
         return 0
     except (SetupError, OSError, tarfile.TarError, subprocess.CalledProcessError) as error:
         print(f"[setup] error: {error}", file=sys.stderr)

@@ -150,7 +150,7 @@ WaterOS/
 │   └── workflows/            # 开发和验证工作流程
 ├── user/                     # 自有用户空间与 EXT4 镜像构建工程
 │   ├── Makefile              # 用户空间构建、镜像与检查入口
-│   ├── configs/              # 架构工具链与 rootfs profile 配置
+│   ├── configs/              # 用户态架构与交叉工具链配置
 │   ├── rootfs/base/          # 架构无关的基础根文件系统布局
 │   ├── packages/             # BusyBox、Nano-X 与现场工具包定义
 │   ├── tools/                # Package 编排、工具链与 EXT4 镜像工具
@@ -324,14 +324,14 @@ kernel-la-pre      kernel-la-final      kernel-la
 ```bash
 make -C user setup ARCH=rv
 make -C user doctor ARCH=rv
-make -C user image ARCH=rv PROFILE=minimal
+make -C user image ARCH=rv
 
 cd os
 make shell ARCH=rv PROFILE=pre \
-  SDCARD=../user/build/images/wateros-rv-minimal.ext4
+  SDCARD=../user/build/images/wateros-rv.ext4
 ```
 
-完整的 package/profile、工具链和镜像说明见 [`user/README.md`](./user/README.md)。
+完整的 package 组合、工具链和镜像说明见 [`user/README.md`](./user/README.md)。
 
 ## 构建配置
 

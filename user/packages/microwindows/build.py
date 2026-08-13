@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""为 WaterOS 交叉构建并安装静态 Nano-X、演示程序和 Doom。"""
+"""为 WaterOS 双架构交叉构建并安装静态 Nano-X、演示程序和 Doom。"""
 
 from __future__ import annotations
 
@@ -65,12 +65,23 @@ def main() -> int:
     run([*command, "-C", "demos/nanox", "all"], cwd=src, env=env)
 
     # contrib/doom 使用的是较老的 C89 风格源码，不能跟随现代 GCC 默认的
-    # gnu17 方言。musl 也不声明历史 BSD 宏 IPPORT_USERRESERVED，因此在此
-    # 固定其兼容值。Doom 最终仍静态链接到上面生成的 libnano-X.a。
-    doom_cc = " ".join((f"{cross}gcc", "-std=gnu89",
-                        "-DIPPORT_USERRESERVED=5000", extra))
+    # gnu17 方言。RISC-V 的 musl 头文件不声明历史 BSD 宏
+    # IPPORT_USERRESERVED，需要补上兼容值；LoongArch 使用的 glibc 头文件
+    # 已经声明了同名枚举，重复以宏定义会破坏 <netinet/in.h> 的语法。
+    # Doom 最终仍静态链接到上面生成的 libnano-X.a。
+    doom_flags = ["-std=gnu89"]
+    if context["arch"] == "rv":
+        doom_flags.append("-DIPPORT_USERRESERVED=5000")
+    doom_cc = " ".join((f"{cross}gcc", *doom_flags, extra))
+    # Doom 随源码附带的 Makefile/configure 已经是可直接使用的生成产物。
+    # 这些文件来自很老的 Automake 1.4；源码包中的 configure.in 时间戳偶尔
+    # 会比 Makefile.in 新几个毫秒，使现代 GNU Make 误判为需要重新运行宿主机
+    # automake。那既会引入不必要的宿主依赖，也会因缺少 compile/depcomp 而
+    # 失败。用 -o 将 Autotools 生成物声明为固定输入，只执行真正的 C 编译。
     run(["make", f"-j{context['jobs']}", "-C", "contrib/doom",
-         f"CC={doom_cc}", "LDFLAGS=-static", "all"], cwd=src, env=env)
+         "-o", "Makefile", "-o", "Makefile.in", "-o", "configure",
+         "-o", "aclocal.m4", f"CC={doom_cc}", "LDFLAGS=-static", "all"],
+        cwd=src, env=env)
 
     destination = destdir / "usr/bin"
     destination.mkdir(parents=True, exist_ok=True)
