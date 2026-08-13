@@ -13,7 +13,7 @@
   <p>
     <strong>面向操作系统设计赛的双架构 Rust 操作系统内核</strong>
     <br />
-    <sub>支持 RISC-V64 与 LoongArch64，兼容 Linux generic64 ABI</sub>
+    <sub>支持 RISC-V64 与 LoongArch64，部分兼容 Linux generic64 ABI</sub>
   </p>
   <p>
     <img src="https://img.shields.io/badge/Rust-2024-000000?style=flat-square&amp;logo=rust&amp;logoColor=white" alt="Rust 2024" />
@@ -46,7 +46,7 @@
 
 > WaterOS 是山东大学 OuterSystems 队面向 2026 年全国大学生计算机系统能力大赛
 > 操作系统设计赛 OS 内核实现赛道，使用 **Rust** 从零构建的双架构操作系统内核。
-> 项目支持 **RISC-V64** 与 **LoongArch64**，兼容 Linux generic64 用户 ABI，能够运行
+> 项目支持 **RISC-V64** 与 **LoongArch64**，目前部分兼容 Linux generic64 用户 ABI，能够运行
 > 赛事指定的功能测试与性能测试负载。
 
 我们从一开始就把双架构支持作为内核的基本约束，而不是在单一平台完成后再追加一层
