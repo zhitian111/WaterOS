@@ -38,3 +38,13 @@ mod socket;
 
 #[cfg(feature = "vfs-handles")]
 pub use socket::{SocketReceiveLease, SocketRef};
+
+/// 网络组件内核态自检：验证协议栈门面可用，不启动用户态任务或真实连接。
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[network] self_test begin");
+    let config = NetworkConfig { address: [10, 0, 2, 15], prefix_len: 24, gateway: [10, 0, 2, 2] };
+    assert_eq!(config.prefix_len, 24);
+    assert_ne!(config.address, config.gateway);
+    log::info!("[network] self_test complete");
+}

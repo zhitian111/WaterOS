@@ -20,6 +20,7 @@
     frame-alloctor = { path = "./mm-frame-alloctor", package = "wateros-mm-frame-alloctor", default-features = true }
 
 [features]
+    self_test = [ "impl-sv39/self_test", "impl-loongarch64/self_test" ]
     api-v0 = [ "impl-sv39/api-v0", "impl-loongarch64/api-v0" ]
     default = [ "api-v0", "impl-sv39" ]
     cache-layer-diagnostics = [ "impl-common/cache-layer-diagnostics" ]

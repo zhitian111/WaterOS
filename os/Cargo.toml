@@ -149,3 +149,18 @@
         #"dashboard-debug",
     ]
     syscall-trace = [  ]
+    # 统一内核态组件自检；不启动用户态测试。
+    self_test = [
+        "dep:fs",
+        "fs/self_test",
+        "dep:vfs",
+        "vfs/self_test",
+        "dep:driver",
+        "driver/self_test",
+        "dep:ipc",
+        "ipc/self_test",
+        "dep:cred",
+        "cred/self_test",
+        "network/self_test",
+        "mm/self_test",
+    ]

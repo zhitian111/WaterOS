@@ -110,7 +110,7 @@ extern "C" fn gui_refresh_task(_arg : usize) -> ! {
 }
 
 /// 驱动 → 网络 → FS → 用户态 bring-up。两 board 模块共用。
-fn bringup_driver_and_user() {
+fn bringup_driver_and_user(memory_end: usize) {
     match driver::machine().init_after_boot() {
         Err(ref err) => warn!("driver init failed: {:?}", err),
         Ok(()) => {
@@ -156,9 +156,23 @@ fn bringup_driver_and_user() {
             }
             fs::init_when_boot();
             fs::init_after_boot();
+            #[cfg(feature = "self_test")]
+            run_self_tests();
             crate::user_bringup_bus::run();
         }
     }
+}
+
+#[cfg(feature = "self_test")]
+fn run_self_tests() {
+    runtime::logging::info!("[self-test] unified kernel self_test begin");
+    cred::self_test();
+    driver::self_test();
+    ipc::self_test();
+    network::self_test();
+    fs::self_test();
+    vfs::self_test();
+    runtime::logging::info!("[self-test] unified kernel self_test complete");
 }
 
 #[cfg(feature = "qemu-riscv64-opensbi")]
@@ -291,7 +305,7 @@ mod qemu_riscv64_opensbi {
         let requested_aps = start_secondary_harts(cpu_id, dtb_pa);
         wait_for_secondary_online(requested_aps);
 
-        bringup_driver_and_user();
+        bringup_driver_and_user(memory_end);
         #[cfg(feature = "stall-debug")]
         crate::stall_debug::start();
         #[cfg(feature = "dashboard-debug")]
@@ -425,7 +439,7 @@ mod qemu_loongarch64_virt {
         let requested_aps = start_secondary_cpus(cpu_id);
         wait_for_secondary_online(requested_aps);
 
-        bringup_driver_and_user();
+        bringup_driver_and_user(memory_end);
         #[cfg(feature = "stall-debug")]
         crate::stall_debug::start();
         #[cfg(feature = "dashboard-debug")]

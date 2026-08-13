@@ -251,3 +251,11 @@ pub fn test_user_copy_progress() {
     impl_sv39::user_access::test_copy_to_user_progress();
     impl_loongarch64::user_access::test_copy_to_user_progress();
 }
+
+#[cfg(feature = "self_test")]
+/// MM 组件统一自检入口；不自行猜测物理内存范围，避免破坏已初始化的帧池。
+pub fn self_test() {
+    log::info!("[mm] self_test begin");
+    api::test();
+    log::info!("[mm] API self_test complete; range-dependent tests remain behind explicit bring-up hooks");
+}
