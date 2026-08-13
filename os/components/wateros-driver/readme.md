@@ -153,7 +153,7 @@ VFS / 用户图形
 
 ### driver-impl / 机器驱动实现
 
-- 提供无硬件占位：`impl-dummy` 让无驱动场景可链接。
+- 具体设备能力由已选择的 QEMU 平台实现提供；未选择平台实现时，机器驱动入口明确报告未配置。
 - 提供共享 DTB 解析：`impl-common` 封装 `parse_irq` 等跨平台解析辅助。
 - 提供 QEMU RISC-V 平台接入：`impl-qemu-riscv64-virt` 经 `enumerate` 扫描 DTB、`register`
   实例化并注册设备、`devfs` 同步设备视图、`uart` 接线 UART。

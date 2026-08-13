@@ -3,21 +3,17 @@
         "./fs-api/api-v0/",
         "./fs-devfs/",
         "./fs-devfs/devfs-api/api-v0/",
-        "./fs-devfs/devfs-impl/impl-dummy/",
         "./fs-devfs/devfs-impl/impl-kernel/",
         "./fs-impl/impl-devfs/",
-        "./fs-impl/impl-dummy/",
         "./fs-impl/impl-ext4-rs/",
         "./fs-impl/impl-another-ext4/",
         "./fs-impl/impl-ext4/",
         "./fs-impl/impl-ramfs/",
         "./fs-procfs/",
         "./fs-procfs/procfs-api/api-v0/",
-        "./fs-procfs/procfs-impl/impl-dummy/",
         "./fs-procfs/procfs-impl/impl-kernel/",
         "./fs-rootfs/",
         "./fs-rootfs/rootfs-api/api-v0/",
-        "./fs-rootfs/rootfs-impl/impl-dummy/",
         "./fs-rootfs/rootfs-impl/impl-kernel/",
     ]
 [package]
@@ -30,7 +26,6 @@
     devfs = { path = "./fs-devfs/", package = "wateros-fs-devfs", default-features = true }
     procfs = { path = "./fs-procfs/", package = "wateros-fs-procfs", default-features = true }
     rootfs = { path = "./fs-rootfs/", package = "wateros-fs-rootfs", default-features = true }
-    impl-dummy = { path = "./fs-impl/impl-dummy/", package = "wateros-fs-impl-dummy", default-features = true }
     impl-devfs = { path = "./fs-impl/impl-devfs/", package = "wateros-fs-impl-devfs", default-features = true }
     impl-ext4 = { path = "./fs-impl/impl-ext4/", package = "wateros-fs-impl-ext4", default-features = true, optional = true }
     impl-ext4-rs = { path = "./fs-impl/impl-ext4-rs/", package = "wateros-fs-impl-ext4-rs", default-features = true, optional = true }
@@ -42,7 +37,6 @@
 [features]
     api-v0 = [
         "devfs/api-v0",
-        "impl-dummy/api-v0",
         "impl-ext4-rs?/api-v0",
         "impl-another-ext4?/api-v0",
         "impl-ext4?/api-v0",
@@ -52,7 +46,6 @@
     ]
     default = [ "api-v0", "impl-devfs", "impl-another-ext4", "impl-ramfs" ]
     impl-devfs = [  ]
-    impl-dummy = [  ]
     impl-ext4 = [ "dep:impl-ext4" ]
     impl-ext4-rs = [ "dep:impl-ext4-rs" ]
     impl-another-ext4 = [ "dep:impl-another-ext4" ]

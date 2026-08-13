@@ -10,9 +10,6 @@ use alloc::string::String;
 pub use api_v0::*;
 pub use driver_api::{DeviceType, SupportedDeviceEntry};
 
-#[cfg(feature = "impl-dummy")]
-#[doc(inline)]
-pub use impl_dummy::DummyNetworkDevice;
 #[cfg(feature = "impl-virtio-mmio")]
 #[doc(inline)]
 pub use impl_virtio_mmio::VirtioNetDevice;

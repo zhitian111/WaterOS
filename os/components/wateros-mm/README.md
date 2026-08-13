@@ -16,7 +16,6 @@
 | 共享实现 | `mm-impl/common/` | 各 arch 实现共享的 ELF 装载、mmap/mremap、按需零页辅助。 |
 | Sv39 实现 | `mm-impl/impl-sv39/` | RISC-V Sv39 页表、用户地址空间与设备 mmap。 |
 | LoongArch64 实现 | `mm-impl/impl-loongarch64/` | LoongArch64 页表与用户地址空间。 |
-| 占位实现 | `mm-impl/impl-dummy/` | 无页表硬件占位。 |
 
 ## 实现说明
 
@@ -122,7 +121,3 @@ handle_tlb_shootdown_ipi // IPI 后各 CPU 刷新本地 TLB
 
 - 文件结构与 Sv39 一致（`pagetable.rs` / `asid.rs` / `kernel_*` / `user_access.rs` /
   `user_aspace.rs` / `user_heap_mmap.rs`），页表格式为 LoongArch64。
-
-### mm-impl/impl-dummy / 占位实现
-
-- 无页表硬件的占位，配合 `impl-dummy` feature 使用。

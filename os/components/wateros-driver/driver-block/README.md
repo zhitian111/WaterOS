@@ -15,7 +15,6 @@
 | VirtIO MMIO 实现 | `block-impl/impl-virtio-mmio/` | RISC-V QEMU `virtio-blk-device`。 |
 | VirtIO PCI 实现 | `block-impl/impl-virtio-pci/` | LoongArch QEMU `virtio-blk-pci`。 |
 | 块缓存实现 | `block-impl/impl-block-cache/` | `CachingBlockDevice` 写穿 LRU 缓存，对上仍实现 `BlockDevice`。 |
-| 占位实现 | `block-impl/impl-dummy/` | 无硬件占位。 |
 
 ## 实现说明
 
@@ -85,7 +84,3 @@ probe_virtio_devices()
   trait。
 - 合并连续未命中为单次底层 `read_blocks`，读数据二次命中准入，避免顺序扫描把一次性块复制
   进数据缓存；`capacity_blocks` 为 0 时退化为直接透传。
-
-### impl-dummy / 占位实现
-
-- 无硬件场景的占位块设备，配合 `impl-dummy` feature 使用。

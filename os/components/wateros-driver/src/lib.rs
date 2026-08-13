@@ -29,7 +29,7 @@ pub mod network {
     pub use ::network::*;
 }
 
-// 三选一：QEMU/OpenSBI RISC-V, QEMU/LoongArch64 virt, 或 dummy 占位；
+// 二选一：QEMU/OpenSBI RISC-V 或 QEMU/LoongArch64 virt；
 // 行为契约统一由 [`MachineDriver`] 表达，经 [`machine`] 选择当前 profile。
 #[cfg(feature = "impl-qemu-loongarch64-virt")]
 pub use impl_qemu_loongarch64_virt::uart;
@@ -39,12 +39,8 @@ pub use impl_qemu_riscv64_virt::uart;
 use alloc::vec::Vec;
 use api_v0::{MachineDriver, SupportedDeviceEntry};
 
-/// 当前 feature 选中的机器驱动契约实现（QEMU RV/LA 或 dummy）。
+/// 当前 feature 选中的机器驱动契约实现（QEMU RV/LA）。
 pub fn machine() -> &'static dyn MachineDriver {
-    #[cfg(feature = "impl-dummy")]
-    {
-        impl_dummy::machine()
-    }
     #[cfg(feature = "impl-qemu-loongarch64-virt")]
     {
         impl_qemu_loongarch64_virt::machine()
@@ -53,8 +49,7 @@ pub fn machine() -> &'static dyn MachineDriver {
     {
         impl_qemu_riscv64_virt::machine()
     }
-    #[cfg(not(any(feature = "impl-dummy",
-                  feature = "impl-qemu-loongarch64-virt",
+    #[cfg(not(any(feature = "impl-qemu-loongarch64-virt",
                   feature = "impl-qemu-riscv64-virt")))]
     {
         core::unreachable!("no machine driver feature selected")
@@ -81,8 +76,7 @@ pub fn init_after_boot() {
     }
 }
 
-/// 自检入口：依次调用 API 与各子系统测试钩子；QEMU 实现会跑探测路径，dummy
-/// 实现跳过硬件。
+/// 自检入口：依次调用 API 与各子系统测试钩子。
 pub fn test() {
     log::trace!("[driver] test begin");
     api_v0::test();

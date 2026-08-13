@@ -3,10 +3,8 @@
         "./platform-api/api-v0/",
         "./platform-arch/",
         "./platform-arch/arch-api/api-v0/",
-        "./platform-arch/arch-impl/impl-dummy/",
         "./platform-arch/arch-impl/impl-loongarch64/",
         "./platform-arch/arch-impl/impl-riscv64/",
-        "./platform-impl/impl-dummy/",
         "./platform-impl/impl-qemu-loongarch64-virt/",
         "./platform-impl/impl-qemu-riscv64-opensbi/",
     ]
@@ -17,7 +15,6 @@
 
 [dependencies]
     api-v0 = { path = "./platform-api/api-v0/", package = "wateros-platform-api-v0", default-features = false }
-    impl-dummy = { path = "./platform-impl/impl-dummy/", package = "wateros-platform-impl-dummy", default-features = false, optional = true }
     impl-qemu-loongarch64-virt = { path = "./platform-impl/impl-qemu-loongarch64-virt/", package = "wateros-platform-impl-qemu-loongarch64-virt", default-features = true, optional = true }
     impl-qemu-riscv64-opensbi = { path = "./platform-impl/impl-qemu-riscv64-opensbi/", package = "wateros-platform-impl-qemu-riscv64-opensbi", default-features = false, optional = true }
     arch = { path = "./platform-arch/", package = "wateros-platform-arch", default-features = false }
@@ -29,12 +26,10 @@ debug = { path = "../wateros-debug/", package = "wateros-debug", default-feature
 [features]
     api-v0 = [
         "arch/api-v0",
-        "impl-dummy?/api-v0",
         "impl-qemu-loongarch64-virt?/api-v0",
         "impl-qemu-riscv64-opensbi?/api-v0",
     ]
-    default = [ "api-v0" ]
-    impl-dummy = [ "dep:impl-dummy" ]
+    default = [ "api-v0", "impl-qemu-riscv64-opensbi" ]
     impl-qemu-loongarch64-virt = [
         "api-v0",
         "arch/impl-loongarch64",

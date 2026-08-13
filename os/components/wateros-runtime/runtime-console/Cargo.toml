@@ -5,12 +5,10 @@
 
 [dependencies]
     api-v0 = { path = "./console-api/api-v0/", package = "wateros-runtime-console-api-v0" }
-    impl-dummy = { path = "./console-impl/impl-dummy/", package = "wateros-runtime-console-impl-dummy", optional = true }
     impl-platform-console = { path = "./console-impl/impl-platform-console/", package = "wateros-runtime-console-impl-platform-console", optional = true }
 [features]
-    api-v0 = [ "impl-dummy?/api-v0", "impl-platform-console?/api-v0" ]
+    api-v0 = [ "impl-platform-console?/api-v0" ]
     default = [ "api-v0", "impl-platform-console" ]
-    impl-dummy = [ "dep:impl-dummy" ]
     impl-platform-console = [
         "dep:impl-platform-console",
         "impl-platform-console/api-v0",

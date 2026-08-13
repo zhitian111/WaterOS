@@ -16,7 +16,6 @@
 | fd 会话  | `vfs-impl/impl-fd-session/` | per-task fd 表、cwd、文件锁，以及控制台/pipe/char dev 等`VfsIoHandle`。                           |
 | FS 桥接  | `vfs-impl/impl-fs-bridge/`  | 把`VfsBackend` 桥接到 `wateros-fs`：目录/文件/paged/proc/tmpfs 句柄与挂载表。                     |
 | 页缓存   | `vfs-impl/impl-page-cache/` | 全局共享文件页缓存（Direct 模式，LRU）。                                                          |
-| 占位实现 | `vfs-impl/impl-dummy/`      | 无后端占位。                                                                                      |
 
 ## 实现说明
 
@@ -132,6 +131,4 @@ Nano-X 打开 /dev/fb0
 - 保证缺页与写回安全：`install_page` / `install_zero_page` 在调用下层 I/O 前先释放内部锁，
   写回路径按固定锁顺序（files → 文件条目 → state → 根卷）访问，避免锁反转与持锁下探块设备。
 
-### impl-dummy / 占位实现
-
-- 无后端的占位，配合 `impl-dummy` feature 使用。
+无 FS 桥接时，聚合层内部返回 `NotMounted`/`Unsupported`，不再维护独立占位 crate。

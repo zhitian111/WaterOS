@@ -4,12 +4,10 @@
         "./driver-block/",
         "./driver-block/block-api/api-v0/",
         "./driver-block/block-impl/impl-block-cache/",
-        "./driver-block/block-impl/impl-dummy/",
         "./driver-block/block-impl/impl-virtio-mmio/",
         "./driver-block/block-impl/impl-virtio-pci/",
         "./driver-character/",
         "./driver-character/character-api/api-v0/",
-        "./driver-character/character-impl/impl-dummy/",
         "./driver-character/character-impl/impl-null-stub/",
         "./driver-character/character-impl/impl-rtc-stub/",
         "./driver-character/character-impl/impl-uart-16550/",
@@ -21,13 +19,11 @@
         "./driver-input/input-api/api-v0/",
         "./driver-input/input-impl/impl-virtio-mmio/",
         "./driver-input/input-impl/impl-virtio-pci/",
-        "./driver-impl/impl-dummy/",
         "./driver-impl/impl-common/",
         "./driver-impl/impl-qemu-loongarch64-virt/",
         "./driver-impl/impl-qemu-riscv64-virt/",
         "./driver-network/",
         "./driver-network/network-api/api-v0/",
-        "./driver-network/network-impl/impl-dummy/",
         "./driver-network/network-impl/impl-virtio-mmio/",
         "./driver-network/network-impl/impl-virtio-pci/",
     ]
@@ -41,7 +37,6 @@
 
 [dependencies]
     api-v0 = { path = "./driver-api/api-v0/", package = "wateros-driver-api-v0", default-features = true }
-    impl-dummy = { path = "./driver-impl/impl-dummy/", package = "wateros-driver-impl-dummy", default-features = true }
     impl-qemu-riscv64-virt = { path = "./driver-impl/impl-qemu-riscv64-virt/", package = "wateros-driver-impl-qemu-riscv64-virt", default-features = true, optional = true }
     impl-qemu-loongarch64-virt = { path = "./driver-impl/impl-qemu-loongarch64-virt/", package = "wateros-driver-impl-qemu-loongarch64-virt", default-features = true, optional = true }
     block = { path = "./driver-block/", package = "wateros-driver-block", default-features = true }
@@ -61,7 +56,6 @@
         "character/api-v0",
         "display/api-v0",
         "input/api-v0",
-        "impl-dummy/api-v0",
         "impl-qemu-loongarch64-virt?/api-v0",
         "impl-qemu-riscv64-virt?/api-v0",
         "network/api-v0",
@@ -81,7 +75,6 @@
         "impl-qemu-loongarch64-virt?/block-cache",
         "impl-qemu-riscv64-virt?/block-cache",
     ]
-    impl-dummy = [  ]
     impl-qemu-loongarch64-virt = [
         "dep:impl-qemu-loongarch64-virt",
         "block/impl-virtio-pci",

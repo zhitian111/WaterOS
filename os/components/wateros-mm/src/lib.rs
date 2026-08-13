@@ -223,11 +223,6 @@ pub mod kernel_mm {
         map_identity_range_user,
     };
 
-    #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
-    pub use impl_dummy::kernel_mm_impl::{
-        ensure_user_execute_for_kernel_va, fork_user_aspace, from_elf_path, init, kernel_satp,
-        load_program_from_path, map_anon_range_user, map_identity_range_user,
-    };
 }
 
 /// 自测入口：`start_ppn`/`end_ppn` 为 **物理页号（PPN）**
@@ -244,11 +239,6 @@ pub fn test_with_range(start_ppn : api::addr::PhysPageNum,
     impl_sv39::test_with_range(start_ppn, end_ppn);
     #[cfg(feature = "impl-loongarch64")]
     impl_loongarch64::test_with_range(start_ppn, end_ppn);
-    #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
-    {
-        let _ = (start_ppn, end_ppn);
-        log::info!("[wateros-mm] dummy impl: no mm-impl test");
-    }
 
     log::trace!("[wateros-mm] test end");
 }

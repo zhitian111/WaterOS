@@ -1,7 +1,6 @@
 [workspace]
     members = [
         "./vfs-api/api-v0/",
-        "./vfs-impl/impl-dummy/",
         "./vfs-impl/impl-fd-session/",
         "./vfs-impl/impl-page-cache/",
     ]
@@ -13,7 +12,6 @@
 [dependencies]
     api-v0 = { path = "./vfs-api/api-v0/", package = "wateros-vfs-api-v0", default-features = true }
     base = { path = "../wateros-base/", package = "wateros-base", default-features = true, optional = true }
-    impl-dummy = { path = "./vfs-impl/impl-dummy/", package = "wateros-vfs-impl-dummy", default-features = true }
     impl_fd_session = { path = "./vfs-impl/impl-fd-session/", package = "wateros-vfs-impl-fd-session", default-features = false, optional = true }
     impl_fs_bridge = { path = "./vfs-impl/impl-fs-bridge/", package = "wateros-vfs-impl-fs-bridge", default-features = true, optional = true }
     fs = { path = "../wateros-fs/", package = "wateros-fs", default-features = true, optional = true }
@@ -24,7 +22,7 @@
     tty = { path = "../wateros-tty/", package = "wateros-tty", default-features = true, optional = true }
 
 [features]
-    api-v0 = [ "impl-dummy/api-v0", "impl_fs_bridge?/api-v0" ]
+    api-v0 = [ "impl_fs_bridge?/api-v0" ]
     bridge-fs-api = [
         "dep:fs",
         "dep:impl_fs_bridge",
@@ -32,7 +30,6 @@
     ]
     cache-layer-diagnostics = [ "impl_fs_bridge/cache-layer-diagnostics" ]
     default = [ "api-v0", "bridge-fs-api", "impl-fd-session" ]
-    impl-dummy = [  ]
     impl-fd-session = [
         "dep:base",
         "dep:impl_fd_session",

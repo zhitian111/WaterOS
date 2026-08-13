@@ -17,7 +17,7 @@ impl（**不**挂载根卷）；bring-up 通过 `mount_default_root_rw` 挂载�
 | rootfs | `fs-rootfs/` | 当前根卷共享句柄与挂载入口。 |
 | ext4 实现 | `fs-impl/impl-{another-ext4,ext4-rs,ext4}/` | 三种 ext4 后端，默认 `impl-another-ext4`。 |
 | ramfs 实现 | `fs-impl/impl-ramfs/` | 物理页 payload 后端 ramfs；tmpfs 策略层复用。 |
-| 适配/占位 | `fs-impl/impl-devfs/`、`fs-impl/impl-dummy/` | devfs 的 fs impl 适配与无硬件占位。 |
+| 适配 | `fs-impl/impl-devfs/` | devfs 的 fs impl 适配。 |
 
 ## 实现说明
 
@@ -28,8 +28,7 @@ impl（**不**挂载根卷）；bring-up 通过 `mount_default_root_rw` 挂载�
 - `registered_fs_impls` 按特性宏静态拼接各 `'static FsImpl`（ext4 族 + ramfs + devfs +
   procfs）；`pick_fs_impl(kind, mode)` 在注册表中匹配一条支持该 `(FsKind, FsAccessMode)` 的
   impl。
-- devfs / procfs / rootfs 各自是“聚合 crate → API → impl”结构，`impl-kernel` 优先于互斥的
-  `impl-dummy`。
+- devfs / procfs / rootfs 各自是“聚合 crate → API → impl”结构，由 `impl-kernel` 提供实现。
 - `FsError` 由实现方把底层 I/O 与格式错误映射到稳定枚举；`SharedFs` / `SharedRwFs` 使用
   `spin::Mutex`，调用方需保证与平台调度策略一致的访问边界。
 
@@ -89,7 +88,7 @@ devfs / procfs：
 
 ### fs-procfs / 进程信息伪文件系统
 
-- `impl-kernel` 提供进程信息伪文件（`/proc`），以 `FsImpl` 注册进统一表；`impl-dummy` 占位。
+- `impl-kernel` 提供进程信息伪文件（`/proc`），以 `FsImpl` 注册进统一表。
 
 ### fs-rootfs / 根文件系统
 
@@ -109,4 +108,3 @@ devfs / procfs：
 - `impl-ext4-rs` / `impl-ext4`：可选 ext4 后端（回退 feature，互斥）。
 - `impl-ramfs`：物理页 payload 后端 ramfs；tmpfs 由 VFS 策略层基于它创建挂载实例。
 - `impl-devfs`：devfs 的 fs impl 适配。
-- `impl-dummy`：无硬件占位。

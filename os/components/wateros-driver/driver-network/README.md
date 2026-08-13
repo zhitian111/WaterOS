@@ -14,7 +14,6 @@
 | 网络设备 API | `network-api/api-v0/` | `NetworkDevice` 与全局注册表，`DEFAULT_MTU` 为 1500。 |
 | VirtIO MMIO 实现 | `network-impl/impl-virtio-mmio/` | RISC-V QEMU `virtio-net-device`。 |
 | VirtIO PCI 实现 | `network-impl/impl-virtio-pci/` | LoongArch QEMU `virtio-net-pci`。 |
-| 占位实现 | `network-impl/impl-dummy/` | 无硬件占位。 |
 
 ## 实现说明
 
@@ -68,7 +67,3 @@ probe_virtio_devices()
 
 - 走 PCI ECAM 枚举并初始化 virtio-net（`VirtioPciNetDevice`），为 BAR 分配 MMIO 地址并开启
   `MEMORY_SPACE` / `BUS_MASTER`。
-
-### impl-dummy / 占位实现
-
-- 无硬件场景的占位网卡，配合 `impl-dummy` feature 使用。

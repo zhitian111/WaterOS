@@ -32,8 +32,8 @@
 - heap：默认 `rlsf::Tlsf`（O(1) alloc/dealloc），`impl-linked-list-allocator` 可切回
   `LockedHeap`；堆大小与对齐来自 `base-config` 的 MM 配置；`interrupt_guard` 禁止本 CPU 中断
   重入；AP 使用堆前必须等待 BSP 单线程初始化完成。
-- console 的 `impl-dummy` 与 `impl-platform-console` 互斥；`serial-uart-virt` 导出 QEMU virt
-  UART 字符设备 API，与 early console 是不同层。
+- `impl-platform-console` 连接 QEMU/platform 控制台；`serial-uart-virt` 导出 QEMU virt UART
+  字符设备 API，与 early console 是不同层。
 
 ## 调用链路
 
@@ -64,7 +64,6 @@ alloc / dealloc
 
 - `console-api/api-v0`：`Console` 后端约束。
 - `console-impl/impl-platform-console`：连接真实 platform console（跨 CPU UART 锁）。
-- `console-impl/impl-dummy`：占位/类型检查，实际输出会失败。
 - 根 crate：`write_fmt` / `write_str` / `write_raw_bytes`、`print!` / `println!` 宏、`AnsiColor`
   （ANSI SGR 转义）。
 
@@ -97,7 +96,6 @@ alloc / dealloc
 ## Feature
 
 - `impl-platform-console`：连接真实 platform console（正常内核配置使用）。
-- `impl-dummy`：仅用于占位/类型检查，实际输出会失败。
 - `impl-trace` 至 `impl-error`：选择日志最大级别；多个同时启用时取最详细一档。
 - `heap-tlsf` / `heap-linked-list`：堆后端选择（互斥）；`heap-stress`：初始化时压力测试。
 - `serial-uart-virt`：导出 QEMU virt UART 字符设备 API。

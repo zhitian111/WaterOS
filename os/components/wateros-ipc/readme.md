@@ -41,7 +41,7 @@
   保护该对象的内存状态，不能代替 scheduler、process 或 address-space 锁。
 - 任何可能阻塞、调度、访问用户内存、修改页表或发送跨核通知的操作，都不应在持有 IPC
   registry/object 锁时执行。
-- 默认 feature 只提供版本化门面、dummy 实现和 waitqueue；内核双架构 feature 通过
+- 默认 feature 只提供版本化门面和 waitqueue；内核双架构 feature 通过
   `ipc/all` 启用 futex、pipe、shm 和 signal。
 - `ipc-event/` 当前只是未接入 workspace 和聚合层的占位目录，不属于现有可用 IPC 接口。
 
@@ -190,8 +190,7 @@ signal 的主要实现在 `ipc-signal/signal-impl/impl-core/src/`。
 - `ipc::waitqueue` 始终提供 IPC 等待适配接口。
 - 启用相应 feature 后，分别通过 `ipc::futex`、`ipc::pipe`、`ipc::shm` 和 `ipc::signal`
   访问子模块。
-- `api` 与 `active_impl` 保留版本化门面和实现选择边界；当前通用 `ipc-api/api-v0` 与
-  `ipc-impl/impl-dummy` 仍是占位层，真实领域 API 位于各子模块中。
+- `api` 保留版本化门面；真实领域 API 位于各子模块中。
 - syscall、VFS 和 task 等调用方应使用顶层重导出，不应跨过聚合层依赖具体实现 crate。
 
 扩展新的 IPC 对象时，应继续保持三条边界：Linux ABI 和用户复制留在 syscall 层；对象状态由

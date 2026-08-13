@@ -13,8 +13,8 @@
 | 聚合门面 | `src/lib.rs` 及 `src/{boot,time,smp,wall_clock}.rs`                      | 组合 arch 与 platform-impl，统一入口、时间换算、IPI reason；`timer`/`console`/`reset` 保留多层组合入口。 |
 | 平台 API | `platform-api/api-v0/`                                                   | 平台 profile 共用的类型与 trait：boot 参数、时间、SMP、console、timer、reset。                           |
 | 架构 API | `platform-arch/arch-api/api-v0/`                                         | ISA 公共的 trap、任务上下文、分页、中断、时间与 kernel_trap 类型。                                       |
-| 架构实现 | `platform-arch/arch-impl/impl-{riscv64,loongarch64,dummy}/`              | RISC-V / LoongArch 汇编、CSR、本地 interrupt/TLB/trap。                                                  |
-| 平台实现 | `platform-impl/impl-{qemu-riscv64-opensbi,qemu-loongarch64-virt,dummy}/` | QEMU/固件 profile：boot 参数解释、console、timer、reset、SMP 运输。                                      |
+| 架构实现 | `platform-arch/arch-impl/impl-{riscv64,loongarch64}/`              | RISC-V / LoongArch 汇编、CSR、本地 interrupt/TLB/trap。                                                  |
+| 平台实现 | `platform-impl/impl-{qemu-riscv64-opensbi,qemu-loongarch64-virt}/` | QEMU/固件 profile：boot 参数解释、console、timer、reset、SMP 运输。                                      |
 
 ## 实现说明
 
@@ -25,8 +25,7 @@
 - 发送 IPI 与清除本地 pending 位是两个不同职责：前者依赖固件或板级控制器（profile），后者
   是目标 CPU 的 ISA 操作（arch `interrupt::clear_soft_interrupt`）。不要在 `platform-impl`
   中重新实现 `sip`、`sie`、`satp` 等 arch 原语。
-- `active_impl` 三选一：`impl-qemu-riscv64-opensbi`、`impl-qemu-loongarch64-virt` 或
-  `impl-dummy`；任一构建只启用一个 arch impl 与一个 platform impl。
+- `active_impl` 二选一：`impl-qemu-riscv64-opensbi` 或 `impl-qemu-loongarch64-virt`；任一构建只启用一个 arch impl 与一个 platform impl。
 - RISC-V QEMU profile 使用 OpenSBI 提供 HSM、IPI、timer 与 reset；LoongArch QEMU profile 的
   mailbox/IPI 运输在 platform profile，本地 IOCSR pending 清除及中断使能在 arch interrupt。
 - `init_when_boot(dtb_pa)` 保存平台持有的 DTB 物理指针；`physical_ram_end_exclusive()` 解析
@@ -136,9 +135,6 @@ pending 清除在 `interrupt.rs`）：
 - `boot.rs` / `console.rs` / `dtb.rs` / `memory.rs` / `reset.rs` / `smp.rs`（mailbox/IPI 运输）
   / `time.rs` / `timer.rs` / `lib.rs`。
 
-`impl-dummy/src/` 下的文件（无 `dtb.rs`/`memory.rs`）：
-
-- `boot.rs` / `console.rs` / `reset.rs` / `smp.rs` / `time.rs` / `timer.rs` / `lib.rs`。
 
 ### 聚合门面 / src/
 

@@ -14,9 +14,6 @@
 
 use core::fmt;
 
-#[cfg(all(feature = "impl-dummy", feature = "impl-platform-console"))]
-compile_error!("enable only one runtime-console implementation");
-
 /// 终端 ANSI 颜色前缀，用于在 `println!` 等输出中高亮级别或横幅。
 pub enum AnsiColor {
     Red,
@@ -58,14 +55,7 @@ pub fn write_fmt(args : fmt::Arguments<'_>) {
         impl_platform_console::platform_console_write_fmt(args);
         return;
     }
-    #[cfg(feature = "impl-dummy")]
-    {
-        use core::fmt::Write;
-        let mut console = ConsoleHandle::default();
-        let _ = console.write_fmt(args);
-        return;
-    }
-    #[cfg(not(any(feature = "impl-platform-console", feature = "impl-dummy")))]
+    #[cfg(not(feature = "impl-platform-console"))]
     {
         let _ = args;
     }
@@ -79,14 +69,7 @@ pub fn write_str(text : &str) {
         impl_platform_console::platform_console_write_a_buffer(text.as_bytes());
         return;
     }
-    #[cfg(feature = "impl-dummy")]
-    {
-        use core::fmt::Write;
-        let mut console = ConsoleHandle::default();
-        let _ = console.write_str(text);
-        return;
-    }
-    #[cfg(not(any(feature = "impl-platform-console", feature = "impl-dummy")))]
+    #[cfg(not(feature = "impl-platform-console"))]
     {
         let _ = text;
     }
@@ -108,11 +91,6 @@ pub fn write_raw_bytes(bytes : &[u8]) {
     }
 }
 
-/// 当前 feature 选中的默认控制台句柄类型。
-///
-/// 此类型用于 backend 实现和测试；普通 runtime 调用方不应直接实例化它。
-#[cfg(feature = "impl-dummy")]
-pub use impl_dummy::DummyConsoleHandle as ConsoleHandle;
 #[cfg(feature = "impl-platform-console")]
 pub use impl_platform_console::PlatformConsoleHandle as ConsoleHandle;
 

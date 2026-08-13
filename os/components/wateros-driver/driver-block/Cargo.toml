@@ -6,7 +6,6 @@
 [dependencies]
     api-v0 = { path = "./block-api/api-v0/", package = "wateros-driver-block-api-v0", default-features = true }
     driver-api = { path = "../driver-api/api-v0/", package = "wateros-driver-api-v0", default-features = true }
-    impl-dummy = { path = "./block-impl/impl-dummy/", package = "wateros-driver-block-impl-dummy", default-features = true }
     impl-virtio-mmio = { path = "./block-impl/impl-virtio-mmio/", package = "wateros-driver-block-impl-virtio-mmio", default-features = true, optional = true }
     impl-virtio-pci = { path = "./block-impl/impl-virtio-pci/", package = "wateros-driver-block-impl-virtio-pci", default-features = true, optional = true }
     impl-block-cache = { path = "./block-impl/impl-block-cache/", package = "wateros-driver-block-impl-block-cache", default-features = true, optional = true }
@@ -14,10 +13,9 @@
 
 
 [features]
-    api-v0 = [ "impl-dummy/api-v0" ]
+    api-v0 = [ "impl-virtio-mmio?/api-v0", "impl-virtio-pci?/api-v0", "impl-block-cache?/api-v0" ]
     default = [ "api-v0", "impl-virtio-mmio" ]
     block-cache-diagnostics = [ "impl-block-cache/diagnostics" ]
     impl-block-cache = [ "dep:impl-block-cache" ]
-    impl-dummy = [  ]
     impl-virtio-mmio = [ "dep:impl-virtio-mmio" ]
     impl-virtio-pci = [ "dep:impl-virtio-pci" ]

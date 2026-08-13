@@ -15,7 +15,6 @@ poll/ioctl”，覆盖串口、实时钟和 null 设备。驱动只负责寄存�
 | NS16550 串口实现 | `character-impl/impl-uart-16550/` | NS16550 家族 MMIO 串口（QEMU RV/LA、龙芯 2K1000、JH7110 共用）。 |
 | 实时钟实现 | `character-impl/impl-rtc-stub/` | `RtcCharacterDevice` / `RtcTime`。 |
 | null 实现 | `character-impl/impl-null-stub/` | `NullCharacterDevice`。 |
-| 占位实现 | `character-impl/impl-dummy/` | 无硬件占位。 |
 
 ## 实现说明
 
@@ -82,7 +81,3 @@ syscall / VFS
 ### impl-null-stub / null 设备
 
 - 提供丢弃写入、无数据的占位设备（`NullCharacterDevice`），由 `register_null_stub` 注册。
-
-### impl-dummy / 占位实现
-
-- 无硬件场景的占位字符设备，配合 `impl-dummy` feature 使用。

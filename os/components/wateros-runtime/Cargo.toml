@@ -1,7 +1,6 @@
 [workspace]
     members = [
         "./runtime-console/console-api/api-v0/",
-        "./runtime-console/console-impl/impl-dummy/",
         "./runtime-console/console-impl/impl-platform-console/",
         "./runtime-logging/",
         "./runtime-panic/",
@@ -30,11 +29,6 @@
     heap-stress = [ "heap-allocator/stress-on-init" ]
     heap-tlsf = [ "heap-allocator/impl-tlsf" ]
     impl-debug = [ "logging/impl-debug" ]
-    impl-dummy = [
-        "console/impl-dummy",
-        "logging/impl-dummy",
-        "panic/impl-dummy",
-    ]
     impl-error = [ "logging/impl-error" ]
     impl-info = [ "logging/impl-info" ]
     impl-platform-console = [

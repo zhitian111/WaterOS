@@ -649,7 +649,6 @@ dependencies = [
  "wateros-driver-block",
  "wateros-driver-character",
  "wateros-driver-display",
- "wateros-driver-impl-dummy",
  "wateros-driver-impl-qemu-loongarch64-virt",
  "wateros-driver-impl-qemu-riscv64-virt",
  "wateros-driver-input",
@@ -671,7 +670,6 @@ dependencies = [
  "wateros-driver-api-v0",
  "wateros-driver-block-api-v0",
  "wateros-driver-block-impl-block-cache",
- "wateros-driver-block-impl-dummy",
  "wateros-driver-block-impl-virtio-mmio",
  "wateros-driver-block-impl-virtio-pci",
 ]
@@ -692,13 +690,6 @@ dependencies = [
  "log",
  "spin",
  "wateros-base-config",
- "wateros-driver-block-api-v0",
-]
-
-[[package]]
-name = "wateros-driver-block-impl-dummy"
-version = "0.1.0"
-dependencies = [
  "wateros-driver-block-api-v0",
 ]
 
@@ -733,7 +724,6 @@ version = "0.1.0"
 dependencies = [
  "wateros-driver-api-v0",
  "wateros-driver-character-api-v0",
- "wateros-driver-character-impl-dummy",
  "wateros-driver-character-impl-null-stub",
  "wateros-driver-character-impl-rtc-stub",
  "wateros-driver-character-impl-uart-16550",
@@ -745,13 +735,6 @@ version = "0.1.0"
 dependencies = [
  "spin",
  "wateros-driver-api-v0",
-]
-
-[[package]]
-name = "wateros-driver-character-impl-dummy"
-version = "0.1.0"
-dependencies = [
- "wateros-driver-character-api-v0",
 ]
 
 [[package]]
@@ -829,14 +812,6 @@ dependencies = [
  "fdt",
  "log",
  "spin",
- "wateros-driver-api-v0",
-]
-
-[[package]]
-name = "wateros-driver-impl-dummy"
-version = "0.1.0"
-dependencies = [
- "log",
  "wateros-driver-api-v0",
 ]
 
@@ -926,7 +901,6 @@ dependencies = [
  "log",
  "wateros-driver-api-v0",
  "wateros-driver-network-api-v0",
- "wateros-driver-network-impl-dummy",
  "wateros-driver-network-impl-virtio-mmio",
  "wateros-driver-network-impl-virtio-pci",
 ]
@@ -938,14 +912,6 @@ dependencies = [
  "spin",
  "wateros-driver-api-v0",
  "wateros-runtime-logging",
-]
-
-[[package]]
-name = "wateros-driver-network-impl-dummy"
-version = "0.1.0"
-dependencies = [
- "spin",
- "wateros-driver-network-api-v0",
 ]
 
 [[package]]
@@ -982,7 +948,6 @@ dependencies = [
  "wateros-fs-devfs",
  "wateros-fs-impl-another-ext4",
  "wateros-fs-impl-devfs",
- "wateros-fs-impl-dummy",
  "wateros-fs-impl-ext4",
  "wateros-fs-impl-ext4-rs",
  "wateros-fs-impl-ramfs",
@@ -1005,7 +970,6 @@ name = "wateros-fs-devfs"
 version = "0.1.0"
 dependencies = [
  "wateros-fs-devfs-api-v0",
- "wateros-fs-devfs-impl-dummy",
  "wateros-fs-devfs-impl-kernel",
 ]
 
@@ -1016,16 +980,6 @@ dependencies = [
  "wateros-driver-block-api-v0",
  "wateros-driver-character-api-v0",
  "wateros-fs-api-v0",
-]
-
-[[package]]
-name = "wateros-fs-devfs-impl-dummy"
-version = "0.1.0"
-dependencies = [
- "wateros-driver-block-api-v0",
- "wateros-driver-character-api-v0",
- "wateros-fs-api-v0",
- "wateros-fs-devfs-api-v0",
 ]
 
 [[package]]
@@ -1059,13 +1013,6 @@ dependencies = [
  "wateros-driver-block-api-v0",
  "wateros-fs-api-v0",
  "wateros-runtime-logging",
-]
-
-[[package]]
-name = "wateros-fs-impl-dummy"
-version = "0.1.0"
-dependencies = [
- "wateros-fs-api-v0",
 ]
 
 [[package]]
@@ -1107,7 +1054,6 @@ name = "wateros-fs-procfs"
 version = "0.1.0"
 dependencies = [
  "wateros-fs-procfs-api-v0",
- "wateros-fs-procfs-impl-dummy",
  "wateros-fs-procfs-impl-kernel",
 ]
 
@@ -1116,13 +1062,6 @@ name = "wateros-fs-procfs-api-v0"
 version = "0.1.0"
 dependencies = [
  "wateros-fs-api-v0",
-]
-
-[[package]]
-name = "wateros-fs-procfs-impl-dummy"
-version = "0.1.0"
-dependencies = [
- "wateros-fs-procfs-api-v0",
 ]
 
 [[package]]
@@ -1145,7 +1084,6 @@ name = "wateros-fs-rootfs"
 version = "0.1.0"
 dependencies = [
  "wateros-fs-rootfs-api-v0",
- "wateros-fs-rootfs-impl-dummy",
  "wateros-fs-rootfs-impl-kernel",
 ]
 
@@ -1154,14 +1092,6 @@ name = "wateros-fs-rootfs-api-v0"
 version = "0.1.0"
 dependencies = [
  "wateros-fs-api-v0",
-]
-
-[[package]]
-name = "wateros-fs-rootfs-impl-dummy"
-version = "0.1.0"
-dependencies = [
- "wateros-fs-api-v0",
- "wateros-fs-rootfs-api-v0",
 ]
 
 [[package]]
@@ -1207,7 +1137,6 @@ dependencies = [
  "ipc-signal",
  "ipc-waitqueue",
  "wateros-ipc-api-v0",
- "wateros-ipc-impl-dummy",
 ]
 
 [[package]]
@@ -1229,13 +1158,6 @@ dependencies = [
  "wateros-ipc-futex-api-v0",
  "wateros-platform-arch",
  "wateros-task-api-v0",
-]
-
-[[package]]
-name = "wateros-ipc-impl-dummy"
-version = "0.1.0"
-dependencies = [
- "wateros-ipc-api-v0",
 ]
 
 [[package]]
@@ -1335,7 +1257,6 @@ dependencies = [
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor",
  "wateros-mm-impl-common",
- "wateros-mm-impl-dummy",
  "wateros-mm-impl-loongarch64",
  "wateros-mm-impl-sv39",
 ]
@@ -1357,16 +1278,11 @@ dependencies = [
  "log",
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor-api-v0",
- "wateros-mm-frame-alloctor-impl-dummy",
  "wateros-mm-frame-alloctor-impl-stack",
 ]
 
 [[package]]
 name = "wateros-mm-frame-alloctor-api-v0"
-version = "0.1.0"
-
-[[package]]
-name = "wateros-mm-frame-alloctor-impl-dummy"
 version = "0.1.0"
 
 [[package]]
@@ -1390,13 +1306,6 @@ dependencies = [
  "wateros-mm-frame-alloctor",
  "wateros-runtime",
  "wateros-vfs-api-v0",
-]
-
-[[package]]
-name = "wateros-mm-impl-dummy"
-version = "0.1.0"
-dependencies = [
- "wateros-mm-api-v0",
 ]
 
 [[package]]
@@ -1475,7 +1384,6 @@ dependencies = [
  "wateros-debug",
  "wateros-platform-api-v0",
  "wateros-platform-arch",
- "wateros-platform-impl-dummy",
  "wateros-platform-impl-qemu-loongarch64-virt",
  "wateros-platform-impl-qemu-riscv64-opensbi",
 ]
@@ -1493,7 +1401,6 @@ version = "0.1.0"
 dependencies = [
  "wateros-base",
  "wateros-platform-arch-api-v0",
- "wateros-platform-arch-impl-dummy",
  "wateros-platform-arch-impl-loongarch64",
  "wateros-platform-arch-impl-riscv64",
 ]
@@ -1504,13 +1411,6 @@ version = "0.1.0"
 dependencies = [
  "wateros-base",
  "wateros-syscall-api-v0",
-]
-
-[[package]]
-name = "wateros-platform-arch-impl-dummy"
-version = "0.1.0"
-dependencies = [
- "wateros-platform-arch-api-v0",
 ]
 
 [[package]]
@@ -1533,14 +1433,6 @@ dependencies = [
  "wateros-base-config",
  "wateros-platform-arch-api-v0",
  "wateros-syscall-api-v0",
-]
-
-[[package]]
-name = "wateros-platform-impl-dummy"
-version = "0.1.0"
-dependencies = [
- "wateros-base",
- "wateros-platform-api-v0",
 ]
 
 [[package]]
@@ -1776,7 +1668,6 @@ dependencies = [
  "wateros-task",
  "wateros-tty",
  "wateros-vfs-api-v0",
- "wateros-vfs-impl-dummy",
  "wateros-vfs-impl-fd-session",
  "wateros-vfs-impl-fs-bridge",
 ]
@@ -1786,13 +1677,6 @@ name = "wateros-vfs-api-v0"
 version = "0.1.0"
 dependencies = [
  "spin",
-]
-
-[[package]]
-name = "wateros-vfs-impl-dummy"
-version = "0.1.0"
-dependencies = [
- "wateros-vfs-api-v0",
 ]
 
 [[package]]

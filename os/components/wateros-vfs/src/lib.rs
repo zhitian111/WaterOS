@@ -365,7 +365,7 @@ pub use impl_fd_session::{
 #[cfg(feature = "bridge-fs-api")]
 pub use impl_fs_bridge::RootFileHandle;
 
-/// 当前 feature 选中的 VFS 后端（`bridge-fs-api` → fs 桥接，否则占位）。
+/// 当前 feature 选中的 VFS 后端（`bridge-fs-api` → fs 桥接，否则返回未挂载错误）。
 pub mod active_impl {
     use super::api::VfsBackend;
 
@@ -377,9 +377,52 @@ pub mod active_impl {
 
     #[cfg(not(feature = "bridge-fs-api"))]
     pub fn backend() -> &'static impl VfsBackend {
-        static B: crate::impl_dummy::DummyBackend = crate::impl_dummy::DummyBackend;
+        static B: crate::unsupported_backend::UnsupportedBackend =
+            crate::unsupported_backend::UnsupportedBackend;
         &B
     }
+}
+
+#[cfg(not(feature = "bridge-fs-api"))]
+mod unsupported_backend {
+    use alloc::{boxed::Box, string::String, vec::Vec};
+    use super::{normalize_absolute_path, RootRwSession, SingleRootReadView, VfsBackend,
+                VfsCapability, VfsDevInventory, VfsDevNode, VfsDirEntry, VfsError, VfsFsKind,
+                VfsMountOps, VfsMountTable, VfsMetadata, VfsOpenOps, VfsResult};
+
+    pub struct UnsupportedBackend;
+
+    impl SingleRootReadView for UnsupportedBackend {
+        fn exists(&self, path: &str) -> VfsResult<bool> {
+            let _ = normalize_absolute_path(path)?;
+            Err(VfsError::NotMounted)
+        }
+        fn metadata(&self, path: &str) -> VfsResult<VfsMetadata> {
+            let _ = normalize_absolute_path(path)?;
+            Err(VfsError::NotMounted)
+        }
+        fn read(&self, path: &str) -> VfsResult<Vec<u8>> {
+            let _ = normalize_absolute_path(path)?;
+            Err(VfsError::NotMounted)
+        }
+        fn read_dir(&self, path: &str) -> VfsResult<Vec<VfsDirEntry>> {
+            let _ = normalize_absolute_path(path)?;
+            Err(VfsError::NotMounted)
+        }
+    }
+    impl VfsMountOps for UnsupportedBackend {
+        fn supported_capabilities(&self) -> Vec<VfsCapability> { Vec::new() }
+        fn mount_rw_session(&self, _kind: VfsFsKind) -> VfsResult<Box<dyn RootRwSession>> {
+            Err(VfsError::Unsupported)
+        }
+    }
+    impl VfsDevInventory for UnsupportedBackend {
+        fn list_dev_nodes(&self) -> Vec<VfsDevNode> { Vec::new() }
+        fn default_root_block_path(&self) -> Option<String> { None }
+    }
+    impl VfsOpenOps for UnsupportedBackend {}
+    impl VfsMountTable for UnsupportedBackend {}
+    impl VfsBackend for UnsupportedBackend {}
 }
 
 /// 单根路径级只读访问。
@@ -678,14 +721,8 @@ pub mod self_test {
     }
 }
 
-#[doc(hidden)]
-pub mod dummy {
-    pub use ::impl_dummy::*;
-}
-
 pub fn test() {
     api_v0::test();
-    impl_dummy::test();
     #[cfg(feature = "bridge-fs-api")]
     impl_fs_bridge::test();
     #[cfg(feature = "impl-fd-session")]

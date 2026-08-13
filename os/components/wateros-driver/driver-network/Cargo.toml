@@ -6,14 +6,12 @@
 [dependencies]
     api-v0 = { path = "./network-api/api-v0/", package = "wateros-driver-network-api-v0", default-features = true }
     driver-api = { path = "../driver-api/api-v0/", package = "wateros-driver-api-v0", default-features = true }
-    impl-dummy = { path = "./network-impl/impl-dummy/", package = "wateros-driver-network-impl-dummy", default-features = true }
     impl-virtio-mmio = { path = "./network-impl/impl-virtio-mmio/", package = "wateros-driver-network-impl-virtio-mmio", default-features = true, optional = true }
     impl-virtio-pci = { path = "./network-impl/impl-virtio-pci/", package = "wateros-driver-network-impl-virtio-pci", default-features = true, optional = true }
     log = { version = "0.4.29" }
 
 [features]
-    api-v0 = [ "impl-dummy/api-v0" ]
-    default = [ "api-v0", "impl-dummy", "impl-virtio-mmio" ]
-    impl-dummy = [  ]
+    api-v0 = [ "impl-virtio-mmio?/api-v0", "impl-virtio-pci?/api-v0" ]
+    default = [ "api-v0", "impl-virtio-mmio" ]
     impl-virtio-mmio = [ "dep:impl-virtio-mmio" ]
     impl-virtio-pci = [ "dep:impl-virtio-pci" ]
