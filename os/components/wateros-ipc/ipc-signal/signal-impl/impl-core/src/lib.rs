@@ -5,6 +5,13 @@
 
 extern crate alloc;
 
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[ipc/signal/impl-core] self_test begin");
+    assert!(api_v0::NSIG > 0);
+    log::info!("[ipc/signal/impl-core] self_test complete");
+}
+
 mod global;
 mod registry;
 mod state;

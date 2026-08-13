@@ -6,9 +6,11 @@
 [dependencies]
     api-v0 = { path = "./pipe-api/api-v0/", package = "wateros-ipc-pipe-api-v0", default-features = true }
     impl-ringbuf = { path = "./pipe-impl/impl-ringbuf/", package = "wateros-ipc-pipe-impl-ringbuf", default-features = true }
+    log = "0.4"
 
 [features]
     api-v0 = [ "impl-ringbuf/api-v0" ]
+    self_test = [ "impl-ringbuf/self_test" ]
     default = [ "impl-ringbuf" ]
     impl-ringbuf = [ "api-v0", "impl-ringbuf/impl-ringbuf" ]
 

@@ -28,3 +28,10 @@ pub fn test() {
     api_v0::test();
     active_impl::test();
 }
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[ipc/pipe] self_test begin");
+    active_impl::self_test();
+    log::info!("[ipc/pipe] self_test complete");
+}

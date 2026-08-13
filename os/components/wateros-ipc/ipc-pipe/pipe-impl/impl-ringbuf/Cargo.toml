@@ -8,8 +8,10 @@
     base = { path = "../../../../wateros-base/", package = "wateros-base", default-features = true }
     spin = "0.10.0"
     waitqueue = { path = "../../../ipc-waitqueue/", package = "ipc-waitqueue", default-features = false }
+    log = "0.4"
 
 [features]
     api-v0 = [  ]
     default = [ "impl-ringbuf" ]
     impl-ringbuf = [ "api-v0", "waitqueue/impl-task" ]
+    self_test = []

@@ -13,6 +13,13 @@ mod kernel_pipe;
 pub use endpoint::{NamedPipe, PipeEndpoint};
 pub(crate) use kernel_pipe::Pipe;
 
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[ipc/pipe/impl-ringbuf] self_test begin");
+    test();
+    log::info!("[ipc/pipe/impl-ringbuf] self_test complete");
+}
+
 /// impl 层自检：创建最小 pipe 并验证非阻塞、端点 clone/close 与 EOF 语义。
 pub fn test() {
     use alloc::sync::Arc;

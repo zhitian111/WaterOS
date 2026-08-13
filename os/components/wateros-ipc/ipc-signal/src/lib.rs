@@ -13,3 +13,10 @@ pub use impl_core as active_impl;
 
 pub use active_impl::*;
 pub use api_v0::*;
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[ipc/signal] self_test begin");
+    impl_core::self_test();
+    log::info!("[ipc/signal] self_test complete");
+}

@@ -12,6 +12,9 @@
     arch = { path = "../../../../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = false, features = ["api-v0"] }
     debug = { path = "../../../../wateros-debug/", package = "wateros-debug", default-features = false }
 
+[features]
+    self_test = []
+
 [profile.dev]
     panic = "abort"
 

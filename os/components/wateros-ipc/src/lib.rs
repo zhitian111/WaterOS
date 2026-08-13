@@ -44,6 +44,12 @@ pub mod signal {
 pub fn self_test() {
     log::info!("[ipc] self_test begin");
     #[cfg(feature = "pipe")]
-    pipe::test();
+    pipe::self_test();
+    #[cfg(feature = "futex")]
+    futex::self_test();
+    #[cfg(feature = "shm")]
+    shm::self_test();
+    #[cfg(feature = "signal")]
+    signal::self_test();
     log::info!("[ipc] self_test complete; temporary IPC objects were scoped to the test");
 }

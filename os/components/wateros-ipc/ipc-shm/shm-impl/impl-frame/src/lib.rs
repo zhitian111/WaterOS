@@ -6,6 +6,13 @@
 
 extern crate alloc;
 
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[ipc/shm/impl-frame] self_test begin");
+    assert!(api_v0::MAX_SHM_SEGMENT_SIZE > 0);
+    log::info!("[ipc/shm/impl-frame] self_test complete");
+}
+
 mod allocation;
 mod global;
 mod registry;
