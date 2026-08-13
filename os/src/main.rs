@@ -270,7 +270,8 @@ mod qemu_riscv64_opensbi {
         }
         // BSP 初始化：驱动 → 日志 → timebase → 堆 → arch → 任务 → trap
         platform::init_when_boot(dtb_pa);
-        runtime::console::show_logo();
+        runtime::init_console();
+        runtime::showlogo();
         klog::init();
         runtime::logging::init();
         crate::boot_timebase::probe_and_init_timebase(dtb_pa);
@@ -390,7 +391,8 @@ mod qemu_loongarch64_virt {
             wait_ap_boot_ready(cpu_id);
         }
 
-        runtime::console::show_logo();
+        runtime::init_console();
+        runtime::showlogo();
         klog::init();
         runtime::logging::init();
         runtime::heap_allocator::init();

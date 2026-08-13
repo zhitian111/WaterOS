@@ -19,6 +19,16 @@ pub mod panic {
 pub mod console {
     pub use console::*;
 }
+
+/// 确保正式启动日志前已经触发控制台后端；此阶段不得依赖 heap 或 logger。
+pub fn init_console() {
+    console::write_raw_bytes(&[]);
+}
+
+/// 打印启动横幅；调用者应在 [`init_console`] 之后调用。
+pub fn showlogo() {
+    console::show_logo();
+}
 /// 再导出 `log` 宏与 [`logging::init`]。
 pub mod logging {
     pub use logging::*;
