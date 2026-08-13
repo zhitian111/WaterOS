@@ -60,6 +60,15 @@ pub fn terminate_current_process(exit_code : isize) -> ! {
     unreachable!("sys_exit_group must not return")
 }
 
+/// Finish one thread of a process whose exit-group state is already published.
+///
+/// Unlike the task-only exit path, this runs the syscall-owned per-thread
+/// resource cleanup before removing the current scheduler entity.
+pub fn terminate_current_thread(exit_code : isize) -> ! {
+    sys::task::exit_current_with_wait_code(exit_code);
+    unreachable!("exit_current_with_wait_code must not return")
+}
+
 /// 透明转发至 `sys::drop_reaped_task_runtime_resources`。
 #[inline]
 pub fn drop_reaped_task_runtime_resources(task_id : usize, aspace : usize) {

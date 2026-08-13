@@ -10,5 +10,5 @@ pub use impl_kernel::{
     is_restartable_syscall, log_thread_bringup_stats_summary,
     raise_current_signal, record_syscall, record_user_page_fault_handled, restore_signal_frame,
     send_kernel_signal_to_process_group,
-    terminate_current_process, timer_slack_for_task, timer_tick,
+    terminate_current_process, terminate_current_thread, timer_slack_for_task, timer_tick,
 };

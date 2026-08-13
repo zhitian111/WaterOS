@@ -16,8 +16,8 @@ use crate::interrupt_guard::{maybe_warn_high_water, with_allocator_interrupt_gua
 use crate::HeapMemStats;
 use crate::HEAP_SPACE;
 
-/// TLSF 位图参数：`FLLEN=22` 使最大块 ≥ 128 MiB（64-bit GRANULARITY=32）。
-type KernelTlsf = Tlsf<'static, u32, u32, 22, 32>;
+/// TLSF 位图参数：`FLLEN=23` 覆盖统一配置的 256 MiB 静态堆。
+type KernelTlsf = Tlsf<'static, u32, u32, 23, 32>;
 
 pub(crate) struct InterruptSafeTlsfHeap {
     inner : Mutex<KernelTlsf>,

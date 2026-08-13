@@ -136,22 +136,16 @@ pub(crate) fn exit_group_with_wait_code(exit_code : isize) -> isize {
             let notifications = task::begin_current_process_exit(exit_code);
             crate::sys::ipc::signal::deliver_parent_death_notifications(notifications);
             if let Some(task_ids) = task::task_ids_for_process(snapshot.pid) {
-                let user_aspace = task::current_task_user_aspace_ptr();
                 for sibling in task_ids {
                     if sibling != task_id {
-                        // 正在远端 CPU 执行的线程不能由本 CPU 提前释放 cred/fd/
-                        // futex 等运行时资源。kill_task 成功表示它已经不再执行；
-                        // 失败的远端线程会在下一次返回用户态时观察到进程 Exited，
-                        // 再通过自己的 sys_exit 路径完成清理。
-                        let killed = task::kill_task_with_notifications(sibling, exit_code);
-                        crate::sys::ipc::signal::deliver_parent_death_notifications(
-                            killed.parent_death_notifications);
-                        if killed.killed {
-                            super::wait::wake_clear_child_tid_for_task(sibling);
-                            crate::sys::ipc::robust::robust_exit_cleanup(sibling);
-                            super::super::shm::drop_task_attachments(sibling, user_aspace);
-                            super::wait::drop_task_runtime_resources(sibling);
-                        } else {
+                        // A blocked syscall may own stack-local pipe/socket leases.
+                        // Marking it Exited remotely would skip Rust destructors and
+                        // can keep a pipe writer alive after the process is already a
+                        // zombie. Interrupt the wait instead; after its syscall stack
+                        // unwinds, the trap-return ProcessState::Exiting check routes
+                        // that thread through exit_current_with_wait_code and performs
+                        // clear_child_tid, robust-list, fd and signal cleanup locally.
+                        if !task::interrupt_task(sibling) {
                             task::request_task_reschedule(sibling);
                         }
                     }

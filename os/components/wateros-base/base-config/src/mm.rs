@@ -6,9 +6,11 @@
 /// 内核堆大小的以 2 为底的指数位宽。
 ///
 /// 降低此值可释放更多物理内存给用户态。不能设太低：`StackFrameAllocator` 的
-/// `ref_counts` Vec（约 2MB）与 `allocated` Vec（约 250KB）也从内核堆分配。
-/// 当前 `2^27 = 128MB`：全量 benchmark 需要比 64MB 更大余量，又避免 256MB 占用过多页帧。
-pub const KERNEL_HEAP_SIZE_BIT_WIDTH : usize = 27;
+/// `ref_counts` 与 `allocated` Vec 随平台公布的物理页数增长，也从内核堆分配。
+/// 全量 native Rust build 已观测到约 121MB 活跃分配；128MB 池会因分配器元数据
+/// 和碎片余量不足而向用户态返回 `ENOMEM`。两架构统一使用 256MB，避免基础容量
+/// 契约随 ISA 分叉。
+pub const KERNEL_HEAP_SIZE_BIT_WIDTH : usize = 28;
 /// 内核堆字节容量，即 `1 << KERNEL_HEAP_SIZE_BIT_WIDTH`。
 pub const KERNEL_HEAP_SIZE : usize = 1 << KERNEL_HEAP_SIZE_BIT_WIDTH;
 

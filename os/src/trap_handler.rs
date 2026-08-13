@@ -55,7 +55,7 @@ macro_rules! hot_syscall_trace {
 fn exit_current_if_process_exiting() {
     if let Some(process) = task::current_process_snapshot() {
         if let task::ProcessState::Exiting(exit_code) = process.state {
-            task::exit_group_current(exit_code);
+            syscall::terminate_current_thread(exit_code);
         }
     }
 }
