@@ -7,7 +7,7 @@
 extern crate alloc;
 
 use alloc::{format, string::String, vec::Vec};
-use api_v0::{FsError, FsResult};
+use api_v0::*;
 use driver_block_api_v0::{block_device_at, block_device_count, SharedBlockDevice};
 use spin::Mutex;
 
