@@ -148,6 +148,8 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::RSEQ => sys::sys_rseq(syscall_args).0,
         #[cfg(target_arch = "riscv64")]
         n if n == api_v0::RISCV_HWPROBE => sys::sys_riscv_hwprobe(syscall_args).0,
+        #[cfg(target_arch = "riscv64")]
+        n if n == api_v0::RISCV_FLUSH_ICACHE => sys::sys_riscv_flush_icache(syscall_args).0,
         n if n == api_v0::GETRANDOM => sys::sys_getrandom(syscall_args).0,
         n if n == api_v0::GETITIMER => sys::sys_getitimer(syscall_args).0,
         n if n == api_v0::SETITIMER => sys::sys_setitimer(syscall_args).0,

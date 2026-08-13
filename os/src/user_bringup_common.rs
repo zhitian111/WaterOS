@@ -11,6 +11,8 @@ use mm::api::kernel_bringup::{
 };
 use runtime::logging::*;
 
+const PROCESS_EXIT_GRACE_TICKS : task::TaskTick = 64;
+
 
 /// bring-up 阶段一次用户态启动：`program` 为待装载 ELF，`argv` 为完整参数（busybox 时
 /// `argv[0]` 须为 applet 名，如 `"sh"` / `"timeout"`，而非 busybox 路径）。
@@ -121,13 +123,29 @@ pub fn run_one_elf_argv_env_exit(log_tag : &str,
         }
     }
 
+    let process_pid = task::process_task_snapshot(tid).map(|snapshot| snapshot.pid);
     task::start_user_task(tid);
     task::wait_for_task_exit(tid);
-    let exit_code = task::reap_exited_task(tid).map(|e| {
-                                                   drop_reaped_task_runtime_resources(&e);
-                                                   e.exit_code
-                                               })
-                                               .unwrap_or(-1);
+    let exited_process = process_pid.and_then(|pid| wait_and_reap_user_process(pid));
+    let exit_code = if let Some(exited_tasks) = exited_process {
+        let exit_code = exited_tasks.iter()
+                                    .find(|exited| exited.id == tid)
+                                    .or_else(|| exited_tasks.first())
+                                    .map(|exited| exited.exit_code)
+                                    .unwrap_or(-1);
+        for exited in &exited_tasks {
+            drop_reaped_task_runtime_resources(exited);
+        }
+        exit_code
+    } else {
+        // Keep the old leader-only fallback for a malformed process registry;
+        // purge_all_user_processes below remains the final bounded cleanup.
+        task::reap_exited_task(tid).map(|exited| {
+                                               drop_reaped_task_runtime_resources(&exited);
+                                               exited.exit_code
+                                           })
+                                           .unwrap_or(-1)
+    };
 
     let (purge, stray_exited) = task::purge_all_user_processes();
     for exited in &stray_exited {
@@ -149,6 +167,44 @@ pub fn run_one_elf_argv_env_exit(log_tag : &str,
 
     trace!("[{log_tag}] END path={elf_path} exit_code={exit_code}");
     Some(exit_code)
+}
+
+/// The scheduler publishes a leader task's exit before remote siblings have
+/// necessarily unwound their interrupted syscalls.  Linux wait semantics make
+/// the process observable as exited only after the whole thread group is done,
+/// so give exit_group siblings a bounded chance to reach TaskState::Exited and
+/// then reap the process atomically.  The caller retains a hard purge fallback.
+fn wait_and_reap_user_process(pid : task::ProcessId) -> Option<Vec<task::ExitedTask>> {
+    let deadline = task::current_tick().saturating_add(PROCESS_EXIT_GRACE_TICKS);
+    loop {
+        if let Some(exited) = task::reap_exited_process(pid) {
+            return Some(exited);
+        }
+        if task::process_snapshot(pid).is_none() {
+            return None;
+        }
+        let now = task::current_tick();
+        if now >= deadline {
+            warn!("[user-runner] timed out waiting for process thread group pid={} grace_ticks={}",
+                  pid.raw(),
+                  PROCESS_EXIT_GRACE_TICKS);
+            return None;
+        }
+        let pending = task::task_ids_for_process(pid).and_then(|task_ids| {
+            task_ids.into_iter()
+                    .find(|task_id| {
+                        !matches!(task::task_state(*task_id),
+                                  Some(task::TaskState::Exited(_)))
+                    })
+        });
+        if let Some(task_id) = pending {
+            let remaining = deadline.saturating_sub(now).max(1);
+            let _ = task::wait_for_task_exit_for_ticks(task_id, remaining);
+        } else {
+            // Registry state can trail the scheduler by a very short window.
+            task::yield_now();
+        }
+    }
 }
 
 /// 回收已退出任务的用户地址空间与 syscall 侧挂接资源。

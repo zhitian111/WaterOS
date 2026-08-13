@@ -13,6 +13,9 @@ impl PlatformSmp for DummySmp {
     fn configured_cpu_mask() -> CpuMask { CpuMask::EMPTY }
     fn send_ipi(_ : CpuMask) -> PlatformSmpResult<()> { Err(PlatformSmpError::Unsupported) }
     fn flush_tlb_remote(_ : CpuMask) -> PlatformSmpResult<()> { Err(PlatformSmpError::Unsupported) }
+    fn flush_icache_remote(_ : CpuMask) -> PlatformSmpResult<()> {
+        Err(PlatformSmpError::Unsupported)
+    }
     fn init_ipi() -> PlatformSmpResult<()> { Err(PlatformSmpError::Unsupported) }
 }
 

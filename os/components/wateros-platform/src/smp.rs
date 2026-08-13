@@ -85,6 +85,12 @@ pub fn flush_tlb_remote(mask: CpuMask) -> PlatformSmpResult<()> {
     crate::active_impl::smp::SmpImpl::flush_tlb_remote(mask)
 }
 
+/// 请求平台同步刷新所选 CPU 的指令缓存。
+#[inline]
+pub fn flush_icache_remote(mask: CpuMask) -> PlatformSmpResult<()> {
+    crate::active_impl::smp::SmpImpl::flush_icache_remote(mask)
+}
+
 /// 取走当前 CPU 已累积的全部 IPI 原因。
 ///
 /// 仅能在当前 CPU 的软件中断处理路径调用；普通路径抢先取走会使 trap 看不到通知。

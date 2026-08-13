@@ -26,8 +26,12 @@ const O_RDWR: u32 = 2;
 const O_CLOEXEC: u32 = 0o2000000;
 const O_PATH: u32 = 0o10000000;
 const O_TMPFILE: u32 = 0o20200000;
-const O_NOFOLLOW: u32 = 0o100_000;
 const O_NOCTTY: u32 = 0o400;
+// asm-generic (and therefore RISC-V/LoongArch): O_LARGEFILE is 0100000,
+// while O_NOFOLLOW is 0400000.  musl includes O_LARGEFILE in ordinary
+// 64-bit opens, so conflating the two makes every shared-library symlink
+// fail with ELOOP.
+const O_NOFOLLOW: u32 = 0o400_000;
 const O_EXCL: u32 = 0o200;
 const O_CREAT: u32 = 0o100;
 const O_TRUNC: u32 = 0o1000;
@@ -191,11 +195,7 @@ fn open_tmpfile(dir_path: &str, flags: u32) -> UserRet {
 }
 
 fn prepare_open_path(resolved: &str, flags: u32) -> Result<String, ErrNo> {
-    let final_mode = if flags & O_NOFOLLOW != 0 {
-        FinalSymlink::NoFollow
-    } else {
-        FinalSymlink::Follow
-    };
+    let final_mode = final_symlink_mode(flags);
     let resolved = match resolve_symlinks(resolved, final_mode) {
         Ok(path) => path,
         Err(ErrNo::ENOENT) if flags & O_CREAT != 0 => {
@@ -215,6 +215,32 @@ fn prepare_open_path(resolved: &str, flags: u32) -> Result<String, ErrNo> {
         }
     }
     Ok(resolved)
+}
+
+fn final_symlink_mode(flags: u32) -> FinalSymlink {
+    if flags & O_NOFOLLOW != 0 {
+        FinalSymlink::NoFollow
+    } else {
+        FinalSymlink::Follow
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{final_symlink_mode, O_NOFOLLOW};
+    use vfs::api::FinalSymlink;
+
+    #[test]
+    fn largefile_does_not_disable_final_symlink_following() {
+        const O_LARGEFILE: u32 = 0o100_000;
+        assert_eq!(final_symlink_mode(O_LARGEFILE), FinalSymlink::Follow);
+    }
+
+    #[test]
+    fn nofollow_uses_asm_generic_flag_value() {
+        assert_eq!(O_NOFOLLOW, 0o400_000);
+        assert_eq!(final_symlink_mode(O_NOFOLLOW), FinalSymlink::NoFollow);
+    }
 }
 
 fn check_existing_open_permission(path: &str, flags: u32, creates_new_file: bool) -> Result<(), ErrNo> {

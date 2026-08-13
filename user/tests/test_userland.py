@@ -53,6 +53,8 @@ class ConfigurationTests(unittest.TestCase):
         la = userland.parse_package_names("all", "la")
         self.assertIn("microwindows", rv)
         self.assertIn("microwindows", la)
+        self.assertIn("openjdk21", rv)
+        self.assertIn("openjdk21", la)
         self.assertEqual(userland.parse_package_names("busybox, operator-tools", "rv"),
                          ("busybox", "operator-tools"))
 
@@ -69,6 +71,45 @@ class ConfigurationTests(unittest.TestCase):
         selected = ("base-layout", "busybox")
         self.assertEqual(userland.exclude_packages(selected, (), "rv"),
                          (selected, {}))
+
+    def test_openjdk21_is_supported_and_dependency_ordered_on_both_arches(self) -> None:
+        packages = userland.resolve_packages(("openjdk21",), "rv")
+        self.assertEqual([package.name for package in packages],
+                         ["base-layout", "busybox", "openjdk21"])
+        la_packages = userland.resolve_packages(("openjdk21",), "la")
+        self.assertEqual([package.name for package in la_packages],
+                         ["base-layout", "busybox", "openjdk21"])
+
+        package = userland.PACKAGE_ROOT / "openjdk21"
+        build = (package / "build.py").read_text(encoding="utf-8")
+        self.assertIn("openjdk21-jre-headless-21.0.11_p10-r0.apk", build)
+        self.assertIn("41e1a3a1234c6cf5014d46288ed0d3c0b475e162d1384e42018eb13fbf47726c",
+                      build)
+        self.assertIn("ca-certificates-bundle-20260611-r0.apk", build)
+        self.assertIn("loongson21.11.38-fx-jdk21.0.11_10-linux-loongarch64-glibc2.34.tar.gz",
+                      build)
+        self.assertIn("3fd0b56e2e060d668f5392c9fb9f2c6f243b4fcc6daaea01dabfdea6e5d153fb",
+                      build)
+        self.assertIn("zlib-1.3.2.tar.gz", build)
+        self.assertIn("bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16",
+                      build)
+        self.assertIn("d8688143c6107456a13d959ae23c9f375ee2b743c8bb5f59be77d9b5ac956173",
+                      build)
+        self.assertIn("94034130a5be3970f06739c6653922b77e4652d82af1f660752d416236e51c28",
+                      build)
+        self.assertTrue((package / "scripts/wos-jvm-smoke").is_file())
+        smoke = (package / "scripts/wos-jvm-smoke").read_text(encoding="utf-8")
+        self.assertIn("-XX:-UseCompressedOops", smoke)
+        self.assertIn("-XX:-UseCompressedClassPointers", smoke)
+        self.assertTrue((package / "scripts/wos-jvm-network").is_file())
+        self.assertTrue((package / "scripts/wos-jvm-application").is_file())
+        self.assertTrue((package / "scripts/wos-jvm-strict").is_file())
+        self.assertTrue((package / "tests/RuntimeProbe.class.b64").is_file())
+        self.assertTrue((package / "tests/NetworkProbe.class.b64").is_file())
+        self.assertTrue((package / "tests/ExceptionProbe.class.b64").is_file())
+        self.assertTrue((package / "tests/JitProbe.class.b64").is_file())
+        self.assertTrue((package / "tests/ApplicationProbe.jar.b64").is_file())
+        self.assertTrue((package / "assets/cacerts").is_file())
 
     def test_nanox_doom_payload_and_launcher_are_present(self) -> None:
         wad = (userland.USER_ROOT / "vendor/microwindows/src/contrib/doom/"
