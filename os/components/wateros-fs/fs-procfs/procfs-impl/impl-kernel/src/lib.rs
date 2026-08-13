@@ -1014,3 +1014,8 @@ pub fn test() {
     let _ = v.read_dir("/");
     logging::info!("[fs::procfs] self_test ok");
 }
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    test();
+}

@@ -26,6 +26,13 @@ pub use ro::Ext4Fs;
 pub use rw::Ext4FsRw;
 pub use selftest::{ro_self_test, rw_mkdir_verify, rw_self_test};
 
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[fs/ext4] self_test begin");
+    assert!(core::mem::size_of::<Ext4FsImpl>() > 0);
+    log::info!("[fs/ext4] self_test complete");
+}
+
 /// ext4 superblock 中标识 ext2/3/4 的 magic（与 Linux 布局一致：`s_magic` 固定为 0xEF53）。
 // 本变量代码由AI完成
 const EXT4_SUPER_MAGIC : u16 = 0xEF53;

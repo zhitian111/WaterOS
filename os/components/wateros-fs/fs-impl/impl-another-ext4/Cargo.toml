@@ -14,3 +14,4 @@ name = "wateros-fs-impl-another-ext4"
     api-v0 = [  ]
     default = [ "api-v0" ]
     lookup-diagnostics = [  ]
+    self_test = [  ]

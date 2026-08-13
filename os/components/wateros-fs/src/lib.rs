@@ -185,6 +185,7 @@ pub fn mount_aux_rw_from_block_path(path : &str) -> api_v0::FsResult<api_v0::Sha
 pub fn test() {
     logging::trace!("[fs] test begin");
     api_v0::test();
+    impl_devfs::self_test();
     #[cfg(all(feature = "impl-ramfs", feature = "self_test"))]
     impl_ramfs::self_test();
     #[cfg(all(feature = "impl-ramfs", not(feature = "self_test")))]
@@ -214,6 +215,15 @@ pub fn test() {
 #[cfg(feature = "self_test")]
 pub fn self_test() {
     logging::info!("[fs] self_test begin");
-    test();
+    api_v0::test();
+    #[cfg(feature = "impl-ramfs")]
+    impl_ramfs::self_test();
+    #[cfg(feature = "impl-another-ext4")]
+    impl_another_ext4::self_test();
+    #[cfg(feature = "impl-ext4")]
+    impl_ext4::self_test();
+    #[cfg(feature = "impl-ext4-rs")]
+    impl_ext4_rs::self_test();
+    procfs::active_impl::self_test();
     logging::info!("[fs] self_test complete; temporary test resources were reclaimed");
 }

@@ -11,3 +11,4 @@
     api-v0 = [ "impl-kernel/api-v0" ]
     default = [ "api-v0", "impl-kernel" ]
     impl-kernel = [  ]
+    self_test = [ "impl-kernel/self_test" ]

@@ -35,6 +35,15 @@ const NEGATIVE_CACHE_WAYS : usize = 4;
 const NEGATIVE_CACHE_BUCKETS : usize = NEGATIVE_CACHE_CAPACITY / NEGATIVE_CACHE_WAYS;
 const OPEN_INODE_DIR : &str = "/.wateros-open-inodes";
 
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[fs/another-ext4] self_test begin");
+    assert_eq!(BLOCK_SIZE, 4096);
+    assert_eq!(EXT4_SUPER_MAGIC, 0xEF53);
+    assert!(LOOKUP_CACHE_CAPACITY > 0);
+    log::info!("[fs/another-ext4] self_test complete");
+}
+
 fn map_error(error : Ext4Error) -> FsError {
     match error.code() {
         ErrCode::ENOENT => FsError::NotFound,

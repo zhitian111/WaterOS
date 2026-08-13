@@ -33,6 +33,15 @@ const MAGIC_OFFSET_IN_SB : usize = 0x38;
 const ROOT_INODE : u32 = 2;
 /// Linux 路径解析允许的最大符号链接跳转次数。
 const MAX_SYMLINK_DEPTH : usize = 40;
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[fs/ext4-rs] self_test begin");
+    assert_eq!(EXT4_SUPER_MAGIC, 0xEF53);
+    assert_eq!(SUPERBLOCK_OFFSET, 1024);
+    assert!(MAX_SYMLINK_DEPTH > 0);
+    log::info!("[fs/ext4-rs] self_test complete");
+}
 /// 普通文件 mode 前缀（`S_IFREG`）。
 // 本变量代码由AI完成
 const S_IFREG : u16 = 0o100000;

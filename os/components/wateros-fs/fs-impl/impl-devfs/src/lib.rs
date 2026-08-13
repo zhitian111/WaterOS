@@ -37,6 +37,14 @@ pub struct DevNode {
 // 本变量代码由AI完成
 static DEV_NODES: Mutex<Vec<DevNode>> = Mutex::new(Vec::new());
 
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    logging::info!("[fs/devfs] self_test begin");
+    assert_eq!(linux_vd_disk_path(0), "/dev/vda");
+    assert_eq!(linux_vd_disk_path(1), "/dev/vdb");
+    logging::info!("[fs/devfs] self_test complete");
+}
+
 // Linux 风格磁盘名：索引 0 → `/dev/vda`。
 // 本方法代码由AI完成
 fn linux_vd_disk_path(index: usize) -> String {
