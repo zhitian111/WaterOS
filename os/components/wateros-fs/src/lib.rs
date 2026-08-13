@@ -197,3 +197,11 @@ pub fn test() {
     }
     logging::trace!("[fs] test end");
 }
+
+/// FS 组件统一内核态自检入口；具体 impl 检查由本聚合层负责调度。
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[fs] self_test begin");
+    test();
+    log::info!("[fs] self_test complete; temporary test resources were reclaimed");
+}
