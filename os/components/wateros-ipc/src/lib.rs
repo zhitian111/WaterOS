@@ -38,3 +38,12 @@ pub mod shm {
 pub mod signal {
     pub use ::signal::*;
 }
+
+/// IPC 组件统一内核态自检入口；只运行不切换用户态的对象级检查。
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[ipc] self_test begin");
+    #[cfg(feature = "pipe")]
+    pipe::test();
+    log::info!("[ipc] self_test complete; temporary IPC objects were scoped to the test");
+}

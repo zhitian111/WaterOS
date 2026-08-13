@@ -29,8 +29,10 @@
     shm = { path = "./ipc-shm/", package = "ipc-shm", default-features = false, optional = true }
     signal = { path = "./ipc-signal/", package = "ipc-signal", default-features = false, optional = true }
     waitqueue = { path = "./ipc-waitqueue/", package = "ipc-waitqueue", default-features = true }
+    log = { version = "0.4.29" }
 
 [features]
+    self_test = [ "pipe" ]
     all = [ "api-v0", "futex", "pipe", "shm", "signal" ]
     api-v0 = [  ]
     default = [ "api-v0" ]
