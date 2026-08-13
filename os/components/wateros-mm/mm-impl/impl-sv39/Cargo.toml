@@ -13,8 +13,8 @@
     vfs = { package = "wateros-vfs", path = "../../../wateros-vfs", default-features = false, features = [
         "bridge-fs-api",
     ], optional = true }
-    platform = { package = "wateros-platform", path = "../../../wateros-platform", default-features = true }
-    runtime = { package = "wateros-runtime", path = "../../../wateros-runtime", default-features = true }
+    platform = { package = "wateros-platform", path = "../../../wateros-platform", default-features = false }
+    runtime = { package = "wateros-runtime", path = "../../../wateros-runtime", default-features = false }
     wateros-base = { path = "../../../wateros-base", package = "wateros-base", default-features = true }
     wateros-base-config = { path = "../../../wateros-base/base-config", package = "wateros-base-config" }
     task = { package = "wateros-task", path = "../../../wateros-task", default-features = true }
