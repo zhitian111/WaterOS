@@ -185,7 +185,6 @@ pub fn mount_aux_rw_from_block_path(path : &str) -> api_v0::FsResult<api_v0::Sha
 pub fn test() {
     logging::trace!("[fs] test begin");
     api_v0::test();
-    impl_devfs::self_test();
     #[cfg(all(feature = "impl-ramfs", feature = "self_test"))]
     impl_ramfs::self_test();
     #[cfg(all(feature = "impl-ramfs", not(feature = "self_test")))]
@@ -216,6 +215,7 @@ pub fn test() {
 pub fn self_test() {
     logging::info!("[fs] self_test begin");
     api_v0::test();
+    impl_devfs::self_test();
     #[cfg(feature = "impl-ramfs")]
     impl_ramfs::self_test();
     #[cfg(feature = "impl-another-ext4")]
