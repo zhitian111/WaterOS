@@ -135,6 +135,14 @@ pub fn test_with_range(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
     log::trace!("[mm-impl::loongarch64] test end");
 }
 
+/// LoongArch64 内核态用户拷贝自检；只操作临时地址空间，函数结束时释放页表和帧。
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[mm-impl::loongarch64] self_test begin");
+    user_access::test_copy_to_user_progress();
+    log::info!("[mm-impl::loongarch64] self_test complete; temporary mappings reclaimed");
+}
+
 /// 内核全局页表与用户 ELF 装载（QEMU LoongArch64 bring-up）；由 `wateros-mm`
 /// 聚合为 `mm::kernel_mm`。
 pub mod kernel_mm_impl {

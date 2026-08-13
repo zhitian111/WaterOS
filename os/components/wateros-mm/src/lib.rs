@@ -264,5 +264,9 @@ pub fn init_after_boot(dtb_pa: usize, memory_end: usize) {
 pub fn self_test() {
     log::info!("[mm] self_test begin");
     api::test();
-    log::info!("[mm] API self_test complete; range-dependent tests remain behind explicit bring-up hooks");
+    #[cfg(all(feature = "impl-sv39", target_arch = "riscv64"))]
+    impl_sv39::self_test();
+    #[cfg(all(feature = "impl-loongarch64", target_arch = "loongarch64"))]
+    impl_loongarch64::self_test();
+    log::info!("[mm] self_test complete; temporary mappings and frames were reclaimed");
 }
