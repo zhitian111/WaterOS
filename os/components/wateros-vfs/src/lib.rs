@@ -426,30 +426,10 @@ mod unsupported_backend {
 }
 
 /// 单根路径级只读访问。
-pub mod root {
-    use super::active_impl;
-    use super::api::SingleRootReadView;
-
-    pub fn read_view() -> &'static impl SingleRootReadView {
-        active_impl::backend()
-    }
-}
+pub mod root;
 
 /// RW 挂载会话。
-pub mod mount {
-    use alloc::boxed::Box;
-
-    use super::active_impl;
-    use super::api::{RootRwSession, VfsFsKind, VfsMountOps, VfsResult};
-
-    pub fn open_rw_session(kind: VfsFsKind) -> VfsResult<Box<dyn RootRwSession>> {
-        active_impl::backend().mount_rw_session(kind)
-    }
-
-    pub fn supported_capabilities() -> alloc::vec::Vec<super::api::VfsCapability> {
-        active_impl::backend().supported_capabilities()
-    }
-}
+pub mod mount;
 
 /// 模块自检：组合挂载与只读读回等（warn 不 panic）。
 pub mod self_test {

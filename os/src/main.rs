@@ -289,13 +289,13 @@ mod qemu_riscv64_opensbi {
             wait_ap_boot_ready(cpu_id);
         }
         // BSP 初始化：驱动 → 日志 → timebase → 堆 → arch → 任务 → trap
-        platform::init_when_boot(dtb_pa);
-        driver::init_when_boot();
-        platform::init_after_boot();
         runtime::init_console();
         runtime::showlogo();
         klog::init();
         runtime::logging::init();
+        platform::init_when_boot(dtb_pa);
+        driver::init_when_boot();
+        platform::init_after_boot();
         crate::boot_timebase::probe_and_init_timebase(dtb_pa);
         runtime::heap_allocator::init();
         platform::arch::init();
