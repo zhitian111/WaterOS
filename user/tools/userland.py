@@ -235,7 +235,7 @@ def doctor(architecture: Architecture, *, static_probe: bool = True) -> list[str
     errors: list[str] = []
     if sys.version_info < (3, 11):
         errors.append("Python 3.11 or newer is required")
-    for tool in ("make", "patch", "mke2fs", "debugfs", "e2fsck", "dumpe2fs"):
+    for tool in ("gcc", "make", "patch", "mke2fs", "debugfs", "e2fsck", "dumpe2fs"):
         if shutil.which(tool) is None:
             errors.append(f"missing host tool: {tool}")
     for suffix in ("gcc", "ar", "strip"):

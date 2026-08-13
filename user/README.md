@@ -80,6 +80,31 @@ make  setup ARCH=rv \
 `make distclean` 会连同二者删除。当前自动安装器只锁定了 RISC-V 工具链，
 LoongArch 暂时仍需设置 `LA_CROSS_COMPILE`。
 
+### macOS（Docker Desktop）
+
+仓库锁定的 Bootlin RISC-V 工具链是 Linux x86_64 可执行文件，不能在 macOS
+宿主机直接运行；请在 Docker Desktop 的 Linux 容器中构建。Apple Silicon 同样必须
+使用 `--platform linux/amd64`。启动 Docker Desktop 后，在本 `user/` 目录运行：
+
+```bash
+docker run --rm --platform linux/amd64 \
+  -v "$PWD":/workspace -w /workspace \
+  python:3.11-slim-bookworm sh -ec '
+    sed -i "s|http://deb.debian.org|https://deb.debian.org|g" \
+      /etc/apt/sources.list.d/debian.sources
+    apt-get -o Acquire::Retries=5 update
+    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y \
+      --no-install-recommends build-essential e2fsprogs make patch \
+      ca-certificates xz-utils file
+    make setup ARCH=rv
+    make image ARCH=rv PROFILE=minimal JOBS=2
+  '
+```
+
+容器把当前目录挂载为工作目录，因此镜像仍输出到宿主机的
+`build/images/wateros-rv-minimal.ext4`。首次运行会下载 Docker 镜像、Debian 依赖
+和工具链；以后会复用 `build/downloads/` 与 `build/toolchains/` 中的缓存。
+
 输出位于：
 
 ```text

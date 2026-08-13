@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import posixpath
 import shutil
 import subprocess
 import sys
@@ -115,13 +116,44 @@ def extract_archive(archive: Path, destination: Path) -> None:
         temporary = Path(temporary_text)
         print(f"[setup] extract: {archive}", flush=True)
         with tarfile.open(archive, "r:xz") as bundle:
-            # Python 3.12's data filter rejects absolute paths, traversal and
-            # unsafe special files before anything reaches the filesystem.
-            bundle.extractall(temporary, filter="data")
+            extract_safely(bundle, temporary)
         extracted = temporary / archive_top_directory(archive)
         if not extracted.is_dir():
             raise SetupError("toolchain archive did not produce its declared root directory")
         shutil.move(str(extracted), str(destination))
+
+
+def _safe_archive_path(path: str) -> bool:
+    """Return whether a POSIX tar member path remains relative to its root."""
+    normalized = posixpath.normpath(path)
+    return not (path.startswith("/") or normalized in ("", ".", "..")
+                or normalized.startswith("../"))
+
+
+def extract_safely(bundle: tarfile.TarFile, destination: Path) -> None:
+    """Extract with Python 3.11-compatible protections equivalent to data filter."""
+    members = bundle.getmembers()
+    for member in members:
+        if not _safe_archive_path(member.name):
+            raise SetupError(f"unsafe path in toolchain archive: {member.name!r}")
+        if member.isdev() or member.isfifo():
+            raise SetupError(f"unsafe special file in toolchain archive: {member.name!r}")
+        if member.issym():
+            target = posixpath.join(posixpath.dirname(member.name), member.linkname)
+            if not _safe_archive_path(target):
+                raise SetupError(f"unsafe symbolic link in toolchain archive: {member.name!r}")
+        elif member.islnk() and not _safe_archive_path(member.linkname):
+            raise SetupError(f"unsafe hard link in toolchain archive: {member.name!r}")
+        # Match tarfile's data filter by dropping setuid, setgid and sticky bits.
+        member.mode &= 0o755
+
+    if sys.version_info >= (3, 12):
+        # Python's built-in filter also protects against link traversal.
+        bundle.extractall(destination, filter="data")
+    else:
+        # The validation above preserves support for Python 3.11, whose tarfile
+        # module predates the filter= API.
+        bundle.extractall(destination)
 
 
 def validate_install(destination: Path, release: ToolchainRelease) -> Path:
