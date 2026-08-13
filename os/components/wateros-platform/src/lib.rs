@@ -83,6 +83,10 @@ pub fn self_test() {
     let dtb = dtb_pa();
     let ram_end = physical_ram_end_exclusive();
     assert!(ram_end > 0, "platform RAM boundary must be non-zero");
+    #[cfg(feature = "impl-qemu-riscv64-opensbi")]
+    impl_qemu_riscv64_opensbi::self_test();
+    #[cfg(feature = "impl-qemu-loongarch64-virt")]
+    impl_qemu_loongarch64_virt::self_test();
     log::info!("[platform] self_test ok: dtb={:#x} ram_end={:#x}", dtb, ram_end);
 }
 

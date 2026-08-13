@@ -9,7 +9,9 @@ base = { path = "../../../wateros-base/", package = "wateros-base", default-feat
 config = { path = "../../../wateros-base/base-config/", package = "wateros-base-config" }
     sbi = { version = "0.0.3", package = "sbi-rt" }
     fdt = { version = "0.1.5" }
+    log = "0.4"
 
 [features]
     api-v0 = [  ]
     default = [ "api-v0" ]
+    self_test = [ ]

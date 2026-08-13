@@ -30,3 +30,11 @@ pub mod smp;
 pub mod time;
 /// OpenSBI timer 后端（经 SBI 设置下次中断时刻）。
 pub mod timer;
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[platform/impl-qemu-riscv64] self_test begin");
+    assert!(config::mm::QEMU_VIRT_MMIO_PHYS_START > 0);
+    assert!(memory::physical_ram_end_exclusive() > 0);
+    log::info!("[platform/impl-qemu-riscv64] self_test complete");
+}

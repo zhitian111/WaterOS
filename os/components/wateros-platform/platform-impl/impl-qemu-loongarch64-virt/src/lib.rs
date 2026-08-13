@@ -20,3 +20,11 @@ pub mod reset;
 pub mod smp;
 pub mod time;
 pub mod timer;
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[platform/impl-qemu-loongarch64] self_test begin");
+    assert!(config::mm::QEMU_VIRT_MMIO_PHYS_START > 0);
+    assert!(memory::physical_ram_end_exclusive() > 0);
+    log::info!("[platform/impl-qemu-loongarch64] self_test complete");
+}
