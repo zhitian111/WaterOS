@@ -109,33 +109,16 @@ extern "C" fn gui_refresh_task(_arg : usize) -> ! {
     }
 }
 
-/// 驱动 → 网络 → FS → 用户态 bring-up。两 board 模块共用。
-fn bringup_driver_and_user(memory_end: usize) {
-    let _ = memory_end;
+/// 启动后的内核服务初始化：驱动 → 时钟 → 网络 → 文件系统 → 内核自检。
+///
+/// 该入口不启动用户态 workload；调用者在它成功返回后再进入用户态 bring-up。
+fn init_services_after_boot() -> bool {
     match driver::machine().init_after_boot() {
-        Err(ref err) => warn!("driver init failed: {:?}", err),
+        Err(ref err) => {
+            warn!("driver init failed: {:?}", err);
+            false
+        }
         Ok(()) => {
-            #[cfg(feature = "user-graphics")]
-            {
-                let has_input = vfs::initialize_user_graphics_devices();
-                if has_input {
-                    task::spawn_kernel_task(vfs::user_graphics_input_worker, 0);
-                }
-                warn!("[user-graphics] fbdev/evdev ready input_worker={}", has_input);
-            }
-            #[cfg(feature = "gui")]
-            match (|| -> gui::GuiResult<()> {
-                gui::initialize()?;
-                gui::install_default_desktop()?;
-                let _ = gui::render()?;
-                Ok(())
-            })() {
-                Ok(()) => {
-                    task::spawn_kernel_task(gui_refresh_task, 0);
-                    info!("[gui] wateros-gui desktop and refresh task ready");
-                }
-                Err(error) => warn!("[gui] initialization skipped: {:?}", error),
-            }
             match driver::machine().realtime_ns() {
                 Ok(Some(ns)) => {
                     if platform::wall_clock::set_realtime_ns(u128::from(ns)).is_err() {
@@ -159,9 +142,35 @@ fn bringup_driver_and_user(memory_end: usize) {
             fs::init_after_boot();
             #[cfg(feature = "self_test")]
             run_self_tests();
-            crate::user_bringup_bus::run();
+            true
         }
     }
+}
+
+/// 启动用户态 workload 以及依赖用户态 ABI 的可选服务。
+fn bringup_user_and_optional_services() {
+    #[cfg(feature = "user-graphics")]
+    {
+        let has_input = vfs::initialize_user_graphics_devices();
+        if has_input {
+            task::spawn_kernel_task(vfs::user_graphics_input_worker, 0);
+        }
+        warn!("[user-graphics] fbdev/evdev ready input_worker={}", has_input);
+    }
+    #[cfg(feature = "gui")]
+    match (|| -> gui::GuiResult<()> {
+        gui::initialize()?;
+        gui::install_default_desktop()?;
+        let _ = gui::render()?;
+        Ok(())
+    })() {
+        Ok(()) => {
+            task::spawn_kernel_task(gui_refresh_task, 0);
+            info!("[gui] wateros-gui desktop and refresh task ready");
+        }
+        Err(error) => warn!("[gui] initialization skipped: {:?}", error),
+    }
+    crate::user_bringup_bus::run();
 }
 
 /// 所有架构共用的启动早期初始化入口。
@@ -197,6 +206,7 @@ fn run_self_tests() {
     base::self_test();
     utils::self_test();
     debug::self_test();
+    mm::self_test();
     #[cfg(feature = "gui")]
     gui::self_test();
     cred::self_test();
@@ -210,7 +220,8 @@ fn run_self_tests() {
 
 #[cfg(feature = "qemu-riscv64-opensbi")]
 mod qemu_riscv64_opensbi {
-    use crate::{bringup_driver_and_user, init_after_boot, init_when_boot};
+    use crate::{bringup_user_and_optional_services, init_after_boot, init_services_after_boot,
+                init_when_boot};
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use runtime::logging::*;
     /// Firmware-selected boot hart. `usize::MAX` means no hart entered yet.
@@ -331,7 +342,9 @@ mod qemu_riscv64_opensbi {
         let requested_aps = start_secondary_harts(cpu_id, dtb_pa);
         wait_for_secondary_online(requested_aps);
 
-        bringup_driver_and_user(memory_end);
+        if init_services_after_boot() {
+            bringup_user_and_optional_services();
+        }
         #[cfg(feature = "stall-debug")]
         crate::stall_debug::start();
         #[cfg(feature = "dashboard-debug")]
@@ -346,7 +359,8 @@ mod qemu_riscv64_opensbi {
 
 #[cfg(feature = "qemu-loongarch64-virt")]
 mod qemu_loongarch64_virt {
-    use crate::{bringup_driver_and_user, init_after_boot, init_when_boot};
+    use crate::{bringup_user_and_optional_services, init_after_boot, init_services_after_boot,
+                init_when_boot};
     use core::sync::atomic::{AtomicBool, Ordering};
     use runtime::logging::*;
 
@@ -458,7 +472,9 @@ mod qemu_loongarch64_virt {
         let requested_aps = start_secondary_cpus(cpu_id);
         wait_for_secondary_online(requested_aps);
 
-        bringup_driver_and_user(memory_end);
+        if init_services_after_boot() {
+            bringup_user_and_optional_services();
+        }
         #[cfg(feature = "stall-debug")]
         crate::stall_debug::start();
         #[cfg(feature = "dashboard-debug")]
