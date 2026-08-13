@@ -46,9 +46,17 @@ pub(crate) fn sys_dup3(args: SyscallArgs) -> UserRet {
     let cloexec = (flags & O_CLOEXEC) != 0;
     let epoll = epoll_fd::lookup(oldfd);
     let overwritten_epoll = epoll_fd::is_epoll_fd(newfd);
+    // dup3 会原子关闭 newfd。先只记住 PTY ID；真正的挂断信号必须等
+    // VFS 完成替换并释放旧打开文件描述后再投递。
+    let overwritten_pty = vfs::fd::current_pty_endpoint(newfd).ok().flatten();
+    let overwritten_pty_id = overwritten_pty.as_ref().map(tty::PtyEndpointHandle::id);
     let task_id = vfs::fd::current_task_id().ok();
     match vfs::fd::dup3_fd(oldfd, newfd, cloexec) {
         Ok(fd) => {
+            drop(overwritten_pty);
+            if let Some(id) = overwritten_pty_id {
+                super::close::dispatch_terminal_events(core::slice::from_ref(&id));
+            }
             if let Some(task_id) = task_id {
                 crate::unix_sock::duplicate_registration(task_id, oldfd, fd);
             }
@@ -60,6 +68,9 @@ pub(crate) fn sys_dup3(args: SyscallArgs) -> UserRet {
             }
             UserRet::from_success(fd)
         }
-        Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+        Err(e) => {
+            drop(overwritten_pty);
+            UserRet::from_error(vfs_error_to_errno(e))
+        }
     }
 }

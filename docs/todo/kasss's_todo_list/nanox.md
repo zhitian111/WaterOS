@@ -483,7 +483,7 @@ Microwindows 固定使用 vendored 源码，WaterOS 修改全部位于 package p
 - `NANOX=Y`、`NANOWM=Y`；
 - 使用内置字体；
 - 禁用 X11、SDL、NX11 和外部字体/图片依赖，启用 Nano-X SysV SHM 命令批处理；
-- 不构建依赖 PTY 的 `nxterm`。
+- 构建 `nxterm`；它通过 WaterOS 的 `/dev/ptmx` 和 `/dev/pts/N` 启动 `/bin/sh`。
 
 构建器用目标架构 `readelf` 检查每个 ELF，确保架构正确、没有 `PT_INTERP`，也没有动态
 `NEEDED` 库，使镜像不依赖动态链接器。
@@ -973,6 +973,46 @@ start-doom -2
 start-doom -3 -warp 1 2
 ```
 
+### 14.4 图形终端与 PTY
+
+先在串口验证 PTY 内核接口：
+
+```sh
+pty-smoke
+ls -l /dev/ptmx /dev/pts
+```
+
+启动 Nano-X 后，可以点击 `nxlaunch` 中的 `Terminal`，也可以执行：
+
+```sh
+nxterm &
+```
+
+`nxterm` 本身只负责绘制字符窗口和把键盘事件变成字节，真正的 shell 是它的子进程
+`/bin/sh`。启动链路为：
+
+```text
+nxterm
+  -> posix_openpt("/dev/ptmx") 创建 PTY pair
+  -> TIOCGPTN 得到 N，grantpt/unlockpt 解锁 /dev/pts/N
+  -> fork，子进程 setsid 后打开 /dev/pts/N
+  -> slave dup2 到 stdin/stdout/stderr
+  -> exec /bin/sh
+```
+
+输入时，nxterm 写 master，内核 slave 行规程处理 canonical/raw、echo 和控制字符，shell
+从 slave 读取；输出时 shell 写 slave，内核执行 `OPOST/ONLCR` 后由 nxterm 从 master 读取并
+绘制。Ctrl-C/Ctrl-Z 由内核按 slave 的前台进程组投递，因此不是 nxterm 自己“模拟退出”。
+
+相关实现位置：
+
+| 层 | 位置 | 作用 |
+| --- | --- | --- |
+| TTY/PT​​Y 核心 | `os/components/wateros-tty/tty-impl/impl-console/src/pty.rs` | pair、行规程、队列、会话和控制事件 |
+| VFS 设备 | `os/components/wateros-vfs/vfs-impl/impl-fd-session/src/pty.rs` | `/dev/ptmx`、`/dev/pts/N`、`/dev/tty` 和 fd I/O |
+| syscall | `sys/misc/ioctl.rs`、`sys/fs/io.rs` | PTY ioctl、作业控制和信号投递 |
+| 用户程序 | `user/vendor/microwindows/src/demos/nanox/nxterm.c` | 窗口、终端字符显示及 shell 子进程 |
+
 ## 15. 现场演示建议
 
 答辩时按以下顺序演示，能同时证明驱动、内存映射、输入和用户态 IPC：
@@ -1143,7 +1183,7 @@ Doom - /usr/bin/start-doom
 - 当前使用包围矩形区域刷新；复杂遮挡可能仍比精确矩形集合多提交一些像素；
 - 输入使用低频轮询 worker，尚未改成完整中断驱动；
 - 不支持 DRM/KMS、动态 mode setting、多显示器；
-- 未实现 PTY，因此不构建 `nxterm`；
+- 已实现 UNIX98 PTY 兼容子集并构建 `nxterm`；暂未实现 PTY packet mode 和完整 devpts 挂载选项；
 - Doom 当前没有完整音频后端，重点验证图形和输入。
 
 建议优化顺序：
@@ -1152,7 +1192,7 @@ Doom - /usr/bin/start-doom
 2. 将 VirtIO input 接入中断，减少轮询延迟和空闲唤醒；
 3. 如需统一 libc，再补充可复现的 LoongArch musl 工具链；
 4. 支持显示模式变更和更通用的像素格式；
-5. 若需要更复杂桌面，再评估 PTY、字体、剪贴板和多进程会话管理。
+5. 若需要更复杂桌面，再评估字体、剪贴板、PTY packet mode 和更完整的多进程会话管理。
 
 ## 18. 答辩速记
 

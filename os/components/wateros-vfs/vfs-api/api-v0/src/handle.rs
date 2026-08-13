@@ -109,10 +109,27 @@ pub struct VfsInputDeviceInfo {
     pub absolute_y : Option<(i32, i32)>,
 }
 
+/// VFS 对终端端点的中立描述，避免 VFS API 依赖具体 TTY 实现 crate。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VfsTerminalInfo {
+    pub id: u64,
+    pub endpoint: VfsTerminalEndpoint,
+    /// UNIX98 PTY 编号；console 没有对应的 `/dev/pts/N`。
+    pub pty_number: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VfsTerminalEndpoint {
+    Console,
+    PtyMaster,
+    PtySlave,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VfsSpecialDeviceInfo {
     Framebuffer(VfsFramebufferInfo),
     InputEvent(VfsInputDeviceInfo),
+    Terminal(VfsTerminalInfo),
 }
 
 /// VFS 层的设备内存生命周期令牌。

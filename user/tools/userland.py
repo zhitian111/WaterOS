@@ -126,7 +126,12 @@ def available_package_names(architecture: str) -> tuple[str, ...]:
     result: list[str] = []
     for metadata in sorted(PACKAGE_ROOT.glob("*/package.toml")):
         name = metadata.parent.name
-        if architecture in load_package(name).architectures:
+        # 这里只读取选择所需的最小元数据。这样用户仍可通过 --exclude-packages
+        # 排除源码尚未准备好的可选 package，而不会在排除生效前就验证其源码。
+        raw = load_toml(metadata).get("package", {})
+        if raw.get("name") != name:
+            raise UserlandError(f"package directory {name!r} has mismatched package.name")
+        if architecture in raw.get("architectures", ()):
             result.append(name)
     if not result:
         raise UserlandError(f"no packages support architecture {architecture}")
@@ -143,6 +148,57 @@ def parse_package_names(value: str, architecture: str) -> tuple[str, ...]:
             raise UserlandError("'all' cannot be combined with explicit package names")
         return available_package_names(architecture)
     return tuple(dict.fromkeys(normalized))
+
+
+def parse_excluded_package_names(value: str) -> tuple[str, ...]:
+    """解析逗号或空白分隔的排除列表；空值表示不排除。"""
+    return tuple(dict.fromkeys(value.replace(",", " ").split()))
+
+
+def exclude_packages(package_names: tuple[str, ...], excluded_names: tuple[str, ...],
+                     architecture: str) -> tuple[tuple[str, ...], dict[str, tuple[str, ...]]]:
+    """排除指定 package，并级联排除依赖它们的顶层 package。
+
+    返回最终顶层列表和 ``被跳过 package -> 根排除项``。依赖闭包仍由
+    :func:`resolve_packages` 统一展开，因此这里不会改变正常的拓扑顺序。
+    """
+    if not excluded_names:
+        return package_names, {}
+    excluded = set(excluded_names)
+    memo: dict[str, frozenset[str]] = {}
+    visiting: list[str] = []
+
+    def blockers(name: str) -> frozenset[str]:
+        if name in memo:
+            return memo[name]
+        if name in excluded:
+            result = frozenset((name,))
+            memo[name] = result
+            return result
+        if name in visiting:
+            cycle = " -> ".join([*visiting, name])
+            raise UserlandError(f"package dependency cycle: {cycle}")
+        visiting.append(name)
+        package = load_package(name)
+        if architecture not in package.architectures:
+            raise UserlandError(f"package {name} does not support {architecture}")
+        result = frozenset().union(*(blockers(dependency)
+                                     for dependency in package.dependencies))
+        visiting.pop()
+        memo[name] = result
+        return result
+
+    kept: list[str] = []
+    skipped: dict[str, tuple[str, ...]] = {}
+    for name in package_names:
+        reasons = blockers(name)
+        if reasons:
+            skipped[name] = tuple(sorted(reasons))
+        else:
+            kept.append(name)
+    if not kept:
+        raise UserlandError("package exclusions removed every selected package")
+    return tuple(kept), skipped
 
 
 def resolve_packages(package_names: Iterable[str], architecture: str) -> list[Package]:
@@ -471,6 +527,8 @@ def add_build_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--arch", choices=("rv", "la"), required=True)
     parser.add_argument("--packages", default="all",
                         help="all or a comma-separated package list")
+    parser.add_argument("--exclude-packages", default="",
+                        help="comma-separated packages to skip; dependents are skipped too")
     parser.add_argument("--jobs", type=int, default=default_jobs())
 
 
@@ -512,6 +570,12 @@ def main() -> int:
                   f"cross={architecture.cross_compile}")
             return 0
         package_names = parse_package_names(args.packages, architecture.name)
+        excluded_names = parse_excluded_package_names(args.exclude_packages)
+        package_names, skipped = exclude_packages(package_names, excluded_names,
+                                                   architecture.name)
+        for name, reasons in skipped.items():
+            print(f"[userland] skip {name}: excluded dependency "
+                  f"{','.join(reasons)}")
         if args.jobs < 1:
             raise UserlandError("--jobs must be positive")
         if args.command == "build":

@@ -353,11 +353,11 @@ diff --git a/src/demos/nanox/Makefile b/src/demos/nanox/Makefile
 index 4a6582f..4560660 100644
 --- a/src/demos/nanox/Makefile
 +++ b/src/demos/nanox/Makefile
-@@ -139,6 +139,18 @@ TARGETS += $(MW_DIR_BIN)/demo-agg
+@@ -139,6 +139,19 @@ TARGETS += $(MW_DIR_BIN)/demo-agg
  endif # COSMO
  
 +# WaterOS intentionally ships a small, dependency-free demonstration set.
-+# In particular nxterm is excluded because the first release has no PTY.
++# nxterm uses the kernel UNIX98 PTY implementation and launches /bin/sh.
 +ifeq ($(WATEROS_NANOX), Y)
 +TARGETS := \
 +	$(MW_DIR_BIN)/nxlaunch \
@@ -365,7 +365,8 @@ index 4a6582f..4560660 100644
 +	$(MW_DIR_BIN)/nxeyes \
 +	$(MW_DIR_BIN)/nxcalc \
 +	$(MW_DIR_BIN)/nxedit \
-+	$(MW_DIR_BIN)/nxev
++	$(MW_DIR_BIN)/nxev \
++	$(MW_DIR_BIN)/nxterm
 +endif
 +
  else # ECOS

@@ -107,6 +107,10 @@ pub(crate) fn exit_current_with_wait_code(exit_code : isize) -> isize {
                                                 completed_process.is_some());
     }
     if let Some(pid) = completed_process {
+        tty::detach_session_by_sid(pid.raw());
+        if tty::controlling_sid() == pid.raw() {
+            tty::detach_controlling_terminal();
+        }
         if !process_was_exiting {
             super::super::acct::record_current_process_exit(exit_code);
         }
@@ -166,6 +170,10 @@ pub(crate) fn exit_group_with_wait_code(exit_code : isize) -> isize {
                                                 completed_process.is_some());
     }
     if let Some(pid) = completed_process {
+        tty::detach_session_by_sid(pid.raw());
+        if tty::controlling_sid() == pid.raw() {
+            tty::detach_controlling_terminal();
+        }
         crate::sys::ipc::signal::notify_parent_sigchld(pid);
         task::wake_parent_child_waiters(pid);
     }

@@ -167,7 +167,13 @@ pub(crate) fn drop_task_runtime_resources_with_aspace(task_id : task::TaskId, as
     super::super::shm::drop_task_attachments(task_id, aspace);
     vfs::cwd::drop_task_cwd(task_id);
     vfs::mount_ns::drop_task_mount_ns(task_id);
-    vfs::fd::drop_task_fd_table(task_id);
+    let terminal_ids = vfs::fd::drop_task_fd_table(task_id);
+    for terminal_id in terminal_ids {
+        for event in tty::take_control_events(terminal_id) {
+            crate::sys::ipc::signal::send_kernel_signal_to_process_group(
+                task::ProcessId::from_raw(event.process_group), event.signal);
+        }
+    }
     crate::epoll_fd::drop_task(task_id);
     crate::unix_sock::drop_task(task_id);
     cred::drop_task_cred(task_id);

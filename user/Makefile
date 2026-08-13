@@ -2,6 +2,8 @@ ARCH ?= rv
 # Package 组合。all 会由构建器自动选择当前架构支持的全部 package。
 # 预设只负责展开为实际列表；也可以直接传逗号分隔的自定义列表。
 PACKAGE ?= all
+# 从 PACKAGE 展开的组合中排除 package；依赖被排除 package 的上层 package 也会跳过。
+SKIP_PACKAGE ?=
 IMAGE_SIZE_MB ?= 256
 BLOCK_SIZE ?= 4096
 INODE_SIZE ?= 256
@@ -27,6 +29,9 @@ PACKAGE_LIST := $(PACKAGE)
 endif
 
 COMMON := --arch $(ARCH) --packages "$(PACKAGE_LIST)"
+ifneq ($(strip $(SKIP_PACKAGE)),)
+COMMON += --exclude-packages "$(SKIP_PACKAGE)"
+endif
 ifneq ($(strip $(JOBS)),)
 COMMON += --jobs $(JOBS)
 endif
@@ -43,6 +48,7 @@ help:
 	@echo "  make image  ARCH=rv PACKAGE=minimal"
 	@echo "  make image  ARCH=rv PACKAGE=operator"
 	@echo "  make image  ARCH=rv PACKAGE=graphics  # Nano-X + Doom"
+	@echo "  make image  ARCH=rv SKIP_PACKAGE=mgba # all，但跳过 mGBA 及其依赖者"
 	@echo "  make image  ARCH=rv PACKAGE=base-layout,busybox,operator-tools"
 	@echo "  make overlay ARCH=rv PACKAGE=operator BASE_IMAGE=../os/sdcard-rv.img"
 	@echo "  make inspect ARCH=rv"
@@ -51,6 +57,7 @@ help:
 	@echo "Defaults:"
 	@echo "  ARCH=rv"
 	@echo "  PACKAGE=all"
+	@echo "  SKIP_PACKAGE=<empty>"
 	@echo "  IMAGE_SIZE_MB=256 BLOCK_SIZE=4096 INODE_SIZE=256"
 	@echo "  JOBS=<host CPU count> OUTPUT=build/images/wateros-<arch>.ext4"
 	@echo "Package presets:"
@@ -59,6 +66,7 @@ help:
 	@echo "  operator  = base-layout,busybox,operator-tools"
 	@echo "  graphics  = microwindows (dependencies add the base packages)"
 	@echo "  other     = a comma-separated custom package list"
+	@echo "  SKIP_PACKAGE = comma-separated exclusions; dependent packages are skipped too"
 	@echo "Toolchain overrides: RV_CROSS_COMPILE=... LA_CROSS_COMPILE=..."
 	@echo "Offline setup (RV only): TOOLCHAIN_ARCHIVE=/path/to/pinned-toolchain.tar.xz"
 

@@ -56,6 +56,20 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(userland.parse_package_names("busybox, operator-tools", "rv"),
                          ("busybox", "operator-tools"))
 
+    def test_exclusion_cascades_to_dependent_packages(self) -> None:
+        selected = userland.parse_package_names("all", "rv")
+        kept, skipped = userland.exclude_packages(selected, ("mgba",), "rv")
+        self.assertNotIn("mgba", kept)
+        self.assertNotIn("waterfm", kept)
+        self.assertEqual(skipped["mgba"], ("mgba",))
+        self.assertEqual(skipped["waterfm"], ("mgba",))
+        self.assertIn("microwindows", kept)
+
+    def test_empty_exclusion_keeps_selection(self) -> None:
+        selected = ("base-layout", "busybox")
+        self.assertEqual(userland.exclude_packages(selected, (), "rv"),
+                         (selected, {}))
+
     def test_nanox_doom_payload_and_launcher_are_present(self) -> None:
         wad = (userland.USER_ROOT / "vendor/microwindows/src/contrib/doom/"
                "doom1.wad")

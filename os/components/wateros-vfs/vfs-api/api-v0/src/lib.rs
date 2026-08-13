@@ -32,6 +32,7 @@ pub use handle::{
     VfsFileContentIdentity, VfsFramebufferInfo, VfsFramebufferRegion, VfsInputDeviceInfo, VfsIoHandle,
     VfsOpenDescriptionState, VfsOpenFlags, VfsOpenOps, VfsPreparedRead, VfsReadFinish,
     VfsReadLease, VfsReadReservation, VfsSeekWhence, VfsSpecialDeviceInfo,
+    VfsTerminalEndpoint, VfsTerminalInfo,
 };
 pub use kind::{VfsAccessMode, VfsCapability, VfsFsKind};
 pub use meta::{VfsDirEntry, VfsMetadata, VfsNodeType};

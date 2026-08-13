@@ -33,12 +33,20 @@ make setup ARCH=rv
 
 # 构建当前架构支持的全部 package，并生成 EXT4 镜像
 make image ARCH=rv
+# 跳过 mGBA；依赖 mGBA 的 waterfm 也会自动跳过
+make image ARCH=rv SKIP_PACKAGE=mgba
+# 构建指定的Package组合
+make image ARCH=rv PACKAGE=graphics
+# 启动
+cd ../os
+make shell ARCH=rv PROFILE=pre \
+  SDCARD=../user/build/images/wateros-rv.ext4
 ```
 
-如果当前位于仓库根目录，等价写法是在命令前加 `-C user`：
+部分模块构建需要更新子模块
 
 ```bash
-make -C user image ARCH=rv
+git submodule update --init --recursive user/vendor/mgba
 ```
 
 默认产物为：
@@ -59,41 +67,27 @@ build/images/wateros-rv.ext4.sha256
 
 运行 `make help` 可以查看当前入口和默认值。
 
-| 参数 | 默认值 | 作用 |
-| --- | --- | --- |
-| `ARCH` | `rv` | 目标架构，可选 `rv`、`la` |
-| `PACKAGE` | `all` | 要组合的 package 预设或自定义列表 |
-| `IMAGE_SIZE_MB` | `256` | EXT4 镜像容量，单位 MiB |
-| `BLOCK_SIZE` | `4096` | EXT4 块大小 |
-| `INODE_SIZE` | `256` | EXT4 inode 大小 |
-| `JOBS` | 宿主 CPU 数 | 并行编译任务数 |
-| `OUTPUT` | `build/images/wateros-<arch>.ext4` | 自定义输出路径 |
-| `BASE_IMAGE` | 无 | `overlay` 使用的基础镜像 |
+
+| 参数            | 默认值                             | 作用                              |
+| ----------------- | ------------------------------------ | ----------------------------------- |
+| `ARCH`          | `rv`                               | 目标架构，可选`rv`、`la`          |
+| `PACKAGE`       | `all`                              | 要组合的 package 预设或自定义列表 |
+| `IMAGE_SIZE_MB` | `256`                              | EXT4 镜像容量，单位 MiB           |
+| `BLOCK_SIZE`    | `4096`                             | EXT4 块大小                       |
+| `INODE_SIZE`    | `256`                              | EXT4 inode 大小                   |
+| `JOBS`          | 宿主 CPU 数                        | 并行编译任务数                    |
+| `OUTPUT`        | `build/images/wateros-<arch>.ext4` | 自定义输出路径                    |
+| `BASE_IMAGE`    | 无                                 | `overlay` 使用的基础镜像          |
 
 `PACKAGE` 提供四个预设：
 
-| 选项 | 实际内容 | 适用场景 |
-| --- | --- | --- |
-| `all` | 当前架构支持的全部 package | 默认完整用户空间 |
-| `minimal` | `base-layout,busybox` | 最小静态 shell/rootfs |
-| `operator` | minimal + `operator-tools` | shell 与现场诊断工具 |
-| `graphics` | `microwindows` 及其依赖 | 双架构 Nano-X、演示程序与 Doom |
 
-例如：
-
-```bash
-# 默认完整镜像
-make image ARCH=rv
-
-# 最小镜像
-make image ARCH=rv PACKAGE=minimal
-
-# Nano-X 与 Doom；依赖会自动补齐
-make image ARCH=rv PACKAGE=graphics
-
-# 用户自定义组合，名称用逗号分隔
-make image ARCH=rv PACKAGE=base-layout,busybox,operator-tools
-```
+| 选项       | 实际内容                   | 适用场景                       |
+| ------------ | ---------------------------- | -------------------------------- |
+| `all`      | 当前架构支持的全部 package | 默认完整用户空间               |
+| `minimal`  | `base-layout,busybox`      | 最小静态 shell/rootfs          |
+| `operator` | minimal +`operator-tools`  | shell 与现场诊断工具           |
+| `graphics` | `microwindows` 及其依赖    | 双架构 Nano-X、演示程序与 Doom |
 
 所有组合默认写入同一个架构产物，例如 `wateros-rv.ext4`。后一次构建会替换前一次
 生成的镜像。需要同时保留多个组合时使用 `OUTPUT`：
@@ -202,6 +196,26 @@ start-nanox >/tmp/nanox.log 2>&1 &
 `/dev/input/keyboard0` 和 `/dev/input/pointer0`，并管理 Nano-X server、客户端及
 `/tmp/.nano-X` socket 的生命周期。
 
+图形终端已经作为 `/usr/bin/nxterm` 安装。可以在 `nxlaunch` 点击 `Terminal`，或从串口执行：
+
+```sh
+nxterm &
+```
+
+内核通过 `/dev/ptmx` 与动态 `/dev/pts/N` 提供 UNIX98 PTY。无需启动 Nano-X 即可先验证：
+
+```sh
+pty-smoke
+ls -l /dev/ptmx /dev/pts
+```
+
+`nxterm` 内默认执行 `/bin/sh`，支持多个独立窗口、canonical/raw 模式、`poll/select`、
+Ctrl-C、Ctrl-Z 和 shell 作业控制。
+
+默认完整镜像还会在 `nxlaunch` 提供 `Files` 按钮，用于启动 `/usr/bin/waterfm`。
+`waterfm` 会被 `PACKAGE=all` 或 `PACKAGE=waterfm` 选中；精简的 `PACKAGE=graphics`
+只包含 Nano-X、Doom 和终端，不包含文件管理器。
+
 可以在 `nxlaunch` 中点击 Doom，也可以从串口启动：
 
 ```sh
@@ -283,10 +297,11 @@ make overlay \
 
 架构配置位于 `configs/architectures.toml`：
 
-| `ARCH` | 默认工具链前缀 | ABI |
-| --- | --- | --- |
-| `rv` | `riscv64-buildroot-linux-musl-` | 静态 musl，`rv64gc/lp64d` |
-| `la` | `loongarch64-linux-gnu-` | 静态 glibc，`lp64d` |
+
+| `ARCH` | 默认工具链前缀                  | ABI                       |
+| -------- | --------------------------------- | --------------------------- |
+| `rv`   | `riscv64-buildroot-linux-musl-` | 静态 musl，`rv64gc/lp64d` |
+| `la`   | `loongarch64-linux-gnu-`        | 静态 glibc，`lp64d`       |
 
 双架构都可以一键准备：
 
@@ -389,12 +404,13 @@ packages/<name>/
 
 当前 package：
 
-| 名称 | 作用 | 架构 |
-| --- | --- | --- |
-| `base-layout` | 目录、账号、环境与基础配置 | RV、LA |
-| `busybox` | 静态 shell 与常用 applet | RV、LA |
-| `operator-tools` | WaterOS 现场诊断脚本 | RV、LA |
-| `microwindows` | Nano-X、演示程序、Doom | RV、LA |
+
+| 名称             | 作用                       | 架构   |
+| ------------------ | ---------------------------- | -------- |
+| `base-layout`    | 目录、账号、环境与基础配置 | RV、LA |
+| `busybox`        | 静态 shell 与常用 applet   | RV、LA |
+| `operator-tools` | WaterOS 现场诊断脚本       | RV、LA |
+| `microwindows`   | Nano-X、演示程序、Doom     | RV、LA |
 
 `base-layout` 只创建 `/dev`、`/proc`、`/tmp` 等挂载点。运行时实际内容仍由 WaterOS 的
 devfs、procfs 和 tmpfs 提供。内核 operator supervisor 直接启动 `/bin/sh`，当前不会

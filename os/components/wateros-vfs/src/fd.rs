@@ -6,7 +6,7 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use api_v0::{VfsError, VfsIoHandle, VfsResult};
+use api_v0::{VfsError, VfsIoHandle, VfsResult, VfsSpecialDeviceInfo, VfsTerminalEndpoint};
 use base::sync::MultiprocessorSafeCell;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -102,6 +102,25 @@ pub fn open_fds_for_task(task_id : task::TaskId) -> Vec<usize> {
     with_registry(|registry| registry.open_fds_for_task(task_id))
 }
 
+/// 返回 `/proc/<pid>/fd/N` 对应的可读链接目标。
+///
+/// 普通文件目前仍由 procfs 使用兼容占位符；PTY 必须返回真实 slave 路径，
+/// 因为 musl/BusyBox 的 `ttyname_r()` 依赖该链接识别控制终端。
+pub fn fd_target_for_task(task_id : task::TaskId, fd : usize) -> Option<alloc::string::String> {
+    with_task_io(task_id, fd, |handle| {
+        Ok(match handle.special_device_info() {
+            Some(VfsSpecialDeviceInfo::Terminal(info)) => match info.endpoint {
+                VfsTerminalEndpoint::PtySlave => {
+                    info.pty_number.map(|number| alloc::format!("/dev/pts/{number}"))
+                }
+                VfsTerminalEndpoint::PtyMaster => Some(alloc::string::String::from("/dev/ptmx")),
+                VfsTerminalEndpoint::Console => Some(alloc::string::String::from("/dev/console")),
+            },
+            _ => None,
+        })
+    }).ok().flatten()
+}
+
 fn with_fd_registry<R>(f : impl FnOnce(&mut PerTaskFdRegistry) -> VfsResult<R>) -> VfsResult<R> {
     with_registry(f)
 }
@@ -187,19 +206,26 @@ pub fn close_fd(fd : usize) -> VfsResult<()> {
 }
 
 /// 关闭当前任务 fd 区间内所有已打开 fd；未打开 fd 按 Linux `close_range` 语义忽略。
-pub fn close_fd_range(first : usize, last : usize) -> VfsResult<Vec<usize>> {
+pub fn close_fd_range(first : usize,
+                      last : usize)
+                      -> VfsResult<(Vec<usize>, Vec<tty::TerminalId>)> {
     let task_id = current_task_id()?;
     let handles = with_fd_registry(|reg| reg.take_fd_range_for_close(task_id, first, last))?;
     let mut closed = Vec::new();
+    let mut terminal_ids = Vec::new();
     for (fd, handle) in handles {
         handle.with_io(|io| {
                   release_locks_for_current_process(io);
+                  if let Some(endpoint) = impl_fd_session::pty_endpoint_for_handle(io) {
+                      let id = endpoint.id();
+                      if !terminal_ids.contains(&id) { terminal_ids.push(id); }
+                  }
                   Ok(())
               })?;
         handle.close()?;
         closed.push(fd);
     }
-    Ok(closed)
+    Ok((closed, terminal_ids))
 }
 
 /// 请求全部打开句柄写回脏数据。
@@ -218,6 +244,16 @@ pub fn flush_all_open_files() -> VfsResult<()> {
 pub fn current_fd_is_tty_char(fd : usize) -> VfsResult<bool> {
     with_current_io(fd, |handle| {
         Ok(handle.is_tty_char_device())
+    })
+}
+
+/// 若 fd 是 UNIX98 PTY，返回一个共享同一打开文件描述状态的端点快照。
+///
+/// syscall 层用它路由 termios/窗口/作业控制 ioctl；普通 console 返回 `None`，
+/// 继续使用兼容的全局控制台 API。
+pub fn current_pty_endpoint(fd : usize) -> VfsResult<Option<tty::PtyEndpointHandle>> {
+    with_current_io(fd, |handle| {
+        Ok(impl_fd_session::pty_endpoint_for_handle(handle))
     })
 }
 
@@ -331,25 +367,43 @@ pub fn unshare_fd_table() -> VfsResult<()> {
 }
 
 /// `execve` 前关闭带 `FD_CLOEXEC` 的 fd。
-pub fn close_cloexec_fds_for_current_task() -> VfsResult<Vec<usize>> {
+pub fn close_cloexec_fds_for_current_task()
+        -> VfsResult<(Vec<usize>, Vec<tty::TerminalId>)> {
     let task_id = current_task_id()?;
     let handles = with_registry(|registry| registry.take_cloexec_fds_for_task(task_id));
     let mut closed = Vec::with_capacity(handles.len());
+    let mut terminal_ids = Vec::new();
     for (fd, handle) in handles {
+        handle.with_io(|io| {
+                  if let Some(endpoint) = impl_fd_session::pty_endpoint_for_handle(io) {
+                      let id = endpoint.id();
+                      if !terminal_ids.contains(&id) { terminal_ids.push(id); }
+                  }
+                  Ok(())
+              })?;
         handle.close()?;
         closed.push(fd);
     }
-    Ok(closed)
+    Ok((closed, terminal_ids))
 }
 
 /// 任务退出后释放 fd 表。
-pub fn drop_task_fd_table(task_id : task::TaskId) {
+pub fn drop_task_fd_table(task_id : task::TaskId) -> Vec<tty::TerminalId> {
     let handles = with_registry(|registry| registry.drain_task_fd_table(task_id));
+    let mut terminal_ids = Vec::new();
     for handle in handles {
+        if let Ok(Some(endpoint)) = handle.with_io(|io| {
+            Ok(impl_fd_session::pty_endpoint_for_handle(io))
+        }) {
+            if !terminal_ids.contains(&endpoint.id()) {
+                terminal_ids.push(endpoint.id());
+            }
+        }
         if let Err(e) = handle.close() {
             log::warn!("[vfs-fd] drop_task_fd_table task_id={task_id} close failed: {e:?}");
         }
     }
+    terminal_ids
 }
 
 /// bring-up：两任务 fd 表隔离、dup 与 fork 继承烟囱。

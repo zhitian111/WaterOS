@@ -114,10 +114,11 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     // 越过不可回退点：后续操作不可传播错误，否则进程将处于无地址空间的死亡状态。
     // 只能 log 警告后继续，确保 execve 最终一定成功。
     match vfs::fd::close_cloexec_fds_for_current_task() {
-        Ok(closed_fds) => {
+        Ok((closed_fds, terminal_ids)) => {
             for fd in closed_fds {
                 crate::unix_sock::unregister(current_tid, fd);
             }
+            crate::sys::fs::close::dispatch_terminal_events(&terminal_ids);
         }
         Err(e) => {
             log::warn!("[execve] close_cloexec_fds failed (continuing): {:?}",

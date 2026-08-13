@@ -14,7 +14,7 @@ DIRECTORIES = (
     "bin", "sbin", "usr/bin", "usr/sbin", "etc", "etc/init.d",
     "etc/profile.d",
     "etc/wateros", "root", "home", "tmp", "run", "var", "var/log",
-    "var/tmp", "dev", "dev/shm", "proc", "sys", "mnt",
+    "var/tmp", "dev", "dev/shm", "dev/pts", "proc", "sys", "mnt",
     "opt/wateros/bin", "var/lib/wateros",
 )
 SPECIAL_MODES = {
@@ -22,6 +22,7 @@ SPECIAL_MODES = {
     "tmp": 0o1777,
     "var/tmp": 0o1777,
     "dev/shm": 0o1777,
+    "dev/pts": 0o755,
 }
 
 

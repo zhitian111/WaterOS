@@ -181,7 +181,8 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
         let framebuffer_mapping = vfs::fd::with_current_io(fd as usize, |handle| {
             match handle.special_device_info() {
                 Some(VfsSpecialDeviceInfo::Framebuffer(_)) => handle.device_mapping().map(Some),
-                Some(VfsSpecialDeviceInfo::InputEvent(_)) => Err(VfsError::Unsupported),
+                Some(VfsSpecialDeviceInfo::InputEvent(_)) |
+                Some(VfsSpecialDeviceInfo::Terminal(_)) => Err(VfsError::Unsupported),
                 None => Ok(None),
             }
         });

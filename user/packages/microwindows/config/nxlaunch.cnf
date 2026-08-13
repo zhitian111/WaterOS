@@ -6,6 +6,8 @@ Eyes - /usr/bin/nxeyes
 Calculator - /usr/bin/nxcalc
 Editor - /usr/bin/nxedit
 Events - /usr/bin/nxev
+Terminal - /usr/bin/nxterm
+Files - /usr/bin/waterfm
 # WaterOS 当前的 execve 不负责解释 shebang。nxlaunch 会直接 execvp 菜单命令，
 # 因此必须显式通过 shell 运行 start-doom，不能把脚本本身作为可执行 ELF 启动。
 Doom - /bin/sh /usr/bin/start-doom

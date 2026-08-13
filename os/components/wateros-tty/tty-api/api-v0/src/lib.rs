@@ -23,7 +23,49 @@ pub const VSUSP: usize = 10;
 
 pub const SIGINT: usize = 2;
 pub const SIGQUIT: usize = 3;
+pub const SIGHUP: usize = 1;
+pub const SIGCONT: usize = 18;
 pub const SIGTSTP: usize = 20;
+pub const SIGWINCH: usize = 28;
+
+/// WaterOS 内核中稳定标识一个终端实例的编号。
+///
+/// `1` 固定表示系统控制台；伪终端使用独立编号。该编号只用于内核模块间路由，
+/// 不是 Linux 设备号，也不会作为用户 ABI 暴露。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct TerminalId(u64);
+
+impl TerminalId {
+    /// 系统串口控制台的固定终端编号。
+    pub const CONSOLE: Self = Self(1);
+
+    /// 从内核注册表分配的原始值构造终端编号。
+    pub const fn from_raw(raw: u64) -> Self { Self(raw) }
+
+    pub const fn raw(self) -> u64 { self.0 }
+}
+
+/// 一个终端文件描述符连接到的端点类型。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalEndpoint {
+    Console,
+    PtyMaster,
+    PtySlave,
+}
+
+/// 创建或打开伪终端时可直接映射到 VFS errno 的错误。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PtyError {
+    NotFound,
+    Locked,
+    NoSpace,
+    Invalid,
+    HungUp,
+    WouldBlock,
+    Interrupted,
+    Busy,
+}
 
 /// 系统控制台标准输入的数据来源策略。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -439,8 +439,21 @@ fn write_fd(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
         // 占住共享 fd 槽锁并与同进程的读/poll 线程形成单核死锁。
         match vfs::fd::with_current_io_detached(fd, |handle| handle.write(buf)) {
             Err(VfsError::Busy) => task::yield_now(),
-            result => return result.map_err(vfs_error_to_errno),
+            Ok(written) => {
+                dispatch_pty_control_events(fd);
+                return Ok(written);
+            }
+            Err(error) => return Err(vfs_error_to_errno(error)),
         }
+    }
+}
+
+/// master 输入产生的 Ctrl-C/Ctrl-Z 等事件在 PTY 锁外投递。
+fn dispatch_pty_control_events(fd: usize) {
+    let Ok(Some(endpoint)) = vfs::fd::current_pty_endpoint(fd) else { return; };
+    for event in tty::take_control_events(endpoint.id()) {
+        crate::sys::ipc::signal::send_kernel_signal_to_process_group(
+            task::ProcessId::from_raw(event.process_group), event.signal);
     }
 }
 
@@ -470,16 +483,33 @@ fn check_tty_foreground(fd : usize, writing : bool) -> Result<(), ErrNo> {
     if !vfs::fd::current_fd_is_tty_char(fd).unwrap_or(false) {
         return Ok(());
     }
-    if writing && !tty::output_stops_background() {
+    let pty = vfs::fd::current_pty_endpoint(fd).ok().flatten();
+    // PTY master 是终端模拟器的数据端，不是受前台进程组限制的控制终端端点。
+    if pty.as_ref().is_some_and(|endpoint| {
+        endpoint.endpoint() == tty::TerminalEndpoint::PtyMaster
+    }) {
         return Ok(());
     }
-    let foreground = tty::foreground_pgid();
+    let stops_background = pty.as_ref().map_or_else(tty::output_stops_background,
+                                                     tty::PtyEndpointHandle::output_stops_background);
+    if writing && !stops_background {
+        return Ok(());
+    }
+    let foreground = pty.as_ref().map_or_else(tty::foreground_pgid,
+                                               tty::PtyEndpointHandle::foreground_pgid);
     if foreground == 0 {
         return Ok(());
     }
     let Some(process) = task::current_process_snapshot() else {
         return Ok(());
     };
+    let controlling_sid = pty.as_ref().map_or_else(tty::controlling_sid,
+                                                    tty::PtyEndpointHandle::controlling_sid);
+    // 只有把该 terminal 作为控制终端的会话才受前后台作业控制约束。
+    // 通过 fd 传递拿到别的会话 PTY 时，不能误向当前进程组发送 SIGTTIN/SIGTTOU。
+    if controlling_sid == 0 || controlling_sid != process.sid.raw() {
+        return Ok(());
+    }
     if process.pgid.raw() == foreground {
         return Ok(());
     }

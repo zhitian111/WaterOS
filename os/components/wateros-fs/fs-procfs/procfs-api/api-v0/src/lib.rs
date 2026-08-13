@@ -31,6 +31,9 @@ pub type TaskExeLookup = fn(TaskId) -> Option<String>;
 /// 按 task id 枚举当前打开的文件描述符。
 pub type TaskFdLookup = fn(TaskId) -> Vec<usize>;
 
+/// 查询一个打开 fd 在 `/proc/<pid>/fd/N` 中应显示的链接目标。
+pub type TaskFdTargetLookup = fn(TaskId, usize) -> Option<String>;
+
 /// 按 task id 查询当前 timer slack，单位纳秒。
 pub type TaskTimerSlackLookup = fn(TaskId) -> u64;
 

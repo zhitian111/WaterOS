@@ -1132,6 +1132,15 @@ fn default_serial_device() -> Option<SharedCharacterDevice> {
                                  .and_then(character_device_at)
 }
 
+/// 为 `/dev/tty` 创建一个指向系统控制台的双向字符设备句柄。
+#[cfg(feature = "user-graphics")]
+pub(crate) fn open_console_tty(accmode: u32) -> Option<Box<dyn VfsIoHandle>> {
+    default_serial_device().map(|device| {
+        Box::new(CharDevHandle::from_devfs_path(device, "/dev/tty", accmode))
+            as Box<dyn VfsIoHandle>
+    })
+}
+
 /// 最多从物理控制台读取一个字节并送入共享 TTY。
 ///
 /// 在执行行规程处理和投递终端信号前释放设备锁。本函数只应由唯一的低优先级控制台

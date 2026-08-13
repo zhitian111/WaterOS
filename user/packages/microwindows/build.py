@@ -11,7 +11,8 @@ import subprocess
 from pathlib import Path
 
 
-NANOX_BINARIES = ("nano-X", "nxlaunch", "nxclock", "nxeyes", "nxcalc", "nxedit", "nxev")
+NANOX_BINARIES = ("nano-X", "nxlaunch", "nxclock", "nxeyes", "nxcalc", "nxedit", "nxev",
+                  "nxterm",)
 DOOM_BINARY = "doom"
 DOOM_WAD = "doom1.wad"
 
@@ -116,6 +117,15 @@ def main() -> int:
     installed_doom.chmod(0o755)
     validate_static(installed_doom, context["readelf"], context["elf_machine"])
     installed_binaries.append(installed_doom)
+
+    # 独立于图形服务验证 /dev/ptmx、/dev/pts/N、setsid 和控制终端取得流程。
+    installed_pty_smoke = destination / "pty-smoke"
+    run([f"{cross}gcc", "-static", *context["cflags"],
+         str(package / "scripts/pty-smoke.c"), "-o", str(installed_pty_smoke)],
+        cwd=work, env=env)
+    installed_pty_smoke.chmod(0o755)
+    validate_static(installed_pty_smoke, context["readelf"], context["elf_machine"])
+    installed_binaries.append(installed_pty_smoke)
 
     strip = shutil.which(f"{cross}strip")
     if strip:

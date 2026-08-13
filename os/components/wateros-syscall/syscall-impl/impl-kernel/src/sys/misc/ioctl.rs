@@ -26,6 +26,8 @@ const FIONREAD: u32 = 0x541b;
 const FIONBIO: u32 = 0x5421;
 const TIOCNOTTY: u32 = 0x5422;
 const TIOCGSID: u32 = 0x5429;
+const TIOCGPTN: u32 = 0x8004_5430;
+const TIOCSPTLCK: u32 = 0x4004_5431;
 const RTC_RD_TIME: u32 = 0x8024_7009;
 const RTC_SET_TIME: u32 = 0x4024_700a;
 const FBIOGET_VSCREENINFO : u32 = 0x4600;
@@ -367,146 +369,158 @@ fn ioctl_enotty(request: u32, fd: Option<usize>, argp: usize) -> UserRet {
     UserRet::from_error(ErrNo::ENOTTY)
 }
 
-fn tty_char_ioctl(request: u32, argp: usize) -> UserRet {
+fn tty_char_ioctl(fd: usize, request: u32, argp: usize) -> UserRet {
+    let pty = vfs::fd::current_pty_endpoint(fd).ok().flatten();
+    let termios = || pty.as_ref().map_or_else(tty::termios, tty::PtyEndpointHandle::termios);
+    let winsize = || pty.as_ref().map_or_else(tty::winsize, tty::PtyEndpointHandle::winsize);
+    let foreground = || pty.as_ref().map_or_else(tty::foreground_pgid,
+                                                  tty::PtyEndpointHandle::foreground_pgid);
+    let controlling = || pty.as_ref().map_or_else(tty::controlling_sid,
+                                                   tty::PtyEndpointHandle::controlling_sid);
     match request {
         TCGETS => {
-            if argp == 0 {
-                return UserRet::from_error(ErrNo::EFAULT);
-            }
-            let termios = LinuxTermios::from(tty::termios());
-            match copy_to_user_struct(argp, &termios) {
-                Ok(()) => UserRet::from_success(0),
-                Err(e) => UserRet::from_error(e),
-            }
+            if argp == 0 { return UserRet::from_error(ErrNo::EFAULT); }
+            copy_to_user_struct(argp, &LinuxTermios::from(termios()))
+                .map_or_else(UserRet::from_error, |_| UserRet::from_success(0))
         }
         TCSETS | TCSETSW | TCSETSF => {
-            if argp == 0 {
-                return UserRet::from_error(ErrNo::EFAULT);
-            }
-            let termios = match copy_from_user_struct::<LinuxTermios>(argp) {
-                Ok(termios) => termios,
+            if argp == 0 { return UserRet::from_error(ErrNo::EFAULT); }
+            let value = match copy_from_user_struct::<LinuxTermios>(argp) {
+                Ok(value) => value.into(),
                 Err(error) => return UserRet::from_error(error),
             };
-            tty::set_termios(termios.into(), request == TCSETSF);
+            if let Some(endpoint) = pty.as_ref() {
+                endpoint.set_termios(value, request == TCSETSF);
+            } else {
+                tty::set_termios(value, request == TCSETSF);
+            }
             UserRet::from_success(0)
         }
         TIOCGWINSZ => {
-            if argp == 0 {
-                return UserRet::from_error(ErrNo::EFAULT);
-            }
-            let current = tty::winsize();
-            let winsize = LinuxWinSize { ws_row: current.row,
-                                         ws_col: current.col,
-                                         ws_xpixel: current.xpixel,
-                                         ws_ypixel: current.ypixel };
-            match copy_to_user_struct(argp, &winsize) {
-                Ok(()) => UserRet::from_success(0),
-                Err(e) => UserRet::from_error(e),
-            }
+            if argp == 0 { return UserRet::from_error(ErrNo::EFAULT); }
+            let current = winsize();
+            let value = LinuxWinSize { ws_row: current.row, ws_col: current.col,
+                                       ws_xpixel: current.xpixel, ws_ypixel: current.ypixel };
+            copy_to_user_struct(argp, &value)
+                .map_or_else(UserRet::from_error, |_| UserRet::from_success(0))
         }
         TIOCGPGRP => {
-            if argp == 0 {
-                return UserRet::from_error(ErrNo::EFAULT);
-            }
-            let pgrp = tty::foreground_pgid().min(i32::MAX as usize) as i32;
-            match copy_to_user_struct(argp, &pgrp) {
-                Ok(()) => UserRet::from_success(0),
-                Err(e) => UserRet::from_error(e),
-            }
+            if argp == 0 { return UserRet::from_error(ErrNo::EFAULT); }
+            let value = foreground().min(i32::MAX as usize) as i32;
+            copy_to_user_struct(argp, &value)
+                .map_or_else(UserRet::from_error, |_| UserRet::from_success(0))
         }
         TIOCSPGRP => {
-            if argp == 0 {
-                return UserRet::from_error(ErrNo::EFAULT);
-            }
+            if argp == 0 { return UserRet::from_error(ErrNo::EFAULT); }
             let pgrp = match copy_from_user_struct::<i32>(argp) {
                 Ok(value) if value > 0 => value as usize,
                 Ok(_) => return UserRet::from_error(ErrNo::EINVAL),
                 Err(error) => return UserRet::from_error(error),
             };
-            if !task::pgid_has_members(task::ProcessId::from_raw(pgrp)) {
-                return UserRet::from_error(ErrNo::ESRCH);
-            }
             let Some(caller) = task::current_process_snapshot() else {
                 return UserRet::from_error(ErrNo::ESRCH);
             };
             let same_session = task::process_pids_in_pgid(task::ProcessId::from_raw(pgrp))
-                .into_iter()
-                .filter_map(task::process_snapshot)
+                .into_iter().filter_map(task::process_snapshot)
                 .any(|member| member.sid == caller.sid);
-            if !same_session {
-                return UserRet::from_error(ErrNo::EPERM);
+            if !task::pgid_has_members(task::ProcessId::from_raw(pgrp)) {
+                return UserRet::from_error(ErrNo::ESRCH);
             }
-            tty::set_foreground_pgid(pgrp);
+            if !same_session { return UserRet::from_error(ErrNo::EPERM); }
+            if let Some(endpoint) = pty.as_ref() { endpoint.set_foreground_pgid(pgrp); }
+            else { tty::set_foreground_pgid(pgrp); }
             UserRet::from_success(0)
         }
         TIOCSCTTY => {
             let Some(process) = task::current_process_snapshot() else {
                 return UserRet::from_error(ErrNo::ESRCH);
             };
-            let sid = if process.sid.raw() == 0 { process.pid.raw() } else { process.sid.raw() };
-            let controlling = tty::controlling_sid();
-            if controlling != 0 && controlling != sid && argp == 0 {
-                return UserRet::from_error(ErrNo::EPERM);
+            if process.pid != process.sid { return UserRet::from_error(ErrNo::EPERM); }
+            let sid = process.sid.raw();
+            if let Some(endpoint) = pty.as_ref() {
+                if endpoint.endpoint() != tty::TerminalEndpoint::PtySlave {
+                    return UserRet::from_error(ErrNo::ENOTTY);
+                }
+                if tty::attach_session(endpoint, sid, process.pgid.raw()).is_err() {
+                    return UserRet::from_error(ErrNo::EPERM);
+                }
+            } else {
+                if controlling() != 0 && controlling() != sid && argp == 0 {
+                    return UserRet::from_error(ErrNo::EPERM);
+                }
+                tty::set_controlling_sid(sid);
+                tty::set_foreground_pgid(process.pgid.raw());
             }
-            tty::set_controlling_sid(sid);
-            tty::set_foreground_pgid(process.pgid.raw());
             UserRet::from_success(0)
         }
         TIOCNOTTY => {
             let Some(process) = task::current_process_snapshot() else {
                 return UserRet::from_error(ErrNo::ESRCH);
             };
-            if tty::controlling_sid() != 0 &&
-               tty::controlling_sid() != process.sid.raw() &&
-               tty::controlling_sid() != process.pid.raw()
-            {
-                return UserRet::from_error(ErrNo::ENOTTY);
+            if let Some(endpoint) = pty.as_ref() {
+                if tty::detach_session(endpoint, process.sid.raw()).is_err() {
+                    return UserRet::from_error(ErrNo::ENOTTY);
+                }
+            } else {
+                if controlling() != 0 && controlling() != process.sid.raw() &&
+                   controlling() != process.pid.raw() {
+                    return UserRet::from_error(ErrNo::ENOTTY);
+                }
+                tty::detach_controlling_terminal();
             }
-            tty::detach_controlling_terminal();
             UserRet::from_success(0)
         }
         TIOCSWINSZ => {
-            if argp == 0 {
-                return UserRet::from_error(ErrNo::EFAULT);
-            }
-            let winsize = match copy_from_user_struct::<LinuxWinSize>(argp) {
+            if argp == 0 { return UserRet::from_error(ErrNo::EFAULT); }
+            let raw = match copy_from_user_struct::<LinuxWinSize>(argp) {
                 Ok(value) => value,
                 Err(error) => return UserRet::from_error(error),
             };
-            tty::set_winsize(tty::TtyWinSize { row: winsize.ws_row,
-                                               col: winsize.ws_col,
-                                               xpixel: winsize.ws_xpixel,
-                                               ypixel: winsize.ws_ypixel });
-            let foreground = tty::foreground_pgid();
-            if foreground != 0 {
+            let value = tty::TtyWinSize { row: raw.ws_row, col: raw.ws_col,
+                                          xpixel: raw.ws_xpixel, ypixel: raw.ws_ypixel };
+            if let Some(endpoint) = pty.as_ref() { endpoint.set_winsize(value); }
+            else { tty::set_winsize(value); }
+            if foreground() != 0 {
                 crate::sys::ipc::signal::send_kernel_signal_to_process_group(
-                    task::ProcessId::from_raw(foreground),
-                    ipc::signal::SIGWINCH,
-                );
+                    task::ProcessId::from_raw(foreground()), ipc::signal::SIGWINCH);
             }
             UserRet::from_success(0)
         }
         TIOCGSID => {
-            if argp == 0 {
-                return UserRet::from_error(ErrNo::EFAULT);
-            }
-            let sid = tty::controlling_sid().min(i32::MAX as usize) as i32;
-            match copy_to_user_struct(argp, &sid) {
-                Ok(()) => UserRet::from_success(0),
-                Err(error) => UserRet::from_error(error),
-            }
+            if argp == 0 { return UserRet::from_error(ErrNo::EFAULT); }
+            let value = controlling().min(i32::MAX as usize) as i32;
+            copy_to_user_struct(argp, &value)
+                .map_or_else(UserRet::from_error, |_| UserRet::from_success(0))
         }
         FIONREAD => {
-            if argp == 0 {
-                return UserRet::from_error(ErrNo::EFAULT);
+            if argp == 0 { return UserRet::from_error(ErrNo::EFAULT); }
+            let value = pty.as_ref().map_or_else(tty::readable_len,
+                                                 tty::PtyEndpointHandle::readable_len)
+                           .min(i32::MAX as usize) as i32;
+            copy_to_user_struct(argp, &value)
+                .map_or_else(UserRet::from_error, |_| UserRet::from_success(0))
+        }
+        TIOCGPTN => {
+            let Some(endpoint) = pty.as_ref() else { return UserRet::from_error(ErrNo::ENOTTY); };
+            if endpoint.endpoint() != tty::TerminalEndpoint::PtyMaster {
+                return UserRet::from_error(ErrNo::ENOTTY);
             }
-            let available = tty::readable_len().min(i32::MAX as usize) as i32;
-            match copy_to_user_struct(argp, &available) {
-                Ok(()) => UserRet::from_success(0),
+            if argp == 0 { return UserRet::from_error(ErrNo::EFAULT); }
+            copy_to_user_struct(argp, &endpoint.number())
+                .map_or_else(UserRet::from_error, |_| UserRet::from_success(0))
+        }
+        TIOCSPTLCK => {
+            let Some(endpoint) = pty.as_ref() else { return UserRet::from_error(ErrNo::ENOTTY); };
+            if endpoint.endpoint() != tty::TerminalEndpoint::PtyMaster {
+                return UserRet::from_error(ErrNo::ENOTTY);
+            }
+            if argp == 0 { return UserRet::from_error(ErrNo::EFAULT); }
+            match copy_from_user_struct::<i32>(argp) {
+                Ok(value) => { endpoint.set_locked(value != 0); UserRet::from_success(0) }
                 Err(error) => UserRet::from_error(error),
             }
         }
-        _ => ioctl_enotty(request, None, argp),
+        _ => ioctl_enotty(request, Some(fd), argp),
     }
 }
 
@@ -532,6 +546,9 @@ pub(crate) fn sys_ioctl(args: SyscallArgs) -> UserRet {
         Some(VfsSpecialDeviceInfo::InputEvent(info)) => {
             return evdev_ioctl(request, argp, info);
         }
+        Some(VfsSpecialDeviceInfo::Terminal(_)) => {
+            return tty_char_ioctl(fd, request, argp);
+        }
         None => {}
     }
 
@@ -540,7 +557,7 @@ pub(crate) fn sys_ioctl(args: SyscallArgs) -> UserRet {
     }
 
     if vfs::fd::current_fd_is_tty_char(fd).unwrap_or(false) {
-        return tty_char_ioctl(request, argp);
+        return tty_char_ioctl(fd, request, argp);
     }
 
     if request == FIONREAD {

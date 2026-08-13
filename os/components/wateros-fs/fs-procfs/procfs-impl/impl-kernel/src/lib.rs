@@ -13,8 +13,8 @@ use alloc::{
 };
 use api_v0::{
     FsDirEntry, FsError, FsMetadata, FsNodeType, FsResult, IdleTimeLookup, MountListLookup, ProcFsView,
-    ProcMountLine, TaskArgvLookup, TaskExeLookup, TaskFdLookup, TaskId, TaskTimerSlackLookup,
-    UptimeLookup,
+    ProcMountLine, TaskArgvLookup, TaskExeLookup, TaskFdLookup, TaskFdTargetLookup, TaskId,
+    TaskTimerSlackLookup, UptimeLookup,
 };
 use core::fmt::Write;
 use fs_api_v0::{FsAccessMode, FsCapability, FsImpl, FsKind};
@@ -27,6 +27,7 @@ static ARGV_LOOKUP : Mutex<Option<TaskArgvLookup>> = Mutex::new(None);
 // 本变量代码由AI完成
 static EXE_LOOKUP : Mutex<Option<TaskExeLookup>> = Mutex::new(None);
 static FD_LOOKUP : Mutex<Option<TaskFdLookup>> = Mutex::new(None);
+static FD_TARGET_LOOKUP : Mutex<Option<TaskFdTargetLookup>> = Mutex::new(None);
 static TIMER_SLACK_LOOKUP : Mutex<Option<TaskTimerSlackLookup>> = Mutex::new(None);
 // 本变量代码由AI完成
 static MOUNT_LOOKUP : Mutex<Option<MountListLookup>> = Mutex::new(None);
@@ -43,6 +44,11 @@ pub fn register_task_exe_lookup(f : TaskExeLookup) { *EXE_LOOKUP.lock() = Some(f
 
 /// 注册按 task id 枚举打开 fd 的回调。
 pub fn register_task_fd_lookup(f : TaskFdLookup) { *FD_LOOKUP.lock() = Some(f); }
+
+/// 注册 `/proc/<pid>/fd/N` 链接目标查询回调。
+pub fn register_task_fd_target_lookup(f : TaskFdTargetLookup) {
+    *FD_TARGET_LOOKUP.lock() = Some(f);
+}
 
 pub fn register_task_timer_slack_lookup(f : TaskTimerSlackLookup) {
     *TIMER_SLACK_LOOKUP.lock() = Some(f);
@@ -87,6 +93,11 @@ fn fds_for(leader : TaskId) -> Vec<usize> {
     let lookup = *FD_LOOKUP.lock();
     lookup.map(|f| f(leader))
           .unwrap_or_default()
+}
+
+fn fd_target_for(leader : TaskId, fd : usize) -> Option<String> {
+    let lookup = *FD_TARGET_LOOKUP.lock();
+    lookup.and_then(|f| f(leader, fd))
 }
 
 fn timer_slack_for(leader : TaskId) -> u64 {
@@ -833,7 +844,9 @@ impl ProcFsView for KernelProcFs {
                 if !fds_for(leader).contains(&fd) {
                     return Err(FsError::NotFound);
                 }
-                Ok(format!("anon_inode:[wateros-fd-{fd}]").into_bytes())
+                Ok(fd_target_for(leader, fd)
+                    .unwrap_or_else(|| format!("anon_inode:[wateros-fd-{fd}]"))
+                    .into_bytes())
             }
             _ => Err(FsError::NotAFile),
         }

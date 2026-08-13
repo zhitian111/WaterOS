@@ -9,6 +9,8 @@ pub enum VfsError {
     NotFound,
     /// 设备或命名管道当前没有可连接的对端。
     NoDevice,
+    /// 权限或设备锁定状态拒绝本次访问。
+    AccessDenied,
     /// 操作要求普通文件，当前节点类型不符。
     NotAFile,
     /// 路径的中间分量不是目录。

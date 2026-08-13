@@ -4,6 +4,9 @@
 
 extern crate alloc;
 
+mod pty;
+pub use pty::*;
+
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use api_v0::*;

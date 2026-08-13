@@ -10,6 +10,8 @@ pub mod cwd;
 pub mod file_lock;
 pub mod handles;
 pub mod interrupt_guard;
+#[cfg(feature = "user-graphics")]
+mod pty;
 pub mod registry;
 #[cfg(feature = "user-graphics")]
 mod user_graphics;
@@ -28,10 +30,7 @@ pub use registry::{PerTaskFdRegistry, poll_console_input_once};
 pub use interrupt_guard::with_interrupt_disabled;
 
 #[cfg(feature = "user-graphics")]
-pub use user_graphics::{
-    initialize_user_graphics_devices, open_special_device, special_device_exists,
-    special_device_metadata, special_device_paths, user_graphics_input_worker,
-};
+pub use user_graphics::{initialize_user_graphics_devices, user_graphics_input_worker};
 
 #[cfg(not(feature = "user-graphics"))]
 pub fn initialize_user_graphics_devices() -> bool { false }
@@ -41,21 +40,64 @@ pub extern "C" fn user_graphics_input_worker(_arg : usize) -> ! {
     loop { task::sleep_for_ticks(1); }
 }
 
-#[cfg(not(feature = "user-graphics"))]
-pub fn special_device_exists(_path : &str) -> bool { false }
+pub fn special_device_exists(path : &str) -> bool {
+    {
+        #[cfg(feature = "user-graphics")]
+        if pty::pty_special_device_exists(path) { return true; }
+        #[cfg(feature = "user-graphics")]
+        { user_graphics::special_device_exists(path) }
+        #[cfg(not(feature = "user-graphics"))]
+        { let _ = path; false }
+    }
+}
 
-#[cfg(not(feature = "user-graphics"))]
-pub fn special_device_metadata(_path : &str) -> Option<api_v0::VfsMetadata> { None }
+pub fn special_device_metadata(path : &str) -> Option<api_v0::VfsMetadata> {
+    #[cfg(feature = "user-graphics")]
+    if let Some(metadata) = pty::pty_special_device_metadata(path) { return Some(metadata); }
+    #[cfg(feature = "user-graphics")]
+    { user_graphics::special_device_metadata(path) }
+    #[cfg(not(feature = "user-graphics"))]
+    { let _ = path; None }
+}
 
-#[cfg(not(feature = "user-graphics"))]
-pub fn special_device_paths() -> alloc::vec::Vec<alloc::string::String> { alloc::vec::Vec::new() }
+pub fn special_device_paths() -> alloc::vec::Vec<alloc::string::String> {
+    #[cfg(feature = "user-graphics")]
+    {
+        let mut paths = pty::pty_special_device_paths();
+        paths.extend(user_graphics::special_device_paths());
+        paths
+    }
+    #[cfg(not(feature = "user-graphics"))]
+    { alloc::vec::Vec::new() }
+}
 
-#[cfg(not(feature = "user-graphics"))]
 pub fn open_special_device(
-    _path : &str,
-    _accmode : u32,
-    _nonblocking : bool,
-) -> Option<api_v0::VfsResult<alloc::boxed::Box<dyn api_v0::VfsIoHandle>>> { None }
+    path : &str,
+    accmode : u32,
+    nonblocking : bool,
+) -> Option<api_v0::VfsResult<alloc::boxed::Box<dyn api_v0::VfsIoHandle>>> {
+    #[cfg(feature = "user-graphics")]
+    {
+        let sid = task::current_process_snapshot().map(|process| process.sid.raw());
+        if let Some(opened) = pty::open_pty_special_device(path, accmode, nonblocking, sid) {
+            return Some(opened);
+        }
+        user_graphics::open_special_device(path, accmode, nonblocking)
+    }
+    #[cfg(not(feature = "user-graphics"))]
+    { let _ = (path, accmode, nonblocking); None }
+}
+
+pub fn pty_endpoint_for_handle(handle: &(dyn api_v0::VfsIoHandle + '_))
+                               -> Option<tty::PtyEndpointHandle> {
+    #[cfg(feature = "user-graphics")]
+    {
+        handle.as_any().downcast_ref::<pty::PtyVfsHandle>()
+              .map(|handle| handle.endpoint().clone())
+    }
+    #[cfg(not(feature = "user-graphics"))]
+    { let _ = handle; None }
+}
 
 pub fn test() {
     ipc::pipe::test();

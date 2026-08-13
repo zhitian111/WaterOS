@@ -27,6 +27,7 @@ const O_CLOEXEC: u32 = 0o2000000;
 const O_PATH: u32 = 0o10000000;
 const O_TMPFILE: u32 = 0o20200000;
 const O_NOFOLLOW: u32 = 0o100_000;
+const O_NOCTTY: u32 = 0o400;
 const O_EXCL: u32 = 0o200;
 const O_CREAT: u32 = 0o100;
 const O_TRUNC: u32 = 0o1000;
@@ -100,6 +101,21 @@ pub(crate) fn sys_openat(args : SyscallArgs) -> UserRet {
 
     match vfs::fd::alloc_fd(handle) {
         Ok(fd) => {
+            // UNIX98 PTY slave：session leader 在未指定 O_NOCTTY 时自动取得控制终端。
+            // nxterm 使用 setsid()+open(ptsname) 而不会额外调用 TIOCSCTTY。
+            if flags & O_NOCTTY == 0 {
+                if let (Ok(Some(endpoint)), Some(process)) =
+                    (vfs::fd::current_pty_endpoint(fd), task::current_process_snapshot())
+                {
+                    if endpoint.endpoint() == tty::TerminalEndpoint::PtySlave &&
+                       process.pid == process.sid && endpoint.controlling_sid() == 0
+                    {
+                        let _ = tty::attach_session(&endpoint,
+                                                    process.sid.raw(),
+                                                    process.pgid.raw());
+                    }
+                }
+            }
             if flags & O_CLOEXEC != 0 {
                 if let Err(e) = vfs::fd::set_fd_flags(fd, FD_CLOEXEC) {
                     let _ = vfs::fd::close_fd(fd);

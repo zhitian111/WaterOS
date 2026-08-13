@@ -51,6 +51,12 @@ def main() -> int:
     for inherited in ("MAKEFLAGS", "MFLAGS", "MAKEOVERRIDES"):
         env.pop(inherited, None)
 
+    if not (work / "CMakeLists.txt").is_file():
+        raise RuntimeError(
+            "vendored mGBA source is not initialized; from the repository root run: "
+            "git submodule update --init --recursive user/vendor/mgba"
+        )
+
     build = work / "wateros-build"
     run(["cmake", "-S", str(work), "-B", str(build),
          "-DCMAKE_SYSTEM_NAME=Linux", f"-DCMAKE_C_COMPILER={cross}gcc",

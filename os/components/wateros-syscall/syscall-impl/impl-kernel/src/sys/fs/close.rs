@@ -10,12 +10,28 @@ use crate::vfs_util::vfs_error_to_errno;
 const CLOSE_RANGE_UNSHARE: usize = 1 << 1;
 const CLOSE_RANGE_CLOEXEC: usize = 1 << 2;
 
+/// PTY 端点已经全部释放后再投递挂断事件，避免在 TTY/VFS 锁内进入信号路径。
+pub(crate) fn dispatch_terminal_events(terminal_ids : &[tty::TerminalId]) {
+    for id in terminal_ids {
+        for event in tty::take_control_events(*id) {
+            crate::sys::ipc::signal::send_kernel_signal_to_process_group(
+                task::ProcessId::from_raw(event.process_group), event.signal);
+        }
+    }
+}
+
 // 本方法代码由AI完成
 pub(crate) fn sys_close(args: SyscallArgs) -> UserRet {
     let fd = args.arg(0);
+    let pty = vfs::fd::current_pty_endpoint(fd).ok().flatten();
     let was_unix = crate::unix_sock::is_unix_fd(fd);
     let was_epoll = epoll_fd::is_epoll_fd(fd);
     let result = vfs::fd::close_fd(fd);
+    let pty_id = pty.as_ref().map(tty::PtyEndpointHandle::id);
+    drop(pty);
+    if let Some(id) = pty_id {
+        dispatch_terminal_events(core::slice::from_ref(&id));
+    }
     if was_unix {
         if let Ok(task_id) = vfs::fd::current_task_id() {
             crate::unix_sock::unregister(task_id, fd);
@@ -58,12 +74,13 @@ pub(crate) fn sys_close_range(args: SyscallArgs) -> UserRet {
     }
 
     match vfs::fd::close_fd_range(first, last) {
-        Ok(closed_fds) => {
+        Ok((closed_fds, terminal_ids)) => {
             for fd in closed_fds {
                 if let Ok(task_id) = vfs::fd::current_task_id() {
                     crate::unix_sock::unregister(task_id, fd);
                 }
             }
+            dispatch_terminal_events(&terminal_ids);
             UserRet::from_success(0)
         }
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
