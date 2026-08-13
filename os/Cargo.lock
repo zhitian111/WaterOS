@@ -238,6 +238,7 @@ dependencies = [
 name = "ipc-futex"
 version = "0.1.0"
 dependencies = [
+ "log",
  "wateros-ipc-futex-api-v0",
  "wateros-ipc-futex-impl-task",
 ]
@@ -246,6 +247,7 @@ dependencies = [
 name = "ipc-pipe"
 version = "0.1.0"
 dependencies = [
+ "log",
  "wateros-ipc-pipe-api-v0",
  "wateros-ipc-pipe-impl-ringbuf",
 ]
@@ -254,6 +256,7 @@ dependencies = [
 name = "ipc-shm"
 version = "0.1.0"
 dependencies = [
+ "log",
  "wateros-ipc-shm-api-v0",
  "wateros-ipc-shm-impl-frame",
 ]
@@ -262,6 +265,7 @@ dependencies = [
 name = "ipc-signal"
 version = "0.1.0"
 dependencies = [
+ "log",
  "wateros-ipc-signal-api-v0",
  "wateros-ipc-signal-impl-core",
 ]
@@ -1175,6 +1179,7 @@ name = "wateros-ipc-pipe-impl-ringbuf"
 version = "0.1.0"
 dependencies = [
  "ipc-waitqueue",
+ "log",
  "spin",
  "wateros-base",
  "wateros-ipc-pipe-api-v0",
@@ -1191,6 +1196,7 @@ dependencies = [
 name = "wateros-ipc-shm-impl-frame"
 version = "0.1.0"
 dependencies = [
+ "log",
  "spin",
  "wateros-ipc-shm-api-v0",
  "wateros-mm-api-v0",
@@ -1205,6 +1211,7 @@ version = "0.1.0"
 name = "wateros-ipc-signal-impl-core"
 version = "0.1.0"
 dependencies = [
+ "log",
  "spin",
  "wateros-ipc-signal-api-v0",
 ]
