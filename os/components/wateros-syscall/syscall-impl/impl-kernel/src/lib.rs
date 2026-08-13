@@ -19,6 +19,15 @@ mod unix_sock;
 mod user_copy;
 mod vfs_util;
 
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[syscall/impl-kernel] self_test begin");
+    assert!(is_restartable_syscall(api_v0::READ));
+    assert!(!is_restartable_syscall(api_v0::YIELD));
+    assert!(!is_restartable_syscall(usize::MAX));
+    log::info!("[syscall/impl-kernel] self_test complete");
+}
+
 /// trap / 异常返回路径上的 syscall 分发入口。
 #[inline]
 pub fn dispatch_syscall_from_trap(syscall_nr : usize, syscall_args : SyscallArgs) -> isize {

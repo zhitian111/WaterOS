@@ -16,6 +16,6 @@ pub use impl_kernel::{
 /// 系统调用内核实现的非用户态自检。
 #[cfg(feature = "self_test")]
 pub fn self_test() {
-    assert!(!impl_kernel::is_restartable_syscall(usize::MAX));
+    impl_kernel::self_test();
     log::info!("[syscall] self_test complete; no user-mode transition performed");
 }
