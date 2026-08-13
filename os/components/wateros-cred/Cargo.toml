@@ -15,6 +15,7 @@
     api-v0 = [  ]
     default = [ "api-v0", "impl-root" ]
     impl-root = [ "api-v0", "dep:task"]
+    self_test = [ "impl-root/self_test" ]
 
 [profile.dev]
     panic = "abort"

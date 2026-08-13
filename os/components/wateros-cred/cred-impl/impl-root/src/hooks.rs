@@ -85,3 +85,28 @@ pub fn may_chown(
         .exclusive_access()
         .may_chown(cred, inode_uid, inode_gid, new_uid, new_gid)
 }
+
+/// 运行凭证侧表的内核态可用性自检；测试使用局部注册表，不污染全局任务状态。
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    use api_v0::{CredentialBackend, CredentialMutation};
+
+    log::info!("[cred] self_test begin");
+    let mut registry = super::registry::PerTaskCredRegistry::new();
+    registry.on_user_task_spawned(1);
+    assert_eq!(registry.current(1), ProcessCredentials::ROOT);
+
+    registry.fork_cred(1, 2);
+    assert_eq!(registry.current(2), ProcessCredentials::ROOT);
+    registry.set_resuid(2, Some(Uid(1000)), Some(Uid(1000)), Some(Uid(1000)));
+    assert_eq!(registry.current(1), ProcessCredentials::ROOT);
+    assert_eq!(registry.current(2).effective_uid, Uid(1000));
+
+    registry.set_supplementary_groups(2, &[Gid(1000), Gid(1001)]);
+    assert_eq!(registry.current(2).supplementary_group_count(), 2);
+    registry.drop_task_cred(2);
+    registry.drop_task_cred(1);
+    assert!(registry.try_cred(1).is_none());
+    assert!(registry.try_cred(2).is_none());
+    log::info!("[cred] self_test complete; temporary credentials reclaimed");
+}

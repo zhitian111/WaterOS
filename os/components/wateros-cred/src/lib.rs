@@ -118,6 +118,13 @@ pub fn set_resgid(real_gid: Option<Gid>, effective_gid: Option<Gid>, saved_gid: 
     active_impl::set_resgid(tid, real_gid, effective_gid, saved_gid);
 }
 
+#[cfg(all(feature = "impl-root", feature = "self_test"))]
+/// 凭证组件自检入口；实际测试由选中的 impl 执行。
+pub fn self_test() {
+    log::info!("[cred] self_test dispatch");
+    active_impl::self_test();
+}
+
 #[cfg(feature = "impl-root")]
 /// 设置当前任务 supplementary 组列表。
 pub fn set_supplementary_groups(groups: &[Gid]) {
