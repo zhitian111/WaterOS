@@ -65,7 +65,7 @@
 - `FUTEX_WAIT` / `FUTEX_WAKE`（含 bitset 变体）
 - `wake_user_addr` 供 `set_tid_address` / `exit` 清理路径使用
 
-同时 `ipc-futex` 仅有 `impl-dummy`，**未进入 syscall 依赖图**。
+当前 `ipc-futex` 已由 `impl-task` 提供实现，并通过统一 IPC feature 接入 syscall 依赖图。
 
 ### 缺失能力
 
@@ -122,7 +122,6 @@ os/components/wateros-ipc/ipc-futex/
       ops.rs                            # 扩展 KernelFutexOps
       robust.rs                         # + FUTEX_OWNER_DIED 等常量
   futex-impl/
-    impl-dummy/                         # 保留链接桩
     impl-task/                          # 新增
       Cargo.toml
       src/
@@ -319,7 +318,7 @@ impl **不**订阅 task 回调；生命周期由 syscall / exec 路径显式驱�
 
 ```toml
 [features]
-default = ["api-v0", "impl-dummy", "impl-task", ...]  # futex 默认 impl-task
+default = ["api-v0"]                  # 聚合层按 feature 启用 impl-task
 futex = ["dep:futex", "futex/api-v0", "futex/impl-task"]
 impl-riscv64 = [
     "futex?/impl-task",
@@ -333,7 +332,6 @@ impl-riscv64 = [
 [features]
 default = ["api-v0", "impl-task"]
 impl-task = []
-impl-dummy = []
 ```
 
 ### `sys_futex` 行为
