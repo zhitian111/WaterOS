@@ -154,7 +154,8 @@ fn bringup_driver_and_user() {
                 }
                 Err(e) => warn!("network stack init skipped: {}", e),
             }
-            fs::init();
+            fs::init_when_boot();
+            fs::init_after_boot();
             crate::user_bringup_bus::run();
         }
     }

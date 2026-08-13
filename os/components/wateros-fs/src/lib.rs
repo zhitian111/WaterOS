@@ -93,7 +93,7 @@ fn log_supported_fs() {
 }
 
 /// 文件系统子系统初始化：打印能力、刷新 devfs，探测根块设备并注入活动 impl（不挂载根卷）。
-pub fn init() {
+pub fn init_after_boot() {
     logging::info!("[fs] init begin");
     log_supported_fs();
     let node_count = devfs::active_impl::refresh();
@@ -145,6 +145,16 @@ pub fn init() {
                    kind);
     rootfs::active_impl::set_active_fs_impl(imp);
     logging::info!("[fs] init end");
+}
+
+/// FS 启动前阶段入口；只建立不依赖块设备的边界，不提前访问根卷。
+pub fn init_when_boot() {
+    logging::info!("[fs] init_when_boot: filesystem facade ready");
+}
+
+/// 兼容旧调用方的初始化入口。
+pub fn init() {
+    init_after_boot();
 }
 
 /// bring-up：在 [`init`] 之后将默认根块设备以 **RW** 挂载为全局根卷。
