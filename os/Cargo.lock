@@ -613,6 +613,7 @@ version = "0.1.0"
 name = "wateros-cred"
 version = "0.1.0"
 dependencies = [
+ "log",
  "wateros-cred-api-v0",
  "wateros-cred-impl-root",
  "wateros-task",
@@ -1226,6 +1227,7 @@ dependencies = [
 name = "wateros-klog"
 version = "0.1.0"
 dependencies = [
+ "log",
  "wateros-klog-api-v0",
  "wateros-klog-impl-kernel",
 ]

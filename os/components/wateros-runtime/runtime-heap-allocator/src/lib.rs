@@ -7,6 +7,8 @@
 //! RUNTIME_ORDER: `init` 在 BSP 的单线程启动阶段完成后，AP 才可执行可能分配的路径。
 //! ALLOC_SYNC: 后端锁保护分配器元数据，`interrupt_guard` 同时禁止本 CPU 的中断重入。
 
+extern crate alloc;
+
 mod interrupt_guard;
 mod stress;
 
