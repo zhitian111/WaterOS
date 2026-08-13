@@ -35,7 +35,7 @@
     spin = "0.10.0"
 
 [features]
-    self_test = [  ]
+    self_test = [ "impl-ramfs?/self_test" ]
     api-v0 = [
         "devfs/api-v0",
         "impl-ext4-rs?/api-v0",

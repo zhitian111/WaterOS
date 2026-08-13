@@ -14,5 +14,6 @@
     ] }
 
 [features]
+    self_test = [ ]
     api-v0 = [  ]
     default = [ "api-v0" ]

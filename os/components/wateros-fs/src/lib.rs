@@ -185,7 +185,9 @@ pub fn mount_aux_rw_from_block_path(path : &str) -> api_v0::FsResult<api_v0::Sha
 pub fn test() {
     logging::trace!("[fs] test begin");
     api_v0::test();
-    #[cfg(feature = "impl-ramfs")]
+    #[cfg(all(feature = "impl-ramfs", feature = "self_test"))]
+    impl_ramfs::self_test();
+    #[cfg(all(feature = "impl-ramfs", not(feature = "self_test")))]
     impl_ramfs::test();
     procfs::active_impl::test();
 

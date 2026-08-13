@@ -1161,6 +1161,11 @@ pub fn test() {
                fs.resident_pages());
 }
 
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    test();
+}
+
 #[cfg(test)]
 mod tests {
     use super::{RamFs, ReadWriteFs, SparseFile, RAMFS_PAGE_SIZE};
