@@ -17,7 +17,10 @@
     ] }
     log = { version = "0.4" }
 [features]
-    default = [ "impl-tlsf" ]
+    self_test = [  ]
+    impl-riscv64 = [ "arch/impl-riscv64" ]
+    impl-loongarch64 = [ "arch/impl-loongarch64" ]
+    default = [ "impl-tlsf", "impl-riscv64" ]
     impl-linked-list-allocator = [ "dep:linked_list_allocator" ]
     impl-tlsf = [  ]
     stress-on-init = [  ]

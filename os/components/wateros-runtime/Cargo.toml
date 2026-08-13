@@ -24,7 +24,10 @@
     runtime-serial = { path = "./runtime-serial/", package = "wateros-runtime-serial", default-features = true, optional = true }
 
 [features]
-    default = [  ]
+    self_test = [ "heap-allocator/self_test" ]
+    impl-riscv64 = [ "heap-allocator/impl-riscv64" ]
+    impl-loongarch64 = [ "heap-allocator/impl-loongarch64" ]
+    default = [ "impl-riscv64" ]
     heap-linked-list = [ "heap-allocator/impl-linked-list-allocator" ]
     heap-stress = [ "heap-allocator/stress-on-init" ]
     heap-tlsf = [ "heap-allocator/impl-tlsf" ]

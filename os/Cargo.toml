@@ -105,6 +105,7 @@
         "dep:klog",
         "klog/default",
         "runtime/impl-platform-console",
+        "runtime/impl-loongarch64",
         "syscall/impl-kernel",
         "vfs-bridge",
     ]
@@ -145,6 +146,7 @@
         "klog/default",
         "runtime/impl-error",
         "runtime/impl-platform-console",
+        "runtime/impl-riscv64",
         "syscall/impl-kernel",
         #"dashboard-debug",
     ]
@@ -163,4 +165,5 @@
         "cred/self_test",
         "network/self_test",
         "mm/self_test",
+        "runtime/self_test",
     ]

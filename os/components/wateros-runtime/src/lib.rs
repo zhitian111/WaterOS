@@ -39,6 +39,14 @@ pub mod heap_allocator {
     pub use heap_allocator::*;
 }
 
+#[cfg(feature = "self_test")]
+/// runtime 组件统一自检入口。
+pub fn self_test() {
+    logging::info!("[runtime] self_test begin");
+    heap_allocator::self_test();
+    logging::info!("[runtime] self_test complete");
+}
+
 #[cfg(feature = "serial-uart-virt")]
 pub mod serial {
     pub use ::runtime_serial::*;

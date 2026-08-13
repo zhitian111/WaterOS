@@ -166,6 +166,7 @@ fn bringup_driver_and_user(memory_end: usize) {
 #[cfg(feature = "self_test")]
 fn run_self_tests() {
     runtime::logging::info!("[self-test] unified kernel self_test begin");
+    runtime::self_test();
     cred::self_test();
     driver::self_test();
     ipc::self_test();

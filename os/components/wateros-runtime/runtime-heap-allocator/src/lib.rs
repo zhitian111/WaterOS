@@ -80,3 +80,17 @@ pub fn init() {
     #[cfg(feature = "stress-on-init")]
     heap_fragmentation_stress_report(100_000);
 }
+
+#[cfg(feature = "self_test")]
+/// 堆组件可用性自检：申请、写入、校验并释放临时分配。
+pub fn self_test() {
+    use alloc::boxed::Box;
+    log::info!("[heap] self_test begin");
+    let mut value = Box::new([0u8; 128]);
+    value[0] = 0x5a;
+    value[127] = 0xa5;
+    assert_eq!(value[0], 0x5a);
+    assert_eq!(value[127], 0xa5);
+    drop(value);
+    log::info!("[heap] self_test complete; allocation released");
+}
