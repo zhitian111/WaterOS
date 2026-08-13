@@ -77,6 +77,15 @@ pub fn physical_ram_end_exclusive() -> usize {
     }
 }
 
+/// 平台组合层自检：验证引导上下文和物理内存边界已经可查询。
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    let dtb = dtb_pa();
+    let ram_end = physical_ram_end_exclusive();
+    assert!(ram_end > 0, "platform RAM boundary must be non-zero");
+    log::info!("[platform] self_test ok: dtb={:#x} ram_end={:#x}", dtb, ram_end);
+}
+
 /// 启动参数与引导上下文：具体类型由 feature 选中的 `platform-impl` 提供。
 #[cfg(feature = "api-v0")]
 pub mod boot;
