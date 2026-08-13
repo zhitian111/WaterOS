@@ -11,11 +11,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::mount_table::{resolve_route, FsRoute};
 use crate::{replace_file_contents, FsBridge};
-use api_v0::{
-    SingleRootReadView, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType,
-    VfsOpenDescriptionState, VfsOpenFlags, VfsPreparedRead, VfsReadLease, VfsResult,
-    VfsSeekWhence,
-};
+use api_v0::*;
 use spin::Mutex;
 
 use crate::read_lease::{try_zeroed, ReservationGuard, StagedReadLease};

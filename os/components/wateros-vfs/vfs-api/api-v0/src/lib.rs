@@ -27,13 +27,7 @@ pub use error::{VfsError, VfsResult};
 pub use fd::{
     VfsFd, VfsFdSession, VFS_FIRST_DYNAMIC_FD, VFS_STDERR_FD, VFS_STDIN_FD, VFS_STDOUT_FD,
 };
-pub use handle::{
-    VfsCopyProgress, VfsDeviceMapping, VfsDeviceMappingLease, VfsFileHandle,
-    VfsFileContentIdentity, VfsFramebufferInfo, VfsFramebufferRegion, VfsInputDeviceInfo, VfsIoHandle,
-    VfsOpenDescriptionState, VfsOpenFlags, VfsOpenOps, VfsPreparedRead, VfsReadFinish,
-    VfsReadLease, VfsReadReservation, VfsSeekWhence, VfsSpecialDeviceInfo,
-    VfsTerminalEndpoint, VfsTerminalInfo,
-};
+pub use handle::*;
 pub use kind::{VfsAccessMode, VfsCapability, VfsFsKind};
 pub use meta::{VfsDirEntry, VfsMetadata, VfsNodeType};
 pub use mount::VfsMountOps;

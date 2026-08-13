@@ -5,10 +5,7 @@ extern crate alloc;
     use alloc::string::String;
 
     use super::active_impl;
-    use super::api::{
-        SingleRootReadView, VfsDevInventory, VfsFsKind, VfsMountOps, VfsOpenFlags, VfsOpenOps,
-        VfsResult, VfsSeekWhence, validate_root_file_name,
-    };
+    use super::api::*;
 
     /// RW 写入后通过同一根 RW 视图读回校验。
     pub fn rw_write_root_verify(

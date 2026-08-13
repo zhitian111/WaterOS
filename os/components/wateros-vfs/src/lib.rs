@@ -19,15 +19,7 @@ extern crate impl_fd_session;
 extern crate task;
 
 pub use api_v0 as api;
-pub use api_v0::{
-    normalize_absolute_path, register_open_path_resolver, resolve_against_cwd, resolve_open_path,
-    resolve_symlink_path_with, validate_root_file_name, FinalSymlink, NormalizedPath,
-    RootRwSession, SingleRootReadView, VfsAccessMode, VfsBackend, VfsCapability, VfsDevInventory,
-    VfsDevNode, VfsDevNodeType, VfsDirEntry, VfsError, VfsFd, VfsFdSession, VfsFileHandle,
-    VfsFsKind, VfsIoHandle, VfsMetadata, VfsMountOps, VfsMountTable, VfsNodeType, VfsOpenFlags,
-    VfsOpenOps, VfsResult, VfsSeekWhence, VFS_FIRST_DYNAMIC_FD, VFS_STDERR_FD, VFS_STDIN_FD,
-    VFS_STDOUT_FD,
-};
+pub use api_v0::*;
 
 /// per-task 文件描述符会话（`impl-fd-session` feature）。
 #[cfg(feature = "impl-fd-session")]
