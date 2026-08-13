@@ -443,3 +443,10 @@ pub fn test_with_range(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
 
     log::trace!("[frame-alloctor::impl-stack] test end");
 }
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[frame-allocator/impl-stack] self_test begin");
+    assert!(core::mem::size_of::<FrameMemStats>() > 0);
+    log::info!("[frame-allocator/impl-stack] self_test complete");
+}

@@ -13,3 +13,4 @@
     api-v0 = [ "impl-stack/api-v0" ]
     default = [ "api-v0", "impl-stack" ]
     impl-stack = [  ]
+    self_test = [ "impl-stack/self_test" ]
