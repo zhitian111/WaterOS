@@ -174,4 +174,5 @@
         "base/self_test",
         "utils/self_test",
         "debug/self_test",
+        "gui?/self_test",
     ]

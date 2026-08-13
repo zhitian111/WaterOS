@@ -12,11 +12,13 @@ edition = "2024"
 [dependencies]
 api-v0 = { path = "./gui-api/api-v0", package = "wateros-gui-api-v0", optional = true }
 impl-software = { path = "./gui-impl/impl-software", package = "wateros-gui-impl-software", optional = true }
+log = { version = "0.4" }
 
 [features]
 default = [ "api-v0", "impl-software" ]
 api-v0 = [ "dep:api-v0" ]
 impl-software = [ "api-v0", "dep:impl-software" ]
+self_test = [ "impl-software?/self_test" ]
 
 [profile.dev]
 panic = "abort"

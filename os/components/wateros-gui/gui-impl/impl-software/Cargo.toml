@@ -11,3 +11,4 @@ spin = "0.10.0"
 
 [features]
 default = []
+self_test = []

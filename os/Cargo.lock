@@ -1110,6 +1110,7 @@ dependencies = [
 name = "wateros-gui"
 version = "0.1.0"
 dependencies = [
+ "log",
  "wateros-gui-api-v0",
  "wateros-gui-impl-software",
 ]

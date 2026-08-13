@@ -31,3 +31,17 @@ pub use input::InputBridge;
 pub use runtime::{GuiRuntime, GuiRuntimeSnapshot};
 pub use surface::{DirtyRegions, ShadowSurface};
 pub use theme::Theme;
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    let mut surface = ShadowSurface::new(api_v0::Size::new(8, 8))
+        .expect("GUI self_test surface allocation");
+    assert_eq!(surface.pixels().len(), 8 * 8 * surface::BYTES_PER_PIXEL);
+    surface.pixels_mut()[0] = 0xaa;
+    assert_eq!(surface.pixels()[0], 0xaa);
+
+    let mut dirty = DirtyRegions::new(api_v0::Rect::new(0, 0, 8, 8));
+    dirty.add(api_v0::Rect::new(-2, -2, 4, 4));
+    assert_eq!(dirty.take().len(), 1);
+    assert!(dirty.is_empty());
+}

@@ -14,3 +14,9 @@ pub mod api {
 pub use api_v0::*;
 #[cfg(feature = "impl-software")]
 pub use impl_software::*;
+
+#[cfg(all(feature = "self_test", feature = "impl-software"))]
+pub fn self_test() {
+    impl_software::self_test();
+    log::info!("[gui] self_test complete; temporary software surface reclaimed");
+}

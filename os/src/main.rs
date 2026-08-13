@@ -197,6 +197,8 @@ fn run_self_tests() {
     base::self_test();
     utils::self_test();
     debug::self_test();
+    #[cfg(feature = "gui")]
+    gui::self_test();
     cred::self_test();
     driver::self_test();
     ipc::self_test();
