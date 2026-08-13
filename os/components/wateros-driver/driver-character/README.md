@@ -60,26 +60,28 @@ syscall / VFS
 
 主要实现在 `character-api/api-v0/src/lib.rs`：
 
-- `CharacterDevice` trait：`read` / `write` / `poll_revents`，以及可选
-  `prepare_read` / `finish_read`（`CharacterReadReservation` / `CharacterReadFinish`）。
-- `SerialPort` trait：`write_byte` / `write_all` / `read_byte_blocking` / `try_read_byte`。
-- `CharacterDeviceKind`：`Serial` / `Rtc` / `Null`，供 devfs 路径别名与 syscall 分发。
-- 注册表：`register_character_device`、`first_character_device`、`with_character_device`、
-  `character_device_count`、`character_device_at`。
+- 提供字节流 I/O：`CharacterDevice` 实现 `read` / `write` / `poll_revents`，并可选支持
+  `prepare_read` / `finish_read` 事务式读取（预约字节 → 提交或回滚）。
+- 提供串口最小契约：`SerialPort` 封装单字节/批量写、阻塞读与非阻塞读。
+- 区分设备类别：`CharacterDeviceKind` 的 `Serial` / `Rtc` / `Null` 供 devfs 路径别名与 syscall
+  分发。
+- 提供稳定注册表：`register_character_device` / `first_character_device` /
+  `with_character_device` 等访问接口。
 
 ### impl-uart-16550 / NS16550 串口
 
-- `RegisterLayout`：`Byte16550` 与 `DwApb32` 两种布局。
-- `Ns16550Port`：按布局换算寄存器偏移并执行 volatile 读写。
-- `register_uart_character_device(base)`：平台层调用，注册为 `CharacterDevice`。
+- 统一处理两种寄存器布局（`RegisterLayout`）：`Byte16550`（标准字节布局）与 `DwApb32`
+  （reg-shift=2、reg-io-width=4）；`Ns16550Port` 按布局换算寄存器偏移并执行 volatile 读写。
+- 平台层调用 `register_uart_character_device(base)` 把串口注册为 `CharacterDevice`；本 crate
+  不感知板级地址，也不做波特率除数编程。
 
 ### impl-rtc-stub / 实时钟
 
-- `RtcCharacterDevice` / `RtcTime`：读取实时钟时间；由 `register_rtc_stub` 注册。
+- 读取实时钟时间（`RtcCharacterDevice` / `RtcTime`），由 `register_rtc_stub` 注册。
 
 ### impl-null-stub / null 设备
 
-- `NullCharacterDevice`：丢弃写入、无数据的占位设备；由 `register_null_stub` 注册。
+- 提供丢弃写入、无数据的占位设备（`NullCharacterDevice`），由 `register_null_stub` 注册。
 
 ### impl-dummy / 占位实现
 

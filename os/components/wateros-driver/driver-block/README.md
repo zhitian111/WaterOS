@@ -60,33 +60,31 @@ probe_virtio_devices()
 
 主要实现在 `block-api/api-v0/src/lib.rs`：
 
-- `Lba(pub u64)`：逻辑块地址，可从 `usize` / `u64` 构造。
-- `BlockDevice` trait：
-  - `block_size()` / `total_blocks()`：设备块大小与总块数。
-  - `read_blocks` / `write_blocks`：按块读写，`buf` 长度须为块大小的整数倍；不支持写时返回
-    `DriverError::Unsupported`。
-  - `read_bytes` / `read_prefix`：任意字节对齐读取。
-- 注册表：`register_block_device`、`first_block_device`、`block_device_at`、
-  `block_device_count`。
+- 提供逻辑块寻址：`Lba` 从 0 起算，可从 `usize` / `u64` 构造，`BLOCK_SIZE` 固定 512。
+- 提供按块与按字节读写：`BlockDevice` 实现 `read_blocks` / `write_blocks`（`buf` 长度须为块
+  大小的整数倍，不支持写返回 `Unsupported`），并默认用整段块缓冲实现任意字节对齐的
+  `read_bytes` / `read_prefix`。
+- 提供稳定注册表：`register_block_device` 返回稳定下标，`first_block_device` 供根文件系统
+  绑定单盘，另有 `block_device_at` / `block_device_count`。
 
 ### impl-virtio-mmio / RISC-V VirtIO 块
 
-- `VirtioBlkDevice::from_mmio(mmio)`：从 DTB 枚举得到的 MMIO 窗口初始化 virtio-blk。
-- `VirtioMmioHal`：恒等映射帧分配；按页申请连续物理页，不连续或 OOM 时整体回滚并返回错误。
+- 从 DTB 枚举得到的 MMIO 窗口初始化 virtio-blk（`VirtioBlkDevice::from_mmio`）。
+- 通过恒等映射帧分配向帧池申请连续物理页（`VirtioMmioHal`），不连续或 OOM 时整体回滚。
 
 ### impl-virtio-pci / LoongArch VirtIO 块
 
-- `VirtioPciBlkDevice` 与 `VirtioPciProbeInfo`、`VirtioPciBarAllocator`：走 PCI ECAM 枚举，
-  为 BAR 分配 MMIO 地址并开启 `MEMORY_SPACE` / `BUS_MASTER`。
+- 走 PCI ECAM 枚举并初始化 virtio-blk（`VirtioPciBlkDevice`），为 BAR 分配 MMIO 地址并开启
+  `MEMORY_SPACE` / `BUS_MASTER`。
 
 ### impl-block-cache / 块缓存
 
 主要实现在 `block-impl/impl-block-cache/src/lib.rs`：
 
-- `BlockCacheManager::wrap(dev, config)` 包装任意 `BlockDevice`，对上仍实现同一 trait。
-- `BlockCacheConfig { capacity_blocks }`：可缓存逻辑块数，默认取自
-  `wateros_base_config::fs::BLOCK_CACHE_CAPACITY_BLOCKS`；为 0 时透传。
-- 连续未命中合并为单次底层 `read_blocks`；读数据二次命中准入，避免顺序扫描污染缓存。
+- 用 `BlockCacheManager::wrap` 包装任意 `BlockDevice` 并提供写穿 LRU 缓存，对上仍实现同一
+  trait。
+- 合并连续未命中为单次底层 `read_blocks`，读数据二次命中准入，避免顺序扫描把一次性块复制
+  进数据缓存；`capacity_blocks` 为 0 时退化为直接透传。
 
 ### impl-dummy / 占位实现
 

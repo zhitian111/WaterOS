@@ -53,19 +53,21 @@ probe_virtio_devices()
 
 主要实现在 `network-api/api/v0/src/lib.rs`：
 
-- `NetworkDevice` trait：`mac_address` / `mtu` / `is_link_up` / `send` / `receive`。
-- 注册表：`register_network_device`、`first_network_device`、`network_device_at`、
+- 提供以太网帧收发：`NetworkDevice` 实现 `send` / `receive`（完整 L2 帧），并提供
+  `mac_address` / `mtu`（默认 1500）/ `is_link_up` 元数据；`buf` 不足以容纳完整帧时返回
+  `InvalidParam`。
+- 提供稳定注册表：`register_network_device` / `first_network_device` / `network_device_at` /
   `network_device_count`。
 
 ### impl-virtio-mmio / RISC-V VirtIO 网络
 
-- `VirtioNetDevice::from_mmio(mmio)`：从 DTB 枚举得到的 MMIO 窗口初始化 virtio-net。
-- `VirtioMmioHal`：恒等映射帧分配，与块设备共用同一策略。
+- 从 DTB 枚举得到的 MMIO 窗口初始化 virtio-net（`VirtioNetDevice::from_mmio`）。
+- 通过恒等映射帧分配申请 DMA 内存（`VirtioMmioHal`），与块设备共用同一策略。
 
 ### impl-virtio-pci / LoongArch VirtIO 网络
 
-- `VirtioPciNetDevice` 与 `VirtioNetPciProbeInfo`、`VirtioNetPciBarAllocator`：走 PCI ECAM
-  枚举，为 BAR 分配 MMIO 地址并开启 `MEMORY_SPACE` / `BUS_MASTER`。
+- 走 PCI ECAM 枚举并初始化 virtio-net（`VirtioPciNetDevice`），为 BAR 分配 MMIO 地址并开启
+  `MEMORY_SPACE` / `BUS_MASTER`。
 
 ### impl-dummy / 占位实现
 

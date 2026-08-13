@@ -59,25 +59,23 @@ Nano-X ioctl(FBIOPAN_DISPLAY)
 
 主要实现在 `display-api/api-v0/src/lib.rs`：
 
-- `DisplayDevice` trait：`info()`（分辨率/步长/像素格式）、`framebuffer()`（借用可写帧缓冲）、
-  `flush()`（全屏提交）、`flush_region()`（区域提交，默认退化全屏）。
-- `FramebufferInfo`：`width` / `height` / `stride` / `format` / `byte_len` / `phys_base` /
-  `mapped_len` / `base`。
-- `FramebufferRegion`：需要提交的矩形区域（`x` / `y` / `width` / `height`）。
-- 注册表：`register_display_device`、`first_display_device`、`display_device_at`、
+- 提供线性帧缓冲与主动刷新：`DisplayDevice` 通过 `info()` 报告分辨率/步长/像素格式，
+  `framebuffer()` 借用可写帧缓冲，`flush()` 全屏提交，`flush_region()` 区域提交（默认安全退化
+  为全屏）。
+- 描述帧缓冲元数据：`FramebufferInfo` 同时给出可见字节数、页对齐映射长度、物理起点与内核
+  诊断地址；`FramebufferRegion` 描述待提交矩形。
+- 提供稳定注册表：`register_display_device` / `first_display_device` / `display_device_at` /
   `display_device_count`。
 
 ### impl-virtio-mmio / RISC-V VirtIO GPU
 
-- `VirtioGpuMmioDevice::from_mmio(mmio)`：创建 `MmioTransport` → 初始化 `VirtIOGpu` →
-  `resolution()` 查询分辨率 → `setup_framebuffer()` 分配 DMA framebuffer → 构造
-  `FramebufferInfo`。
-- `VirtioGpuMmioHal`：恒等映射帧分配；按页申请连续物理页，不连续或 OOM 时整体回滚。
-- `flush()` / `flush_region()` 直接转发到 `VirtIOGpu`。
+- 从 DTB 枚举得到的 MMIO 窗口初始化 VirtIO GPU（`VirtioGpuMmioDevice::from_mmio`）：建传输 →
+  协商 → 查分辨率 → 分配 DMA framebuffer → 构造 `FramebufferInfo`。
+- 通过恒等映射帧分配申请连续物理页（`VirtioGpuMmioHal`），不连续或 OOM 时整体回滚。
+- 刷新直接转发 `VirtIOGpu::flush` / `flush_region`。
 
 ### impl-virtio-pci / LoongArch VirtIO GPU
 
-- `VirtioGpuPciDevice` 与 `VirtioGpuPciProbeInfo`、`VirtioGpuPciBarAllocator`：走 PCI ECAM
-  枚举（`probe_first_from_ecam`），为 BAR 分配 MMIO 地址并开启 `MEMORY_SPACE` /
-  `BUS_MASTER`。
+- 走 PCI ECAM 枚举并初始化 VirtIO GPU（`probe_first_from_ecam`），为 BAR 分配 MMIO 地址并
+  开启 `MEMORY_SPACE` / `BUS_MASTER`。
 - 上层接口（`DisplayDevice`）与 RISC-V 完全相同，仅 transport 不同。

@@ -59,24 +59,23 @@ user_graphics_input_worker()
 
 主要实现在 `input-api/api-v0/src/lib.rs`：
 
-- `InputDeviceKind`：`Keyboard` / `Pointer` / `Unknown`。
-- `AbsoluteAxis`：绝对轴闭区间硬件取值范围（`minimum` / `maximum`），供坐标缩放。
-- `InputDeviceInfo`：`name` / `kind` / `absolute_x` / `absolute_y`，初始化后固定。
-- `RawInputEvent`：Linux evdev/virtio-input 兼容三元组。
-- `InputDevice` trait：`info()`（稳定元数据）与 `pop_event()`（非阻塞取事件）。
-- 注册表：`register_input_device`、`input_devices`、`input_device_at`、
+- 提供原始输入事件：`InputDevice` 非阻塞 `pop_event()` 返回 evdev 兼容三元组 `RawInputEvent`。
+- 描述设备元数据：`InputDeviceInfo` 携带名称、类别与绝对轴范围，初始化后固定；`AbsoluteAxis`
+  给出闭区间范围供坐标缩放。
+- 区分设备类别：`InputDeviceKind` 的 `Keyboard` / `Pointer` / `Unknown` 供 devfs 别名与事件
+  解释策略选择。
+- 提供稳定注册表：`register_input_device` / `input_devices` / `input_device_at` /
   `input_device_count`。
 
 ### impl-virtio-mmio / RISC-V VirtIO 输入
 
-- `VirtioInputMmioDevice::from_mmio(mmio)`：创建 `MmioTransport` → 初始化 `VirtIOInput` →
-  查询能力并构造 `InputDeviceInfo`。
-- `VirtioInputMmioHal`：恒等映射帧分配，与其它 virtio 驱动共用同一策略。
+- 从 DTB 枚举得到的 MMIO 窗口初始化 VirtIO 键盘/平板（`VirtioInputMmioDevice::from_mmio`），
+  查询设备能力并构造 `InputDeviceInfo`。
+- 通过恒等映射帧分配申请 DMA 内存（`VirtioInputMmioHal`），与其它 virtio 驱动共用策略。
 - `pop_event()` 直接转发 `VirtIOInput::pop_pending_event()` 并转换为 `RawInputEvent`。
 
 ### impl-virtio-pci / LoongArch VirtIO 输入
 
-- `VirtioInputPciDevice` 与 `VirtioInputPciProbeInfo`、`VirtioInputPciBarAllocator`：走 PCI
-  ECAM 枚举（`probe_all_from_ecam`），为 BAR 分配 MMIO 地址并开启 `MEMORY_SPACE` /
-  `BUS_MASTER`。
+- 走 PCI ECAM 枚举并初始化 VirtIO 键盘/平板（`probe_all_from_ecam`），为 BAR 分配 MMIO 地址
+  并开启 `MEMORY_SPACE` / `BUS_MASTER`。
 - 上层接口（`InputDevice`）与 RISC-V 完全相同，仅 transport 不同。

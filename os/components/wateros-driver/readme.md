@@ -90,55 +90,72 @@ VFS / 用户图形
 
 ### driver-api / 公共数据模型
 
-`driver-api/api-v0/src/lib.rs` 提供跨子系统共享的类型：
+`driver-api/api-v0/src/lib.rs` 提供跨子系统共享的数据模型：
 
-- `DeviceType`：Block / Character / Network / Display / Input / Unknown。
-- `DeviceInfo`：DTB 节点名、`compatible` 列表、探测类型、MMIO 区间与中断线。
-- `SupportedDeviceEntry`：子系统声明的“可绑定”设备描述（subsystem/name/compatible）。
-- `DriverError` 与 `DriverResult<T>`：统一错误分类与返回值别名。
-- `MachineDriver`：机器级契约（`init_after_boot`、`realtime_ns`、`test`）；每个 `driver-impl`
-  profile 实现它，并通过 `machine()` 暴露单例。
+- 统一设备分类：`DeviceType` 区分 Block / Character / Network / Display / Input / Unknown，供
+  DTB/PCI 探测后按类型路由到对应子系统。
+- 汇总一次扫描结果：`DeviceInfo` 携带节点名、`compatible` 列表、探测类型、MMIO 区间与中断线，
+  作为绑定决策与诊断的输入。
+- 声明可绑定设备：`SupportedDeviceEntry` 让每个子系统静态列出自己可尝试处理的 `compatible`，
+  供扫描阶段精确匹配。
+- 统一错误分类：`DriverError` / `DriverResult<T>` 不区分 Linux errno，只按 `InvalidDtb` /
+  `Unsupported` / `IoError` 等归类。
+- 定义机器级契约：`MachineDriver`（`init_after_boot` / `realtime_ns` / `test`）由每个
+  `driver-impl` profile 实现，上层经 `machine()` 拿到单例，不感知具体平台。
 
 ### driver-block / 块设备
 
-- `BlockCacheManager` 与 `CachingBlockDevice` 提供块缓存，`BlockCacheConfig` 可调参。
-- `impl-virtio-mmio` / `impl-virtio-pci` 分别对接 RISC-V MMIO 与 LoongArch PCI 的 virtio-blk；
-  `impl-dummy` 提供占位。
-- DTB 声明支持 `virtio,mmio` 与 PCI transitional/modern 的 virtio-blk。
+- 提供按块寻址读写：`BlockDevice` 以 LBA 按块读写，并默认实现任意字节对齐的 `read_bytes` /
+  `read_prefix`；不支持写时返回 `Unsupported`。
+- 提供块缓存加速：`BlockCacheManager` 以写穿 LRU 包装任意 `BlockDevice`，连续未命中合并为
+  单次底层读，读数据二次命中准入，避免顺序扫描污染缓存；`capacity_blocks` 为 0 时透传。
+- 支持两种 VirtIO transport：RISC-V MMIO 与 LoongArch PCI 各自初始化 virtio-blk 并注册；
+  探测阶段按 `compatible` 匹配 `virtio,mmio` 与 PCI transitional/modern 声明。
 
 ### driver-character / 字符设备
 
-- `CharacterDevice` 注册表与 `first_character_device` / `with_character_device` 等访问接口。
-- `impl-uart-16550`：NS16550 串口，`Ns16550Port` 与 `RegisterLayout`。
-- `impl-rtc-stub`：实时钟；`impl-null-stub`：null 设备；`impl-dummy`：占位。
-- DTB 声明支持 `ns16550a` / `ns8250`；`is_uart_compatible` 还识别 `snps,dw-apb-uart`。
+- 提供字符流 I/O：`CharacterDevice` 支持 `read` / `write` / `poll_revents`，并可选支持
+  `prepare_read` / `finish_read` 事务式读取（预约 → 提交/回滚）。
+- 提供串口最小契约：`SerialPort` 封装单字节/批量写、阻塞读与非阻塞读，由
+  `SerialPortCharacterDevice` 包装成 `CharacterDevice`。
+- 提供 NS16550 串口：`impl-uart-16550` 统一处理 `Byte16550` 与 `DwApb32`（reg-shift=2）两种
+  寄存器布局，平台只传基址与布局。
+- 提供 RTC / null 内置设备：`impl-rtc-stub` 读取实时钟、`impl-null-stub` 丢弃写入，
+  `register_builtin_character_devices` 统一注册；DTB 声明支持 `ns16550a` / `ns8250`。
 
 ### driver-display / 显示设备
 
 见 [`driver-display/README.md`](driver-display/README.md)。要点：
 
-- `FramebufferInfo` 区分可见字节、页对齐长度、物理起点与内核诊断地址。
-- 像素格式固定 BGRA8888；绘制后必须 `flush()` / `flush_region()`，否则 QEMU 窗口不更新。
-- 由 `gui` 或 `user-graphics` 显式启用，两者互斥。
+- 提供线性帧缓冲与主动刷新：`DisplayDevice` 给出 `FramebufferInfo`、借用可写帧缓冲，并提供
+  `flush()`（全屏）与 `flush_region()`（区域，默认退化全屏）提交画面。
+- 区分字节语义：`FramebufferInfo` 同时给出可见字节数、页对齐映射长度、物理起点与内核诊断
+  地址，供设备 mmap 与绘制层分别使用。
+- 像素格式固定 BGRA8888；绘制后必须显式刷新，否则 QEMU 窗口不更新；由 `gui` 或
+  `user-graphics` 显式启用，两者互斥。
 
 ### driver-input / 输入设备
 
 见 [`driver-input/README.md`](driver-input/README.md)。要点：
 
-- 保留 VirtIO/evdev 的原始 `type/code/value` 语义；驱动不负责键盘布局、鼠标加速或窗口命中。
-- `pop_event()` 均为非阻塞；GUI/evdev 轮询任务无事件时 sleep，不忙等。
+- 保留原始输入语义：`InputDevice` 非阻塞 `pop_event()` 返回 evdev 兼容三元组
+  `RawInputEvent`；驱动不负责键盘布局、鼠标加速或窗口命中。
+- 自动识别设备类型：初始化时查询设备名、`EV_REL`/`EV_ABS` 能力位图与绝对轴范围，判断
+  `Keyboard` / `Pointer` / `Unknown`，供 devfs 建立 `keyboard0` / `pointer0` 别名。
+- 非阻塞 + 轮询友好：GUI/evdev 轮询任务无事件时 sleep，不忙等。
 
 ### driver-network / 网络设备
 
-- `impl-virtio-mmio` / `impl-virtio-pci` 对接 RISC-V MMIO 与 LoongArch PCI 的 virtio-net；
-  `impl-dummy` 提供占位。
-- DTB 声明支持 `virtio,mmio` 与 PCI transitional/modern 的 virtio-net。
+- 提供以太网帧收发：`NetworkDevice` 暴露 `send` / `receive` 完整 L2 帧，以及 `mac_address` /
+  `mtu` / `is_link_up` 元数据；协议栈经注册表统一调度。
+- 支持两种 VirtIO transport：RISC-V MMIO 与 LoongArch PCI 各自初始化 virtio-net 并注册；
+  探测阶段按 `compatible` 匹配 `virtio,mmio` 与 PCI transitional/modern 声明。
 
 ### driver-impl / 机器驱动实现
 
-- `impl-dummy`：无硬件占位 profile。
-- `impl-common`：共享 DTB 解析（如 `parse_irq`）。
-- `impl-qemu-riscv64-virt`：RISC-V64/OpenSBI。模块 `enumerate`（扫描 DTB）、`register`
-  （实例化并注册设备）、`devfs`（同步设备视图）、`uart`（平台 UART 接线）、`machine`/`test`。
-- `impl-qemu-loongarch64-virt`：LoongArch64 virt。结构与 RISC-V 对应；virtio 设备走 PCI
-  ECAM，需要为 BAR 分配 MMIO 地址并开启 `MEMORY_SPACE` / `BUS_MASTER`。
+- 提供无硬件占位：`impl-dummy` 让无驱动场景可链接。
+- 提供共享 DTB 解析：`impl-common` 封装 `parse_irq` 等跨平台解析辅助。
+- 提供 QEMU RISC-V 平台接入：`impl-qemu-riscv64-virt` 经 `enumerate` 扫描 DTB、`register`
+  实例化并注册设备、`devfs` 同步设备视图、`uart` 接线 UART。
+- 提供 QEMU LoongArch 平台接入：结构与 RISC-V 对应；virtio 设备走 PCI ECAM，需要为 BAR
+  分配 MMIO 地址并开启 `MEMORY_SPACE` / `BUS_MASTER`。
