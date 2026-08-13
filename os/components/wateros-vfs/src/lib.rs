@@ -442,6 +442,11 @@ pub fn test() {
 #[cfg(feature = "self_test")]
 pub fn self_test() {
     log::info!("[vfs] self_test begin");
-    test();
+    api_v0::test();
+    #[cfg(feature = "bridge-fs-api")]
+    impl_fs_bridge::self_test();
+    #[cfg(feature = "impl-fd-session")]
+    impl_fd_session::self_test();
+    self_test::run();
     log::info!("[vfs] self_test complete; temporary VFS resources were reclaimed");
 }

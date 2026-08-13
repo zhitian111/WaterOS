@@ -22,7 +22,7 @@
     tty = { path = "../wateros-tty/", package = "wateros-tty", default-features = true, optional = true }
 
 [features]
-    self_test = [  ]
+    self_test = [ "impl_fs_bridge?/self_test", "impl_fd_session?/self_test" ]
     api-v0 = [ "impl_fs_bridge?/api-v0" ]
     bridge-fs-api = [
         "dep:fs",

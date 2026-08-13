@@ -105,3 +105,8 @@ pub fn test() {
     char_dev_handle::read_lease_self_test();
     handles::read_lease_self_test();
 }
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    test();
+}

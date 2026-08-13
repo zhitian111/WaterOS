@@ -1301,3 +1301,8 @@ pub fn test() {
     let _ = mount_table::mount_table_self_test();
     read_lease::allocation_failure_self_test().expect("prepared-read allocation self-test");
 }
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    test();
+}

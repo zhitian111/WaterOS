@@ -25,6 +25,7 @@
     tty = { path = "../../../wateros-tty/", package = "wateros-tty", default-features = true }
 
 [features]
+    self_test = [ ]
     api-v0 = [  ]
     default = [ "impl-fd-session" ]
     impl-fd-session = [
