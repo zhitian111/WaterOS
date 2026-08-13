@@ -732,3 +732,11 @@ pub fn test() {
     }
     self_test::run();
 }
+
+/// VFS 组件统一内核态自检入口；测试完成后由各测试项清理临时文件和句柄。
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[vfs] self_test begin");
+    test();
+    log::info!("[vfs] self_test complete; temporary VFS resources were reclaimed");
+}
