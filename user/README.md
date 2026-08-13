@@ -196,6 +196,19 @@ start-nanox >/tmp/nanox.log 2>&1 &
 `/dev/input/keyboard0` 和 `/dev/input/pointer0`，并管理 Nano-X server、客户端及
 `/tmp/.nano-X` socket 的生命周期。
 
+默认桌面使用 1280×800 深色 WaterOS 波纹背景和底部居中的应用启动栏。按钮支持正常、
+悬停和按下三种状态；终端、编辑器、计算器、时钟与 Doom 始终可用，`Files` 和 `mGBA`
+会在对应 package 未安装时自动隐藏。背景原图、图标生成器和启动器主题分别位于：
+
+```text
+packages/microwindows/assets/wateros-waves.png
+packages/microwindows/tools/prepare_assets.py
+packages/microwindows/patches/0006-wateros-launcher-desktop-theme.patch
+```
+
+修改这些文件后重新执行 `make image ARCH=rv` 即可；无需向 Nano-X 增加 PNG 库，构建器
+会将资源转换成 PPM。默认不再自动弹出 `nxclock` 和 `nxeyes`，需要时从启动栏打开。
+
 图形终端已经作为 `/usr/bin/nxterm` 安装。可以在 `nxlaunch` 点击 `Terminal`，或从串口执行：
 
 ```sh
@@ -214,7 +227,7 @@ Ctrl-C、Ctrl-Z 和 shell 作业控制。
 
 默认完整镜像还会在 `nxlaunch` 提供 `Files` 按钮，用于启动 `/usr/bin/waterfm`。
 `waterfm` 会被 `PACKAGE=all` 或 `PACKAGE=waterfm` 选中；精简的 `PACKAGE=graphics`
-只包含 Nano-X、Doom 和终端，不包含文件管理器。
+只包含 Nano-X、Doom 和终端，不包含文件管理器，此时 `Files` 按钮会自动隐藏。
 
 可以在 `nxlaunch` 中点击 Doom，也可以从串口启动：
 

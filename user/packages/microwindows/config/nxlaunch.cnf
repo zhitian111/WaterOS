@@ -1,13 +1,14 @@
-# WaterOS Nano-X 启动器菜单。图标使用 `-`，避免依赖额外图片解码库。
-$window_background_colour BLUE
+# WaterOS Nano-X 桌面。背景和图标均在构建镜像时转换为 Nano-X 原生 PPM。
+$window_background_colour BLACK
+$window_background_image /usr/share/wateros/wallpapers/wateros-waves.ppm
+$window_background_mode 4
 
-Clock - /usr/bin/nxclock
-Eyes - /usr/bin/nxeyes
-Calculator - /usr/bin/nxcalc
-Editor - /usr/bin/nxedit
-Events - /usr/bin/nxev
-Terminal - /usr/bin/nxterm
-Files - /usr/bin/waterfm
+Terminal /usr/share/wateros/icons/terminal.ppm /usr/bin/nxterm
+Files /usr/share/wateros/icons/files.ppm /usr/bin/waterfm
+Editor /usr/share/wateros/icons/editor.ppm /usr/bin/nxedit
+Calculator /usr/share/wateros/icons/calculator.ppm /usr/bin/nxcalc
+Clock /usr/share/wateros/icons/clock.ppm /usr/bin/nxclock
 # WaterOS 当前的 execve 不负责解释 shebang。nxlaunch 会直接 execvp 菜单命令，
 # 因此必须显式通过 shell 运行 start-doom，不能把脚本本身作为可执行 ELF 启动。
-Doom - /bin/sh /usr/bin/start-doom
+Doom /usr/share/wateros/icons/doom.ppm /bin/sh /usr/bin/start-doom
+mGBA /usr/share/wateros/icons/mgba.ppm /usr/bin/water-mgba /games/pokemon_phatom5.0.gba

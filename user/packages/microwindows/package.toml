@@ -1,6 +1,6 @@
 [package]
 name = "microwindows"
-version = "0.93-wateros-21086753-doom1"
+version = "0.93-wateros-21086753-desktop1"
 source = "vendor/microwindows"
 architectures = ["rv", "la"]
 dependencies = ["base-layout", "busybox", "operator-tools"]

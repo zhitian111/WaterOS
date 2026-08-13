@@ -124,6 +124,20 @@ Nano-X 客户端
 | WaterOS 适配补丁 | [`patches/`](../../../user/packages/microwindows/patches) | fbdev/evdev、launcher、刷新和 RV64 Doom 修复 |
 | 用户包构建 | [`build.py`](../../../user/packages/microwindows/build.py) | 交叉编译、静态 ELF 检查、安装程序和 WAD |
 | 启动脚本 | [`start-nanox`](../../../user/packages/microwindows/scripts/start-nanox) | 启动 server、等待 socket、启动默认客户端并清理 |
+| 桌面菜单 | [`nxlaunch.cnf`](../../../user/packages/microwindows/config/nxlaunch.cnf) | 选择背景、图标、按钮名称与启动命令 |
+| 桌面资源 | [`assets/`](../../../user/packages/microwindows/assets) | WaterOS 背景原图；构建时转换为 PPM |
+| 资源生成 | [`prepare_assets.py`](../../../user/packages/microwindows/tools/prepare_assets.py) | 生成 1280×800 背景和 40×40 确定性图标 |
+
+### 4.1 默认桌面外观如何实现
+
+Nano-X 没有完整桌面环境，默认界面实际由 `nxlaunch` 客户端组成。WaterOS 的构建流程先
+将背景 PNG 转成 Nano-X 已启用解码器可读取的 PPM，再通过配置文件把它设置成 root window
+背景。`0006-wateros-launcher-desktop-theme.patch` 将原先贴在左下角的灰色按钮栏改成底部
+居中的深色启动栏，图标由 32×32 扩为 40×40，并补充悬停、按下反馈。
+
+`start-nanox` 只自动启动 server 和 `nxlaunch`，不再自动打开时钟、眼睛等演示窗口。
+它还会检查 `/usr/bin/waterfm` 与 `/usr/bin/water-mgba`：程序不存在就从临时菜单中删除
+对应项，因此精简镜像和 LoongArch 镜像不会出现无法启动的按钮。
 
 ## 5. 启动时发生了什么
 

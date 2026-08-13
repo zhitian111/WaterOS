@@ -792,7 +792,8 @@ Nano-X 启动脚本：
 → 删除旧 /tmp/.nano-X
 → 启动 nano-X
 → 等待 socket
-→ 启动 nxlaunch/nxclock/nxeyes
+→ 按已安装程序过滤菜单
+→ 启动 nxlaunch
 → server 退出后清理
 ```
 

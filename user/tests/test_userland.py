@@ -81,8 +81,31 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn("DOOMWADDIR", launcher.read_text(encoding="utf-8"))
         menu = (userland.PACKAGE_ROOT / "microwindows/config/"
                 "nxlaunch.cnf").read_text(encoding="utf-8")
-        self.assertIn("Doom - /bin/sh /usr/bin/start-doom", menu)
+        self.assertIn("Doom /usr/share/wateros/icons/doom.ppm "
+                      "/bin/sh /usr/bin/start-doom", menu)
         self.assertNotIn("Doom - /usr/bin/start-doom", menu)
+
+    def test_nanox_desktop_assets_are_reproducible_ppm(self) -> None:
+        package = userland.PACKAGE_ROOT / "microwindows"
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            subprocess.run([
+                sys.executable, str(package / "tools/prepare_assets.py"),
+                "--source", str(package / "assets/wateros-waves.png"),
+                "--output", str(output),
+            ], check=True)
+            wallpaper = output / "wallpapers/wateros-waves.ppm"
+            self.assertTrue(wallpaper.read_bytes().startswith(b"P6\n1280 800\n255\n"))
+            for name in ("terminal", "files", "editor", "calculator",
+                         "clock", "doom", "mgba"):
+                icon = output / f"icons/{name}.ppm"
+                self.assertTrue(icon.read_bytes().startswith(b"P6\n40 40\n255\n"))
+
+        menu = (package / "config/nxlaunch.cnf").read_text(encoding="utf-8")
+        self.assertIn("$window_background_mode 4", menu)
+        self.assertIn("wateros-waves.ppm", menu)
+        launcher = (package / "scripts/start-nanox").read_text(encoding="utf-8")
+        self.assertNotIn("nxeyes &", launcher)
 
     def test_nanox_input_and_present_optimizations_are_configured(self) -> None:
         package = userland.PACKAGE_ROOT / "microwindows"

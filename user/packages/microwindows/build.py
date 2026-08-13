@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -157,6 +158,13 @@ def main() -> int:
     configuration.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(package / "config/nxlaunch.cnf", configuration)
     configuration.chmod(0o644)
+
+    # Nano-X 只启用了无外部依赖的 PNM 解码器。构建时将版本库中的 PNG
+    # 背景转换为固定分辨率 PPM，并生成与启动器主题一致的小图标，避免把
+    # Pillow/ImageMagick 等宿主工具变成用户空间构建依赖。
+    run([sys.executable, str(package / "tools/prepare_assets.py"),
+         "--source", str(package / "assets/wateros-waves.png"),
+         "--output", str(destdir / "usr/share/wateros")], cwd=work, env=env)
     return 0
 
 

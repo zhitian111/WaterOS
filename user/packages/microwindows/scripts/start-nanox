@@ -10,6 +10,7 @@ for device in /dev/fb0 /dev/input/keyboard0 /dev/input/pointer0; do
 done
 
 socket=/tmp/.nano-X
+launcher_config=/tmp/.nxlaunch.$$.cnf
 rm -f "$socket"
 nano-X &
 server_pid=$!
@@ -20,6 +21,7 @@ cleanup() {
     kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
     rm -f "$socket"
+    rm -f "$launcher_config"
 }
 trap cleanup EXIT INT TERM
 
@@ -35,7 +37,11 @@ if [ ! -S "$socket" ]; then
     exit 1
 fi
 
-nxlaunch & clients="$clients $!"
-nxclock & clients="$clients $!"
-nxeyes & clients="$clients $!"
+# 同一份 Microwindows package 同时用于精简 graphics、完整 all 以及 LA 镜像。
+# 启动时按实际安装内容裁掉可选项，避免显示点击后毫无反应的幽灵按钮。
+cp /etc/wateros/nxlaunch.cnf "$launcher_config"
+[ -x /usr/bin/waterfm ] || sed -i '/^Files /d' "$launcher_config"
+[ -x /usr/bin/water-mgba ] || sed -i '/^mGBA /d' "$launcher_config"
+nxlaunch "$launcher_config" & clients="$clients $!"
+# 演示程序由底部启动栏按需打开；默认桌面保持干净，也减少无意义刷新。
 wait "$server_pid"

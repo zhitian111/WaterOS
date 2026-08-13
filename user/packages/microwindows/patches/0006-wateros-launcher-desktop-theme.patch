@@ -1,0 +1,188 @@
+diff --git a/src/demos/nanox/nxlaunch.h b/src/demos/nanox/nxlaunch.h
+index 3e870c8..eb2c83c 100644
+--- a/src/demos/nanox/nxlaunch.h
++++ b/src/demos/nanox/nxlaunch.h
+@@ -35,11 +35,14 @@
+-#define ITEM_WIDTH 100
+-#define ITEM_HEIGHT 60
+-#define ITEM_TEXT_COLOUR GR_COLOR_BLACK
+-#define ITEM_BORDER_COLOUR GR_COLOR_BLACK
+-#define ITEM_BACKGROUND_COLOUR GR_COLOR_GRAY80
+-#define ICON_WIDTH 32
+-#define ICON_HEIGHT 32
++#define ITEM_WIDTH 104
++#define ITEM_HEIGHT 76
++#define ITEM_TEXT_COLOUR GR_RGB(224, 247, 250)
++#define ITEM_BORDER_COLOUR GR_RGB(53, 85, 110)
++#define ITEM_BACKGROUND_COLOUR GR_RGB(10, 28, 45)
++#define ITEM_HOVER_COLOUR GR_RGB(17, 55, 78)
++#define ITEM_PRESSED_COLOUR GR_RGB(8, 95, 115)
++#define PANEL_BACKGROUND_COLOUR GR_RGB(5, 18, 32)
++#define ICON_WIDTH 40
++#define ICON_HEIGHT 40
+ #define ICON_X_POSITION ((ITEM_WIDTH - ICON_WIDTH) / 2)
+-#define ICON_Y_POSITION 6
+-#define TEXT_Y_POSITION (ITEM_HEIGHT - 6)
++#define ICON_Y_POSITION 7
++#define TEXT_Y_POSITION (ITEM_HEIGHT - 8)
+ #define MAX_ARGUMENTS 12
+@@ -45,5 +48,11 @@
+ #define MAX_ARGUMENTS 12
+ 
++enum item_visual_state {
++	ITEM_STATE_NORMAL,
++	ITEM_STATE_HOVER,
++	ITEM_STATE_PRESSED
++};
++
+ struct command_argv {
+ 	char *command;
+ 	char *argv[MAX_ARGUMENTS];
+@@ -57,6 +67,7 @@ struct launcher_item {
+ 	struct launcher_item *prev;
+ 	GR_IMAGE_ID iconid;
+ 	GR_WINDOW_ID wid;
++	int visual_state;
+ };
+ typedef struct launcher_item litem;
+ 
+diff --git a/src/demos/nanox/nxlaunch.c b/src/demos/nanox/nxlaunch.c
+index 5c9d725..fca9922 100644
+--- a/src/demos/nanox/nxlaunch.c
++++ b/src/demos/nanox/nxlaunch.c
+@@ -300,6 +300,7 @@ void parse_config_line(lstate *state, char *buf, int lineno)
+ 		return;
+ 	}
+ 	new_litem->iconid = 0;
++	new_litem->visual_state = ITEM_STATE_NORMAL;
+ 	if(strcmp("-", icon)) {
+ 		li = state->litems;
+ 		while(li) {
+@@ -388,21 +389,43 @@ void read_config(lstate *state)
+ 	}
+ }
+ 
++static GR_COLOR item_background(const litem *item)
++{
++	if(item->visual_state == ITEM_STATE_PRESSED)
++		return ITEM_PRESSED_COLOUR;
++	if(item->visual_state == ITEM_STATE_HOVER)
++		return ITEM_HOVER_COLOUR;
++	return ITEM_BACKGROUND_COLOUR;
++}
++
+ void draw_item(lstate *state, litem *item)
+ {
+ 	GR_SIZE width, height, base, x, len;
++	GR_COLOR background = item_background(item);
+ 
+-	GrDrawImageToFit(item->wid, state->gc, ICON_X_POSITION, ICON_Y_POSITION,
+-				ICON_WIDTH, ICON_HEIGHT, item->iconid);
++	GrSetWindowBackgroundColor(item->wid, background);
++	GrClearWindow(item->wid, GR_FALSE);
++	GrSetGCForeground(state->gc, ITEM_TEXT_COLOUR);
++	GrSetGCBackground(state->gc, background);
++	if(item->iconid)
++		GrDrawImageToFit(item->wid, state->gc, ICON_X_POSITION,
++			ICON_Y_POSITION, ICON_WIDTH, ICON_HEIGHT, item->iconid);
+ 
+ 	len = strlen(item->name);
+ 	GrGetGCTextSize(state->gc, item->name, len, 0, &width, &height, &base);
+ 	if(width >= ITEM_WIDTH) x = 0;
+ 	else x = (ITEM_WIDTH - width) / 2;
+ 
+ 	GrText(item->wid, state->gc, x, TEXT_Y_POSITION, item->name, len, 0);
+ }
+ 
++static void set_item_state(lstate *state, litem *item, int visual_state)
++{
++	if(item->visual_state == visual_state) return;
++	item->visual_state = visual_state;
++	draw_item(state, item);
++}
++
+ void handle_exposure_event(lstate *state)
+ {
+ 	GR_EVENT_EXPOSURE *event = &state->event.exposure;
+@@ -442,17 +463,27 @@ void handle_mouse_event(lstate *state)
+ 	GR_EVENT_MOUSE *event = &state->event.mouse;
+ 	litem *i = state->litems;
+ 
+-	if(event->wid == state->main_window) return;
+-
+ 	while(i) {
+ 		if(event->wid == i->wid) {
+-			launch_program(i->prog);
++			switch(state->event.type) {
++			case GR_EVENT_TYPE_MOUSE_ENTER:
++				set_item_state(state, i, ITEM_STATE_HOVER);
++				break;
++			case GR_EVENT_TYPE_MOUSE_EXIT:
++				set_item_state(state, i, ITEM_STATE_NORMAL);
++				break;
++			case GR_EVENT_TYPE_BUTTON_DOWN:
++				set_item_state(state, i, ITEM_STATE_PRESSED);
++				break;
++			case GR_EVENT_TYPE_BUTTON_UP:
++				set_item_state(state, i, ITEM_STATE_HOVER);
++				launch_program(i->prog);
++				break;
++			}
+ 			return;
+ 		}
+ 		i = i->next;
+ 	}
+-
+-	GrError("Got mouse event for unknown window %d\n", event->wid);
+ }
+ 
+ void choose_random_screensaver(lstate *state)
+@@ -527,6 +563,9 @@ void handle_event(lstate *state)
+ 			handle_exposure_event(state);
+ 			break;
+ 		case GR_EVENT_TYPE_BUTTON_DOWN:
++		case GR_EVENT_TYPE_BUTTON_UP:
++		case GR_EVENT_TYPE_MOUSE_ENTER:
++		case GR_EVENT_TYPE_MOUSE_EXIT:
+ 			handle_mouse_event(state);
+ 			break;
+ 		case GR_EVENT_TYPE_CLOSE_REQ:
+@@ -575,7 +614,7 @@ void initialise(lstate *state)
+ 	GR_SCREEN_INFO si;
+ 	GR_IMAGE_ID back_image;
+ 	GR_IMAGE_INFO imageinfo;
+-	int rows = 1, columns = 1, width, height, x = 0, y = 0;
++	int rows = 1, columns = 1, width, height, x = 0, y = 0, panel_x;
+ 	GR_WM_PROPERTIES props;
+ 	litem *i;
+ 
+@@ -611,6 +650,7 @@ void initialise(lstate *state)
+ 		height = (rows * ITEM_HEIGHT) + 1 + rows;
+ 		y = si.rows - (rows * ITEM_HEIGHT) - 1 - rows;
+ 	}
++	panel_x = (si.cols - width) / 2;
+ 
+ 	state->gc = GrNewGC();
+ 	GrSetGCForeground(state->gc, ITEM_TEXT_COLOUR);
+@@ -643,8 +683,9 @@ void initialise(lstate *state)
+ 	if(state->ssitems)
+ 		GrSelectEvents(GR_ROOT_WINDOW_ID, GR_EVENT_MASK_SCREENSAVER);
+ 
+-	state->main_window = GrNewWindow(GR_ROOT_WINDOW_ID, 0, y, width, height,
+-		0, ITEM_BACKGROUND_COLOUR, 0);
++	state->main_window = GrNewWindow(GR_ROOT_WINDOW_ID, panel_x, y,
++		width, height, 0, PANEL_BACKGROUND_COLOUR, 0);
++	GrSetWindowBackgroundColor(state->main_window, PANEL_BACKGROUND_COLOUR);
+ 	GrSelectEvents(state->main_window, GR_EVENT_MASK_CLOSE_REQ | GR_EVENT_MASK_TIMER);
+ 	props.flags = GR_WM_FLAGS_PROPS;
+ 	props.props = GR_WM_PROPS_NOMOVE | GR_WM_PROPS_NODECORATE |
+@@ -658,6 +699,8 @@ void initialise(lstate *state)
+ 					(y * ITEM_HEIGHT) + y + 1, ITEM_WIDTH,
+ 					ITEM_HEIGHT, 1, ITEM_BACKGROUND_COLOUR, ITEM_BORDER_COLOUR);
+-		GrSelectEvents(i->wid, GR_EVENT_MASK_EXPOSURE | GR_EVENT_MASK_BUTTON_DOWN);
++		GrSelectEvents(i->wid, GR_EVENT_MASK_EXPOSURE |
++			GR_EVENT_MASK_BUTTON_DOWN | GR_EVENT_MASK_BUTTON_UP |
++			GR_EVENT_MASK_MOUSE_ENTER | GR_EVENT_MASK_MOUSE_EXIT);
+ 		GrMapWindow(i->wid);
+ 		i = i->prev;
+ 		if(++x == columns) {
