@@ -1451,6 +1451,7 @@ name = "wateros-platform-impl-qemu-loongarch64-virt"
 version = "0.1.0"
 dependencies = [
  "fdt",
+ "log",
  "wateros-base",
  "wateros-base-config",
  "wateros-platform-api-v0",
@@ -1461,6 +1462,7 @@ name = "wateros-platform-impl-qemu-riscv64-opensbi"
 version = "0.1.0"
 dependencies = [
  "fdt",
+ "log",
  "sbi-rt",
  "wateros-base",
  "wateros-base-config",
@@ -1595,6 +1597,7 @@ dependencies = [
 name = "wateros-task-impl-core"
 version = "0.1.0"
 dependencies = [
+ "log",
  "wateros-base",
  "wateros-debug",
  "wateros-mm-api-v0",
