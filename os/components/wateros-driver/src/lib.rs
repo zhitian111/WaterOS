@@ -87,3 +87,11 @@ pub fn test() {
     machine().test();
     log::trace!("[driver] test end");
 }
+
+/// 驱动组件统一内核态自检入口；仅探测和验证已注册的内核设备能力。
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[driver] self_test begin");
+    test();
+    log::info!("[driver] self_test complete");
+}
