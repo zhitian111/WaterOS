@@ -1,0 +1,10 @@
+[package]
+name = "mgba"
+version = "0.10.5-wateros-2"
+source = "vendor/mgba"
+architectures = ["rv"]
+dependencies = ["microwindows"]
+build = "build.py"
+install_prefix = "/usr"
+allow_overwrite = []
+inputs = ["packages/mgba/roms/pokemon_phatom5.0.gba.xz"]

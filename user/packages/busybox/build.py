@@ -45,6 +45,14 @@ def validate_applets(destdir: Path) -> None:
             raise RuntimeError(f"BusyBox applet is not a symbolic link: {installed}")
 
 
+def is_arch_linux() -> bool:
+    """Whether the host uses Arch's split musl-wrapper/UAPI-header layout."""
+    try:
+        return "ID=arch" in Path("/etc/os-release").read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--context", required=True, type=Path)
@@ -61,10 +69,10 @@ def main() -> int:
     env["SOURCE_DATE_EPOCH"] = context["source_date_epoch"]
     env["KBUILD_BUILD_TIMESTAMP"] = context["source_date_epoch"]
     shutil.copy2(package / "config/wateros_defconfig", work / ".config")
-    if context["arch"] == "la":
-        # Ubuntu 的 LoongArch UAPI 已删除旧 CBQ traffic-control 结构，而
-        # BusyBox 1.33 的 `tc` applet 仍直接引用它们。Nano-X/rootfs 不依赖
-        # 该 applet；仅在 LA 工作副本中关闭，保留 tcpsvd 和通用网络工具。
+    if context["arch"] == "la" or (context["arch"] == "rv" and is_arch_linux()):
+        # Modern Linux UAPI headers have removed the old CBQ traffic-control
+        # structures used by BusyBox 1.33's `tc` applet. Nano-X/rootfs does
+        # not need it, so disable it only in the isolated build copy.
         config = work / ".config"
         text = config.read_text(encoding="utf-8")
         text = text.replace("CONFIG_TC=y", "# CONFIG_TC is not set")
@@ -76,6 +84,12 @@ def main() -> int:
     # make command-line variable keeps the vendored source/config immutable and
     # ensures the architecture ABI selected in architectures.toml is honored.
     extra_cflags = " ".join(context["cflags"])
+    # Arch's musl GCC wrapper supplies musl libc headers but not Linux UAPI
+    # headers.  BusyBox's enabled console applets include <linux/kd.h>; use
+    # the matching installed RISC-V GNU sysroot only for those UAPI headers.
+    if (context["arch"] == "rv" and is_arch_linux() and
+            Path("/usr/riscv64-linux-gnu/include/linux/kd.h").is_file()):
+        extra_cflags += " -isystem /usr/riscv64-linux-gnu/include"
     common = ["make", f"-j{jobs}", f"ARCH={arch}", f"CROSS_COMPILE={cross}",
               f"CONFIG_EXTRA_CFLAGS={extra_cflags}"]
     # BusyBox 1.33 uses the older Kconfig target name.  `silentoldconfig`

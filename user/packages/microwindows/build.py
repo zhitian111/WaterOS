@@ -34,6 +34,13 @@ def validate_static(binary: Path, readelf: str, machine: str) -> None:
         raise RuntimeError(f"{binary.name} is not statically linked")
 
 
+def is_arch_linux() -> bool:
+    try:
+        return "ID=arch" in Path("/etc/os-release").read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--context", required=True, type=Path)
@@ -53,15 +60,20 @@ def main() -> int:
         env.pop(inherited, None)
     env["SOURCE_DATE_EPOCH"] = context["source_date_epoch"]
     cross = context["cross_compile"]
-    extra = " ".join(context["cflags"])
     # Microwindows' Makefile.rules clears config-file LDFLAGS, therefore the
     # static-link requirement must be a make command-line assignment.
+    nano_extra = "-DWATEROS_NANOX=1"
+    if (context["arch"] == "rv" and is_arch_linux() and
+            Path("/usr/riscv64-linux-gnu/include/linux/fb.h").is_file()):
+        nano_extra += " -isystem /usr/riscv64-linux-gnu/include"
     command = ["make", f"-j{context['jobs']}", "ARCH=LINUX-NATIVE",
                f"NATIVETOOLSPREFIX={cross}",
-               "LDFLAGS=-static", f"EXTRAFLAGS=-DWATEROS_NANOX=1 {extra}"]
-    # `all` 会递归进入与 Nano-X 无关的 Win32/Nuklear/游戏目录；先构建核心和
-    # server，再只进入 Nano-X demo 目录，缩短离线交叉编译时间并减少 syscall 需求。
-    run([*command, "default"], cwd=src, env=env)
+               "LDFLAGS=-static", f"EXTRAFLAGS={nano_extra}"]
+    # The top-level `default` target appends an empty `LIBNAME` as `/lib/` in
+    # this upstream snapshot, which GNU make treats as an unbuildable target.
+    # Build its meaningful prerequisites explicitly: output directories plus
+    # the core/server subdirectories. This keeps the vendor source untouched.
+    run([*command, str(src / "bin"), str(src / "lib"), "subdirs"], cwd=src, env=env)
     run([*command, "-C", "demos/nanox", "all"], cwd=src, env=env)
 
     # contrib/doom 使用的是较老的 C89 风格源码，不能跟随现代 GCC 默认的
@@ -72,7 +84,7 @@ def main() -> int:
     doom_flags = ["-std=gnu89"]
     if context["arch"] == "rv":
         doom_flags.append("-DIPPORT_USERRESERVED=5000")
-    doom_cc = " ".join((f"{cross}gcc", *doom_flags, extra))
+    doom_cc = " ".join((f"{cross}gcc", *doom_flags, *context["cflags"]))
     # Doom 随源码附带的 Makefile/configure 已经是可直接使用的生成产物。
     # 这些文件来自很老的 Automake 1.4；源码包中的 configure.in 时间戳偶尔
     # 会比 Makefile.in 新几个毫秒，使现代 GNU Make 误判为需要重新运行宿主机
