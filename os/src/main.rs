@@ -111,6 +111,8 @@ extern "C" fn gui_refresh_task(_arg : usize) -> ! {
 
 /// 驱动 → 网络 → FS → 用户态 bring-up。两 board 模块共用。
 fn bringup_driver_and_user(memory_end: usize) {
+    #[cfg(not(feature = "self_test"))]
+    let _ = memory_end;
     match driver::machine().init_after_boot() {
         Err(ref err) => warn!("driver init failed: {:?}", err),
         Ok(()) => {
