@@ -37,6 +37,11 @@ pub fn init_when_boot(dtb_pa: usize) {
     }
 }
 
+/// 启动后平台阶段入口；平台 profile 的 DTB/时间基础已在 boot 阶段保存。
+pub fn init_after_boot() {
+    log::info!("[platform] init_after_boot: platform services ready");
+}
+
 /// 平台持有的 DTB 物理指针（未保存时为 0）。
 pub fn dtb_pa() -> usize {
     #[cfg(feature = "impl-qemu-riscv64-opensbi")]

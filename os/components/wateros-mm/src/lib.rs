@@ -252,6 +252,13 @@ pub fn test_user_copy_progress() {
     impl_loongarch64::user_access::test_copy_to_user_progress();
 }
 
+/// 启动后 MM 统一入口；架构实现负责建立内核地址空间和帧分配器。
+pub fn init_after_boot(dtb_pa: usize, memory_end: usize) {
+    log::info!("[mm] init_after_boot begin");
+    kernel_mm::init(dtb_pa, memory_end);
+    log::info!("[mm] init_after_boot complete");
+}
+
 #[cfg(feature = "self_test")]
 /// MM 组件统一自检入口；不自行猜测物理内存范围，避免破坏已初始化的帧池。
 pub fn self_test() {

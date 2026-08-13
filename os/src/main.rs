@@ -286,6 +286,8 @@ mod qemu_riscv64_opensbi {
         }
         // BSP 初始化：驱动 → 日志 → timebase → 堆 → arch → 任务 → trap
         platform::init_when_boot(dtb_pa);
+        driver::init_when_boot();
+        platform::init_after_boot();
         runtime::init_console();
         runtime::showlogo();
         klog::init();
@@ -300,7 +302,7 @@ mod qemu_riscv64_opensbi {
         crate::trap_handler::init();
         // MM 初始化
         let memory_end = platform::physical_ram_end_exclusive();
-        mm::kernel_mm::init(dtb_pa, memory_end);
+        mm::init_after_boot(dtb_pa, memory_end);
         AP_BOOT_READY.store(true, Ordering::Release);
 
         let requested_aps = start_secondary_harts(cpu_id, dtb_pa);
@@ -417,6 +419,8 @@ mod qemu_loongarch64_virt {
         let _ = platform::smp::init_ipi();
         let dtb_pa = platform::active_impl::boot::device_tree_phys_addr();
         platform::init_when_boot(dtb_pa);
+        driver::init_when_boot();
+        platform::init_after_boot();
         let configured =
             platform::active_impl::smp::init_configured_cpu_mask(dtb_pa).expect("initialize \
                                                                                  LoongArch CPU \
@@ -434,7 +438,7 @@ mod qemu_loongarch64_virt {
         platform::arch::paging::init_paging_disable_mmu();
 
         let memory_end = platform::physical_ram_end_exclusive();
-        mm::kernel_mm::init(dtb_pa, memory_end);
+        mm::init_after_boot(dtb_pa, memory_end);
 
         AP_BOOT_READY.store(true, Ordering::Release);
         let requested_aps = start_secondary_cpus(cpu_id);

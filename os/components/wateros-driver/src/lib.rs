@@ -76,6 +76,11 @@ pub fn init_after_boot() {
     }
 }
 
+/// 启动前驱动阶段入口；仅准备聚合层，不访问尚未探测的设备。
+pub fn init_when_boot() {
+    log::info!("[driver] init_when_boot: driver facade ready");
+}
+
 /// 自检入口：依次调用 API 与各子系统测试钩子。
 pub fn test() {
     log::trace!("[driver] test begin");
