@@ -16,7 +16,7 @@ BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 .PHONY: rv_pre_run-gdb rv_final_run-gdb rv_final_run_log-gdb rv_final_debug_run-gdb
 .PHONY: rv_qemu_run rv_qemu_run_snapshot
 .PHONY: rv_qemu_run_with_log
-.PHONY: la_check la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
+.PHONY: la_check la2k_check jh7110_check la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
 .PHONY: kernel-la kernel-la-best kernel-la-pre kernel-la-final la_pre_run la_final_run la_final_run_log
 .PHONY: la_pre_run-gdb la_final_run-gdb la_final_run_log-gdb
 .PHONY: la_qemu_run la_qemu_run_snapshot
@@ -475,6 +475,18 @@ la_check:
 	$(call INFO, "开始对 loongarch64 平台进行 cargo check ...")
 	@$(operator_env) $(cargo_env) cargo check $(SELECTED_LA_FLAG)
 	$(call INFO, "对 loongarch64 平台的 cargo check 完成！")
+
+jh7110_check:
+	$(call INFO, "开始对 jh7110-visionfive2 平台进行 cargo check ...")
+	@$(operator_env) $(cargo_env) cargo check --no-default-features \
+		--features jh7110-visionfive2,pre --target riscv64gc-unknown-none-elf
+	$(call INFO, "对 jh7110-visionfive2 平台的 cargo check 完成！")
+
+la2k_check:
+	$(call INFO, "开始对 loongson2k1000la 平台进行 cargo check ...")
+	@$(operator_env) $(cargo_env) cargo check --no-default-features \
+		--features loongson2k1000la,pre --target loongarch64-unknown-none
+	$(call INFO, "对 loongson2k1000la 平台的 cargo check 完成！")
 
 # rv_link_app_asm:
 # 	$(call INFO, "开始生成批处理系统的 asm 文件...")

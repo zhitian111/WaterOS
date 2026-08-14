@@ -55,4 +55,30 @@ git diff --check
 
 ## 任务简报
 
-（完成后追加，格式见目录 README。）
+- 完成日期：2026-08-15
+- commit：本任务实现提交（见 `git log --oneline -1`，分支 `feat/real-hardware-porting`）
+- 实际改动：
+  - 新增两个板级 platform-impl 占位 crate：`impl-jh7110-visionfive2`、
+    `impl-loongson2k1000la`（boot/console/dtb/memory/reset/smp/time/timer 全表面，
+    保守回退值：console no-op、SMP/timer/reset Unsupported、memory 用 config 回退）。
+  - `wateros-platform`：workspace 成员、可选依赖、feature
+    `impl-jh7110-visionfive2`/`impl-loongson2k1000la`、`active_impl` 再导出、
+    `init_when_boot`/`dtb_pa`/`memory::kernel_layout` 分支、self_test/api-v0 传播。
+  - 顶层 `os/Cargo.toml`：新增 `jh7110-visionfive2`（RISC-V64）与
+    `loongson2k1000la`（LoongArch64）feature，镜像各自 qemu 链（含 `heap-tlsf`），
+    驱动层暂回退 `impl-dummy`。
+  - `os/Makefile`：新增 `jh7110_check` / `la2k_check` 目标（并入 .PHONY）。
+  - 同步 `components/wateros-platform/README.md`（active_impl 四选一说明）。
+- 验收结果：
+  - `cargo check --no-default-features --features jh7110-visionfive2,pre
+    --target riscv64gc-unknown-none-elf`：通过。
+  - `cargo check --no-default-features --features loongson2k1000la,pre
+    --target loongarch64-unknown-none`：通过。
+  - `make jh7110_check`、`make la2k_check`：通过。
+  - `make rv_check`、`make la_check`（默认 QEMU）：无回归。
+  - `git diff --check`：clean。
+- 未验证/风险：
+  - 两个板级 feature 目前只有 `cargo check` 级别通过：`src/main.rs` 尚无板级
+    bring-up 模块，内核不能链接/启动；`operator-shell` 等组合与真实板级 console/
+    内存/SMP 均在任务 05/09 落地。
+  - 占位 crate 的 self_test 只记录日志，不做硬件断言（任务 05/09 替换）。

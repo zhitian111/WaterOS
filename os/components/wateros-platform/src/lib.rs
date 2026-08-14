@@ -23,6 +23,12 @@ pub use impl_qemu_loongarch64_virt as active_impl;
 /// 当前 feature 选中的板级实现 crate（RISC-V QEMU + OpenSBI）。
 #[cfg(feature = "impl-qemu-riscv64-opensbi")]
 pub use impl_qemu_riscv64_opensbi as active_impl;
+/// 当前 feature 选中的板级实现 crate（VisionFive 2 / JH7110 占位）。
+#[cfg(feature = "impl-jh7110-visionfive2")]
+pub use impl_jh7110_visionfive2 as active_impl;
+/// 当前 feature 选中的板级实现 crate（Loongson 2K1000LA 占位）。
+#[cfg(feature = "impl-loongson2k1000la")]
+pub use impl_loongson2k1000la as active_impl;
 
 /// 引导早期：保存平台持有的 DTB 物理指针（内存布局等平台侧解析使用）。
 pub fn init_when_boot(dtb_pa: usize) {
@@ -30,8 +36,14 @@ pub fn init_when_boot(dtb_pa: usize) {
     impl_qemu_riscv64_opensbi::dtb::store(dtb_pa);
     #[cfg(feature = "impl-qemu-loongarch64-virt")]
     impl_qemu_loongarch64_virt::dtb::store(dtb_pa);
+    #[cfg(feature = "impl-jh7110-visionfive2")]
+    impl_jh7110_visionfive2::dtb::store(dtb_pa);
+    #[cfg(feature = "impl-loongson2k1000la")]
+    impl_loongson2k1000la::dtb::store(dtb_pa);
     #[cfg(not(any(feature = "impl-qemu-riscv64-opensbi",
-                  feature = "impl-qemu-loongarch64-virt")))]
+                  feature = "impl-qemu-loongarch64-virt",
+                  feature = "impl-jh7110-visionfive2",
+                  feature = "impl-loongson2k1000la")))]
     {
         let _ = dtb_pa;
     }
@@ -52,8 +64,18 @@ pub fn dtb_pa() -> usize {
     {
         impl_qemu_loongarch64_virt::dtb::dtb_pa()
     }
+    #[cfg(feature = "impl-jh7110-visionfive2")]
+    {
+        impl_jh7110_visionfive2::dtb::dtb_pa()
+    }
+    #[cfg(feature = "impl-loongson2k1000la")]
+    {
+        impl_loongson2k1000la::dtb::dtb_pa()
+    }
     #[cfg(not(any(feature = "impl-qemu-riscv64-opensbi",
-                  feature = "impl-qemu-loongarch64-virt")))]
+                  feature = "impl-qemu-loongarch64-virt",
+                  feature = "impl-jh7110-visionfive2",
+                  feature = "impl-loongson2k1000la")))]
     {
         0
     }
@@ -82,8 +104,18 @@ pub mod memory {
         {
             return impl_qemu_loongarch64_virt::memory::kernel_memory_layout();
         }
+        #[cfg(feature = "impl-jh7110-visionfive2")]
+        {
+            return impl_jh7110_visionfive2::memory::kernel_memory_layout();
+        }
+        #[cfg(feature = "impl-loongson2k1000la")]
+        {
+            return impl_loongson2k1000la::memory::kernel_memory_layout();
+        }
         #[cfg(not(any(feature = "impl-qemu-riscv64-opensbi",
-                      feature = "impl-qemu-loongarch64-virt")))]
+                      feature = "impl-qemu-loongarch64-virt",
+                      feature = "impl-jh7110-visionfive2",
+                      feature = "impl-loongson2k1000la")))]
         {
             const NO_MMIO : [PhysicalRange; 0] = [];
             KernelMemoryLayout {

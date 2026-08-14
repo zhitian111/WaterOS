@@ -1408,6 +1408,8 @@ dependencies = [
  "wateros-debug",
  "wateros-platform-api-v0",
  "wateros-platform-arch",
+ "wateros-platform-impl-jh7110-visionfive2",
+ "wateros-platform-impl-loongson2k1000la",
  "wateros-platform-impl-qemu-loongarch64-virt",
  "wateros-platform-impl-qemu-riscv64-opensbi",
 ]
@@ -1457,6 +1459,26 @@ dependencies = [
  "wateros-base-config",
  "wateros-platform-arch-api-v0",
  "wateros-syscall-api-v0",
+]
+
+[[package]]
+name = "wateros-platform-impl-jh7110-visionfive2"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "wateros-base",
+ "wateros-base-config",
+ "wateros-platform-api-v0",
+]
+
+[[package]]
+name = "wateros-platform-impl-loongson2k1000la"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "wateros-base",
+ "wateros-base-config",
+ "wateros-platform-api-v0",
 ]
 
 [[package]]
