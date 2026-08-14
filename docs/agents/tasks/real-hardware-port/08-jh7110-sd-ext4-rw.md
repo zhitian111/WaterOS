@@ -86,3 +86,15 @@ git diff --check
   ext4 只读→读写→重开一致性 → 离线 `e2fsck -fn`。
 - 依赖：VisionFive 2 物理板或真机串口日志；ext4 RW/持久化逻辑可在 QEMU virt
   （VirtIO 块）先回归，但 SD 真实时序必须上板。
+
+### 08b 软件侧追加验证（2026-08-15，QEMU 实测）
+
+- **分区根挂载打通**（本轮提交）：从 GPT 整盘镜像启动时，`fs::init` 探测与
+  `mount_default_root_rw` 均回退到 `/dev/vda1`（新增 devfs `partition_block_paths()`、
+  fs 探测与挂载两级回退）。
+- **QEMU 实测**：以任务 12 的 `wateros-rv.img`（GPT，rootfs 分区）启动，
+  日志确认 `probed root partition /dev/vda1` → `mount root RW from /dev/vda1` →
+  `/sbin/init` → `[rcS] WaterOS sysinit complete` → `wateros login:`。
+- 顺带修复 `root_image.py` 路径正则：允许 BusyBox 的 `[` applet（`/usr/bin/[`）。
+
+剩余真机部分不变：SD 物理控制器枚举/读写时序必须上板验证。

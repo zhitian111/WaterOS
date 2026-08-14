@@ -255,3 +255,23 @@ pub fn default_root_block_path() -> Option<String> {
     let m = KernelDevFsManager;
     m.default_root_block_path()
 }
+
+/// 分区块设备路径（如 `/dev/vda1`、`/dev/vdb2`）：由角色快照生成的节点，
+/// 供根挂载在整盘不是文件系统时回退使用。
+// 本方法代码由AI完成
+pub fn partition_block_paths() -> Vec<String> {
+    let inner = DEVFS.lock();
+    inner
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.node_type, api_v0::DevNodeType::Block))
+        .filter(|n| {
+            n.path.starts_with("/dev/vd")
+                && n.path
+                    .as_bytes()
+                    .get(7..)
+                    .is_some_and(|suffix| suffix.iter().any(u8::is_ascii_digit))
+        })
+        .map(|n| n.path.clone())
+        .collect()
+}

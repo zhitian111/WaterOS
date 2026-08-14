@@ -73,7 +73,8 @@ def checked_guest_path(raw: Any) -> PurePosixPath:
     path = PurePosixPath(raw)
     if not path.is_absolute() or path == PurePosixPath("/") or ".." in path.parts:
         raise ImageError(f"unsafe guest path: {raw!r}")
-    if re.fullmatch(r"/[A-Za-z0-9._+/-]+", raw) is None:
+    # `[`/`]` 是 BusyBox 的合法 applet 名（`/usr/bin/[`），保留在允许字符集内。
+    if re.fullmatch(r"/[A-Za-z0-9._+\[\]/-]+", raw) is None:
         raise ImageError(f"guest path contains unsupported characters: {raw!r}")
     return path
 
