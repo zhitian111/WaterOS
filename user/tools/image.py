@@ -94,6 +94,21 @@ def _inode_metadata_commands(logical: str) -> list[str]:
     return commands
 
 
+def _debugfs_supports_split_super_fields(image: Path) -> bool:
+    """Whether `debugfs set_super_value` accepts split `*_lo`/`*_hi` fields.
+
+    Newer e2fsprogs exposes the 64-bit superblock timestamps as split
+    `mtime_lo`/`mtime_hi` names; e2fsprogs 1.47.0 (e.g. Debian) only knows the
+    aggregate `mtime` field and would otherwise fail with "invalid field
+    specifier".  Probe on a throwaway field; the value is overwritten right
+    after in `_normalize_image_metadata`.
+    """
+    probe = _run(["debugfs", "-w", "-R", "set_super_value mtime_lo 0", str(image)],
+                 capture=True, accepted=(0, 1))
+    diagnostics = ((probe.stdout or "") + (probe.stderr or "")).lower()
+    return "invalid field" not in diagnostics
+
+
 def _normalize_image_metadata(image: Path, staging: Path,
                               arch: str) -> None:
     # mke2fs randomizes the directory hash seed even when UUID and time are
@@ -106,9 +121,15 @@ def _normalize_image_metadata(image: Path, staging: Path,
     # Keep source files reproducible, but make filesystem lifecycle timestamps
     # describe when this particular image was created.
     build_timestamp = str(int(time.time()))
+    split_fields = _debugfs_supports_split_super_fields(image)
     for field in ("mtime", "wtime", "lastcheck", "mkfs_time"):
-        commands.append(f"set_super_value {field}_lo {build_timestamp}")
-        commands.append(f"set_super_value {field}_hi 0")
+        if split_fields:
+            commands.append(f"set_super_value {field}_lo {build_timestamp}")
+            commands.append(f"set_super_value {field}_hi 0")
+        else:
+            # e2fsprogs < 1.47.1 (e.g. Debian's 1.47.0) exposes only the
+            # aggregate 32-bit superblock timestamp fields; set them directly.
+            commands.append(f"set_super_value {field} {build_timestamp}")
     for logical in ["/", *("/" + entry.relative_to(staging).as_posix()
                            for entry in _iter_entries(staging))]:
         commands.extend(_inode_metadata_commands(logical))
