@@ -212,15 +212,18 @@ fn futex_wait(uaddr : usize,
             return Err(ErrNo::ETIMEDOUT);
         }
         let mut condition_error = None;
-        let outcome = ipc::futex::wait_while(task_id, key, bitset, timeout_ticks, || {
-            match read_user_u32_in_aspace(current_aspace, uaddr) {
-                Ok(value) => value == val,
-                Err(error) => {
-                    condition_error = Some(error);
-                    false
-                }
-            }
-        });
+        let outcome = ipc::futex::wait_while(task_id,
+                                             key,
+                                             bitset,
+                                             timeout_ticks,
+                                             || match read_user_u32_in_aspace(current_aspace, uaddr)
+                                             {
+                                                 Ok(value) => value == val,
+                                                 Err(error) => {
+                                                     condition_error = Some(error);
+                                                     false
+                                                 }
+                                             });
         if let Some(error) = condition_error {
             return Err(error);
         }
@@ -310,9 +313,9 @@ fn sign_extend_12(value : u32) -> i32 { ((value << 20) as i32) >> 20 }
 fn decode_wake_op(encoded : u32) -> Result<(u32, u32, i32, i32), ErrNo> {
     let op_field = encoded >> 28;
     let op = op_field & 0x7;
-    let cmp = (encoded >> 24) & 0xf;
-    let mut op_arg = sign_extend_12((encoded >> 12) & 0xfff);
-    let cmp_arg = sign_extend_12(encoded & 0xfff);
+    let cmp = (encoded >> 24) & 0xF;
+    let mut op_arg = sign_extend_12((encoded >> 12) & 0xFFF);
+    let cmp_arg = sign_extend_12(encoded & 0xFFF);
     if op > FUTEX_OP_XOR || cmp > FUTEX_OP_CMP_GE {
         return Err(ErrNo::ENOSYS);
     }
@@ -374,10 +377,7 @@ fn futex_wake_op(uaddr : usize,
     let old = loop {
         let observed = atomic_load_user_u32_in_aspace(aspace, uaddr2)?;
         let desired = apply_wake_op(observed, op, op_arg);
-        let actual = atomic_compare_exchange_user_u32_in_aspace(aspace,
-                                                                 uaddr2,
-                                                                 observed,
-                                                                 desired)?;
+        let actual = atomic_compare_exchange_user_u32_in_aspace(aspace, uaddr2, observed, desired)?;
         if actual == observed {
             break observed;
         }
@@ -414,10 +414,8 @@ mod tests {
         assert!(wake_op_comparison(7, cmp, cmp_arg));
 
         // 12-bit -1 is sign extended for both operation and comparison args.
-        let encoded_negative = (FUTEX_OP_SET << 28) |
-                               (FUTEX_OP_CMP_EQ << 24) |
-                               (0xfff << 12) |
-                               0xfff;
+        let encoded_negative =
+            (FUTEX_OP_SET << 28) | (FUTEX_OP_CMP_EQ << 24) | (0xFFF << 12) | 0xFFF;
         let (op, cmp, op_arg, cmp_arg) = decode_wake_op(encoded_negative).unwrap();
         assert_eq!(apply_wake_op(0, op, op_arg), u32::MAX);
         assert!(wake_op_comparison(u32::MAX, cmp, cmp_arg));
@@ -480,7 +478,10 @@ pub(crate) fn sys_futex(args : SyscallArgs) -> UserRet {
                                          timeout_ptr),
                     Err(e) => Err(e),
                 },
-                FUTEX_WAKE => futex_wake(uaddr, val, 0, futex_op),
+                FUTEX_WAKE => futex_wake(uaddr,
+                                         val,
+                                         FUTEX_BITSET_MATCH_ALL,
+                                         futex_op),
                 FUTEX_WAKE_BITSET => match validate_futex_bitset(cmd, val3) {
                     Ok(()) => futex_wake(uaddr, val, val3, futex_op),
                     Err(e) => Err(e),

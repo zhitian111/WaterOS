@@ -11,6 +11,7 @@
 #include <string.h>
 #include <sys/syscall.h>
 #include <sys/mman.h>
+#include <sys/msg.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -130,9 +131,11 @@ struct wos_open_how {
 #define FUTEX_WAKE_BITSET   10
 #define FUTEX_CMP_REQUEUE   4
 #define FUTEX_WAIT          0
+#define FUTEX_WAKE          1
 #define FUTEX_WAKE_OP       5
 #define FUTEX_OP_ADD        1
 #define FUTEX_OP_CMP_EQ     0
+#define FUTEX_OP_CMP_NE     1
 #define FUTEX_OP(op, oparg, cmp, cmparg) \
     ((((op) & 0xfU) << 28) | (((cmp) & 0xfU) << 24) | \
      (((oparg) & 0xfffU) << 12) | ((cmparg) & 0xfffU))
@@ -150,6 +153,11 @@ struct wos_clone_args {
     uint64_t set_tid;
     uint64_t set_tid_size;
     uint64_t cgroup;
+};
+
+struct wos_msg_buf {
+    long mtype;
+    char mtext[64];
 };
 
 _Static_assert(sizeof(struct wos_inotify_event) == 16,
@@ -786,6 +794,189 @@ int main(void) {
             clone_pidfd_info.si_status == 23,
             "clone pidfd waitid exit status");
 
+    /* WAKE_OP：条件不满足时仍原子更新第二个 word，但跳过第二队列唤醒。 */
+    futex_words[0] = 0;
+    futex_words[1] = 7;
+    futex_words[4] = 0;
+    pid_t wake_op_miss_child = fork();
+    if (wake_op_miss_child < 0)
+        fail("fork futex wake-op miss waiter");
+    if (wake_op_miss_child == 0) {
+        __atomic_store_n(&futex_words[4], 1, __ATOMIC_SEQ_CST);
+        long result = syscall(__NR_futex, &futex_words[1], FUTEX_WAIT,
+                              7, NULL, NULL, 0);
+        _exit(result == 0 ? 0 : 1);
+    }
+    for (int attempt = 0; attempt < 100 &&
+                              __atomic_load_n(&futex_words[4], __ATOMIC_SEQ_CST) != 1;
+         ++attempt) {
+        struct timespec short_pause = {.tv_sec = 0, .tv_nsec = 1000000L};
+        nanosleep(&short_pause, NULL);
+    }
+    require(__atomic_load_n(&futex_words[4], __ATOMIC_SEQ_CST) == 1,
+            "futex wake-op miss waiter started");
+    nanosleep(&futex_settle, NULL);
+    unsigned wake_op_miss = FUTEX_OP(FUTEX_OP_ADD, 2, FUTEX_OP_CMP_NE, 7);
+    require(syscall(__NR_futex, &futex_words[0], FUTEX_WAKE_OP,
+                    0, 1, &futex_words[1], wake_op_miss) == 0 &&
+            __atomic_load_n(&futex_words[1], __ATOMIC_SEQ_CST) == 9,
+            "futex wake-op updates word but skips second wake on miss");
+    require(waitpid(wake_op_miss_child, &status, WNOHANG) == 0,
+            "futex wake-op miss leaves waiter asleep");
+    require(syscall(__NR_futex, &futex_words[1], FUTEX_WAKE, 1, NULL, NULL, 0) == 1,
+            "futex wake-op miss waiter manual wake");
+    require(waitpid(wake_op_miss_child, &status, 0) == wake_op_miss_child &&
+            WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "futex wake-op miss waiter result");
+
+    errno = 0;
+    require(syscall(__NR_futex, &futex_words[0], FUTEX_WAKE_OP,
+                    0, 1, &futex_words[1], FUTEX_OP(5, 0, FUTEX_OP_CMP_EQ, 0)) == -1 &&
+            errno == ENOSYS,
+            "futex wake-op rejects unsupported operation");
+
+    /* clone3 CLONE_PIDFD：pidfd 指针为空时应在启动子进程前失败。 */
+    struct wos_clone_args zero_pidfd_args;
+    memset(&zero_pidfd_args, 0, sizeof(zero_pidfd_args));
+    zero_pidfd_args.flags = CLONE_PIDFD;
+    zero_pidfd_args.pidfd = 0;
+    zero_pidfd_args.exit_signal = SIGCHLD;
+    errno = 0;
+    require(syscall(__NR_clone3, &zero_pidfd_args, sizeof(zero_pidfd_args)) == -1 &&
+            errno == EFAULT,
+            "clone3 CLONE_PIDFD with null pidfd pointer");
+
+    /* ── SysV 消息队列：msgget / msgsnd / msgrcv / msgctl ─────────────── */
+    long msg_key = 0x57575331L;
+    int msgid = msgget((key_t)msg_key, IPC_CREAT | IPC_EXCL | 0600);
+    if (msgid < 0)
+        fail("msgget create");
+    require(msgget((key_t)msg_key, 0) == msgid,
+            "msgget key lookup returns same id");
+    errno = 0;
+    require(msgget((key_t)msg_key, IPC_CREAT | IPC_EXCL) == -1 && errno == EEXIST,
+            "msgget exclusive create conflicts");
+    errno = 0;
+    require(msgget((key_t)0x57575332L, 0) == -1 && errno == ENOENT,
+            "msgget missing key without create");
+
+    int msg_priv_id = msgget(IPC_PRIVATE, 0600);
+    if (msg_priv_id < 0)
+        fail("msgget private");
+    struct wos_msg_buf msg_send = {.mtype = 1};
+    memcpy(msg_send.mtext, "hello", 5);
+    require(msgsnd(msg_priv_id, &msg_send, 5, 0) == 0, "msgsnd basic");
+    struct wos_msg_buf msg_recv;
+    memset(&msg_recv, 0, sizeof(msg_recv));
+    long msg_received = msgrcv(msg_priv_id, &msg_recv, sizeof(msg_recv.mtext), 0, 0);
+    require(msg_received == 5 && msg_recv.mtype == 1 &&
+            memcmp(msg_recv.mtext, "hello", 5) == 0,
+            "msgrcv basic roundtrip");
+
+    /* msgtyp 选择：>0 只取同类型；<0 取 <= |msgtyp| 的最小类型；0 取队首。 */
+    msg_send.mtype = 2;
+    memcpy(msg_send.mtext, "two", 3);
+    require(msgsnd(msg_priv_id, &msg_send, 3, 0) == 0, "msgsnd type two");
+    msg_send.mtype = 1;
+    memcpy(msg_send.mtext, "one", 3);
+    require(msgsnd(msg_priv_id, &msg_send, 3, 0) == 0, "msgsnd type one");
+    memset(&msg_recv, 0, sizeof(msg_recv));
+    msg_received = msgrcv(msg_priv_id, &msg_recv, sizeof(msg_recv.mtext), 1, 0);
+    require(msg_received == 3 && msg_recv.mtype == 1 &&
+            memcmp(msg_recv.mtext, "one", 3) == 0,
+            "msgrcv positive type selects only matching");
+    msg_send.mtype = 3;
+    memcpy(msg_send.mtext, "thr", 3);
+    require(msgsnd(msg_priv_id, &msg_send, 3, 0) == 0, "msgsnd type three");
+    memset(&msg_recv, 0, sizeof(msg_recv));
+    msg_received = msgrcv(msg_priv_id, &msg_recv, sizeof(msg_recv.mtext), -2, 0);
+    require(msg_received == 3 && msg_recv.mtype == 2 &&
+            memcmp(msg_recv.mtext, "two", 3) == 0,
+            "msgrcv negative type picks smallest at or below bound");
+    memset(&msg_recv, 0, sizeof(msg_recv));
+    msg_received = msgrcv(msg_priv_id, &msg_recv, sizeof(msg_recv.mtext), 0, 0);
+    require(msg_received == 3 && msg_recv.mtype == 3 &&
+            memcmp(msg_recv.mtext, "thr", 3) == 0,
+            "msgrcv zero type consumes fifo head");
+
+    /* MSG_NOERROR 截断；无该标志且超长返回 E2BIG 且消息保留。 */
+    msg_send.mtype = 1;
+    memcpy(msg_send.mtext, "abcdefghijkl", 12);
+    require(msgsnd(msg_priv_id, &msg_send, 12, 0) == 0, "msgsnd long payload");
+    memset(&msg_recv, 0, sizeof(msg_recv));
+    msg_received = msgrcv(msg_priv_id, &msg_recv, 4, 0, MSG_NOERROR);
+    require(msg_received == 4 && memcmp(msg_recv.mtext, "abcd", 4) == 0,
+            "msgrcv MSG_NOERROR truncates");
+    require(msgsnd(msg_priv_id, &msg_send, 12, 0) == 0, "msgsnd long again");
+    errno = 0;
+    require(msgrcv(msg_priv_id, &msg_recv, 4, 0, 0) == -1 && errno == E2BIG,
+            "msgrcv oversized without MSG_NOERROR");
+    memset(&msg_recv, 0, sizeof(msg_recv));
+    msg_received = msgrcv(msg_priv_id, &msg_recv, sizeof(msg_recv.mtext), 0, 0);
+    require(msg_received == 12 && memcmp(msg_recv.mtext, "abcdefghijkl", 12) == 0,
+            "msgrcv oversized message retained for full read");
+
+    /* 空队列 IPC_NOWAIT 返回 ENOMSG；非法参数返回 EINVAL。 */
+    errno = 0;
+    require(msgrcv(msg_priv_id, &msg_recv, sizeof(msg_recv.mtext), 0, IPC_NOWAIT) == -1 &&
+            errno == ENOMSG,
+            "msgrcv nonblocking empty queue");
+    msg_send.mtype = 0;
+    errno = 0;
+    require(msgsnd(msg_priv_id, &msg_send, 1, 0) == -1 && errno == EINVAL,
+            "msgsnd rejects nonpositive type");
+    errno = 0;
+    require(msgrcv(msg_priv_id, &msg_recv, sizeof(msg_recv.mtext), 0,
+                   MSG_EXCEPT) == -1 && errno == EINVAL,
+            "msgrcv rejects MSG_EXCEPT with nonpositive type");
+
+    /* msgctl IPC_STAT 反映队列当前消息数与字节数。 */
+    int msg_stat_id = msgget(IPC_PRIVATE, 0600);
+    if (msg_stat_id < 0)
+        fail("msgget stat queue");
+    msg_send.mtype = 1;
+    memcpy(msg_send.mtext, "ab", 2);
+    require(msgsnd(msg_stat_id, &msg_send, 2, 0) == 0, "msgsnd stat one");
+    msg_send.mtype = 2;
+    memcpy(msg_send.mtext, "cd", 2);
+    require(msgsnd(msg_stat_id, &msg_send, 2, 0) == 0, "msgsnd stat two");
+    struct msqid_ds msg_stats;
+    require(msgctl(msg_stat_id, IPC_STAT, &msg_stats) == 0 &&
+            msg_stats.msg_qnum == 2 && msg_stats.msg_cbytes == 4,
+            "msgctl stat qnum and cbytes");
+    memset(&msg_recv, 0, sizeof(msg_recv));
+    require(msgrcv(msg_stat_id, &msg_recv, sizeof(msg_recv.mtext), 0, 0) == 2,
+            "msgrcv stat drain one");
+    require(msgctl(msg_stat_id, IPC_STAT, &msg_stats) == 0 &&
+            msg_stats.msg_qnum == 1 && msg_stats.msg_cbytes == 2,
+            "msgctl stat tracks after receive");
+
+    /* IPC_RMID 唤醒阻塞接收者并返回 EIDRM。 */
+    int msg_eidrm_id = msgget(IPC_PRIVATE, 0600);
+    if (msg_eidrm_id < 0)
+        fail("msgget eidrm queue");
+    pid_t msg_waiter = fork();
+    if (msg_waiter < 0)
+        fail("fork msg waiter");
+    if (msg_waiter == 0) {
+        struct wos_msg_buf child_buf;
+        memset(&child_buf, 0, sizeof(child_buf));
+        ssize_t child_received = msgrcv(msg_eidrm_id, &child_buf,
+                                        sizeof(child_buf.mtext), 0, 0);
+        _exit(child_received == -1 && errno == EIDRM ? 0 : 1);
+    }
+    struct timespec msg_grace = {.tv_sec = 0, .tv_nsec = 50000000L};
+    nanosleep(&msg_grace, NULL);
+    require(msgctl(msg_eidrm_id, IPC_RMID, NULL) == 0,
+            "msgctl remove while receiver waits");
+    require(waitpid(msg_waiter, &status, 0) == msg_waiter &&
+            WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "blocked msgrcv interrupted by IPC_RMID returns EIDRM");
+
+    require(msgctl(msgid, IPC_RMID, NULL) == 0, "msgctl remove key queue");
+    require(msgctl(msg_priv_id, IPC_RMID, NULL) == 0, "msgctl remove private queue");
+    require(msgctl(msg_stat_id, IPC_RMID, NULL) == 0, "msgctl remove stat queue");
+
     int pidfd_pipe[2];
     require(pipe(pidfd_pipe) == 0, "pidfd pipe");
     pid_t pidfd_child = fork();
@@ -888,7 +1079,9 @@ int main(void) {
     puts("[PASS] inotify: create/modify/move/delete, cookies, poll and EFAULT rollback");
     puts("[PASS] openat2: versioned open_how, CLOEXEC, symlink/beneath/cache constraints");
     puts("[PASS] futex bitset/requeue/wake-op: selective, migrated and atomic conditional wake");
+    puts("[PASS] futex wake-op: conditional miss and unsupported opcode");
     puts("[PASS] pidfd: clone3, open, getfd, signal, poll and waitid(P_PIDFD)");
+    puts("[PASS] SysV message queues: get/snd/rcv/ctl selection, truncation and EIDRM");
     puts("[PASS] memory residency: mincore, MADV_POPULATE, mlock and MCL_CURRENT/FUTURE");
     return 0;
 }
