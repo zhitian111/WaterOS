@@ -2,6 +2,13 @@
 
 #![no_std]
 
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[mm/frame-allocator] self_test begin");
+    impl_stack::self_test();
+    log::info!("[mm/frame-allocator] self_test complete");
+}
+
 pub use api_v0::*;
 
 use mm_api::addr::{PhysPageNum, PAGE_SIZE};
