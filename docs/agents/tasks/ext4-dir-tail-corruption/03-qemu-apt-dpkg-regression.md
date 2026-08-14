@@ -88,6 +88,19 @@ seek、管道读），与 ext4 目录块 tail 修复无关，也不是本任务�
 （`59f50c44`）中，需要先合入对应分支的 syscall 修复后，apt 模式才能作为
 本任务的验收项。
 
+跨仓库核查（2026-08-15）：
+
+```text
+git branch -a                                       # 无 PTY/seek 修复分支
+git log --all --oneline --grep='unlockpt|ptsname|PTY|ESPIPE' -i
+                                                    # 无对应提交
+git log --oneline 59f50c44..github/main             # github/main 落后于 main
+timeout 30 git ls-remote gitlab                     # gitlab 不可达（超时）
+```
+
+因此无法在本环境直接引用队友的 syscall 修复；需要用户提供对应分支/提交，
+或授权在本分支实现这三项 syscall 兼容后，再跑 `REGRESS_MODE=apt`。
+
 ## 完成后简报
 
 写 `history/03-qemu-apt-dpkg-regression-brief.md`，记录两种模式的结果与
