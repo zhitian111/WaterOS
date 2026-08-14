@@ -6,7 +6,6 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use api_v0::{BlockDevice, SharedBlockDevice};
-use spin::Mutex;
 use wateros_base_config::fs::BLOCK_CACHE_CAPACITY_BLOCKS;
 
 use crate::{BlockCacheConfig, CachingBlockDevice};
@@ -22,19 +21,18 @@ impl BlockCacheManager {
     }
 
     /// 用写穿 LRU 包装 `inner` 并返回可注册的共享句柄。
-    pub fn wrap(inner : Box<dyn BlockDevice + Send>,
+    pub fn wrap(inner : Box<dyn BlockDevice>,
                 config : BlockCacheConfig)
                 -> SharedBlockDevice {
-        let cached : Box<dyn BlockDevice> = Box::new(CachingBlockDevice::new(inner, config));
-        Arc::new(Mutex::new(cached))
+        let cached : Arc<dyn BlockDevice> = Arc::new(CachingBlockDevice::new(inner, config));
+        cached
     }
 
     /// Flush every registered block device, including uncached devices.
     pub fn flush_all() -> api_v0::DriverResult<()> {
         for index in 0..api_v0::block_device_count() {
             let device = api_v0::block_device_at(index).ok_or(api_v0::DriverError::IoError)?;
-            device.lock()
-                  .flush()?;
+            device.flush()?;
         }
         Ok(())
     }

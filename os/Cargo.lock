@@ -716,6 +716,7 @@ dependencies = [
 name = "wateros-driver-block-impl-virtio-pci"
 version = "0.1.0"
 dependencies = [
+ "spin",
  "virtio-drivers",
  "wateros-driver-api-v0",
  "wateros-driver-block-api-v0",

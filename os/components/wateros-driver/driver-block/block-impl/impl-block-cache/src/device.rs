@@ -1,4 +1,5 @@
 use super::*;
+use spin::Mutex;
 
 
 pub(crate) struct Slot {
@@ -7,10 +8,8 @@ pub(crate) struct Slot {
     next : Option<usize>,
 }
 
-/// 写穿块缓存装饰器：[`read_blocks`] 命中则避免访问 `inner`；未命中合并读取，并在近期
-/// 第二次访问时填入 LRU。写入维持 write-through + write-allocate。
-pub struct CachingBlockDevice {
-    pub(crate) inner : Box<dyn BlockDevice + Send>,
+/// 写穿块缓存内部状态，由 [`CachingBlockDevice`] 以 `Mutex` 串行化持有。
+pub(crate) struct CacheState {
     pub(crate) block_size : usize,
     pub(crate) capacity : usize,
     pub(crate) data : Vec<u8>,
@@ -28,10 +27,9 @@ pub struct CachingBlockDevice {
     pub(crate) diagnostics : BlockCacheDiagnostics,
 }
 
-impl CachingBlockDevice {
-    /// 用给定配置包装 `inner`；从 `inner` 读取 [`BlockDevice::block_size`] 并预分配槽位缓冲。
-    pub fn new(inner : Box<dyn BlockDevice + Send>, config : BlockCacheConfig) -> Self {
-        let block_size = inner.block_size();
+impl CacheState {
+    /// 按 `inner` 的块大小与给定配置预分配槽位缓冲。
+    fn new(block_size : usize, config : BlockCacheConfig) -> Self {
         let capacity = if block_size == 0 {
             0
         } else {
@@ -53,8 +51,7 @@ impl CachingBlockDevice {
             }
             free.extend((0..capacity).rev());
         }
-        Self { inner,
-               block_size,
+        Self { block_size,
                capacity,
                data,
                map : LbaIndex::new(capacity),
@@ -79,9 +76,6 @@ impl CachingBlockDevice {
         let start = idx * self.block_size;
         &mut self.data[start..start + self.block_size]
     }
-
-    /// 将脏缓存写回底层（写穿下为 no-op）；保留接口供将来 write-back 或测试钩子使用。
-    pub fn flush(&mut self) -> DriverResult<()> { self.inner.flush() }
 
     pub(crate) fn touch_lru(&mut self, idx : usize) {
         if self.lru_tail == Some(idx) {
@@ -178,9 +172,8 @@ impl CachingBlockDevice {
     /// Install a read-missed block only after the LBA has been observed in
     /// the recent history. First-touch streaming data bypasses the data cache.
     pub(crate) fn admit_read_miss(&mut self, lba : Lba, block : &[u8]) {
-        if self.recent
-               .take(lba)
-        {
+        let admitted = self.recent.take(lba);
+        if admitted {
             #[cfg(feature = "diagnostics")]
             {
                 self.diagnostics
@@ -319,21 +312,38 @@ impl CachingBlockDevice {
     }
 }
 
+/// 写穿块缓存装饰器：实现 [`BlockDevice`] 的 `&self` 契约，缓存状态由内部
+/// `Mutex` 串行化；底层 `inner` 按 `&self` 契约自持锁。
+pub struct CachingBlockDevice {
+    pub(crate) inner : Box<dyn BlockDevice>,
+    pub(crate) state : Mutex<CacheState>,
+}
+
+impl CachingBlockDevice {
+    /// 用给定配置包装 `inner`；从 `inner` 读取 [`BlockDevice::block_size`] 并预分配槽位缓冲。
+    pub fn new(inner : Box<dyn BlockDevice>, config : BlockCacheConfig) -> Self {
+        let state = Mutex::new(CacheState::new(inner.block_size(), config));
+        Self { inner, state }
+    }
+}
+
 impl BlockDevice for CachingBlockDevice {
-    fn block_size(&self) -> usize { self.block_size }
+    fn block_size(&self) -> usize { self.state.lock().block_size }
 
     fn total_blocks(&self) -> Option<u64> {
         self.inner
             .total_blocks()
     }
 
-    fn read_blocks(&mut self, start_block : Lba, buf : &mut [u8]) -> DriverResult<()> {
+    fn read_blocks(&self, start_block : Lba, buf : &mut [u8]) -> DriverResult<()> {
         self.check_request_range(start_block, buf.len())?;
-        let bs = self.block_size;
+        let mut state = self.state.lock();
+        let bs = state.block_size;
         if bs == 0 || buf.len() % bs != 0 {
             return Err(DriverError::InvalidParam);
         }
-        if self.capacity == 0 {
+        if state.capacity == 0 {
+            drop(state);
             return self.inner
                        .read_blocks(start_block, buf);
         }
@@ -341,7 +351,7 @@ impl BlockDevice for CachingBlockDevice {
         let nblocks = buf.len() / bs;
         #[cfg(feature = "diagnostics")]
         {
-            self.diagnostics
+            state.diagnostics
                 .read_blocks += nblocks as u64;
         }
         let base = start_block.0;
@@ -352,13 +362,13 @@ impl BlockDevice for CachingBlockDevice {
             while hit_end < nblocks {
                 let lk = Lba(base.checked_add(hit_end as u64)
                                  .ok_or(DriverError::InvalidParam)?);
-                let Some(idx) = self.map.get(lk) else {
+                let Some(idx) = state.map.get(lk) else {
                     break;
                 };
-                buf[hit_end * bs..(hit_end + 1) * bs].copy_from_slice(self.slot_data(idx));
+                buf[hit_end * bs..(hit_end + 1) * bs].copy_from_slice(state.slot_data(idx));
                 #[cfg(feature = "diagnostics")]
                 {
-                    self.diagnostics
+                    state.diagnostics
                         .hit_blocks += 1;
                 }
                 last_hit_idx = Some(idx);
@@ -366,33 +376,33 @@ impl BlockDevice for CachingBlockDevice {
             }
             if hit_end > i {
                 if let Some(idx) = last_hit_idx {
-                    self.touch_lru(idx);
+                    state.touch_lru(idx);
                 }
                 i = hit_end;
                 continue;
             }
             let mut j = i + 1;
             #[cfg(feature = "diagnostics")]
-            self.note_miss();
+            state.note_miss();
             while j < nblocks {
                 let lbaj = Lba(base.checked_add(j as u64)
                                    .ok_or(DriverError::InvalidParam)?);
-                if self.map
+                if state.map
                        .get(lbaj)
                        .is_some()
                 {
                     break;
                 }
                 #[cfg(feature = "diagnostics")]
-                self.note_miss();
+                state.note_miss();
                 j += 1;
             }
             let run_bytes = (j - i) * bs;
             #[cfg(feature = "diagnostics")]
             {
-                self.diagnostics
+                state.diagnostics
                     .backend_read_calls += 1;
-                self.diagnostics
+                state.diagnostics
                     .backend_read_blocks += (j - i) as u64;
             }
             self.inner
@@ -402,30 +412,31 @@ impl BlockDevice for CachingBlockDevice {
             for k in i..j {
                 let lk = Lba(base.checked_add(k as u64)
                                  .ok_or(DriverError::InvalidParam)?);
-                self.admit_read_miss(lk, &buf[k * bs..(k + 1) * bs]);
+                state.admit_read_miss(lk, &buf[k * bs..(k + 1) * bs]);
             }
             i = j;
         }
         #[cfg(feature = "diagnostics")]
-        self.maybe_report_diagnostics();
+        state.maybe_report_diagnostics();
         Ok(())
     }
 
-    fn write_blocks(&mut self, start_block : Lba, buf : &[u8]) -> DriverResult<()> {
+    fn write_blocks(&self, start_block : Lba, buf : &[u8]) -> DriverResult<()> {
         self.check_request_range(start_block, buf.len())?;
-        let bs = self.block_size;
+        let mut state = self.state.lock();
+        let bs = state.block_size;
         if bs == 0 || buf.len() % bs != 0 {
             return Err(DriverError::InvalidParam);
         }
         self.inner
             .write_blocks(start_block, buf)?;
-        if self.capacity == 0 {
+        if state.capacity == 0 {
             return Ok(());
         }
         let nblocks = buf.len() / bs;
         #[cfg(feature = "diagnostics")]
         {
-            self.diagnostics
+            state.diagnostics
                 .write_blocks += nblocks as u64;
         }
         for i in 0..nblocks {
@@ -433,19 +444,19 @@ impl BlockDevice for CachingBlockDevice {
                                      .checked_add(i as u64)
                                      .ok_or(DriverError::InvalidParam)?);
             #[cfg(feature = "diagnostics")]
-            if self.map
+            if state.map
                    .get(lba)
                    .is_none()
             {
-                self.diagnostics
+                state.diagnostics
                     .write_allocations += 1;
             }
-            self.cache_put(lba, &buf[i * bs..(i + 1) * bs]);
+            state.cache_put(lba, &buf[i * bs..(i + 1) * bs]);
         }
         #[cfg(feature = "diagnostics")]
-        self.maybe_report_diagnostics();
+        state.maybe_report_diagnostics();
         Ok(())
     }
 
-    fn flush(&mut self) -> DriverResult<()> { CachingBlockDevice::flush(self) }
+    fn flush(&self) -> DriverResult<()> { self.inner.flush() }
 }

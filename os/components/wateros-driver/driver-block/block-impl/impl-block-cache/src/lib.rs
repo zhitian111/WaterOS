@@ -50,14 +50,14 @@ mod tests {
     use std::sync::Mutex;
 
     struct CountingMem {
-        bytes : Vec<u8>,
+        bytes : Mutex<Vec<u8>>,
         reads : Arc<Mutex<usize>>,
         writes : Arc<Mutex<usize>>,
     }
 
     impl CountingMem {
         fn new(size_blocks : usize, reads : Arc<Mutex<usize>>, writes : Arc<Mutex<usize>>) -> Self {
-            Self { bytes : vec![0u8; size_blocks * api_v0::BLOCK_SIZE],
+            Self { bytes : Mutex::new(vec![0u8; size_blocks * api_v0::BLOCK_SIZE]),
                    reads,
                    writes }
         }
@@ -65,10 +65,10 @@ mod tests {
 
     impl BlockDevice for CountingMem {
         fn total_blocks(&self) -> Option<u64> {
-            Some((self.bytes.len() / api_v0::BLOCK_SIZE) as u64)
+            Some((self.bytes.lock().unwrap().len() / api_v0::BLOCK_SIZE) as u64)
         }
 
-        fn read_blocks(&mut self, start_block : Lba, buf : &mut [u8]) -> DriverResult<()> {
+        fn read_blocks(&self, start_block : Lba, buf : &mut [u8]) -> DriverResult<()> {
             *self.reads
                  .lock()
                  .unwrap() += 1;
@@ -80,14 +80,15 @@ mod tests {
                                                 .ok_or(DriverError::InvalidParam)?;
             let end = start.checked_add(buf.len())
                            .ok_or(DriverError::InvalidParam)?;
-            let src = self.bytes
+            let bytes = self.bytes.lock().unwrap();
+            let src = bytes
                           .get(start..end)
                           .ok_or(DriverError::InvalidParam)?;
             buf.copy_from_slice(src);
             Ok(())
         }
 
-        fn write_blocks(&mut self, start_block : Lba, buf : &[u8]) -> DriverResult<()> {
+        fn write_blocks(&self, start_block : Lba, buf : &[u8]) -> DriverResult<()> {
             *self.writes
                  .lock()
                  .unwrap() += 1;
@@ -99,14 +100,15 @@ mod tests {
                                                 .ok_or(DriverError::InvalidParam)?;
             let end = start.checked_add(buf.len())
                            .ok_or(DriverError::InvalidParam)?;
-            let dst = self.bytes
+            let mut bytes = self.bytes.lock().unwrap();
+            let dst = bytes
                           .get_mut(start..end)
                           .ok_or(DriverError::InvalidParam)?;
             dst.copy_from_slice(buf);
             Ok(())
         }
 
-        fn flush(&mut self) -> DriverResult<()> { Ok(()) }
+        fn flush(&self) -> DriverResult<()> { Ok(()) }
     }
 
     #[test]
@@ -114,8 +116,8 @@ mod tests {
         let reads = Arc::new(Mutex::new(0));
         let writes = Arc::new(Mutex::new(0));
         let inner = Box::new(CountingMem::new(4, reads.clone(), writes.clone()));
-        let mut cache = CachingBlockDevice::new(inner,
-                                                BlockCacheConfig { capacity_blocks : 8 });
+        let cache = CachingBlockDevice::new(inner,
+                                            BlockCacheConfig { capacity_blocks : 8 });
         let bs = cache.block_size();
         let mut a = vec![0u8; bs];
         let mut b = vec![0u8; bs];
@@ -141,8 +143,8 @@ mod tests {
         let reads = Arc::new(Mutex::new(0));
         let writes = Arc::new(Mutex::new(0));
         let inner = Box::new(CountingMem::new(8, reads.clone(), writes.clone()));
-        let mut cache = CachingBlockDevice::new(inner,
-                                                BlockCacheConfig { capacity_blocks : 8 });
+        let cache = CachingBlockDevice::new(inner,
+                                            BlockCacheConfig { capacity_blocks : 8 });
         let bs = cache.block_size();
         let mut buf = vec![0u8; bs * 3];
         cache.read_blocks(Lba(2), &mut buf)
@@ -150,8 +152,9 @@ mod tests {
         assert_eq!(*reads.lock()
                          .unwrap(),
                    1);
-        assert_eq!(cache.free.len(),
-                   cache.capacity,
+        let state = cache.state.lock();
+        assert_eq!(state.free.len(),
+                   state.capacity,
                    "first-touch scan must not consume data slots");
     }
 
@@ -160,8 +163,8 @@ mod tests {
         let reads = Arc::new(Mutex::new(0));
         let writes = Arc::new(Mutex::new(0));
         let inner = Box::new(CountingMem::new(4, reads.clone(), writes.clone()));
-        let mut cache = CachingBlockDevice::new(inner,
-                                                BlockCacheConfig { capacity_blocks : 4 });
+        let cache = CachingBlockDevice::new(inner,
+                                            BlockCacheConfig { capacity_blocks : 4 });
         let bs = cache.block_size();
         let mut first = vec![0u8; bs * 2];
         cache.read_blocks(Lba(0), &mut first)
@@ -194,8 +197,8 @@ mod tests {
         let reads = Arc::new(Mutex::new(0));
         let writes = Arc::new(Mutex::new(0));
         let inner = Box::new(CountingMem::new(4, reads.clone(), writes));
-        let mut cache = CachingBlockDevice::new(inner,
-                                                BlockCacheConfig { capacity_blocks : 2 });
+        let cache = CachingBlockDevice::new(inner,
+                                            BlockCacheConfig { capacity_blocks : 2 });
         let mut buf = vec![0u8; cache.block_size()];
 
         for _ in 0..2 {
@@ -236,8 +239,8 @@ mod tests {
         let reads = Arc::new(Mutex::new(0));
         let writes = Arc::new(Mutex::new(0));
         let inner = Box::new(CountingMem::new(2, reads.clone(), writes.clone()));
-        let mut cache = CachingBlockDevice::new(inner,
-                                                BlockCacheConfig { capacity_blocks : 4 });
+        let cache = CachingBlockDevice::new(inner,
+                                            BlockCacheConfig { capacity_blocks : 4 });
         let bs = cache.block_size();
         let mut r = vec![0u8; bs];
         cache.read_blocks(Lba(0), &mut r)
@@ -267,8 +270,8 @@ mod tests {
         let reads = Arc::new(Mutex::new(0));
         let writes = Arc::new(Mutex::new(0));
         let inner = Box::new(CountingMem::new(8, reads.clone(), writes.clone()));
-        let mut cache = CachingBlockDevice::new(inner,
-                                                BlockCacheConfig { capacity_blocks : 8 });
+        let cache = CachingBlockDevice::new(inner,
+                                            BlockCacheConfig { capacity_blocks : 8 });
         let bs = cache.block_size();
         let w = vec![0xCD_u8; bs];
         cache.write_blocks(Lba(5), &w)
@@ -293,8 +296,8 @@ mod tests {
         let inner = Box::new(CountingMem::new(2,
                                               reads.clone(),
                                               Arc::new(Mutex::new(0))));
-        let mut cache = CachingBlockDevice::new(inner,
-                                                BlockCacheConfig { capacity_blocks : 0 });
+        let cache = CachingBlockDevice::new(inner,
+                                            BlockCacheConfig { capacity_blocks : 0 });
         let bs = cache.block_size();
         let mut r = vec![0u8; bs];
         cache.read_blocks(Lba(0), &mut r)

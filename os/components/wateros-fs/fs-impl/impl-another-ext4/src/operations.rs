@@ -138,7 +138,6 @@ impl ReadWriteFs for AnotherExt4Fs {
         self.device
             .as_ref()
             .ok_or(FsError::NotMounted)?
-            .lock()
             .flush()
             .map_err(|_| FsError::Io)?;
         if !self.pending_reclaims

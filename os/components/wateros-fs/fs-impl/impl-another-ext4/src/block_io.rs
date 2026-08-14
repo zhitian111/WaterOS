@@ -41,8 +41,7 @@ pub(crate) struct BlockAdapter {
 impl BlockDevice for BlockAdapter {
     fn read_block(&self, block_id : u64) -> Block {
         let mut data = Box::new([0u8; BLOCK_SIZE]);
-        let mut guard = self.device.lock();
-        let block_size = guard.block_size() as u64;
+        let block_size = self.device.block_size() as u64;
         if block_size == 0 || BLOCK_SIZE as u64 % block_size != 0 {
             log::error!("[fs::another-ext4] unsupported device block size {block_size}, \
                          block={block_id}");
@@ -57,12 +56,12 @@ impl BlockDevice for BlockAdapter {
                                  let end =
                                      lba.checked_add(lba_count)
                                         .ok_or(driver_block_api_v0::DriverError::InvalidParam)?;
-                                 if guard.total_blocks()
+                                 if self.device.total_blocks()
                                          .is_some_and(|capacity| end > capacity)
                                  {
                                      return Err(driver_block_api_v0::DriverError::InvalidParam);
                                  }
-                                 guard.read_blocks(Lba(lba), &mut data[..])
+                                 self.device.read_blocks(Lba(lba), &mut data[..])
                              });
         if let Err(error) = result {
             self.io_error
@@ -73,8 +72,7 @@ impl BlockDevice for BlockAdapter {
     }
 
     fn write_block(&self, block : &Block) {
-        let mut guard = self.device.lock();
-        let block_size = guard.block_size();
+        let block_size = self.device.block_size();
         if block_size == 0 || BLOCK_SIZE % block_size != 0 {
             log::error!("[fs::another-ext4] unsupported device block size {block_size}, block={}",
                         block.id);
@@ -90,12 +88,12 @@ impl BlockDevice for BlockAdapter {
                           .and_then(|lba| {
                               let end = lba.checked_add(lba_count)
                                            .ok_or(driver_block_api_v0::DriverError::InvalidParam)?;
-                              if guard.total_blocks()
+                              if self.device.total_blocks()
                                       .is_some_and(|capacity| end > capacity)
                               {
                                   return Err(driver_block_api_v0::DriverError::InvalidParam);
                               }
-                              guard.write_blocks(Lba(lba), &block.data[..])
+                              self.device.write_blocks(Lba(lba), &block.data[..])
                           });
         if let Err(error) = result {
             self.io_error
@@ -111,8 +109,7 @@ pub(crate) fn probe(device : &SharedBlockDevice,
                     magic : u16)
                     -> FsResult<bool> {
     let mut bytes = [0u8; 2];
-    device.lock()
-          .read_bytes(magic_offset, &mut bytes)
+    device.read_bytes(magic_offset, &mut bytes)
           .map_err(|_| FsError::Driver)?;
     Ok(u16::from_le_bytes(bytes) == magic)
 }

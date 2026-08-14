@@ -259,7 +259,7 @@ impl VfsIoHandle for FramebufferHandle {
     }
 
     fn flush_device(&mut self) -> VfsResult<()> {
-        self.device.lock().flush().map_err(|_| VfsError::Driver)
+        self.device.flush().map_err(|_| VfsError::Driver)
     }
 
     fn flush_device_region(&mut self,

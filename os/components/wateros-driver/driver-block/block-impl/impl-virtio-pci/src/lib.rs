@@ -9,6 +9,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::ptr;
 use core::ptr::NonNull;
+use spin::Mutex;
 
 use api_v0::{BlockDevice, DriverError, DriverResult, Lba};
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
@@ -160,7 +161,7 @@ unsafe impl Hal for VirtioPciHal {
 
 /// VirtIO block device backed by PCI transport.
 pub struct VirtioPciBlkDevice {
-    inner : VirtIOBlk<VirtioPciHal, PciTransport>,
+    inner : Mutex<VirtIOBlk<VirtioPciHal, PciTransport>>,
 }
 
 impl VirtioPciBlkDevice {
@@ -181,7 +182,7 @@ impl VirtioPciBlkDevice {
             VirtIOBlk::<VirtioPciHal, PciTransport>::new(transport).map_err(|_| {
                                                                        DriverError::Unsupported
                                                                    })?;
-        Ok(Self { inner })
+        Ok(Self { inner : Mutex::new(inner) })
     }
 
     /// Scan PCI bus 0 in a memory-mapped PCI CAM/ECAM window and return the first VirtIO block
@@ -305,27 +306,31 @@ fn assign_memory_bars<C : ConfigurationAccess>(root : &mut PciRoot<C>,
 impl BlockDevice for VirtioPciBlkDevice {
     fn total_blocks(&self) -> Option<u64> {
         Some(self.inner
+                 .lock()
                  .capacity())
     }
 
-    fn read_blocks(&mut self, start_block : Lba, buf : &mut [u8]) -> DriverResult<()> {
+    fn read_blocks(&self, start_block : Lba, buf : &mut [u8]) -> DriverResult<()> {
         self.check_request_range(start_block, buf.len())?;
         let start = usize::try_from(start_block.0).map_err(|_| DriverError::InvalidParam)?;
         self.inner
+            .lock()
             .read_blocks(start, buf)
             .map_err(|_| DriverError::IoError)
     }
 
-    fn write_blocks(&mut self, start_block : Lba, buf : &[u8]) -> DriverResult<()> {
+    fn write_blocks(&self, start_block : Lba, buf : &[u8]) -> DriverResult<()> {
         self.check_request_range(start_block, buf.len())?;
         let start = usize::try_from(start_block.0).map_err(|_| DriverError::InvalidParam)?;
         self.inner
+            .lock()
             .write_blocks(start, buf)
             .map_err(|_| DriverError::IoError)
     }
 
-    fn flush(&mut self) -> DriverResult<()> {
+    fn flush(&self) -> DriverResult<()> {
         self.inner
+            .lock()
             .flush()
             .map_err(|_| DriverError::IoError)
     }

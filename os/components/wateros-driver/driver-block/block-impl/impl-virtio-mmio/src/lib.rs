@@ -12,6 +12,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::ptr;
 use core::ptr::NonNull;
+use spin::Mutex;
 
 use api_v0::{BlockDevice, DriverError, DriverResult, Lba};
 use driver_api::MmioRegion;
@@ -108,7 +109,7 @@ unsafe impl Hal for VirtioMmioHal {
 /// VirtIO-MMIO 上的块设备（`virtio-blk`）。
 pub struct VirtioBlkDevice {
     /// `virtio-drivers` 侧已握手的传输与队列状态。
-    inner : VirtIOBlk<VirtioMmioHal, MmioTransport<'static>>,
+    inner : Mutex<VirtIOBlk<VirtioMmioHal, MmioTransport<'static>>>,
 }
 
 impl VirtioBlkDevice {
@@ -123,27 +124,29 @@ impl VirtioBlkDevice {
             VirtIOBlk::<VirtioMmioHal, MmioTransport>::new(transport).map_err(|_| {
                                                                          DriverError::Unsupported
                                                                      })?;
-        Ok(Self { inner })
+        Ok(Self { inner : Mutex::new(inner) })
     }
 }
 
 impl BlockDevice for VirtioBlkDevice {
     fn total_blocks(&self) -> Option<u64> {
         Some(self.inner
+                 .lock()
                  .capacity())
     }
 
     /// 以 LBA 为单位读入 `buf`；长度须为块大小的整数倍，否则由 VirtIO 层返回错误。
-    fn read_blocks(&mut self, start_block : Lba, buf : &mut [u8]) -> DriverResult<()> {
+    fn read_blocks(&self, start_block : Lba, buf : &mut [u8]) -> DriverResult<()> {
         self.check_request_range(start_block, buf.len())?;
         let start = usize::try_from(start_block.0).map_err(|_| DriverError::InvalidParam)?;
         self.inner
+            .lock()
             .read_blocks(start, buf)
             .map_err(|_| DriverError::IoError)
     }
 
     /// 将 `buf` 写回磁盘；语义与 [`read_blocks`] 对称。
-    fn write_blocks(&mut self, start_block : Lba, buf : &[u8]) -> DriverResult<()> {
+    fn write_blocks(&self, start_block : Lba, buf : &[u8]) -> DriverResult<()> {
         self.check_request_range(start_block, buf.len())?;
         let start = usize::try_from(start_block.0).map_err(|_| DriverError::InvalidParam)?;
         let probe = buf.len() >= IOZONE_PROBE_MIN_WRITE_BYTES;
@@ -153,6 +156,7 @@ impl BlockDevice for VirtioBlkDevice {
                             buf.len());
         }
         let result = self.inner
+                         .lock()
                          .write_blocks(start, buf)
                          .map_err(|_| DriverError::IoError);
         if probe {
@@ -173,8 +177,9 @@ impl BlockDevice for VirtioBlkDevice {
         result
     }
 
-    fn flush(&mut self) -> DriverResult<()> {
+    fn flush(&self) -> DriverResult<()> {
         self.inner
+            .lock()
             .flush()
             .map_err(|_| DriverError::IoError)
     }

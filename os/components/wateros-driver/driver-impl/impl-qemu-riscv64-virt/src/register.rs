@@ -84,8 +84,8 @@ pub(crate) fn probe_virtio_devices() -> Vec<String> {
                         }
                         #[cfg(not(feature = "block-cache"))]
                         {
-                            let dev: Box<dyn BlockDevice> = Box::new(dev);
-                            Arc::new(Mutex::new(dev))
+                            let dev: Arc<dyn BlockDevice> = Arc::new(dev);
+                            dev
                         }
                     };
                     let idx = register_block_device(shared);

@@ -47,8 +47,7 @@ const MAGIC_OFFSET_IN_SB : usize = 0x38;
 // 本方法代码由AI完成
 fn probe_ext4_magic(device : &SharedBlockDevice) -> FsResult<bool> {
     let mut buf = [0u8; 2];
-    let r = device.lock()
-                  .read_bytes(SUPERBLOCK_OFFSET + MAGIC_OFFSET_IN_SB as u64,
+    let r = device.read_bytes(SUPERBLOCK_OFFSET + MAGIC_OFFSET_IN_SB as u64,
                               &mut buf);
     match r {
         Ok(()) => Ok(u16::from_le_bytes(buf) == EXT4_SUPER_MAGIC),
