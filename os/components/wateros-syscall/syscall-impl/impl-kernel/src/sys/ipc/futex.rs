@@ -10,7 +10,8 @@ use task::TaskTick;
 
 use crate::poll_engine::ns_duration_to_ticks;
 use crate::user_copy::{
-    atomic_load_user_u32_in_aspace, copy_from_user_struct, futex_mapping_identity_u32_in_aspace,
+    atomic_compare_exchange_user_u32_in_aspace, atomic_load_user_u32_in_aspace,
+    copy_from_user_struct, futex_mapping_identity_u32_in_aspace,
 };
 
 use super::futex_error_to_errno;
@@ -23,10 +24,24 @@ const FUTEX_WAIT_BITSET : u32 = 9;
 const FUTEX_WAKE_BITSET : u32 = 10;
 const FUTEX_REQUEUE : u32 = 3;
 const FUTEX_CMP_REQUEUE : u32 = 4;
+const FUTEX_WAKE_OP : u32 = 5;
 const FUTEX_CLOCK_REALTIME : u32 = 256;
 
 const FUTEX_CMD_MASK : u32 = !(ipc::futex::FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
 const FUTEX_BITSET_MATCH_ALL : u32 = !0;
+
+const FUTEX_OP_SET : u32 = 0;
+const FUTEX_OP_ADD : u32 = 1;
+const FUTEX_OP_OR : u32 = 2;
+const FUTEX_OP_ANDN : u32 = 3;
+const FUTEX_OP_XOR : u32 = 4;
+
+const FUTEX_OP_CMP_EQ : u32 = 0;
+const FUTEX_OP_CMP_NE : u32 = 1;
+const FUTEX_OP_CMP_LT : u32 = 2;
+const FUTEX_OP_CMP_LE : u32 = 3;
+const FUTEX_OP_CMP_GT : u32 = 4;
+const FUTEX_OP_CMP_GE : u32 = 5;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -288,6 +303,93 @@ fn futex_requeue(uaddr : usize,
     }
 }
 
+/// 将编码字段按 Linux futex ABI 解释为有符号 12 位立即数。
+#[inline]
+fn sign_extend_12(value : u32) -> i32 { ((value << 20) as i32) >> 20 }
+
+fn decode_wake_op(encoded : u32) -> Result<(u32, u32, i32, i32), ErrNo> {
+    let op_field = encoded >> 28;
+    let op = op_field & 0x7;
+    let cmp = (encoded >> 24) & 0xf;
+    let mut op_arg = sign_extend_12((encoded >> 12) & 0xfff);
+    let cmp_arg = sign_extend_12(encoded & 0xfff);
+    if op > FUTEX_OP_XOR || cmp > FUTEX_OP_CMP_GE {
+        return Err(ErrNo::ENOSYS);
+    }
+    // FUTEX_OP_OPARG_SHIFT 使参数表示 `1 << op_arg`。Linux 拒绝负数和
+    // 会触及符号位的移位，避免 C ABI 中的未定义行为。
+    if op_field & 0x8 != 0 {
+        if !(0..31).contains(&op_arg) {
+            return Err(ErrNo::EINVAL);
+        }
+        op_arg = 1i32 << op_arg;
+    }
+    Ok((op, cmp, op_arg, cmp_arg))
+}
+
+fn apply_wake_op(old : u32, op : u32, argument : i32) -> u32 {
+    let argument = argument as u32;
+    match op {
+        FUTEX_OP_SET => argument,
+        FUTEX_OP_ADD => old.wrapping_add(argument),
+        FUTEX_OP_OR => old | argument,
+        FUTEX_OP_ANDN => old & !argument,
+        FUTEX_OP_XOR => old ^ argument,
+        _ => unreachable!("wake op was validated"),
+    }
+}
+
+fn wake_op_comparison(old : u32, cmp : u32, argument : i32) -> bool {
+    let old = old as i32;
+    match cmp {
+        FUTEX_OP_CMP_EQ => old == argument,
+        FUTEX_OP_CMP_NE => old != argument,
+        FUTEX_OP_CMP_LT => old < argument,
+        FUTEX_OP_CMP_LE => old <= argument,
+        FUTEX_OP_CMP_GT => old > argument,
+        FUTEX_OP_CMP_GE => old >= argument,
+        _ => unreachable!("wake comparison was validated"),
+    }
+}
+
+/// `FUTEX_WAKE_OP`：原子更新 `uaddr2`，总是唤醒第一队列，并在旧值满足
+/// 比较条件时唤醒第二队列。CAS 既保证 SMP 原子性，也允许用户页首次缺页。
+fn futex_wake_op(uaddr : usize,
+                 wake_count : u32,
+                 wake_count2 : u32,
+                 uaddr2 : usize,
+                 encoded : u32,
+                 futex_op : u32)
+                 -> Result<usize, ErrNo> {
+    let wake_count = validate_requeue_count(wake_count)?;
+    let wake_count2 = validate_requeue_count(wake_count2)?;
+    validate_futex_uaddr(uaddr)?;
+    validate_futex_uaddr(uaddr2)?;
+    let (op, cmp, op_arg, cmp_arg) = decode_wake_op(encoded)?;
+    let aspace = current_futex_scope();
+    // 先解析两个 key，确保任何地址错误发生在用户字被修改之前。
+    let key1 = futex_key_in_aspace(uaddr, futex_op, aspace)?;
+    let key2 = futex_key_in_aspace(uaddr2, futex_op, aspace)?;
+
+    let old = loop {
+        let observed = atomic_load_user_u32_in_aspace(aspace, uaddr2)?;
+        let desired = apply_wake_op(observed, op, op_arg);
+        let actual = atomic_compare_exchange_user_u32_in_aspace(aspace,
+                                                                 uaddr2,
+                                                                 observed,
+                                                                 desired)?;
+        if actual == observed {
+            break observed;
+        }
+    };
+
+    let mut woken = ipc::futex::wake(key1, wake_count);
+    if wake_op_comparison(old, cmp, cmp_arg) {
+        woken = woken.saturating_add(ipc::futex::wake(key2, wake_count2));
+    }
+    Ok(woken)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,6 +403,24 @@ mod tests {
                    Err(ErrNo::EINVAL));
         assert_eq!(validate_requeue_count(u32::MAX),
                    Err(ErrNo::EINVAL));
+    }
+
+    #[test]
+    fn wake_op_decode_and_apply_match_linux_encoding() {
+        // FUTEX_OP(FUTEX_OP_ADD, 2, FUTEX_OP_CMP_EQ, 7)
+        let encoded = (FUTEX_OP_ADD << 28) | (FUTEX_OP_CMP_EQ << 24) | (2 << 12) | 7;
+        let (op, cmp, op_arg, cmp_arg) = decode_wake_op(encoded).unwrap();
+        assert_eq!(apply_wake_op(5, op, op_arg), 7);
+        assert!(wake_op_comparison(7, cmp, cmp_arg));
+
+        // 12-bit -1 is sign extended for both operation and comparison args.
+        let encoded_negative = (FUTEX_OP_SET << 28) |
+                               (FUTEX_OP_CMP_EQ << 24) |
+                               (0xfff << 12) |
+                               0xfff;
+        let (op, cmp, op_arg, cmp_arg) = decode_wake_op(encoded_negative).unwrap();
+        assert_eq!(apply_wake_op(0, op, op_arg), u32::MAX);
+        assert!(wake_op_comparison(u32::MAX, cmp, cmp_arg));
     }
 }
 
@@ -377,6 +497,12 @@ pub(crate) fn sys_futex(args : SyscallArgs) -> UserRet {
                                                    uaddr2,
                                                    futex_op,
                                                    Some(val3)),
+                FUTEX_WAKE_OP => futex_wake_op(uaddr,
+                                               val,
+                                               timeout_ptr as u32,
+                                               uaddr2,
+                                               val3,
+                                               futex_op),
                 _ => Err(ErrNo::ENOSYS),
             }
         };

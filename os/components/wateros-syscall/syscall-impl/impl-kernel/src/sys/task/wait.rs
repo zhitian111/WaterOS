@@ -202,7 +202,9 @@ fn user_siginfo_exited(pid : task::ProcessId, exit_code : isize) -> UserSigInfo 
     let status = if exit_code < 0 {
         (-exit_code) as i32
     } else {
-        ((exit_code as i32) & 0xFF) << 8
+        // waitid 的 siginfo_t.si_status 是原始退出码；只有 wait4/waitpid
+        // 写入的 int status 才使用高 8 位编码。
+        (exit_code as i32) & 0xFF
     };
     #[repr(C)]
     struct SigchldFields {

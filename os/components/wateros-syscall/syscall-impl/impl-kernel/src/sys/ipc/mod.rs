@@ -10,6 +10,7 @@ pub(crate) mod robust;
 pub(crate) mod shm;
 pub(crate) mod signal;
 pub(crate) mod signalfd;
+pub(crate) mod sysv_msg;
 
 pub(crate) use eventfd::sys_eventfd2;
 pub(crate) use futex::sys_futex;
@@ -27,6 +28,7 @@ pub(crate) use signal::{
     sys_rt_sigsuspend, sys_rt_sigtimedwait, sys_sigaltstack, sys_tgkill, sys_tkill, timer_tick,
 };
 pub(crate) use signalfd::sys_signalfd4;
+pub(crate) use sysv_msg::{sys_msgctl, sys_msgget, sys_msgrcv, sys_msgsnd};
 
 fn futex_error_to_errno(error : FutexError) -> ErrNo {
     match error {

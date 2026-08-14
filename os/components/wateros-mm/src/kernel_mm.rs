@@ -255,6 +255,29 @@ pub use api_v0::kernel_bringup::{
         }
     }
 
+    /// 预取当前地址空间中的全部 lazy 用户 VMA，供 `mlockall(MCL_CURRENT)`。
+    pub fn prefault_all_current_user_ranges(aspace_ptr : usize)
+                                             -> api_v0::error::MmResult<()> {
+        let mut alloc = crate::frame_alloctor::GlobalPhysFrameAllocator;
+        #[cfg(feature = "impl-sv39")]
+        {
+            return crate::user_aspace::with_user_aspace_mut_and_flush(aspace_ptr, |aspace| {
+                aspace.prefault_all_current_user_ranges(&mut alloc)
+            });
+        }
+        #[cfg(all(not(feature = "impl-sv39"), feature = "impl-loongarch64"))]
+        {
+            return crate::user_aspace::with_user_aspace_mut_and_flush(aspace_ptr, |aspace| {
+                aspace.prefault_all_current_user_ranges(&mut alloc)
+            });
+        }
+        #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
+        {
+            let _ = (aspace_ptr, &mut alloc);
+            Err(api_v0::error::MmError::Unsupported)
+        }
+    }
+
     pub fn madvise_range_shared_or_file(aspace_ptr: usize,
                                         addr: usize,
                                         len: usize)

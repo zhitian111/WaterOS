@@ -6,7 +6,7 @@
 //! 与 [`crate::pagetable`] 一致：映射 **饥渴（eager）** 建立；未映射用户 VA
 //! 由硬件 page fault 进入 trap，本阶段不提供 demand paging。
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec::Vec};
 use api_v0::addr::{PhysPageNum, VirtAddr, VirtPageNum};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::brk::{BrkRegion, HeapBrk};
@@ -789,6 +789,51 @@ impl MmapOps for LoongArch64AddressSpace {
 }
 
 impl LoongArch64AddressSpace {
+    /// 使当前可按需装入的文件、brk 与用户栈 VMA 全部驻留。
+    pub fn prefault_all_current_user_ranges<A>(&mut self, allocator : &mut A) -> MmResult<()>
+        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>
+    {
+        let mut ranges : Vec<(VirtAddr, VirtAddr, PageFaultAccess)> = self.lazy_file_vmas
+            .iter()
+            .filter_map(|vma| {
+                let access = if vma.perm.writable() {
+                    PageFaultAccess::Write
+                } else if vma.perm.readable() {
+                    PageFaultAccess::Read
+                } else if vma.perm.executable() {
+                    PageFaultAccess::Execute
+                } else {
+                    return None;
+                };
+                Some((vma.start, vma.end, access))
+            })
+            .collect();
+        if self.user_brk_start.0 < self.user_brk_current_end.0 {
+            ranges.push((self.user_brk_start,
+                         self.user_brk_current_end,
+                         PageFaultAccess::Read));
+        }
+        if self.user_stack_bottom.0 < self.user_stack_top.0 {
+            ranges.push((self.user_stack_bottom,
+                         self.user_stack_top,
+                         PageFaultAccess::Read));
+        }
+        for (start, end, access) in ranges {
+            let mut vpn = start.floor_page();
+            let vpn_end = end.ceil_page();
+            while vpn.0 < vpn_end.0 {
+                let page = vpn.start_addr();
+                if self.translate_addr(page)?.is_none() &&
+                   !MmapOps::handle_page_fault(self, allocator, page, access)?
+                {
+                    return Err(MmError::InvalidAddress);
+                }
+                vpn = VirtPageNum(vpn.0 + 1);
+            }
+        }
+        Ok(())
+    }
+
     pub fn madvise_range_mapped(&self, addr : VirtAddr, len : usize) -> bool {
         if len == 0 {
             return true;

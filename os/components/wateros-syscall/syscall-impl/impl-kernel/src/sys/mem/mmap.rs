@@ -547,6 +547,9 @@ pub(crate) fn sys_mlock(args : SyscallArgs) -> UserRet {
     };
     match mm::kernel_mm::prefault_user_range(handle, addr, len, false) {
         Ok(()) => UserRet::from_success(0),
+        Err(MmError::InvalidAddress | MmError::NotMapped) => {
+            UserRet::from_error(ErrNo::ENOMEM)
+        }
         Err(error) => UserRet::from_error(mm_err_to_errno(error)),
     }
 }
@@ -584,11 +587,20 @@ pub(crate) fn sys_mlockall(args : SyscallArgs) -> UserRet {
     if flags & !MCL_KNOWN != 0 || flags == 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    if flags & MCL_CURRENT != 0 {
-        // 尚无枚举完整地址空间 VMA 的公共接口，不能伪装已锁定当前全部映射。
-        return UserRet::from_error(ErrNo::EOPNOTSUPP);
+    if flags & MCL_ONFAULT != 0 && flags & (MCL_CURRENT | MCL_FUTURE) == 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
     }
-    // MCL_FUTURE 在当前无 swap、无用户页回收的内存模型下天然满足。
+    if flags & MCL_CURRENT != 0 && flags & MCL_ONFAULT == 0 {
+        let handle = match require_user_aspace("mlockall") {
+            Ok(handle) => handle,
+            Err(error) => return UserRet::from_error(error),
+        };
+        if let Err(error) = mm::kernel_mm::prefault_all_current_user_ranges(handle) {
+            return UserRet::from_error(mm_err_to_errno(error));
+        }
+    }
+    // 无 swap、无用户页回收，因此 CURRENT 的驻留页和 FUTURE/ONFAULT
+    // 后续装入的页都会自然保持，不需要额外 PTE 标志。
     UserRet::from_success(0)
 }
 

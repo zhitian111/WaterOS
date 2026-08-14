@@ -1,6 +1,6 @@
 # task syscall
 
-[返回 impl-kernel](../../../README.md) · [任务系统](../../../../../../../wateros-task/readme.md)
+[返回 impl-kernel](../../../README.md) · [任务系统](../../../../../../wateros-task/readme.md)
 
 本目录负责把 Linux 进程/线程 ABI 映射到 `wateros-task` 的 PCB、TCB、scheduler
 和各资源侧表。创建流程采用“先创建未发布 task，初始化全部资源，再入队”，防止

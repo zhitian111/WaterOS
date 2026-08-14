@@ -12,7 +12,7 @@ use api_v0::brk::{BrkRegion, HeapBrk};
 use api_v0::error::{MmError, MmResult};
 use api_v0::flags::MapFlags;
 use api_v0::frame_allocator::PhysicalFrameAllocator;
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec::Vec};
 
 use api_v0::mmap::{
     DemandPageLoader, DeviceMapping, MmapKind, MmapOps, MmapRequest, PageFaultAccess,
@@ -769,6 +769,56 @@ impl MmapOps for Sv39AddressSpace {
 }
 
 impl Sv39AddressSpace {
+    /// 将当前地址空间中所有可按需装入的 VMA 变为驻留。
+    ///
+    /// eager mmap、共享映射和设备映射在创建时已有 PTE；这里只需覆盖文件
+    /// lazy VMA、brk 当前区间和用户栈保留区。先复制轻量元数据，避免在调用
+    /// `handle_page_fault` 时仍借用 VMA 数组。
+    pub fn prefault_all_current_user_ranges<A>(&mut self, allocator : &mut A) -> MmResult<()>
+        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>
+    {
+        let mut ranges : Vec<(VirtAddr, VirtAddr, PageFaultAccess)> = self.lazy_file_vmas
+            .iter()
+            .filter_map(|vma| {
+                let access = if vma.perm.writable() {
+                    PageFaultAccess::Write
+                } else if vma.perm.readable() {
+                    PageFaultAccess::Read
+                } else if vma.perm.executable() {
+                    PageFaultAccess::Execute
+                } else {
+                    // PROT_NONE 区域没有可执行的用户访问，也没有已驻留页需要补。
+                    return None;
+                };
+                Some((vma.start, vma.end, access))
+            })
+            .collect();
+        if self.user_brk_start.0 < self.user_brk_current_end.0 {
+            ranges.push((self.user_brk_start,
+                         self.user_brk_current_end,
+                         PageFaultAccess::Read));
+        }
+        if self.user_stack_bottom.0 < self.user_stack_top.0 {
+            ranges.push((self.user_stack_bottom,
+                         self.user_stack_top,
+                         PageFaultAccess::Read));
+        }
+        for (start, end, access) in ranges {
+            let mut vpn = start.floor_page();
+            let vpn_end = end.ceil_page();
+            while vpn.0 < vpn_end.0 {
+                let page = vpn.start_addr();
+                if self.translate_addr(page)?.is_none() &&
+                   !MmapOps::handle_page_fault(self, allocator, page, access)?
+                {
+                    return Err(MmError::InvalidAddress);
+                }
+                vpn = VirtPageNum(vpn.0 + 1);
+            }
+        }
+        Ok(())
+    }
+
     pub fn madvise_range_mapped(&self, addr : VirtAddr, len : usize) -> bool {
         if len == 0 {
             return true;

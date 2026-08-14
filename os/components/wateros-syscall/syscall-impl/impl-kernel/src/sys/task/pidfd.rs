@@ -27,8 +27,9 @@ impl PidFdHandle {
 
     fn exited(&self) -> bool {
         task::process_snapshot(self.pid)
-            .map(|snapshot| matches!(snapshot.state,
-                                     ProcessState::Exited(_) | ProcessState::Exiting(_)))
+            // `Exiting` 只表示 exit_group 已开始：其他 hart 上的线程可能仍在
+            // 用户态运行。只有全部成员真正退出后 pidfd 才能变为可读。
+            .map(|snapshot| matches!(snapshot.state, ProcessState::Exited(_)))
             .unwrap_or(true)
     }
 
@@ -96,7 +97,7 @@ pub(crate) fn pidfd_process_id(fd : usize) -> Result<ProcessId, ErrNo> {
     }).map_err(vfs_error_to_errno)
 }
 
-fn allocate_pidfd(pid : ProcessId, nonblocking : bool) -> Result<usize, ErrNo> {
+pub(crate) fn allocate_pidfd(pid : ProcessId, nonblocking : bool) -> Result<usize, ErrNo> {
     let fd = vfs::fd::alloc_fd(Box::new(PidFdHandle::new(pid, nonblocking)))
         .map_err(vfs_error_to_errno)?;
     // Linux pidfd_open 总是返回 close-on-exec fd。
@@ -141,6 +142,11 @@ pub(crate) fn sys_pidfd_send_signal(args : SyscallArgs) -> UserRet {
         Ok(pid) => pid,
         Err(error) => return UserRet::from_error(error),
     };
+    if !matches!(task::process_snapshot(pid).map(|snapshot| snapshot.state),
+                 Some(ProcessState::Running))
+    {
+        return UserRet::from_error(ErrNo::ESRCH);
+    }
     let result = if signal == 0 {
         crate::sys::ipc::signal::check_signal_permission(pid, 0)
     } else {

@@ -1,7 +1,7 @@
 //! `mincore(2)`：查询用户 VMA 中每一页当前是否已有物理映射。
 
 use api_v0::{ErrNo, SyscallArgs, UserRet};
-use mm::api::addr::PAGE_SIZE;
+use mm::api::{addr::PAGE_SIZE, error::MmError};
 
 use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::mm_util::{mm_err_to_errno, require_user_aspace};
@@ -33,7 +33,11 @@ pub(crate) fn sys_mincore(args : SyscallArgs) -> UserRet {
                                                           addr,
                                                           len,
                                                           &mut residency) {
-        return UserRet::from_error(mm_err_to_errno(error));
+        return UserRet::from_error(match error {
+            // Linux 为区间中存在未映射页返回 ENOMEM。
+            MmError::InvalidAddress | MmError::NotMapped => ErrNo::ENOMEM,
+            other => mm_err_to_errno(other),
+        });
     }
     match copy_to_user(vector, &residency) {
         Ok(copied) if copied == residency.len() => UserRet::from_success(0),

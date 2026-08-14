@@ -66,6 +66,9 @@
 #define __NR_pidfd_open 434
 #define __NR_pidfd_getfd 438
 #endif
+#ifndef __NR_clone3
+#define __NR_clone3 435
+#endif
 
 #define IOPRIO_WHO_PROCESS 1
 #define IOPRIO_CLASS_BE 2
@@ -126,6 +129,28 @@ struct wos_open_how {
 #define FUTEX_WAIT_BITSET   9
 #define FUTEX_WAKE_BITSET   10
 #define FUTEX_CMP_REQUEUE   4
+#define FUTEX_WAIT          0
+#define FUTEX_WAKE_OP       5
+#define FUTEX_OP_ADD        1
+#define FUTEX_OP_CMP_EQ     0
+#define FUTEX_OP(op, oparg, cmp, cmparg) \
+    ((((op) & 0xfU) << 28) | (((cmp) & 0xfU) << 24) | \
+     (((oparg) & 0xfffU) << 12) | ((cmparg) & 0xfffU))
+#define CLONE_PIDFD         0x00001000ULL
+
+struct wos_clone_args {
+    uint64_t flags;
+    uint64_t pidfd;
+    uint64_t child_tid;
+    uint64_t parent_tid;
+    uint64_t exit_signal;
+    uint64_t stack;
+    uint64_t stack_size;
+    uint64_t tls;
+    uint64_t set_tid;
+    uint64_t set_tid_size;
+    uint64_t cgroup;
+};
 
 _Static_assert(sizeof(struct wos_inotify_event) == 16,
                "inotify_event ABI size");
@@ -704,6 +729,63 @@ int main(void) {
             WIFEXITED(status) && WEXITSTATUS(status) == 0,
             "futex requeue waiter result");
 
+    /* WAKE_OP 必须先原子更新第二个 word，再按更新前的值决定是否唤醒。 */
+    futex_words[0] = 0;
+    futex_words[1] = 7;
+    futex_words[3] = 0;
+    pid_t wake_op_child = fork();
+    if (wake_op_child < 0)
+        fail("fork futex wake-op waiter");
+    if (wake_op_child == 0) {
+        __atomic_store_n(&futex_words[3], 1, __ATOMIC_SEQ_CST);
+        long result = syscall(__NR_futex, &futex_words[1], FUTEX_WAIT,
+                              7, NULL, NULL, 0);
+        _exit(result == 0 ? 0 : 1);
+    }
+    for (int attempt = 0; attempt < 100 &&
+                              __atomic_load_n(&futex_words[3], __ATOMIC_SEQ_CST) != 1;
+         ++attempt) {
+        struct timespec short_pause = {.tv_sec = 0, .tv_nsec = 1000000L};
+        nanosleep(&short_pause, NULL);
+    }
+    require(__atomic_load_n(&futex_words[3], __ATOMIC_SEQ_CST) == 1,
+            "futex wake-op waiter started");
+    nanosleep(&futex_settle, NULL);
+    unsigned wake_op = FUTEX_OP(FUTEX_OP_ADD, 2, FUTEX_OP_CMP_EQ, 7);
+    require(syscall(__NR_futex, &futex_words[0], FUTEX_WAKE_OP,
+                    0, 1, &futex_words[1], wake_op) == 1 &&
+            __atomic_load_n(&futex_words[1], __ATOMIC_SEQ_CST) == 9,
+            "futex wake-op atomic update and conditional wake");
+    require(waitpid(wake_op_child, &status, 0) == wake_op_child &&
+            WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "futex wake-op waiter result");
+
+    int clone_pidfd = -1;
+    struct wos_clone_args clone_args;
+    memset(&clone_args, 0, sizeof(clone_args));
+    clone_args.flags = CLONE_PIDFD;
+    clone_args.pidfd = (uintptr_t)&clone_pidfd;
+    clone_args.exit_signal = SIGCHLD;
+    pid_t clone_pidfd_child = syscall(__NR_clone3, &clone_args, sizeof(clone_args));
+    if (clone_pidfd_child < 0)
+        fail("clone3 CLONE_PIDFD");
+    if (clone_pidfd_child == 0)
+        _exit(23);
+    require(clone_pidfd >= 0 &&
+            (fcntl(clone_pidfd, F_GETFD) & FD_CLOEXEC) != 0,
+            "clone3 returned close-on-exec pidfd");
+    struct pollfd clone_pidfd_poll = {.fd = clone_pidfd, .events = POLLIN};
+    require(poll(&clone_pidfd_poll, 1, 5000) == 1 &&
+            (clone_pidfd_poll.revents & (POLLIN | POLLHUP)) != 0,
+            "clone pidfd poll exit readiness");
+    siginfo_t clone_pidfd_info;
+    memset(&clone_pidfd_info, 0, sizeof(clone_pidfd_info));
+    require(syscall(__NR_waitid, 3, clone_pidfd, &clone_pidfd_info,
+                    WEXITED, NULL) == 0 &&
+            clone_pidfd_info.si_pid == clone_pidfd_child &&
+            clone_pidfd_info.si_status == 23,
+            "clone pidfd waitid exit status");
+
     int pidfd_pipe[2];
     require(pipe(pidfd_pipe) == 0, "pidfd pipe");
     pid_t pidfd_child = fork();
@@ -756,8 +838,8 @@ int main(void) {
             "mlock accepts unaligned address and prefaults");
     require(munlock(lock_area + 1, 4096) == 0,
             "munlock mapped range");
-    require(mlockall(MCL_FUTURE) == 0 && munlockall() == 0,
-            "mlockall future in non-swapping kernel");
+    require(mlockall(MCL_CURRENT | MCL_FUTURE) == 0 && munlockall() == 0,
+            "mlockall current/future in non-swapping kernel");
 
     close(pipefd[0]);
     close(pipefd[1]);
@@ -782,6 +864,7 @@ int main(void) {
     close(openat2_dirfd);
     munmap(futex_words, 4096);
     close(futex_memfd);
+    close(clone_pidfd);
     close(copied_child_fd);
     close(pidfd_pipe[0]);
     close(pidfd);
@@ -804,8 +887,8 @@ int main(void) {
     puts("[PASS] memfd: shared mmap/writeback, CLOEXEC, size/write seals and seal locking");
     puts("[PASS] inotify: create/modify/move/delete, cookies, poll and EFAULT rollback");
     puts("[PASS] openat2: versioned open_how, CLOEXEC, symlink/beneath/cache constraints");
-    puts("[PASS] futex bitset/requeue: selective wake and migrated waiter bookkeeping");
-    puts("[PASS] pidfd: open, getfd, signal, poll and waitid(P_PIDFD)");
-    puts("[PASS] memory residency: mincore, MADV_POPULATE, mlock and MCL_FUTURE");
+    puts("[PASS] futex bitset/requeue/wake-op: selective, migrated and atomic conditional wake");
+    puts("[PASS] pidfd: clone3, open, getfd, signal, poll and waitid(P_PIDFD)");
+    puts("[PASS] memory residency: mincore, MADV_POPULATE, mlock and MCL_CURRENT/FUTURE");
     return 0;
 }
