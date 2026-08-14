@@ -8,6 +8,7 @@ use core::ptr::addr_of_mut;
 use config::mm::KERNEL_HEAP_SIZE;
 use linked_list_allocator::LockedHeap;
 
+use crate::heap_backend::HeapBackend;
 use crate::interrupt_guard::{maybe_warn_high_water, with_allocator_interrupt_guard};
 use crate::HeapMemStats;
 use crate::HEAP_SPACE;
@@ -19,14 +20,16 @@ pub(crate) struct InterruptSafeLockedHeap {
 impl InterruptSafeLockedHeap {
     pub(crate) const fn empty() -> Self { Self { inner: LockedHeap::empty() } }
 
-    pub(crate) fn mem_stats(&self) -> HeapMemStats {
+    pub(crate) fn mem_stats_impl(&self) -> HeapMemStats {
         let heap = self.inner.lock();
         HeapMemStats { used: heap.used(),
                        free: heap.free(),
                        capacity: KERNEL_HEAP_SIZE }
     }
 
-    pub(crate) unsafe fn init(&self, heap_start : *mut u8, heap_size : usize) {
+    pub(crate) unsafe fn init_region(&self,
+                                     heap_start : *mut u8,
+                                     heap_size : usize) {
         with_allocator_interrupt_guard(|| unsafe {
             self.inner
                 .lock()
@@ -35,7 +38,18 @@ impl InterruptSafeLockedHeap {
     }
 }
 
-unsafe impl GlobalAlloc for InterruptSafeLockedHeap {
+impl HeapBackend for InterruptSafeLockedHeap {
+    fn init(&self) {
+        unsafe {
+            self.init_region(addr_of_mut!(HEAP_SPACE) as *mut u8,
+                             KERNEL_HEAP_SIZE);
+        }
+    }
+
+    fn mem_stats(&self) -> HeapMemStats {
+        self.mem_stats_impl()
+    }
+
     unsafe fn alloc(&self, layout : Layout) -> *mut u8 {
         let (ptr, used, free) = with_allocator_interrupt_guard(|| {
             let heap = self.inner.lock();
@@ -63,14 +77,10 @@ unsafe impl GlobalAlloc for InterruptSafeLockedHeap {
     }
 }
 
-#[global_allocator]
-pub(crate) static HEAP_ALLOCATOR : InterruptSafeLockedHeap = InterruptSafeLockedHeap::empty();
+pub(crate) static ACTIVE_ALLOCATOR : InterruptSafeLockedHeap = InterruptSafeLockedHeap::empty();
 
 pub(crate) fn init_heap() {
-    unsafe {
-        HEAP_ALLOCATOR.init(addr_of_mut!(HEAP_SPACE) as *mut u8,
-                            KERNEL_HEAP_SIZE);
-    }
+    ACTIVE_ALLOCATOR.init();
 }
 
-pub(crate) fn stats() -> HeapMemStats { HEAP_ALLOCATOR.mem_stats() }
+pub(crate) fn stats() -> HeapMemStats { ACTIVE_ALLOCATOR.mem_stats() }

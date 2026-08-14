@@ -2,7 +2,7 @@
 //!
 //! **不变量**：分配路径与 [`crate::interrupt_guard`] 一致；`pool_len` 在 `init` 后不变。
 
-use core::alloc::{GlobalAlloc, Layout};
+use core::alloc::Layout;
 use core::ptr::{self, addr_of_mut, NonNull};
 #[cfg(not(feature = "tlsf-diagnostics"))]
 use core::sync::atomic::AtomicBool;
@@ -12,6 +12,7 @@ use config::mm::KERNEL_HEAP_SIZE;
 use rlsf::Tlsf;
 use spin::Mutex;
 
+use crate::heap_backend::HeapBackend;
 use crate::interrupt_guard::{maybe_warn_high_water, with_allocator_interrupt_guard};
 use crate::HeapMemStats;
 use crate::HEAP_SPACE;
@@ -65,7 +66,7 @@ impl InterruptSafeTlsfHeap {
                used_estimate : AtomicUsize::new(0) }
     }
 
-    pub(crate) fn mem_stats(&self) -> HeapMemStats {
+    pub(crate) fn mem_stats_impl(&self) -> HeapMemStats {
         let used = self.used_estimate
                        .load(Ordering::Relaxed);
         let pool_len = self.pool_len
@@ -92,7 +93,7 @@ impl InterruptSafeTlsfHeap {
                                   |u| Some(u.saturating_sub(n)));
     }
 
-    pub(crate) unsafe fn init(&self) {
+    pub(crate) unsafe fn init_region(&self) {
         with_allocator_interrupt_guard(|| unsafe {
             let block = NonNull::new_unchecked(addr_of_mut!(HEAP_SPACE) as *mut u8);
             let block_slice = NonNull::new(ptr::slice_from_raw_parts_mut(block.as_ptr(),
@@ -111,10 +112,20 @@ impl InterruptSafeTlsfHeap {
     }
 }
 
-unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
+impl HeapBackend for InterruptSafeTlsfHeap {
+    fn init(&self) {
+        unsafe {
+            self.init_region();
+        }
+    }
+
+    fn mem_stats(&self) -> HeapMemStats {
+        self.mem_stats_impl()
+    }
+
     unsafe fn alloc(&self, layout : Layout) -> *mut u8 {
         let (ptr, stats) = with_allocator_interrupt_guard(|| {
-            let stats = self.mem_stats();
+            let stats = self.mem_stats_impl();
             let mut tlsf = self.inner.lock();
             let ptr = match tlsf.allocate(layout) {
                 Some(ptr) => {
@@ -146,7 +157,11 @@ unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
         })
     }
 
-    unsafe fn realloc(&self, ptr : *mut u8, layout : Layout, new_size : usize) -> *mut u8 {
+    unsafe fn realloc(&self,
+                      ptr : *mut u8,
+                      layout : Layout,
+                      new_size : usize)
+                      -> *mut u8 {
         if !ptr.is_null() && !dealloc_pointer_in_heap(ptr, layout) {
             reject_invalid_pointer("realloc", ptr, layout);
             return ptr::null_mut();
@@ -186,13 +201,10 @@ unsafe impl GlobalAlloc for InterruptSafeTlsfHeap {
     }
 }
 
-#[global_allocator]
-pub(crate) static HEAP_ALLOCATOR : InterruptSafeTlsfHeap = InterruptSafeTlsfHeap::new();
+pub(crate) static ACTIVE_ALLOCATOR : InterruptSafeTlsfHeap = InterruptSafeTlsfHeap::new();
 
 pub(crate) fn init_heap() {
-    unsafe {
-        HEAP_ALLOCATOR.init();
-    }
+    ACTIVE_ALLOCATOR.init();
 }
 
-pub(crate) fn stats() -> HeapMemStats { HEAP_ALLOCATOR.mem_stats() }
+pub(crate) fn stats() -> HeapMemStats { ACTIVE_ALLOCATOR.mem_stats() }

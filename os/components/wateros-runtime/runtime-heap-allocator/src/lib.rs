@@ -9,10 +9,13 @@
 
 extern crate alloc;
 
+mod heap_backend;
 mod interrupt_guard;
 mod stress;
 
+use core::alloc::{GlobalAlloc, Layout};
 use config::mm::KERNEL_HEAP_SIZE;
+use heap_backend::HeapBackend;
 
 #[cfg(all(feature = "impl-tlsf", feature = "impl-linked-list-allocator"))]
 compile_error!("enable only one of `impl-tlsf` or `impl-linked-list-allocator`");
@@ -43,7 +46,36 @@ pub struct HeapMemStats {
     pub capacity : usize,
 }
 
-pub(crate) use backend::HEAP_ALLOCATOR;
+/// 全局分配器入口：按编译期 feature 委托给唯一活动后端。
+///
+/// 该类型保持为无状态门面，后端状态仍由各 backend 模块自己的静态对象持有；
+/// Task 03 在这里增加运行期 boot/slab 后端切换。
+pub(crate) struct KernelAllocator;
+
+impl KernelAllocator {
+    pub(crate) const fn new() -> Self { Self }
+}
+
+unsafe impl GlobalAlloc for KernelAllocator {
+    unsafe fn alloc(&self, layout : Layout) -> *mut u8 {
+        unsafe { backend::ACTIVE_ALLOCATOR.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr : *mut u8, layout : Layout) {
+        unsafe { backend::ACTIVE_ALLOCATOR.dealloc(ptr, layout) }
+    }
+
+    unsafe fn realloc(&self,
+                      ptr : *mut u8,
+                      layout : Layout,
+                      new_size : usize)
+                      -> *mut u8 {
+        unsafe { backend::ACTIVE_ALLOCATOR.realloc(ptr, layout, new_size) }
+    }
+}
+
+#[global_allocator]
+pub(crate) static HEAP_ALLOCATOR : KernelAllocator = KernelAllocator::new();
 
 /// 返回当前内核堆用量（`used`/`free`/`capacity`）。
 ///
