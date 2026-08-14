@@ -186,7 +186,7 @@ fn fs_and_rel_rw(path : &str) -> VfsResult<(SharedRwFs, String)> {
 /// 已完成的目录项和元数据更新。
 pub(crate) fn sync_path_filesystem(path : &str) -> VfsResult<()> {
     let (fs, _) = fs_and_rel_rw(path)?;
-    fs.lock().sync().map_err(map_fs_err)
+    fs.write().sync().map_err(map_fs_err)
 }
 
 // 本方法代码由AI完成
@@ -339,7 +339,7 @@ impl FsBridge {
     pub(crate) fn read_dir_on_root(path : &str) -> VfsResult<Vec<VfsDirEntry>> {
         let n = normalize_absolute_path(path)?;
         let fs = root_rw()?;
-        fs.lock()
+        fs.read()
           .read_dir(n.as_str())
           .map_err(map_fs_err)
           .map(|v| {
@@ -362,7 +362,7 @@ impl FsBridge {
                            .map_err(map_fs_err)
             }
             FsRoute::PseudoSecurity { .. } => Err(VfsError::NotFound),
-            FsRoute::Root { abs, .. } => match root_rw()?.lock()
+            FsRoute::Root { abs, .. } => match root_rw()?.read()
                                                          .read_range(abs.as_str(), offset, buf)
                                                          .map_err(map_fs_err)
             {
@@ -375,7 +375,7 @@ impl FsBridge {
                 }
                 Err(e) => Err(e),
             },
-            FsRoute::AuxRw { fs, rel, .. } => fs.lock()
+            FsRoute::AuxRw { fs, rel, .. } => fs.read()
                                                 .read_range(rel.as_str(), offset, buf)
                                                 .map_err(map_fs_err),
             FsRoute::AuxRo { fs, rel, .. } => fs.lock()
@@ -402,7 +402,7 @@ impl RootRwSession for MountedRwSession {
     fn write_regular_file_at_root(&mut self, name : &str, data : &[u8]) -> VfsResult<()> {
         validate_root_file_name(name)?;
         self.inner
-            .lock()
+            .write()
             .write_regular_file_at_root(name, data)
             .map_err(map_fs_err)
     }
@@ -411,7 +411,7 @@ impl RootRwSession for MountedRwSession {
     fn write_regular_file(&mut self, path : &str, data : &[u8]) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
-            .lock()
+            .write()
             .write_regular_file(n.as_str(), data)
             .map_err(map_fs_err)
     }
@@ -420,7 +420,7 @@ impl RootRwSession for MountedRwSession {
     fn unlink(&mut self, path : &str) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
-            .lock()
+            .write()
             .unlink(n.as_str())
             .map_err(map_fs_err)
     }
@@ -429,7 +429,7 @@ impl RootRwSession for MountedRwSession {
     fn rmdir(&mut self, path : &str) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
-            .lock()
+            .write()
             .rmdir(n.as_str())
             .map_err(map_fs_err)
     }
@@ -438,7 +438,7 @@ impl RootRwSession for MountedRwSession {
     fn write_range(&mut self, path : &str, offset : u64, data : &[u8]) -> VfsResult<usize> {
         let n = normalize_absolute_path(path)?;
         self.inner
-            .lock()
+            .write()
             .write_range(n.as_str(), offset, data)
             .map_err(map_fs_err)
     }
@@ -447,7 +447,7 @@ impl RootRwSession for MountedRwSession {
     fn truncate(&mut self, path : &str, len : u64) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
-            .lock()
+            .write()
             .truncate(n.as_str(), len)
             .map_err(map_fs_err)
     }
@@ -456,7 +456,7 @@ impl RootRwSession for MountedRwSession {
     fn mkdir(&mut self, path : &str, mode : u32) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
-            .lock()
+            .write()
             .mkdir(n.as_str(), mode)
             .map_err(map_fs_err)
     }
@@ -465,7 +465,7 @@ impl RootRwSession for MountedRwSession {
     fn chmod(&mut self, path : &str, mode : u32) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
-            .lock()
+            .write()
             .chmod(n.as_str(), mode)
             .map_err(map_fs_err)
     }
@@ -474,7 +474,7 @@ impl RootRwSession for MountedRwSession {
     fn chown(&mut self, path : &str, uid : Option<u32>, gid : Option<u32>) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
-            .lock()
+            .write()
             .chown(n.as_str(), uid, gid)
             .map_err(map_fs_err)
     }
@@ -483,7 +483,7 @@ impl RootRwSession for MountedRwSession {
     fn setxattr(&mut self, path : &str, name : &str, value : &[u8]) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
-            .lock()
+            .write()
             .setxattr(n.as_str(), name, value)
             .map_err(map_fs_err)
     }
@@ -492,7 +492,7 @@ impl RootRwSession for MountedRwSession {
     fn getxattr(&self, path : &str, name : &str, buf : &mut [u8]) -> VfsResult<usize> {
         let n = normalize_absolute_path(path)?;
         self.inner
-            .lock()
+            .read()
             .getxattr(n.as_str(), name, buf)
             .map_err(map_fs_err)
     }
@@ -501,7 +501,7 @@ impl RootRwSession for MountedRwSession {
     fn listxattr(&self, path : &str, buf : &mut [u8]) -> VfsResult<usize> {
         let n = normalize_absolute_path(path)?;
         self.inner
-            .lock()
+            .read()
             .listxattr(n.as_str(), buf)
             .map_err(map_fs_err)
     }
@@ -510,7 +510,7 @@ impl RootRwSession for MountedRwSession {
     fn removexattr(&mut self, path : &str, name : &str) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
-            .lock()
+            .write()
             .removexattr(n.as_str(), name)
             .map_err(map_fs_err)
     }
@@ -520,7 +520,7 @@ impl RootRwSession for MountedRwSession {
         let old = normalize_absolute_path(old_path)?;
         let new = normalize_absolute_path(new_path)?;
         self.inner
-            .lock()
+            .write()
             .rename(old.as_str(), new.as_str())
             .map_err(map_fs_err)
     }
@@ -530,7 +530,7 @@ impl RootRwSession for MountedRwSession {
         let existing = normalize_absolute_path(existing_path)?;
         let new = normalize_absolute_path(new_path)?;
         self.inner
-            .lock()
+            .write()
             .hardlink(existing.as_str(), new.as_str())
             .map_err(map_fs_err)
     }
@@ -539,7 +539,7 @@ impl RootRwSession for MountedRwSession {
     fn symlink(&mut self, link_path : &str, target : &str) -> VfsResult<()> {
         let link = normalize_absolute_path(link_path)?;
         self.inner
-            .lock()
+            .write()
             .symlink(link.as_str(), target)
             .map_err(map_fs_err)
     }
@@ -548,7 +548,7 @@ impl RootRwSession for MountedRwSession {
     fn mknod(&mut self, path : &str, mode : u32, rdev : u32) -> VfsResult<()> {
         let n = normalize_absolute_path(path)?;
         self.inner
-            .lock()
+            .write()
             .mknod(n.as_str(), mode, rdev)
             .map_err(map_fs_err)
     }

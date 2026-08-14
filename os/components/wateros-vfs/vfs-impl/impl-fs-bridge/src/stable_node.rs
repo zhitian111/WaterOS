@@ -13,14 +13,14 @@ impl StableNodeLease {
     }
 
     pub(crate) fn metadata(&self) -> VfsResult<VfsMetadata> {
-        self.fs.lock()
+        self.fs.read()
                .metadata_node(self.node)
                .map(|meta| crate::map_meta(meta, self.identity))
                .map_err(map_fs_err)
     }
 
     pub(crate) fn read_range(&self, offset : u64, buf : &mut [u8]) -> VfsResult<usize> {
-        self.fs.lock()
+        self.fs.read()
                .read_range_node(self.node, offset, buf)
                .map_err(map_fs_err)
     }
@@ -28,7 +28,7 @@ impl StableNodeLease {
     pub(crate) fn write_range(&self, offset : u64, data : &[u8]) -> VfsResult<usize> {
         let mut done = 0usize;
         while done < data.len() {
-            let written = self.fs.lock()
+            let written = self.fs.write()
                                   .write_range_node(self.node,
                                                     offset + done as u64,
                                                     &data[done..])
@@ -42,10 +42,10 @@ impl StableNodeLease {
     }
 
     pub(crate) fn truncate(&self, len : u64) -> VfsResult<()> {
-        self.fs.lock().truncate_node(self.node, len).map_err(map_fs_err)
+        self.fs.write().truncate_node(self.node, len).map_err(map_fs_err)
     }
 
-    pub(crate) fn sync(&self) -> VfsResult<()> { self.fs.lock().sync().map_err(map_fs_err) }
+    pub(crate) fn sync(&self) -> VfsResult<()> { self.fs.write().sync().map_err(map_fs_err) }
 
     pub(crate) fn mark_content_changed(&self) { self.content_identity.mark_changed(); }
 
@@ -59,7 +59,7 @@ impl StableNodeLease {
         if identity.mount_id != self.identity.mount_id || !Arc::ptr_eq(&fs, &self.fs) {
             return Err(VfsError::Unsupported);
         }
-        fs.lock().link_node(self.node, rel.as_str()).map_err(map_fs_err)?;
+        fs.write().link_node(self.node, rel.as_str()).map_err(map_fs_err)?;
         self.mark_content_changed();
         Ok(())
     }
@@ -67,7 +67,7 @@ impl StableNodeLease {
 
 impl Drop for StableNodeLease {
     fn drop(&mut self) {
-        if let Err(error) = self.fs.lock().close_node(self.node) {
+        if let Err(error) = self.fs.write().close_node(self.node) {
             log::warn!("[paged_handle] stable node close failed node={} mount={} err={error:?}",
                        self.node.raw(),
                        self.identity.mount_id);
@@ -106,7 +106,7 @@ pub(crate) fn open_stable_node(mount_gen : u64, path : &str) -> VfsResult<Option
             return Ok(None);
         }
     };
-    let node = match fs.lock().open_node(rel.as_str()) {
+    let node = match fs.write().open_node(rel.as_str()) {
         Ok(node) => node,
         // Stable node handles only regular files. A backend may report
         // `NotAFile` for directories and symlinks; that is not a path error
@@ -134,7 +134,7 @@ pub(crate) fn create_tmpfile_stable(
         FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } |
         FsRoute::PseudoSecurity { .. } => return Err(VfsError::ReadOnlyFs),
     };
-    let node = fs.lock()
+    let node = fs.write()
                  .create_tmpfile_node(rel.as_str(), mode, uid, gid)
                  .map_err(map_fs_err)?;
     let content_identity = stable_content_identity(mount_gen, identity, node);

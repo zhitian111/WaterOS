@@ -15,12 +15,12 @@ impl SingleRootReadView for FsBridge {
                                                           .map_err(map_fs_err),
             FsRoute::PseudoSecurity { rel, .. } => Ok(securityfs_exists(rel.as_str())),
             FsRoute::Root { abs, .. } => {
-                let exists = root_rw()?.lock()
+                let exists = root_rw()?.read()
                                        .exists(abs.as_str())
                                        .map_err(map_fs_err)?;
                 Ok(exists || unixbench_virtual_file(abs.as_str()).is_some())
             }
-            FsRoute::AuxRw { fs, rel, .. } => fs.lock()
+            FsRoute::AuxRw { fs, rel, .. } => fs.read()
                                                 .exists(rel.as_str())
                                                 .map_err(map_fs_err),
             FsRoute::AuxRo { fs, rel, .. } => fs.lock()
@@ -46,7 +46,7 @@ impl SingleRootReadView for FsBridge {
                 securityfs_metadata(rel.as_str(), identity)?
             }
             FsRoute::Root { abs, identity } => {
-                let meta = match root_rw()?.lock()
+                let meta = match root_rw()?.read()
                                            .metadata(abs.as_str())
                                            .map_err(map_fs_err)
                 {
@@ -64,7 +64,7 @@ impl SingleRootReadView for FsBridge {
                 meta
             }
             FsRoute::AuxRw { fs, rel, identity, .. } => {
-                let mut meta = map_meta(fs.lock()
+                let mut meta = map_meta(fs.read()
                                           .metadata(rel.as_str())
                                           .map_err(map_fs_err)?,
                                         identity);
@@ -86,7 +86,7 @@ impl SingleRootReadView for FsBridge {
             FsRoute::PseudoProc { rel, .. } => proc_view().read(rel.as_str())
                                                           .map_err(map_fs_err),
             FsRoute::PseudoSecurity { .. } => Err(VfsError::NotFound),
-            FsRoute::Root { abs, .. } => match root_rw()?.lock()
+            FsRoute::Root { abs, .. } => match root_rw()?.read()
                                                          .read(abs.as_str())
                                                          .map_err(map_fs_err)
             {
@@ -99,7 +99,7 @@ impl SingleRootReadView for FsBridge {
                 }
                 Err(e) => Err(e),
             },
-            FsRoute::AuxRw { fs, rel, .. } => fs.lock()
+            FsRoute::AuxRw { fs, rel, .. } => fs.read()
                                                 .read(rel.as_str())
                                                 .map_err(map_fs_err),
             FsRoute::AuxRo { fs, rel, .. } => fs.lock()
@@ -122,13 +122,13 @@ impl SingleRootReadView for FsBridge {
                                                           .map_err(map_fs_err)?,
             FsRoute::PseudoSecurity { rel, .. } => securityfs_read_dir(rel.as_str())?,
             FsRoute::Root { abs, .. } => {
-                match root_rw()?.lock().read_dir(abs.as_str()).map_err(map_fs_err) {
+                match root_rw()?.read().read_dir(abs.as_str()).map_err(map_fs_err) {
                     Ok(entries) => entries,
                     Err(VfsError::NotFound) if virtual_directory => Vec::new(),
                     Err(error) => return Err(error),
                 }
             }
-            FsRoute::AuxRw { fs, rel, .. } => fs.lock()
+            FsRoute::AuxRw { fs, rel, .. } => fs.read()
                                                 .read_dir(rel.as_str())
                                                 .map_err(map_fs_err)?,
             FsRoute::AuxRo { fs, rel, .. } => fs.lock()
@@ -149,5 +149,3 @@ impl SingleRootReadView for FsBridge {
         // bring-up 单 RW 根卷：启动树打印仍可由 fs 层自检触发。
     }
 }
-
-

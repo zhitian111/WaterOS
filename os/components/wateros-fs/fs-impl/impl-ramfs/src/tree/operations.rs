@@ -543,7 +543,8 @@ impl ReadWriteFs for RamFs {
 
 /// Build a shared ramfs handle for auxiliary mounts.
 pub fn new_shared_rw(limit_bytes : Option<usize>, root_mode : u16) -> SharedRwFs {
-    Arc::new(Mutex::new(LocalRwFs::new(Box::new(RamFs::with_options(limit_bytes, root_mode)))))
+    Arc::new(spin::RwLock::new(LocalRwFs::new(Box::new(RamFs::with_options(limit_bytes,
+                                                                           root_mode)))))
 }
 
 pub struct RamFsImpl;

@@ -1,7 +1,7 @@
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::ops::{Deref, DerefMut};
 use driver_block_api_v0::SharedBlockDevice;
-use spin::Mutex;
+use spin::{Mutex, RwLock};
 use super::*;
 
 /// 将 `dyn ReadWriteFs` 装箱后的本地句柄，用于装入 [`SharedRwFs`]。
@@ -159,11 +159,14 @@ impl ReadWriteFs for LocalRwFs {
     fn read_symlink(&self, path: &str) -> FsResult<Vec<u8>> { self.deref().read_symlink(path) }
 }
 
-// 与 LocalFs 相同：单核 bring-up 下由 Mutex 序列化；跨线程 Send 由调用方保证不数据竞争。
+// 与 LocalFs 相同：读写锁序列化写、允许读并发；`Send + Sync` 由具体 FS 实现
+// 保证读方法 `&self` 线程安全（写方法经 `RwLock` 独占）。
 unsafe impl Send for LocalRwFs {}
+unsafe impl Sync for LocalRwFs {}
 
-/// 线程间共享的读写文件系统句柄（`Arc<Mutex<...>>`）。
-pub type SharedRwFs = Arc<Mutex<LocalRwFs>>;
+/// 线程间共享的读写文件系统句柄（`Arc<RwLock<...>>`）：读侧并发、写侧独占，
+/// 为块 I/O 等待期间不持写锁（T06 任务睡眠）提供结构前提。
+pub type SharedRwFs = Arc<RwLock<LocalRwFs>>;
 
 /// 单个文件系统实现的统一注册接口。`impl-*` crate 暴露一个 `'static` 实例（如 `&IMPL`）供聚合层登记。
 ///

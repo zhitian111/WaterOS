@@ -102,7 +102,7 @@ impl PageCacheIo for FsPageIo {
                 let rw = root_rw()?;
                 let mut done = 0usize;
                 while done < data.len() {
-                    let written = rw.lock()
+                    let written = rw.write()
                                     .write_range(n.as_str(),
                                                  offset + done as u64,
                                                  &data[done..])
@@ -115,7 +115,7 @@ impl PageCacheIo for FsPageIo {
                 }
                 Ok(done)
             }
-            FsRoute::AuxRw { fs, rel, .. } => fs.lock()
+            FsRoute::AuxRw { fs, rel, .. } => fs.write()
                                                 .write_range(rel.as_str(), offset, data)
                                                 .map_err(map_fs_err),
             FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } | FsRoute::PseudoSecurity { .. } => {
@@ -737,20 +737,14 @@ impl VfsIoHandle for PagedFileHandle {
                 let n = normalize_absolute_path(path.as_str())?;
                 match resolve_route(path.as_str())? {
                     FsRoute::Root { .. } => {
-                        match root_rw()?.lock()
-                                        .truncate(n.as_str(), len)
-                                        .map_err(map_fs_err)
-                        {
+                        match root_rw()?.write().truncate(n.as_str(), len).map_err(map_fs_err) {
                             Ok(()) => {}
                             Err(VfsError::NotFound) => self.mark_detached(),
                             Err(e) => return Err(e),
                         }
                     }
                     FsRoute::AuxRw { fs, rel, .. } => {
-                        match fs.lock()
-                                .truncate(rel.as_str(), len)
-                                .map_err(map_fs_err)
-                        {
+                        match fs.write().truncate(rel.as_str(), len).map_err(map_fs_err) {
                             Ok(()) => {}
                             Err(VfsError::NotFound) => self.mark_detached(),
                             Err(e) => return Err(e),

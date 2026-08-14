@@ -526,7 +526,6 @@ impl FsImpl for Ext4RsImpl {
         log::info!("[fs::ext4-rs] mount_rw begin");
         let mut fs = Ext4RsFs::new();
         ReadWriteFs::mount_rw(&mut fs, device)?;
-        Ok(Arc::new(Mutex::new(LocalRwFs::new(Box::new(fs)))))
+        Ok(Arc::new(spin::RwLock::new(LocalRwFs::new(Box::new(fs)))))
     }
 }
-

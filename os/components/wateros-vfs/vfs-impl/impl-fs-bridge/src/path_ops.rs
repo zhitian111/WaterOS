@@ -146,7 +146,7 @@ pub fn sync_file_page_cache() -> VfsResult<()> {
     let cache = impl_page_cache::global_cache(mount_gen);
     let mut io = paged_handle::FsPageIo::path();
     cache.flush_all(&mut io, core::convert::identity)?;
-    root_rw()?.lock().sync().map_err(map_fs_err)
+    root_rw()?.write().sync().map_err(map_fs_err)
 }
 
 /// 刷回并丢弃整个文件页缓存（用于测例脚本切换等批量回收点）。
@@ -220,10 +220,10 @@ pub fn read_symlink_path(path : &str) -> VfsResult<Vec<u8>> {
             .read_symlink(rel.as_str())
             .map_err(map_fs_err),
         FsRoute::PseudoSecurity { .. } => Err(VfsError::NotAFile),
-        FsRoute::Root { abs, .. } => root_rw()?.lock()
+        FsRoute::Root { abs, .. } => root_rw()?.read()
                                                .read_symlink(abs.as_str())
                                                .map_err(map_fs_err),
-        FsRoute::AuxRw { fs, rel, .. } => fs.lock()
+        FsRoute::AuxRw { fs, rel, .. } => fs.read()
                                             .read_symlink(rel.as_str())
                                             .map_err(map_fs_err),
         FsRoute::AuxRo { fs, rel, .. } => fs.lock()
@@ -528,4 +528,3 @@ fn unused_rename_temp_path(target : &str) -> VfsResult<String> {
 pub struct MountedRwSession {
     pub(crate) inner : SharedRwFs,
 }
-

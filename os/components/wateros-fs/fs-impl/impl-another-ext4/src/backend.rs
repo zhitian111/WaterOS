@@ -23,6 +23,6 @@ impl FsImpl for AnotherExt4Impl {
     fn mount_rw(&self, device : SharedBlockDevice) -> FsResult<SharedRwFs> {
         let mut fs = AnotherExt4Fs::new();
         ReadWriteFs::mount_rw(&mut fs, device)?;
-        Ok(Arc::new(Mutex::new(LocalRwFs::new(Box::new(fs)))))
+        Ok(Arc::new(spin::RwLock::new(LocalRwFs::new(Box::new(fs)))))
     }
 }

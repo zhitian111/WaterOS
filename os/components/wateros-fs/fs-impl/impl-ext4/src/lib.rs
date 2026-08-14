@@ -95,7 +95,7 @@ impl FsImpl for Ext4FsImpl {
         logging::trace!("[fs::ext4] mount_rw begin");
         let mut fs = Ext4FsRw::new();
         ReadWriteFs::mount_rw(&mut fs, device)?;
-        let shared : SharedRwFs = Arc::new(Mutex::new(LocalRwFs::new(Box::new(fs))));
+        let shared : SharedRwFs = Arc::new(spin::RwLock::new(LocalRwFs::new(Box::new(fs))));
         Ok(shared)
     }
 }
