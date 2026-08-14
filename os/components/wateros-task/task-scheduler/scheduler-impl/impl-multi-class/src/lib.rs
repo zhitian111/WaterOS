@@ -1199,6 +1199,16 @@ pub fn get_nice(task_id : TaskId) -> Result<i8, SchedError> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.get_nice(task_id))
 }
+
+pub fn set_io_priority(task_id : TaskId, io_priority : u16) -> Result<(), SchedError> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.set_io_priority(task_id, io_priority))
+}
+
+pub fn get_io_priority(task_id : TaskId) -> Result<u16, SchedError> {
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.get_io_priority(task_id))
+}
 pub fn policy(task_id : TaskId) -> Result<SchedPolicy, SchedError> {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.policy(task_id))

@@ -100,6 +100,8 @@ pub struct TaskControlBlock {
     /// 调度器在 tick 时据此计算 vruntime 增量；该字段是唯一的 task-level 真相，
     /// 避免把线程调度属性错误地存成 process-wide 状态。
     nice : i8,
+    /// 线程级块 I/O 优先级；保留 Linux ioprio 的 16 位编码。
+    io_priority : u16,
     /// fair 调度类的累计虚拟运行时间。跨 CPU 迁移时仍由 TCB 保持。
     vruntime : VRunTime,
     stats : TaskRuntimeStats,
@@ -137,6 +139,7 @@ impl TaskControlBlock {
                policy : SchedPolicy::Other,
                priority : 0,
                nice : 0,
+               io_priority : 0,
                vruntime : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
@@ -163,6 +166,7 @@ impl TaskControlBlock {
                policy : SchedPolicy::Other,
                priority : 0,
                nice : 0,
+               io_priority : 0,
                vruntime : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
@@ -187,6 +191,7 @@ impl TaskControlBlock {
                policy : SchedPolicy::Other,
                priority : 0,
                nice : 0,
+               io_priority : 0,
                vruntime : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
@@ -244,6 +249,7 @@ impl TaskControlBlock {
                     policy : self.policy,
                     priority : self.priority,
                     nice : self.nice,
+                    io_priority : self.io_priority,
                     vruntime : self.vruntime,
                     stats : TaskRuntimeStats::default(),
                     wait_result : None,
@@ -287,6 +293,7 @@ impl TaskControlBlock {
                     policy : self.policy,
                     priority : self.priority,
                     nice : self.nice,
+                    io_priority : self.io_priority,
                     vruntime : self.vruntime,
                     stats : TaskRuntimeStats::default(),
                     wait_result : None,
@@ -366,6 +373,9 @@ impl TaskControlBlock {
     pub fn nice(&self) -> i8 { self.nice }
 
     #[inline]
+    pub fn io_priority(&self) -> u16 { self.io_priority }
+
+    #[inline]
     pub fn set_sched(&mut self, policy : SchedPolicy, priority : i32) {
         self.policy = policy;
         self.priority = priority;
@@ -373,6 +383,9 @@ impl TaskControlBlock {
 
     #[inline]
     pub fn set_nice(&mut self, nice : i8) { self.nice = nice; }
+
+    #[inline]
+    pub fn set_io_priority(&mut self, io_priority : u16) { self.io_priority = io_priority; }
     pub fn set_affinity(&mut self, mask : CpuMask) { self.affinity = mask; }
 
     #[inline]
@@ -409,6 +422,7 @@ impl TaskControlBlock {
                        policy : self.policy,
                        priority : self.priority,
                        nice : self.nice,
+                       io_priority : self.io_priority,
                        vruntime : self.vruntime,
                        trap_frame,
                        stats : self.stats,

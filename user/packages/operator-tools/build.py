@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
+import subprocess
 from pathlib import Path
 
 
@@ -21,9 +23,16 @@ def main() -> int:
         target = destination / script.name
         shutil.copy2(script, target)
         target.chmod(0o755)
+    cross = context["cross_compile"]
+    smoke_source = package / "src/syscall-transfer-smoke.c"
+    smoke_target = destination / "wos-syscall-smoke"
+    env = os.environ.copy()
+    subprocess.run([f"{cross}gcc", "-std=c11", "-O2", "-static",
+                    *context["cflags"], str(smoke_source), "-o", str(smoke_target)],
+                   env=env, check=True)
+    smoke_target.chmod(0o755)
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

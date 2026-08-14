@@ -207,6 +207,12 @@ pub const SYSLOG : usize = 116;
 // 未分发的调用仍由实现层稳定返回 ENOSYS，不能用“成功桩”冒充内核能力。
 pub const IOPRIO_SET : usize = 30;
 pub const IOPRIO_GET : usize = 31;
+/// 将用户 iovec 中的数据写入 pipe；当前兼容实现会复制数据。
+pub const VMSPLICE : usize = 75;
+/// 在 pipe 与文件（或另一 pipe）之间移动数据。
+pub const SPLICE : usize = 76;
+/// 在两个 pipe 间复制数据但不消费输入。
+pub const TEE : usize = 77;
 pub const PIVOT_ROOT : usize = 41;
 pub const CHROOT : usize = 51;
 pub const INIT_MODULE : usize = 105;
@@ -222,6 +228,8 @@ pub const SEMOP : usize = 193;
 pub const SWAPON : usize = 224;
 pub const SWAPOFF : usize = 225;
 pub const FINIT_MODULE : usize = 273;
+/// 在两个普通文件之间由内核复制数据。
+pub const COPY_FILE_RANGE : usize = 285;
 
 // Socket 与网络
 pub const SOCKET : usize = 198;

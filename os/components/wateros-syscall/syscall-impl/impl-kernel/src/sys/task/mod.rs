@@ -1,5 +1,6 @@
 pub(crate) mod clone;
 pub(crate) mod execve;
+pub(crate) mod ioprio;
 pub(crate) mod priority;
 pub(crate) mod personality;
 pub(crate) mod process;
@@ -13,6 +14,7 @@ pub(crate) mod wait;
 
 pub(crate) use clone::{sys_clone, sys_clone3};
 pub(crate) use execve::sys_execve;
+pub(crate) use ioprio::{sys_ioprio_get, sys_ioprio_set};
 pub(crate) use priority::{sys_getpriority, sys_setpriority};
 pub(crate) use personality::sys_personality;
 pub(crate) use process::{
@@ -38,4 +40,7 @@ pub(crate) use wait::{
 };
 
 #[cfg(feature = "self_test")]
-pub(crate) fn self_test() { personality::self_test(); }
+pub(crate) fn self_test() {
+    ioprio::self_test();
+    personality::self_test();
+}

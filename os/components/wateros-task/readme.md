@@ -104,13 +104,15 @@ TCB 的主要实现在 `task-impl/impl-core/src/tcb.rs`。
 - 区分 Idle、Kernel、User 三种任务资源。三者都拥有独立内核栈和任务上下文；用户任务额外
   拥有用户 trap frame、入口、用户栈和地址空间信息。
 - 维护 `Ready`、`Running`、`Blocking`、`Sleeping`、`Exited` 五种调度生命周期状态。
-- 维护调度策略、实时优先级、nice、vruntime、运行统计和等待结果。
+- 维护调度策略、实时优先级、nice、vruntime、线程级 I/O 优先级、运行统计和等待结果。
 - `ready_cpu_id` 表示 Ready 任务所属的唯一 CPU runqueue；`running_cpu_id` 表示任务当前运行
   的 CPU；`last_cpu_id` 用于唤醒时尽量回到最近运行 CPU，提高缓存局部性。
 - 新创建但尚未发布的任务状态也是 Ready，但 `ready_cpu_id` 为 `None`，且不在任何就绪队列；
   调用 `start_user_task`、`start_fork_child` 或 `start_clone_thread` 后才正式入队。
 - 支持从父 TCB 构造 fork 子任务：复制用户现场和调度属性，安装独立地址空间，并令子任务的
   syscall 返回值为 0。
+- `io_priority` 保存 Linux `ioprio` 原始编码，fork/clone 继承且 exec 保留；它与 CPU
+  调度优先级相互独立，供 syscall 查询和未来块 I/O 请求队列使用。
 - 支持 clone 同进程线程：共享进程地址空间，创建独立内核栈、上下文和 trap frame，并可设置
   用户栈及 TLS。
 - 支持 exec：替换用户入口、栈、trap frame 和地址空间信息，同时保留当前调度实体。

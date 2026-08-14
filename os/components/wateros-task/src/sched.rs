@@ -103,6 +103,18 @@ pub fn get_nice(task_id : TaskId) -> Result<i8, SchedError> {
     scheduler::get_nice(task_id)
 }
 
+/// 设置线程级 Linux I/O 优先级编码；fork/clone 从 TCB 自动继承。
+pub fn set_io_priority(task_id : TaskId, io_priority : u16) -> Result<(), SchedError> {
+    ensure_task_exists(task_id)?;
+    scheduler::set_io_priority(task_id, io_priority)
+}
+
+/// 查询线程级 Linux I/O 优先级编码。
+pub fn get_io_priority(task_id : TaskId) -> Result<u16, SchedError> {
+    ensure_task_exists(task_id)?;
+    scheduler::get_io_priority(task_id)
+}
+
 // 确认 task 仍存在于调度器 registry。
 fn ensure_task_exists(task_id : TaskId) -> Result<(), SchedError> {
     if scheduler::task_snapshot(task_id).is_some() {

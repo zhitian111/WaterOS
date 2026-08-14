@@ -179,6 +179,15 @@ feature；它与用户镜像无关。`user/Makefile` 已经不再使用 `PROFILE
 自有镜像不包含比赛镜像中的 `/glibc`、`/musl` 测试目录，因此不要直接用它替换自动
 bringup 所需的比赛测试镜像。如需在比赛镜像中加入自有工具，应使用 `overlay`。
 
+`PACKAGE=operator` 及默认完整镜像会安装目标机 syscall 冒烟程序。进入 shell 后运行：
+
+```sh
+wos-syscall-smoke
+```
+
+它会直接验证当前内核的 `sendfile`、`copy_file_range`、`splice`、`tee`、
+`vmsplice` 和 `ioprio`，不依赖宿主架构或模拟返回值。
+
 ## Nano-X 与 Doom
 
 RV 与 LA 的默认完整镜像均包含 Nano-X、演示程序、Doom 和 `doom1.wad`。启动时还需要

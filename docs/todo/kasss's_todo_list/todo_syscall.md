@@ -14,6 +14,11 @@
 | `syncfs` | 267 | 校验 fd，随后同步当前唯一可写根卷及全局文件页缓存，并返回写回错误 |
 | `reboot` | 142 | 校验 euid、Linux magic 和 command；支持 restart、halt、poweroff |
 | `personality` | 92 | 支持查询及原生 `PER_LINUX`；不支持的执行域/标志返回 `EINVAL` |
+| `splice` | 76 | 支持 file→pipe、pipe→file、pipe→pipe；pipe 输入使用 read lease，短写不丢数据；支持显式文件 offset 与 `SPLICE_F_NONBLOCK` |
+| `tee` | 77 | 用 read lease 向第二条 pipe 复制数据并以 0 消费提交，输入 pipe 内容保持不变 |
+| `vmsplice` | 75 | 校验 iovec 后复制用户数据进 pipe；支持部分成功和非阻塞上限，暂不赠送用户物理页 |
+| `copy_file_range` | 285 | 普通文件间复制；支持独立输入/输出 offset、同 inode 重叠检查、短写和部分成功语义 |
+| `ioprio_set/get` | 30 / 31 | TCB 保存线程级编码，支持 process/pgrp/user 目标、权限检查及 fork/clone 继承 |
 
 同时修正了已有实现中的错误语义：
 
@@ -23,6 +28,8 @@
   因此目前以 root 近似 `CAP_SYS_ADMIN`。
 - 为未实现调用补齐统一的 asm-generic 编号，方便分发表和审计工具发现缺口。
 - 修正文档中的旧编号：`syncfs=267`、`setns=268`、`finit_module=273`。
+- `sendfile` 改用 VFS read lease；输出短写或后续错误时返回已完成字节，未交付
+  数据不会被错误地从输入流消费。
 
 ## 2. 已登记但尚未分发的 syscall
 
@@ -44,10 +51,11 @@
 
 | syscall | nr | 所需基础设施 |
 |---|---:|---|
-| `ioprio_set` / `ioprio_get` | 30 / 31 | per-task I/O priority 状态以及块 I/O 调度器实际消费 |
 | `swapon` / `swapoff` | 224 / 225 | swap area、换入换出、反向映射、页回收和并发失效 |
 
-在块层真正消费 ioprio 之前，不应添加永远返回成功的 `ionice` 桩。
+`ioprio` 现已具有真实的 per-task 状态、权限、查询和继承语义，但 WaterOS 的块 I/O
+仍是同步提交，没有可按优先级重排的异步 elevator。因此它不会被错误地用于 CPU
+调度，后续块层引入请求队列时再消费 `TaskSnapshot::io_priority`。
 
 ### 2.3 内核模块
 
@@ -95,11 +103,11 @@ WaterOS 当前采用静态链接组件架构，因此这组暂列低优先级。
 `os/src/trap_handler.rs` 在进入普通分发前调用 `restore_signal_frame` 接管；这不是
 缺失实现。若未来合并 trap 入口，必须保留该特殊顺序。
 
-## 4. 待纳入编号表的现代 Linux 能力
+## 4. 下一批现代 Linux 能力
 
 当前 BusyBox 主路径未必需要，但 Debian、apt、编译工具和较新的 libc 会逐步触发：
 
-- 文件搬运：`splice`、`tee`、`vmsplice`、`copy_file_range`。
+- 文件搬运：`splice`、`tee`、`vmsplice`、`copy_file_range` 已完成。
 - fd/事件：`timerfd_*`、`signalfd4`、`inotify_*`、`memfd_create`。
 - 网络：`recvmmsg`。
 - 进程：`pidfd_open`、`pidfd_send_signal`、`pidfd_getfd`。
@@ -110,16 +118,45 @@ WaterOS 当前采用静态链接组件架构，因此这组暂列低优先级。
 
 ## 5. 验证方式
 
-本轮已经执行：
+本轮提供三层验证：
 
 ```bash
 cd os
 make check ARCH=rv PROFILE=pre
 make check ARCH=la PROFILE=pre
+
+# 构建含目标机测试程序的用户镜像
+make -C ../user image ARCH=rv PACKAGE=operator
+
+# 在 WaterOS shell 内执行
+wos-syscall-smoke
 ```
 
-两种架构均通过。纯 Rust 单元断言同时接入 `syscall/self_test`，可随内核 self-test
-构建在目标架构执行。直接在 x86_64 宿主运行
+同一测试程序也已用 `ARCH=la PACKAGE=operator` 构建并在 LoongArch QEMU 中执行，
+两种架构输出相同的五组 `PASS`。
+
+`wos-syscall-smoke` 直接发出 asm-generic syscall 号，校验：
+
+- `copy_file_range` 的文件内容、输入/输出 offset 及非法 flags。
+- `sendfile` 的显式 offset 隔离与顺序 offset 推进。
+- `splice` 的 file→pipe→file 数据和 offset，以及“两端都不是 pipe”的 `EINVAL`。
+- `tee` 复制后输入未消费，`vmsplice` 多 iovec 内容顺序正确。
+- `ioprio` 的 set/get 和 fork 继承。
+
+纯 Rust 边界断言同时接入 `syscall/self_test`，可随内核 self-test 构建在目标架构
+执行。直接在 x86_64 宿主运行
 `cargo test -p wateros-syscall-impl-kernel` 会先编译 RISC-V `sbi-rt`，因宿主没有
 `a0/a7` 寄存器而失败；这属于现有测试基础设施限制，后续应为纯 ABI 逻辑拆出
 host-test crate，不能把该失败误判为 syscall 实现错误。
+
+## 6. 现场优先级（2026）
+
+结合往届线下题和当前用户空间，后续按以下顺序推进：
+
+1. **P0 fd 与事件链路**：`timerfd_*`、`signalfd4`、`inotify_*`。
+2. **P0 进程/路径兼容**：真实 `chroot`（per-process root + `*at`/symlink/dirfd
+   全链路约束）、`openat2`；不得添加只存字符串的成功桩。
+3. **P1 现代运行时**：`memfd_create`、`recvmmsg`、常见 futex requeue/bitset 组合。
+4. **P1 可观测性**：真实 `sysinfo/statfs/getrusage/times` 计数、`/proc` 配套字段。
+5. **P2 专用设施**：SysV msg/sem、namespace、swap、内核模块；只有题目或真实程序
+   命中时再做，保持未实现时明确 `ENOSYS`。

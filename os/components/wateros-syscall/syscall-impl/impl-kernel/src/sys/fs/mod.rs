@@ -19,6 +19,7 @@ pub(crate) mod pipe2;
 pub(crate) mod renameat2;
 pub(crate) mod sendfile;
 pub(crate) mod statfs;
+pub(crate) mod transfer;
 pub(crate) mod truncate;
 pub(crate) mod xattr;
 
@@ -45,8 +46,12 @@ pub(crate) use pipe2::sys_pipe2;
 pub(crate) use renameat2::{sys_renameat, sys_renameat2};
 pub(crate) use sendfile::sys_sendfile;
 pub(crate) use statfs::{sys_fstatfs, sys_statfs};
+pub(crate) use transfer::{sys_copy_file_range, sys_splice, sys_tee, sys_vmsplice};
 pub(crate) use truncate::{sys_ftruncate, sys_truncate};
 pub(crate) use xattr::{
     sys_fgetxattr, sys_flistxattr, sys_fremovexattr, sys_fsetxattr, sys_getxattr, sys_lgetxattr,
     sys_listxattr, sys_llistxattr, sys_lremovexattr, sys_lsetxattr, sys_removexattr, sys_setxattr,
 };
+
+#[cfg(feature = "self_test")]
+pub(crate) fn self_test() { transfer::self_test(); }

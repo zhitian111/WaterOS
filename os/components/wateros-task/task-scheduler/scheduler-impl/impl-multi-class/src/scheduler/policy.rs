@@ -150,6 +150,27 @@ impl MultiClassScheduler {
                        .task_snapshot(task_id);
         Ok(snap.nice)
     }
+
+    /// 设置线程级 I/O 优先级；块层可通过任务快照消费该属性。
+    pub fn set_io_priority(&mut self,
+                           task_id : TaskId,
+                           io_priority : u16)
+                           -> Result<(), SchedError> {
+        let state = self.registry
+                        .state(task_id)
+                        .ok_or(SchedError::NoSuchTask)?;
+        if matches!(state, TaskState::Exited(_)) {
+            return Err(SchedError::NoSuchTask);
+        }
+        self.registry
+            .set_io_priority(task_id, io_priority)
+    }
+
+    pub fn get_io_priority(&self, task_id : TaskId) -> Result<u16, SchedError> {
+        Ok(self.registry
+               .task_snapshot(task_id)
+               .io_priority)
+    }
     pub fn priority(&self, task_id : TaskId) -> Result<Priority, SchedError> {
         let snap = self.registry
                        .task_snapshot(task_id);

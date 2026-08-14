@@ -489,6 +489,22 @@ impl TaskRegistry {
         }
     }
 
+    /// 更新线程级 I/O 优先级。该字段不改变 CPU runqueue 排序。
+    pub fn set_io_priority(&mut self,
+                           task_id : TaskId,
+                           io_priority : u16)
+                           -> Result<(), SchedError> {
+        if let Some(task) = self.tasks
+                                .get_mut(&task_id)
+                                .map(|task| task.as_mut())
+        {
+            task.set_io_priority(io_priority);
+            Ok(())
+        } else {
+            Err(SchedError::NoSuchTask)
+        }
+    }
+
     /// 返回任务状态（None 表示任务不存在）。
     pub fn state(&self, task_id : TaskId) -> Option<TaskState> {
         self.tasks

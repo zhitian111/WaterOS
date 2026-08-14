@@ -87,6 +87,10 @@ pub struct TaskSnapshot {
     ///
     /// 该值用于 tick 时计算 vruntime 增量；FIFO/RR 保存该字段但不以它决定实时优先级。
     pub nice : i8,
+    /// Linux `ioprio` 原始编码（class 位于高 3 位，data 位于低 13 位）。
+    ///
+    /// 该属性属于线程，fork/clone 时继承；0 表示 `IOPRIO_CLASS_NONE`。
+    pub io_priority : u16,
     /// fair 策略的累计虚拟运行时间；TCB 是唯一真相。
     pub vruntime : VRunTime,
     /// 最近一次 trap 的语义快照。

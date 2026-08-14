@@ -31,6 +31,7 @@ pub(crate) use cred::*;
 
 #[cfg(feature = "self_test")]
 pub(crate) fn self_test() {
+    fs::self_test();
     misc::self_test();
     task::self_test();
 }
