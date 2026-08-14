@@ -59,4 +59,31 @@ git diff --check
 
 ## 任务简报
 
-（完成后追加，格式见目录 README。）
+- 完成日期：2026-08-15
+- commit：本任务实现提交（见 `git log --oneline -1`，分支 `feat/real-hardware-porting`）
+- 实际改动：
+  - 新增 `user/rootfs/base/etc/inittab`（busybox init 格式）：
+    `::sysinit:/bin/sh /etc/init.d/rcS`（显式解释器——WaterOS execve 尚未支持
+    shebang，直跑脚本会 Exec format error）、`ttyS0`/`ttyS1` 串口 getty respawn。
+  - `rcS` 改为 userspace-init 的 sysinit 脚本（更新注释，末尾输出
+    `[rcS] WaterOS sysinit complete` 到 /dev/console 便于验证）。
+  - 新增 `os/src/user_bringup_init.rs`：`try_start_init()` 探测 rootfs `/sbin/init`，
+    存在则派生内核任务执行它（`run_one_elf_argv_exit`，等待；init 退出则停机）；
+    不存在/探测失败返回 `false` 回退。
+  - `user_bringup_busybox::run_stage_busybox` 优先走 init 模式，回退保留
+    operator/LTP 队列（比赛镜像无 `/sbin/init`，不受影响）。
+- 验收结果（QEMU virt，RISC-V，minimal 镜像实测）：
+  - 启动日志：`/sbin/init present; entering userspace-init mode` →
+    `launching /sbin/init` → **`[rcS] WaterOS sysinit complete`** →
+    **`wateros login:`** getty 提示出现。
+  - `make rv_check`、`make la_check`：通过；`git diff --check`：clean。
+  - busybox 配置确认：`CONFIG_INIT=y`、`CONFIG_GETTY=y`、`CONFIG_LOGIN=y`、
+    `CONFIG_FEATURE_USE_INITTAB=y`、`CONFIG_INSTALL_APPLET_SYMLINKS=y`
+    （`/sbin/init`、`/sbin/getty` 由 busybox install 自动安装，镜像内已核实）。
+- 未验证/风险：
+  - 登录闭环未完成：getty 提示出现但未验证输入登录（passwd 用 `x`，需
+    `/etc/shadow` 或改为空密码策略；串口输入到 tty 的路径待进一步验证）。
+  - 回退路径（无 `/sbin/init` 的镜像）仅编译验证，未跑运行时回退（需比赛镜像）。
+  - `/dev` 挂载与 getty tty 打开依赖既有 devfs/字符设备路径，已在 QEMU 验证
+    getty 能打开 ttyS0；`/proc` 由内核挂载，`/sys` 尚无 sysfs（未实现）。
+  - 真机串口 getty 后置 08/09 联调。

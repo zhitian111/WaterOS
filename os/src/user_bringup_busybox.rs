@@ -111,6 +111,12 @@ fn log_elapsed(log_tag : &str, cmd : &BringupCommand, start_ns : u128, end_ns : 
 /// Enqueue the kernel runner; image detection happens after the root filesystem is available.
 pub fn run_stage_busybox() {
     error!("[bringup][stage-busybox] BEGIN");
+    // 有 /sbin/init 的 rootfs（板级镜像）优先走 userspace-init；否则回退到
+    // operator/LTP 队列（比赛镜像没有 /sbin/init）。
+    if crate::user_bringup_init::try_start_init() {
+        error!("[bringup][stage-busybox] userspace-init mode; skipping operator queue");
+        return;
+    }
     crate::user_operator::start();
     error!("[{LOG_TAG}] kernel runner enqueued; queue will be selected from root image marker");
     error!("[bringup][stage-busybox] END");
