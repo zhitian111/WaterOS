@@ -168,6 +168,11 @@ impl DirEntryTail {
 pub struct DirBlock(Block);
 
 impl DirBlock {
+    /// First byte of the 12-byte ext4 directory checksum tail. Directory
+    /// entries must never be written into this area; `set_checksum` and
+    /// `ensure_tail` own the tail exclusively.
+    const TAIL_OFFSET: usize = BLOCK_SIZE - size_of::<DirEntryTail>();
+
     /// Wrap a data block to a directory block.
     pub fn new(block: Block) -> Self {
         DirBlock(block)
@@ -182,35 +187,36 @@ impl DirBlock {
     /// and the dir entry tail.
     pub fn init(&mut self) {
         self.0.data_mut().fill(0);
-        let tail_offset = BLOCK_SIZE - size_of::<DirEntryTail>();
-        let entry = DirEntry::new(0, tail_offset as u16, "", FileType::Unknown);
+        let entry = DirEntry::new(0, Self::TAIL_OFFSET as u16, "", FileType::Unknown);
         self.0.write_offset_as(0, &entry);
         let tail = DirEntryTail::new();
-        self.0.write_offset_as(tail_offset, &tail);
+        self.0.write_offset_as(Self::TAIL_OFFSET, &tail);
     }
 
     /// Ensure the block ends with a normal ext4 directory checksum tail.
     pub fn ensure_tail(&mut self) {
-        let tail_offset = BLOCK_SIZE - size_of::<DirEntryTail>();
         let mut offset = 0usize;
-        while offset < tail_offset {
+        while offset < Self::TAIL_OFFSET {
             let mut entry: DirEntry = self.0.read_offset_as(offset);
             let next = offset.saturating_add(entry.rec_len as usize);
-            if entry.rec_len == 0 || next > tail_offset {
-                entry.rec_len = (tail_offset - offset) as u16;
+            if entry.rec_len == 0 || next > Self::TAIL_OFFSET {
+                entry.rec_len = (Self::TAIL_OFFSET - offset) as u16;
                 self.0.write_offset_as(offset, &entry);
                 break;
             }
             offset = next;
         }
-        self.0.write_offset_as(tail_offset, &DirEntryTail::new());
+        self.0.write_offset_as(Self::TAIL_OFFSET, &DirEntryTail::new());
     }
 
     /// Get a directory entry by name, return the inode id of the entry.
     pub fn get(&self, name: &str) -> Option<InodeId> {
         let mut offset = 0;
-        while offset < BLOCK_SIZE {
+        while offset < Self::TAIL_OFFSET {
             let de: DirEntry = self.0.read_offset_as(offset);
+            if de.rec_len == 0 {
+                break;
+            }
             if !de.unused() && de.compare_name(name) {
                 return Some(de.inode);
             }
@@ -222,8 +228,11 @@ impl DirBlock {
     /// Get all directory entries in the block.
     pub fn list(&self, entries: &mut Vec<DirEntry>) {
         let mut offset = 0;
-        while offset < BLOCK_SIZE {
+        while offset < Self::TAIL_OFFSET {
             let de: DirEntry = self.0.read_offset_as(offset);
+            if de.rec_len == 0 {
+                break;
+            }
             offset += de.rec_len as usize;
             if !de.unused() {
                 trace!("Dir entry: {:?} {}", de.name(), de.inode);
@@ -237,10 +246,13 @@ impl DirBlock {
     pub fn insert(&mut self, name: &str, inode: InodeId, file_type: FileType) -> bool {
         let required_size = DirEntry::required_size(name.len());
         let mut offset = 0;
-        while offset < BLOCK_SIZE {
+        while offset < Self::TAIL_OFFSET {
             // Read a dir entry
             let mut de: DirEntry = self.0.read_offset_as(offset);
             let rec_len = de.rec_len as usize;
+            if rec_len == 0 || offset + rec_len > Self::TAIL_OFFSET {
+                break;
+            }
             // The size that `de` actually uses
             let used_size = if de.unused() { 0 } else { de.used_size() };
             // The rest size
@@ -273,8 +285,11 @@ impl DirBlock {
     /// if the entry doesn't exist.
     pub fn remove(&mut self, name: &str) -> bool {
         let mut offset = 0;
-        while offset < BLOCK_SIZE {
+        while offset < Self::TAIL_OFFSET {
             let mut de: DirEntry = self.0.read_offset_as(offset);
+            if de.rec_len == 0 {
+                break;
+            }
             if !de.unused() && de.compare_name(name) {
                 // Mark the target entry as unused
                 de.set_unused();
@@ -288,10 +303,9 @@ impl DirBlock {
 
     /// Calc and set block checksum
     pub fn set_checksum(&mut self, uuid: &[u8], ino: InodeId, ino_gen: u32) {
-        let tail_offset = BLOCK_SIZE - size_of::<DirEntryTail>();
-        let mut tail: DirEntryTail = self.0.read_offset_as(tail_offset);
+        let mut tail: DirEntryTail = self.0.read_offset_as(Self::TAIL_OFFSET);
         tail.set_checksum(uuid, ino, ino_gen, &self.0);
-        self.0.write_offset_as(tail_offset, &tail);
+        self.0.write_offset_as(Self::TAIL_OFFSET, &tail);
     }
 }
 
@@ -324,6 +338,25 @@ mod tests {
         let dotdot: DirEntry = dir.block().read_offset_as(12);
         let tail: DirEntryTail = dir.block().read_offset_as(tail_offset);
         assert_eq!(dotdot.rec_len as usize, tail_offset - 12);
+        assert_eq!(tail.rec_len as usize, size_of::<DirEntryTail>());
+        assert_eq!(tail.reserved_ft, 0xDE);
+    }
+
+    #[test]
+    fn insert_reserves_checksum_tail() {
+        let mut dir = DirBlock::new(Block::default());
+        dir.init();
+
+        // A 4-byte name needs exactly 12 bytes. The first block can hold 340
+        // such entries; the 341st used to be written into the 12-byte checksum
+        // tail, and then `set_checksum` overwrote its name with the CRC.
+        for inode in 1..=340 {
+            assert!(dir.insert("f000", inode, FileType::RegularFile));
+        }
+        assert!(!dir.insert("f000", 341, FileType::RegularFile));
+
+        let tail_offset = BLOCK_SIZE - size_of::<DirEntryTail>();
+        let tail: DirEntryTail = dir.block().read_offset_as(tail_offset);
         assert_eq!(tail.rec_len as usize, size_of::<DirEntryTail>());
         assert_eq!(tail.reserved_ft, 0xDE);
     }
