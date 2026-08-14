@@ -6,6 +6,10 @@
 `impl-linked-list-allocator` 切回 `LockedHeap`；二者互斥。项目构建可通过
 `HEAP_ALLOCATOR_FEATURE=heap-linked-list` 选择回退实现。
 
+`KernelAllocator` 是无状态全局分配器入口，编译期通过 `HeapBackend` 接口委托给
+唯一活动后端（`backend_tlsf` / `backend_linked_list`）。后续 slab 后端也将实现
+同一接口，由该入口按运行期状态切换。
+
 `HEAP_SPACE` 是链接脚本放入 `.kernel.heap` 的静态池。只有 BSP 可调用一次 `init()`；
 AP 必须在其后才可走可能分配的路径。每次分配在本 CPU 上临时关中断并以 `CpuLocal`
 深度检测递归；backend 自身锁负责跨 CPU allocator 元数据互斥。
