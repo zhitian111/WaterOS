@@ -35,4 +35,6 @@ mod view;
 pub use view::{view, KernelProcFs};
 #[path = "fs_impl.rs"]
 mod fs_impl;
-pub use fs_impl::{self_test, test, IMPL, KernelProcFsImpl};
+pub use fs_impl::{test, IMPL, KernelProcFsImpl};
+#[cfg(feature = "self_test")]
+pub use fs_impl::self_test;
