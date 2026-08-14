@@ -28,6 +28,7 @@ pub const PREADV : usize = 69;
 pub const PWRITEV : usize = 70;
 pub const SENDFILE : usize = 71;
 pub const FADVISE64 : usize = 223;
+pub const READAHEAD : usize = 213;
 pub const PSELECT6 : usize = 72;
 pub const PPOLL : usize = 73;
 /// asm-generic 64 位无独立 `select` nr；riscv64/loong64 用户态经 `pselect6`(72) 实现。
@@ -41,6 +42,7 @@ pub const FCHOWN : usize = 55;
 pub const FCHOWNAT : usize = 54;
 pub const STATFS : usize = 43;
 pub const SYNC : usize = 81;
+pub const SYNCFS : usize = 267;
 pub const FSYNC : usize = 82;
 pub const FDATASYNC : usize = 83;
 pub const TRUNCATE : usize = 45;
@@ -89,6 +91,7 @@ pub const WAITID : usize = 95;
 pub const KILL : usize = 129;
 pub const EXEC : usize = 221; // execve
 pub const UNSHARE : usize = 272;
+pub const SETNS : usize = 268;
 
 // 调度与时间
 pub const SCHED_SETPARAM : usize = 118;
@@ -132,6 +135,9 @@ pub const SHMDT : usize = 197;
 
 // 进程标识与杂项信息
 pub const UNAME : usize = 160;
+pub const SETHOSTNAME : usize = 161;
+pub const SETDOMAINNAME : usize = 162;
+pub const PERSONALITY : usize = 92;
 pub const PRCTL : usize = 167;
 pub const CAPGET : usize = 90;
 pub const CAPSET : usize = 91;
@@ -153,6 +159,7 @@ pub const SETSID : usize = 157;
 pub const GETSID : usize = 156;
 pub const GETGROUPS : usize = 158;
 pub const SYSINFO : usize = 179;
+pub const REBOOT : usize = 142;
 pub const SETGID : usize = 144;
 pub const SETREGID : usize = 143;
 pub const SETREUID : usize = 145;
@@ -193,6 +200,28 @@ pub const UMASK : usize = 166;
 pub const PRLIMIT64 : usize = 261;
 pub const NANOSLEEP : usize = 101;
 pub const SYSLOG : usize = 116;
+
+// 当前尚无后端子系统的 Linux ABI 编号。
+//
+// 保留这些编号是为了让分发表、审计工具和文档使用同一份 asm-generic 定义；
+// 未分发的调用仍由实现层稳定返回 ENOSYS，不能用“成功桩”冒充内核能力。
+pub const IOPRIO_SET : usize = 30;
+pub const IOPRIO_GET : usize = 31;
+pub const PIVOT_ROOT : usize = 41;
+pub const CHROOT : usize = 51;
+pub const INIT_MODULE : usize = 105;
+pub const DELETE_MODULE : usize = 106;
+pub const MSGGET : usize = 186;
+pub const MSGCTL : usize = 187;
+pub const MSGRCV : usize = 188;
+pub const MSGSND : usize = 189;
+pub const SEMGET : usize = 190;
+pub const SEMCTL : usize = 191;
+pub const SEMTIMEDOP : usize = 192;
+pub const SEMOP : usize = 193;
+pub const SWAPON : usize = 224;
+pub const SWAPOFF : usize = 225;
+pub const FINIT_MODULE : usize = 273;
 
 // Socket 与网络
 pub const SOCKET : usize = 198;

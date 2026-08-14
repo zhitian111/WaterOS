@@ -3,8 +3,9 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
+use spin::Mutex;
 
-use crate::user_copy::{copy_to_user, copy_to_user_struct};
+use crate::user_copy::{copy_from_user, copy_to_user, copy_to_user_struct};
 
 const UTS_LEN: usize = 65;
 const GRND_NONBLOCK: usize = 0x0001;
@@ -13,6 +14,19 @@ const GRND_INSECURE: usize = 0x0004;
 const GETRANDOM_ALLOWED_FLAGS: usize = GRND_NONBLOCK | GRND_RANDOM | GRND_INSECURE;
 const SYSINFO_TOTAL_RAM: usize = wateros_base_config::mm::QEMU_VIRT_PHYS_RAM_SIZE;
 const SYSINFO_FREE_RAM: usize = SYSINFO_TOTAL_RAM / 2;
+const UTS_VALUE_MAX: usize = UTS_LEN - 1;
+
+#[derive(Clone, Copy)]
+struct UtsIdentity {
+    nodename: [u8; UTS_LEN],
+    domainname: [u8; UTS_LEN],
+}
+
+/// 主机名和 NIS 域名属于全局 UTS 状态；锁只保护两个定长数组，不跨用户拷贝。
+static UTS_IDENTITY: Mutex<UtsIdentity> = Mutex::new(UtsIdentity {
+    nodename: make_const_uts_field(b"wateros"),
+    domainname: make_const_uts_field(b""),
+});
 
 /// Linux `struct utsname`（与 libc 对齐）。
 #[repr(C)]
@@ -47,12 +61,26 @@ struct UserSysInfo {
 
 const _: () = assert!(core::mem::size_of::<UserSysInfo>() == 112);
 
-fn make_uts_field(s: &str) -> [u8; UTS_LEN] {
+const fn make_const_uts_field(bytes: &[u8]) -> [u8; UTS_LEN] {
     let mut buf = [0u8; UTS_LEN];
-    let bytes = s.as_bytes();
-    let n = bytes.len().min(UTS_LEN - 1);
-    buf[..n].copy_from_slice(&bytes[..n]);
+    let mut index = 0;
+    while index < bytes.len() && index < UTS_VALUE_MAX {
+        buf[index] = bytes[index];
+        index += 1;
+    }
     buf
+}
+
+fn make_uts_field(s: &str) -> [u8; UTS_LEN] {
+    make_const_uts_field(s.as_bytes())
+}
+
+#[cfg(feature = "self_test")]
+pub(crate) fn self_test() {
+    let short = make_const_uts_field(b"wateros");
+    assert_eq!(&short[..8], b"wateros\0");
+    let long = make_const_uts_field(&[b'x'; UTS_LEN + 8]);
+    assert_eq!(long[UTS_LEN - 1], 0);
 }
 
 /// `uname(buf)` — 返回系统信息。
@@ -67,17 +95,60 @@ pub(crate) fn sys_uname(args: SyscallArgs) -> UserRet {
     let machine = "loongarch64";
     #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
     let machine = "unknown";
+    let identity = *UTS_IDENTITY.lock();
     let uts = UserUtsName {
         sysname: make_uts_field("WaterOS"),
-        nodename: make_uts_field("wateros"),
+        nodename: identity.nodename,
         release: make_uts_field("5.15.0"),
         version: make_uts_field("WaterOS #1 SMP"),
         machine: make_uts_field(machine),
-        domainname: make_uts_field(""),
+        domainname: identity.domainname,
     };
     match copy_to_user_struct(buf_ptr, &uts) {
         Ok(()) => UserRet::from_success(0),
         Err(e) => UserRet::from_error(e),
+    }
+}
+
+fn set_uts_value(user_ptr: usize, len: usize, domain: bool) -> Result<(), ErrNo> {
+    if cred::current_credentials().effective_uid.0 != 0 {
+        return Err(ErrNo::EPERM);
+    }
+    if len > UTS_VALUE_MAX {
+        return Err(ErrNo::EINVAL);
+    }
+
+    // 长度为零时 Linux 不读取用户指针，因此空主机名允许传入 NULL。
+    let mut value = [0u8; UTS_LEN];
+    if len != 0 {
+        let copied = copy_from_user(&mut value[..len], user_ptr)?;
+        if copied != len {
+            return Err(ErrNo::EFAULT);
+        }
+    }
+
+    let mut identity = UTS_IDENTITY.lock();
+    if domain {
+        identity.domainname = value;
+    } else {
+        identity.nodename = value;
+    }
+    Ok(())
+}
+
+/// `sethostname(name, len)` — 修改 `uname().nodename`。
+pub(crate) fn sys_sethostname(args: SyscallArgs) -> UserRet {
+    match set_uts_value(args.arg(0), args.arg(1), false) {
+        Ok(()) => UserRet::from_success(0),
+        Err(error) => UserRet::from_error(error),
+    }
+}
+
+/// `setdomainname(name, len)` — 修改 `uname().domainname`。
+pub(crate) fn sys_setdomainname(args: SyscallArgs) -> UserRet {
+    match set_uts_value(args.arg(0), args.arg(1), true) {
+        Ok(()) => UserRet::from_success(0),
+        Err(error) => UserRet::from_error(error),
     }
 }
 
@@ -164,4 +235,19 @@ pub(crate) fn sys_getrandom(args: SyscallArgs) -> UserRet {
     }
 
     UserRet::from_success(written)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{make_const_uts_field, UTS_LEN};
+
+    #[test]
+    fn uts_field_is_nul_terminated_and_truncated() {
+        let short = make_const_uts_field(b"wateros");
+        assert_eq!(&short[..8], b"wateros\0");
+
+        let long = make_const_uts_field(&[b'x'; UTS_LEN + 8]);
+        assert_eq!(long[UTS_LEN - 2], b'x');
+        assert_eq!(long[UTS_LEN - 1], 0);
+    }
 }

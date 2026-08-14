@@ -30,7 +30,7 @@ pub(crate) use dir::{
 };
 pub(crate) use dup::{sys_dup, sys_dup3};
 pub(crate) use faccessat::{sys_faccessat, sys_faccessat2};
-pub(crate) use fadvise::sys_fadvise64;
+pub(crate) use fadvise::{sys_fadvise64, sys_readahead};
 pub(crate) use fallocate::sys_fallocate;
 pub(crate) use fcntl::sys_fcntl;
 pub(crate) use flock::sys_flock;

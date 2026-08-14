@@ -1,6 +1,7 @@
 pub(crate) mod clone;
 pub(crate) mod execve;
 pub(crate) mod priority;
+pub(crate) mod personality;
 pub(crate) mod process;
 pub(crate) mod rlimit;
 pub(crate) mod rseq;
@@ -13,6 +14,7 @@ pub(crate) mod wait;
 pub(crate) use clone::{sys_clone, sys_clone3};
 pub(crate) use execve::sys_execve;
 pub(crate) use priority::{sys_getpriority, sys_setpriority};
+pub(crate) use personality::sys_personality;
 pub(crate) use process::{
     sys_getpgid, sys_getpid, sys_getppid, sys_getsid, sys_gettid, sys_set_tid_address, sys_setpgid,
     sys_setsid,
@@ -34,3 +36,6 @@ pub(crate) use wait::{
     reap_exited_member_threads_runtime_resources, signal_terminate_exit_code,
     wake_clear_child_tid_for_task, sys_waitid, sys_waitpid,
 };
+
+#[cfg(feature = "self_test")]
+pub(crate) fn self_test() { personality::self_test(); }

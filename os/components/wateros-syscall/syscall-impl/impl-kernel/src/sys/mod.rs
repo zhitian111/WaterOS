@@ -28,3 +28,9 @@ pub(crate) use time::*;
 // ── 独立模块重新导出 ────────────────────────────────────────────
 pub(crate) use task::*;
 pub(crate) use cred::*;
+
+#[cfg(feature = "self_test")]
+pub(crate) fn self_test() {
+    misc::self_test();
+    task::self_test();
+}
