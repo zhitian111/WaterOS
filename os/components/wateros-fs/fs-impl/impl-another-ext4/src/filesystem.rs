@@ -2,22 +2,28 @@ use super::*;
 
 pub struct AnotherExt4Fs {
     pub(crate) fs : Option<Ext4>,
+    pub(crate) device : Option<SharedBlockDevice>,
     pub(crate) io_error_state : Option<Arc<AtomicBool>>,
     pub(crate) lookup_cache : Mutex<BTreeMap<String, u32>>,
     pub(crate) negative_cache : Mutex<Option<Box<NegativeDentryCache>>>,
     pub(crate) open_nodes : BTreeMap<u32, usize>,
     pub(crate) orphan_nodes : BTreeMap<u32, String>,
+    /// Hidden links whose final removal failed after the user-visible unlink
+    /// had committed.  They are retried by `sync` and the final close.
+    pub(crate) pending_reclaims : BTreeMap<u32, String>,
     pub(crate) orphan_dir : Option<u32>,
 }
 
 impl AnotherExt4Fs {
     pub(crate) const fn new() -> Self {
         Self { fs : None,
+               device : None,
                io_error_state : None,
                lookup_cache : Mutex::new(BTreeMap::new()),
                negative_cache : Mutex::new(None),
                open_nodes : BTreeMap::new(),
                orphan_nodes : BTreeMap::new(),
+               pending_reclaims : BTreeMap::new(),
                orphan_dir : None }
     }
     pub(crate) fn get(&self) -> FsResult<&Ext4> {
@@ -29,15 +35,19 @@ impl AnotherExt4Fs {
 
     pub(crate) fn get_mut(&mut self) -> FsResult<&mut Ext4> {
         self.check_backend()?;
-        self.fs.as_mut().ok_or(FsError::NotMounted)
+        self.fs
+            .as_mut()
+            .ok_or(FsError::NotMounted)
     }
 
-    pub(crate) fn check_backend(&self) -> FsResult<()> {
-        check_backend_error(&self.io_error_state)
-    }
+    pub(crate) fn check_backend(&self) -> FsResult<()> { check_backend_error(&self.io_error_state) }
 
     pub(crate) fn lookup(&self, path : &str) -> FsResult<u32> {
-        if let Some(inode) = self.lookup_cache.lock().get(path).copied() {
+        if let Some(inode) = self.lookup_cache
+                                 .lock()
+                                 .get(path)
+                                 .copied()
+        {
             lookup_diag_event!(positive_hit);
             return Ok(inode);
         }
@@ -68,7 +78,8 @@ impl AnotherExt4Fs {
     }
 
     pub(crate) fn cache_insert(&self, path : &str, inode : u32) {
-        let mut cache = self.lookup_cache.lock();
+        let mut cache = self.lookup_cache
+                            .lock();
         if cache.len() >= LOOKUP_CACHE_CAPACITY && !cache.contains_key(path) {
             cache.clear();
             lookup_diag_positive_clear();
@@ -125,21 +136,22 @@ impl AnotherExt4Fs {
             prefix
         };
         let mut moved = Vec::new();
-        let mut cache = self.lookup_cache.lock();
+        let mut cache = self.lookup_cache
+                            .lock();
         cache.retain(|cached, inode| {
-            if cached == old_path {
-                moved.push((String::from(new_path), *inode));
-                return false;
-            }
-            if let Some(suffix) = cached.strip_prefix(old_prefix.as_str()) {
-                let mut renamed = String::from(new_path.trim_end_matches('/'));
-                renamed.push('/');
-                renamed.push_str(suffix);
-                moved.push((renamed, *inode));
-                return false;
-            }
-            cached != new_path && !cached.starts_with(new_prefix.as_str())
-        });
+                 if cached == old_path {
+                     moved.push((String::from(new_path), *inode));
+                     return false;
+                 }
+                 if let Some(suffix) = cached.strip_prefix(old_prefix.as_str()) {
+                     let mut renamed = String::from(new_path.trim_end_matches('/'));
+                     renamed.push('/');
+                     renamed.push_str(suffix);
+                     moved.push((renamed, *inode));
+                     return false;
+                 }
+                 cached != new_path && !cached.starts_with(new_prefix.as_str())
+             });
         for (path, inode) in moved {
             cache.insert(path, inode);
         }
@@ -176,7 +188,8 @@ impl AnotherExt4Fs {
                                     .collect();
         let had_stale = !names.is_empty();
         for name in names {
-            fs.unlink(dir, name.as_str()).map_err(map_error)?;
+            fs.unlink(dir, name.as_str())
+              .map_err(map_error)?;
         }
         if had_stale {
             fs.flush_all();
@@ -192,13 +205,12 @@ impl AnotherExt4Fs {
         let fs = self.get_mut()?;
         let (dir, created) = match lookup(fs, OPEN_INODE_DIR) {
             Ok(dir) => (dir, false),
-            Err(FsError::NotFound) => {
-                (fs.mkdir(EXT4_ROOT_INO,
-                          OPEN_INODE_DIR.trim_start_matches('/'),
-                          InodeMode::DIRECTORY | InodeMode::from_bits_retain(0o700))
-                   .map_err(map_error)?,
-                 true)
-            }
+            Err(FsError::NotFound) => (fs.mkdir(EXT4_ROOT_INO,
+                                                OPEN_INODE_DIR.trim_start_matches('/'),
+                                                InodeMode::DIRECTORY |
+                                                InodeMode::from_bits_retain(0o700))
+                                         .map_err(map_error)?,
+                                       true),
             Err(error) => return Err(error),
         };
         if metadata(fs, dir)?.node_type != FsNodeType::Directory {
@@ -211,27 +223,83 @@ impl AnotherExt4Fs {
         Ok(dir)
     }
 
-    pub(crate) fn preserve_inode_if_open(&mut self, inode : u32) -> FsResult<()> {
-        if !self.open_nodes.contains_key(&inode) || self.orphan_nodes.contains_key(&inode) {
+    pub(crate) fn preserve_inode_for_unlink(&mut self, inode : u32) -> FsResult<()> {
+        if self.orphan_nodes
+               .contains_key(&inode)
+        {
             return Ok(());
         }
         let dir = self.ensure_orphan_dir()?;
         let name = alloc::format!("{inode:08x}");
-        self.get_mut()?.link(inode, dir, name.as_str()).map_err(map_error)?;
-        self.get_mut()?.flush_all();
+        self.get_mut()?
+            .link(inode, dir, name.as_str())
+            .map_err(map_error)?;
+        self.get_mut()?
+            .flush_all();
         let mut path = String::from(OPEN_INODE_DIR);
         path.push('/');
         path.push_str(name.as_str());
-        self.orphan_nodes.insert(inode, name);
+        self.orphan_nodes
+            .insert(inode, name);
         self.cache_insert(path.as_str(), inode);
         Ok(())
+    }
+
+    /// Remove a hidden link after a successful user-visible unlink.  A failure
+    /// is deliberately deferred: namespace semantics are already committed.
+    pub(crate) fn reclaim_orphan(&mut self, inode : u32) {
+        let Some(name) = self.orphan_nodes
+                             .get(&inode)
+                             .cloned()
+        else {
+            return;
+        };
+        let result = (|| -> FsResult<()> {
+            let dir = self.orphan_dir
+                          .ok_or(FsError::Io)?;
+            self.get_mut()?
+                .unlink(dir, name.as_str())
+                .map_err(map_error)?;
+            self.get_mut()?
+                .flush_all();
+            self.check_backend()
+        })();
+        match result {
+            Ok(()) => {
+                self.orphan_nodes
+                    .remove(&inode);
+                self.pending_reclaims
+                    .remove(&inode);
+            }
+            Err(error) => {
+                if self.pending_reclaims
+                       .insert(inode, name)
+                       .is_none()
+                {
+                    log::warn!("[fs::another-ext4] deferred reclaim inode={} failed: {:?}",
+                               inode,
+                               error);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn retry_pending_reclaims(&mut self) {
+        let pending : Vec<u32> = self.pending_reclaims
+                                     .keys()
+                                     .copied()
+                                     .collect();
+        for inode in pending {
+            self.reclaim_orphan(inode);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AnotherExt4Fs, AtomicBool, FsError, FsNodeId, Ordering, ReadWriteFs,
-                check_backend_error};
+    use super::{
+        check_backend_error, AnotherExt4Fs, AtomicBool, FsError, FsNodeId, Ordering, ReadWriteFs,
+    };
     use alloc::boxed::Box;
     use alloc::sync::Arc;
 
@@ -239,8 +307,11 @@ mod tests {
     pub(crate) fn backend_error_latch_reports_io_after_failure() {
         let state = Some(Arc::new(AtomicBool::new(false)));
         assert_eq!(check_backend_error(&state), Ok(()));
-        state.as_ref().unwrap().store(true, Ordering::Release);
-        assert_eq!(check_backend_error(&state), Err(FsError::Io));
+        state.as_ref()
+             .unwrap()
+             .store(true, Ordering::Release);
+        assert_eq!(check_backend_error(&state),
+                   Err(FsError::Io));
     }
 
     #[test]
@@ -251,8 +322,10 @@ mod tests {
         fs.cache_insert("/dst/stale", 12);
         fs.cache_insert("/unrelated", 13);
         {
-            let mut negative = fs.negative_cache.lock();
-            let negative = negative.get_or_insert_with(|| Box::new(super::NegativeDentryCache::new()));
+            let mut negative = fs.negative_cache
+                                 .lock();
+            let negative =
+                negative.get_or_insert_with(|| Box::new(super::NegativeDentryCache::new()));
             negative.insert("/dst");
             negative.insert("/dst/missing");
             negative.insert("/dstish/missing");
@@ -260,7 +333,8 @@ mod tests {
 
         fs.cache_rename_subtree("/src", "/dst");
 
-        let cache = fs.lookup_cache.lock();
+        let cache = fs.lookup_cache
+                      .lock();
         assert_eq!(cache.get("/dst"), Some(&10));
         assert_eq!(cache.get("/dst/child"), Some(&11));
         assert_eq!(cache.get("/unrelated"), Some(&13));
@@ -268,8 +342,10 @@ mod tests {
         assert!(!cache.contains_key("/src/child"));
         assert!(!cache.contains_key("/dst/stale"));
         drop(cache);
-        let negative = fs.negative_cache.lock();
-        let negative = negative.as_ref().unwrap();
+        let negative = fs.negative_cache
+                         .lock();
+        let negative = negative.as_ref()
+                               .unwrap();
         assert!(!negative.contains("/dst"));
         assert!(!negative.contains("/dst/missing"));
         assert!(negative.contains("/dstish/missing"));
@@ -278,14 +354,21 @@ mod tests {
     #[test]
     pub(crate) fn stable_node_refcount_closes_exactly_once() {
         let mut fs = AnotherExt4Fs::new();
-        fs.open_nodes.insert(42, 2);
+        fs.open_nodes
+          .insert(42, 2);
         let node = FsNodeId::new(42);
 
-        fs.close_node(node).unwrap();
-        assert_eq!(fs.open_nodes.get(&42), Some(&1));
-        fs.close_node(node).unwrap();
-        assert!(!fs.open_nodes.contains_key(&42));
-        assert_eq!(fs.close_node(node), Err(FsError::NotFound));
+        fs.close_node(node)
+          .unwrap();
+        assert_eq!(fs.open_nodes
+                     .get(&42),
+                   Some(&1));
+        fs.close_node(node)
+          .unwrap();
+        assert!(!fs.open_nodes
+                   .contains_key(&42));
+        assert_eq!(fs.close_node(node),
+                   Err(FsError::NotFound));
     }
 
     #[test]
@@ -297,7 +380,8 @@ mod tests {
 
         fs.cache_remove_subtree("/tmp/work");
 
-        let cache = fs.lookup_cache.lock();
+        let cache = fs.lookup_cache
+                      .lock();
         assert!(!cache.contains_key("/tmp/work"));
         assert!(!cache.contains_key("/tmp/work/output"));
         assert_eq!(cache.get("/tmp/worker"), Some(&22));
@@ -308,19 +392,19 @@ mod tests {
         let mut cache = super::NegativeDentryCache::new();
         let original = "/missing/a";
         let bucket = super::NegativeDentryCache::bucket(super::negative_path_hash(original));
-        let collision = (0..10_000)
-                            .map(|index| alloc::format!("/collision/{index}"))
-                            .find(|path| {
-                                path != original &&
+        let collision = (0..10_000).map(|index| alloc::format!("/collision/{index}"))
+                                   .find(|path| {
+                                       path != original &&
                                 super::NegativeDentryCache::bucket(
                                     super::negative_path_hash(path.as_str()),
                                 ) == bucket
-                            })
-                            .expect("find another path in the same cache bucket");
+                                   })
+                                   .expect("find another path in the same cache bucket");
         cache.insert(original);
         assert!(cache.contains(original));
         assert!(!cache.contains(collision.as_str()));
-        assert_eq!(cache.remove_exact(collision.as_str()), 0);
+        assert_eq!(cache.remove_exact(collision.as_str()),
+                   0);
         assert_eq!(cache.remove_exact(original), 1);
         assert!(!cache.contains(original));
     }
@@ -347,7 +431,14 @@ mod tests {
           .insert("/created");
         fs.cache_insert("/created", 41);
 
-        assert_eq!(fs.lookup_cache.lock().get("/created"), Some(&41));
-        assert!(!fs.negative_cache.lock().as_ref().unwrap().contains("/created"));
+        assert_eq!(fs.lookup_cache
+                     .lock()
+                     .get("/created"),
+                   Some(&41));
+        assert!(!fs.negative_cache
+                   .lock()
+                   .as_ref()
+                   .unwrap()
+                   .contains("/created"));
     }
 }

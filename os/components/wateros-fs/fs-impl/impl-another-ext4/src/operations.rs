@@ -3,23 +3,32 @@ use super::*;
 impl ReadOnlyFs for AnotherExt4Fs {
     fn mount(&mut self, device : SharedBlockDevice) -> FsResult<()> {
         let io_error_state = Arc::new(AtomicBool::new(false));
-        let backend = Arc::new(BlockAdapter { device, io_error : io_error_state.clone() });
+        let backend = Arc::new(BlockAdapter { device : device.clone(),
+                                              io_error : io_error_state.clone() });
         let fs = Ext4::load(backend).map_err(|error| {
-            log::error!(
-                "[fs::another-ext4] mount failed: code={:?} detail={:?}",
-                error.code(),
-                error
-            );
-            map_error(error)
-        })?;
+                                        log::error!("[fs::another-ext4] mount failed: code={:?} \
+                                                     detail={:?}",
+                                                    error.code(),
+                                                    error);
+                                        map_error(error)
+                                    })?;
         let state = Some(io_error_state);
         check_backend_error(&state)?;
         self.io_error_state = state;
+        self.device = Some(device);
         self.fs = Some(fs);
-        self.lookup_cache.lock().clear();
-        self.negative_cache.lock().take();
-        self.open_nodes.clear();
-        self.orphan_nodes.clear();
+        self.lookup_cache
+            .lock()
+            .clear();
+        self.negative_cache
+            .lock()
+            .take();
+        self.open_nodes
+            .clear();
+        self.orphan_nodes
+            .clear();
+        self.pending_reclaims
+            .clear();
         self.orphan_dir = None;
         Ok(())
     }
@@ -45,15 +54,17 @@ impl ReadOnlyFs for AnotherExt4Fs {
     fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> FsResult<usize> {
         let fs = self.get()?;
         let inode = self.lookup(path)?;
-        let result = fs.read(inode, offset as usize, buf).map_err(|error| {
-            log::error!("[fs::another-ext4] read failed path={} inode={} offset={} len={} code={:?}",
-                        path,
-                        inode,
-                        offset,
-                        buf.len(),
-                        error.code());
-            map_error(error)
-        });
+        let result = fs.read(inode, offset as usize, buf)
+                       .map_err(|error| {
+                           log::error!("[fs::another-ext4] read failed path={} inode={} \
+                                        offset={} len={} code={:?}",
+                                       path,
+                                       inode,
+                                       offset,
+                                       buf.len(),
+                                       error.code());
+                           map_error(error)
+                       });
         self.check_backend()?;
         result
     }
@@ -121,7 +132,20 @@ impl ReadWriteFs for AnotherExt4Fs {
     fn is_mounted(&self) -> bool { self.fs.is_some() }
 
     fn sync(&mut self) -> FsResult<()> {
-        self.get_mut()?.flush_all();
+        self.retry_pending_reclaims();
+        self.get_mut()?
+            .flush_all();
+        self.device
+            .as_ref()
+            .ok_or(FsError::NotMounted)?
+            .lock()
+            .flush()
+            .map_err(|_| FsError::Io)?;
+        if !self.pending_reclaims
+                .is_empty()
+        {
+            return Err(FsError::Io);
+        }
         self.check_backend()?;
         Ok(())
     }
@@ -131,37 +155,46 @@ impl ReadWriteFs for AnotherExt4Fs {
         if metadata(self.get()?, inode)?.node_type != FsNodeType::File {
             return Err(FsError::NotAFile);
         }
-        let count = self.open_nodes.entry(inode).or_insert(0);
-        *count = count.checked_add(1).ok_or(FsError::NoSpace)?;
+        let count = self.open_nodes
+                        .entry(inode)
+                        .or_insert(0);
+        *count = count.checked_add(1)
+                      .ok_or(FsError::NoSpace)?;
         self.check_backend()?;
         Ok(FsNodeId::new(inode as u64))
     }
 
     fn close_node(&mut self, node : FsNodeId) -> FsResult<()> {
         let inode = self.open_inode(node)?;
-        let count = *self.open_nodes.get(&inode).ok_or(FsError::NotFound)?;
+        let count = *self.open_nodes
+                         .get(&inode)
+                         .ok_or(FsError::NotFound)?;
         if count > 1 {
-            self.open_nodes.insert(inode, count - 1);
+            self.open_nodes
+                .insert(inode, count - 1);
             return Ok(());
         }
         if count == 0 {
             return Err(FsError::Io);
         }
-        if self.get()?.getattr_open(inode).links == 0 {
-            self.get_mut()?.discard_tmpfile(inode).map_err(map_error)?;
-            self.get_mut()?.flush_all();
+        if self.get()?
+               .getattr_open(inode)
+               .links ==
+           0
+        {
+            self.get_mut()?
+                .discard_tmpfile(inode)
+                .map_err(map_error)?;
+            self.get_mut()?
+                .flush_all();
             self.check_backend()?;
-            self.open_nodes.remove(&inode);
+            self.open_nodes
+                .remove(&inode);
             return Ok(());
         }
-        if let Some(name) = self.orphan_nodes.get(&inode).cloned() {
-            let dir = self.orphan_dir.ok_or(FsError::Io)?;
-            self.get_mut()?.unlink(dir, name.as_str()).map_err(map_error)?;
-            self.get_mut()?.flush_all();
-            self.check_backend()?;
-            self.orphan_nodes.remove(&inode);
-        }
-        self.open_nodes.remove(&inode);
+        self.open_nodes
+            .remove(&inode);
+        self.reclaim_orphan(inode);
         Ok(())
     }
 
@@ -171,21 +204,17 @@ impl ReadWriteFs for AnotherExt4Fs {
         result
     }
 
-    fn read_range_node(&self,
-                       node : FsNodeId,
-                       offset : u64,
-                       buf : &mut [u8])
-                       -> FsResult<usize> {
-        let result = self.get()?.read(self.open_inode(node)?, offset as usize, buf).map_err(map_error);
+    fn read_range_node(&self, node : FsNodeId, offset : u64, buf : &mut [u8]) -> FsResult<usize> {
+        let result = self.get()?
+                         .read(self.open_inode(node)?,
+                               offset as usize,
+                               buf)
+                         .map_err(map_error);
         self.check_backend()?;
         result
     }
 
-    fn write_range_node(&mut self,
-                        node : FsNodeId,
-                        offset : u64,
-                        data : &[u8])
-                        -> FsResult<usize> {
+    fn write_range_node(&mut self, node : FsNodeId, offset : u64, data : &[u8]) -> FsResult<usize> {
         let inode = self.open_inode(node)?;
         let result = write_with_ordered_size(self.get_mut()?, inode, offset, data);
         self.check_backend()?;
@@ -194,18 +223,26 @@ impl ReadWriteFs for AnotherExt4Fs {
 
     fn truncate_node(&mut self, node : FsNodeId, len : u64) -> FsResult<()> {
         let inode = self.open_inode(node)?;
-        self.get_mut()?.setattr(inode, None, None, None, Some(len), None, None, None, None)
-                       .map_err(map_error)?;
-        self.get_mut()?.flush_all();
+        self.get_mut()?
+            .setattr(inode,
+                     None,
+                     None,
+                     None,
+                     Some(len),
+                     None,
+                     None,
+                     None,
+                     None)
+            .map_err(map_error)?;
+        self.get_mut()?
+            .flush_all();
         self.check_backend()?;
         Ok(())
     }
 
     fn exists(&self, path : &str) -> FsResult<bool> { ReadOnlyFs::exists(self, path) }
 
-    fn metadata(&self, path : &str) -> FsResult<FsMetadata> {
-        ReadOnlyFs::metadata(self, path)
-    }
+    fn metadata(&self, path : &str) -> FsResult<FsMetadata> { ReadOnlyFs::metadata(self, path) }
 
     fn read(&self, path : &str) -> FsResult<Vec<u8>> { ReadOnlyFs::read(self, path) }
 
@@ -234,10 +271,19 @@ impl ReadWriteFs for AnotherExt4Fs {
             Err(FsError::NotFound) => (fs.generic_create(EXT4_ROOT_INO,
                                                          path,
                                                          InodeMode::FILE | InodeMode::ALL_RW)
-                                         .map_err(map_error)?, true),
+                                         .map_err(map_error)?,
+                                       true),
             Err(error) => return Err(error),
         };
-        fs.setattr(inode, None, None, None, Some(0), None, None, None, None)
+        fs.setattr(inode,
+                   None,
+                   None,
+                   None,
+                   Some(0),
+                   None,
+                   None,
+                   None,
+                   None)
           .map_err(map_error)?;
         write_with_ordered_size(fs, inode, 0, data)?;
         fs.flush_all();
@@ -253,11 +299,22 @@ impl ReadWriteFs for AnotherExt4Fs {
         if metadata(self.get()?, inode)?.node_type == FsNodeType::Directory {
             return Err(FsError::NotAFile);
         }
-        self.preserve_inode_if_open(inode)?;
-        self.get_mut()?.generic_remove(EXT4_ROOT_INO, path).map_err(map_error)?;
-        self.get_mut()?.flush_all();
+        // Give every non-directory unlink a hidden hard link before removing
+        // the public dentry.  If this preparation fails, the public name is
+        // still intact and the syscall returns the failure.
+        self.preserve_inode_for_unlink(inode)?;
+        self.get_mut()?
+            .generic_remove(EXT4_ROOT_INO, path)
+            .map_err(map_error)?;
+        self.get_mut()?
+            .flush_all();
         self.check_backend()?;
         self.cache_remove_subtree(path);
+        if !self.open_nodes
+                .contains_key(&inode)
+        {
+            self.reclaim_orphan(inode);
+        }
         Ok(())
     }
 
@@ -267,7 +324,8 @@ impl ReadWriteFs for AnotherExt4Fs {
         if metadata(fs, inode)?.node_type != FsNodeType::Directory {
             return Err(FsError::NotAFile);
         }
-        fs.generic_remove(EXT4_ROOT_INO, path).map_err(map_error)?;
+        fs.generic_remove(EXT4_ROOT_INO, path)
+          .map_err(map_error)?;
         fs.flush_all();
         self.check_backend()?;
         self.cache_remove_subtree(path);
@@ -282,22 +340,24 @@ impl ReadWriteFs for AnotherExt4Fs {
         result
     }
 
-    fn create_tmpfile_node(
-        &mut self,
-        directory : &str,
-        mode : u32,
-        uid : u32,
-        gid : u32,
-    ) -> FsResult<FsNodeId> {
+    fn create_tmpfile_node(&mut self,
+                           directory : &str,
+                           mode : u32,
+                           uid : u32,
+                           gid : u32)
+                           -> FsResult<FsNodeId> {
         let fs = self.get_mut()?;
         let parent = lookup(fs, directory)?;
         if metadata(fs, parent)?.node_type != FsNodeType::Directory {
             return Err(FsError::NotAFile);
         }
-        let inode = fs.create_tmpfile(InodeMode::from_bits_retain(mode as u16), uid, gid)
+        let inode = fs.create_tmpfile(InodeMode::from_bits_retain(mode as u16),
+                                      uid,
+                                      gid)
                       .map_err(map_error)?;
         fs.flush_all();
-        self.open_nodes.insert(inode, 1);
+        self.open_nodes
+            .insert(inode, 1);
         self.check_backend()?;
         Ok(FsNodeId::new(inode as u64))
     }
@@ -315,7 +375,8 @@ impl ReadWriteFs for AnotherExt4Fs {
         if metadata(fs, parent)?.node_type != FsNodeType::Directory {
             return Err(FsError::NotAFile);
         }
-        fs.link(inode, parent, name).map_err(map_error)?;
+        fs.link(inode, parent, name)
+          .map_err(map_error)?;
         fs.flush_all();
         self.check_backend()?;
         self.cache_insert(new_path, inode);
@@ -325,7 +386,15 @@ impl ReadWriteFs for AnotherExt4Fs {
     fn truncate(&mut self, path : &str, len : u64) -> FsResult<()> {
         let fs = self.get_mut()?;
         let inode = lookup(fs, path)?;
-        fs.setattr(inode, None, None, None, Some(len), None, None, None, None)
+        fs.setattr(inode,
+                   None,
+                   None,
+                   None,
+                   Some(len),
+                   None,
+                   None,
+                   None,
+                   None)
           .map_err(map_error)?;
         fs.flush_all();
         self.check_backend()?;
@@ -354,10 +423,20 @@ impl ReadWriteFs for AnotherExt4Fs {
     fn chmod(&mut self, path : &str, mode : u32) -> FsResult<()> {
         let fs = self.get_mut()?;
         let inode = lookup(fs, path)?;
-        let file_type = fs.getattr(inode).map_err(map_error)?.ftype;
+        let file_type = fs.getattr(inode)
+                          .map_err(map_error)?
+                          .ftype;
         let mode = InodeMode::from_type_and_perm(file_type,
                                                  InodeMode::from_bits_retain(mode as u16));
-        fs.setattr(inode, Some(mode), None, None, None, None, None, None, None)
+        fs.setattr(inode,
+                   Some(mode),
+                   None,
+                   None,
+                   None,
+                   None,
+                   None,
+                   None,
+                   None)
           .map_err(map_error)?;
         fs.flush_all();
         self.check_backend()?;
@@ -392,7 +471,8 @@ impl ReadWriteFs for AnotherExt4Fs {
 
     fn rename(&mut self, old_path : &str, new_path : &str) -> FsResult<()> {
         let fs = self.get_mut()?;
-        fs.generic_rename(EXT4_ROOT_INO, old_path, new_path).map_err(map_error)?;
+        fs.generic_rename(EXT4_ROOT_INO, old_path, new_path)
+          .map_err(map_error)?;
         fs.flush_all();
         self.check_backend()?;
         self.cache_rename_subtree(old_path, new_path);
@@ -419,7 +499,8 @@ impl ReadWriteFs for AnotherExt4Fs {
             return Err(FsError::Exists);
         }
 
-        fs.link(child, parent, name).map_err(map_error)?;
+        fs.link(child, parent, name)
+          .map_err(map_error)?;
         fs.flush_all();
         self.check_backend()?;
         self.cache_insert(new_path, child);
@@ -440,7 +521,8 @@ impl ReadWriteFs for AnotherExt4Fs {
             return Err(FsError::NotAFile);
         }
 
-        let inode = fs.symlink(parent, name, target).map_err(map_error)?;
+        let inode = fs.symlink(parent, name, target)
+                      .map_err(map_error)?;
         fs.flush_all();
         self.check_backend()?;
         self.cache_insert(link_path, inode);
