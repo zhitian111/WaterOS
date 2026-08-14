@@ -58,16 +58,26 @@ impl Drop for OpenFileDescription {
 pub struct SharedIoHandle {
     inner : Arc<Mutex<OpenFileDescription>>,
     snapshot : Arc<Mutex<Option<OpenFileDescription>>>,
+    /// PTY identity is immutable for an open file description.  Cache it at
+    /// installation time so close-on-exec never has to wait for an active I/O
+    /// lease merely to discover which terminal may need hangup delivery.
+    terminal_id : Option<tty::TerminalId>,
 }
 
 impl SharedIoHandle {
     pub fn new(handle : Box<dyn VfsIoHandle>) -> Self {
+        let terminal_id = crate::pty_endpoint_for_handle(handle.as_ref())
+                               .map(|endpoint| endpoint.id());
         let snapshot = handle.duplicate()
                              .ok()
                              .map(OpenFileDescription::new);
         Self { inner : Arc::new(Mutex::new(OpenFileDescription::new(handle))),
-               snapshot : Arc::new(Mutex::new(snapshot)) }
+               snapshot : Arc::new(Mutex::new(snapshot)),
+               terminal_id }
     }
+
+    /// Return the immutable PTY identity without acquiring the I/O lease.
+    pub fn terminal_id(&self) -> Option<tty::TerminalId> { self.terminal_id }
 
     pub fn with_io<R>(&self,
                       f : impl FnOnce(&mut (dyn VfsIoHandle + '_)) -> VfsResult<R>)

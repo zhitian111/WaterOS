@@ -381,13 +381,9 @@ pub fn close_cloexec_fds_for_current_task()
     let mut closed = Vec::with_capacity(handles.len());
     let mut terminal_ids = Vec::new();
     for (fd, handle) in handles {
-        handle.with_io(|io| {
-                  if let Some(endpoint) = impl_fd_session::pty_endpoint_for_handle(io) {
-                      let id = endpoint.id();
-                      if !terminal_ids.contains(&id) { terminal_ids.push(id); }
-                  }
-                  Ok(())
-              })?;
+        if let Some(id) = handle.terminal_id() {
+            if !terminal_ids.contains(&id) { terminal_ids.push(id); }
+        }
         handle.close()?;
         closed.push(fd);
     }
