@@ -461,6 +461,13 @@ pub trait VfsIoHandle: Send + VfsHandleAny {
         None
     }
 
+    /// 按打开的稳定 inode 为 `linkat(AT_EMPTY_PATH)` 创建新目录项。
+    /// 以 `O_TMPFILE | O_EXCL` 创建的匿名文件不得发布。
+    fn link_at_empty_path(&self, new_path: &str) -> VfsResult<()> {
+        let _ = new_path;
+        Err(VfsError::Unsupported)
+    }
+
     /// `flock(2)` 的打开文件描述 owner；`dup`/`fork` 复制时应保持不变。
     fn flock_owner_id(&self) -> Option<u64> {
         None

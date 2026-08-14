@@ -30,7 +30,10 @@ const O_RDWR : usize = 2;
 const O_APPEND : usize = 0o0002000;
 const O_NONBLOCK : usize = 0o0004000;
 const O_DIRECT : usize = 0o00040000;
-const F_SETFL_MASK : u32 = (O_APPEND | O_NONBLOCK | O_DIRECT) as u32;
+const O_ASYNC : usize = 0o00020000;
+const O_NOATIME : usize = 0o01000000;
+const F_SETFL_MASK : u32 = (O_APPEND | O_NONBLOCK) as u32;
+const UNSUPPORTED_SETFL_MASK : usize = O_DIRECT | O_ASYNC | O_NOATIME;
 
 const PAGE_SIZE : usize = 4096;
 const MAX_PIPE_SIZE : usize = 1 << 20;
@@ -126,6 +129,9 @@ fn fcntl_getfl(fd : usize) -> Result<usize, ErrNo> {
 }
 
 fn fcntl_setfl(fd : usize, arg : usize) -> Result<usize, ErrNo> {
+    if arg & UNSUPPORTED_SETFL_MASK != 0 {
+        return Err(ErrNo::EOPNOTSUPP);
+    }
     if socket_fd::lookup(fd).is_some() {
         let flags = arg & O_NONBLOCK;
         socket_fd::set_status_flags(fd, flags).ok_or(ErrNo::EBADF)?;

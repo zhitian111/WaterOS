@@ -6,7 +6,7 @@ extern crate alloc;
 use alloc::string::String;
 
 use api_v0::ErrNo;
-use vfs::api::{resolve_against_cwd, resolve_open_path, FinalSymlink, VfsError};
+use vfs::api::{resolve_open_path, FinalSymlink, VfsError};
 
 use crate::vfs_util::vfs_error_to_errno;
 
@@ -40,7 +40,7 @@ pub(crate) fn resolve_path_at(dirfd: isize, path: &str) -> Result<String, ErrNo>
         Err(VfsError::NotAFile) => return Err(ErrNo::ENOTDIR),
         Err(e) => return Err(super::super::super::vfs_util::vfs_error_to_errno(e)),
     };
-    resolve_against_cwd(base.as_str(), Some(path))
+    vfs::cwd::resolve_from_directory(base.as_str(), path)
         .map_err(super::super::super::vfs_util::vfs_error_to_errno)
 }
 

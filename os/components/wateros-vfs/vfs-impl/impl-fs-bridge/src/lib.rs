@@ -43,6 +43,26 @@ fn proc_view() -> &'static impl ProcFsView { fs::procfs::active_impl::view() }
 // 本结构代码由AI完成
 pub struct FsBridge;
 
+/// 在 `directory` 所属的可写挂载上创建匿名普通文件句柄。
+pub fn open_tmpfile_path(
+    directory : &str,
+    flags : VfsOpenFlags,
+    mode : u32,
+    uid : u32,
+    gid : u32,
+    linkable : bool,
+) -> VfsResult<Box<dyn VfsIoHandle>> {
+    let directory = normalize_absolute_path(directory)?;
+    mount_table::assert_path_writable(directory.as_str())?;
+    let handle = PagedFileHandle::open_tmpfile(directory.as_str(),
+                                               flags,
+                                               mode,
+                                               uid,
+                                               gid,
+                                               linkable)?;
+    Ok(Box::new(handle))
+}
+
 // 本方法代码由AI完成
 pub(crate) fn map_fs_err(e : FsError) -> VfsError {
     match e {
@@ -636,4 +656,3 @@ pub fn self_test() {
     test();
     impl_page_cache::self_test();
 }
-

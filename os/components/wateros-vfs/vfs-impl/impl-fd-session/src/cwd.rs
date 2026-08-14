@@ -14,6 +14,7 @@ pub const PATH_MAX: usize = 256;
 // 本结构代码由AI完成
 pub struct PerTaskCwdRegistry {
     cwd_tables: BTreeMap<task::TaskId, String>,
+    root_tables: BTreeMap<task::TaskId, String>,
     exe_paths: BTreeMap<task::TaskId, String>,
     argv_vectors: BTreeMap<task::TaskId, Vec<String>>,
     owners: BTreeMap<task::TaskId, task::TaskId>,
@@ -24,6 +25,7 @@ impl PerTaskCwdRegistry {
     pub const fn new() -> Self {
         Self {
             cwd_tables: BTreeMap::new(),
+            root_tables: BTreeMap::new(),
             exe_paths: BTreeMap::new(),
             argv_vectors: BTreeMap::new(),
             owners: BTreeMap::new(),
@@ -63,6 +65,7 @@ impl PerTaskCwdRegistry {
     pub fn init_task_cwd(&mut self, task_id: task::TaskId) {
         let owner = self.ensure_owner(task_id);
         self.cwd_tables.insert(owner, String::from("/"));
+        self.root_tables.insert(owner, String::from("/"));
     }
 
     /// 读取任务 cwd 字符串；未初始化时回退 `/`。
@@ -89,6 +92,16 @@ impl PerTaskCwdRegistry {
         self.cwd_tables.get_mut(&owner).expect("init_task_cwd")
     }
 
+    pub fn get_root(&self, task_id: task::TaskId) -> &str {
+        let owner = self.effective_owner(task_id);
+        self.root_tables.get(&owner).map(String::as_str).unwrap_or("/")
+    }
+
+    pub fn set_root(&mut self, task_id: task::TaskId, root: String) {
+        let owner = self.ensure_owner(task_id);
+        self.root_tables.insert(owner, root);
+    }
+
     /// 任务退出或 unshare 后释放 cwd / exe / argv 槽位。
 // 本方法代码由AI完成
     pub fn drop_task(&mut self, task_id: task::TaskId) {
@@ -97,11 +110,13 @@ impl PerTaskCwdRegistry {
         };
         if self.ref_counts.get(&owner).copied().unwrap_or(0) == 0 {
             self.cwd_tables.remove(&owner);
+            self.root_tables.remove(&owner);
             self.exe_paths.remove(&owner);
             self.argv_vectors.remove(&owner);
         }
         if task_id != owner {
             self.cwd_tables.remove(&task_id);
+            self.root_tables.remove(&task_id);
             self.exe_paths.remove(&task_id);
             self.argv_vectors.remove(&task_id);
         }
@@ -110,6 +125,7 @@ impl PerTaskCwdRegistry {
 // 本方法代码由AI完成
     pub fn copy_cwd_from_parent(&mut self, child: task::TaskId, parent: task::TaskId) {
         let parent_cwd = self.get_cwd(parent).to_string();
+        let parent_root = self.get_root(parent).to_string();
         let parent_exe = self.get_exe_path(parent).map(ToString::to_string);
         let parent_argv = self.get_argv(parent).map(|v| v.to_vec());
         if self.owners.contains_key(&child) {
@@ -121,6 +137,7 @@ impl PerTaskCwdRegistry {
         } else {
             self.cwd_tables.insert(child_owner, parent_cwd);
         }
+        self.root_tables.insert(child_owner, parent_root);
         if let Some(exe) = parent_exe {
             self.exe_paths.insert(child_owner, exe);
         }

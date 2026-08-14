@@ -48,6 +48,21 @@ impl StableNodeLease {
     pub(crate) fn sync(&self) -> VfsResult<()> { self.fs.lock().sync().map_err(map_fs_err) }
 
     pub(crate) fn mark_content_changed(&self) { self.content_identity.mark_changed(); }
+
+    pub(crate) fn link_tmpfile(&self, new_path : &str) -> VfsResult<()> {
+        let (fs, rel, identity) = match resolve_route(new_path)? {
+            FsRoute::Root { abs, identity } => (root_rw()?, abs, identity),
+            FsRoute::AuxRw { fs, rel, identity, .. } => (fs, rel, identity),
+            FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } |
+            FsRoute::PseudoSecurity { .. } => return Err(VfsError::ReadOnlyFs),
+        };
+        if identity.mount_id != self.identity.mount_id || !Arc::ptr_eq(&fs, &self.fs) {
+            return Err(VfsError::Unsupported);
+        }
+        fs.lock().link_node(self.node, rel.as_str()).map_err(map_fs_err)?;
+        self.mark_content_changed();
+        Ok(())
+    }
 }
 
 impl Drop for StableNodeLease {
@@ -93,7 +108,10 @@ pub(crate) fn open_stable_node(mount_gen : u64, path : &str) -> VfsResult<Option
     };
     let node = match fs.lock().open_node(rel.as_str()) {
         Ok(node) => node,
-        Err(FsError::Unsupported) => return Ok(None),
+        // Stable node handles only regular files. A backend may report
+        // `NotAFile` for directories and symlinks; that is not a path error
+        // for callers such as unlink, which must still reach the backend.
+        Err(FsError::Unsupported | FsError::NotAFile) => return Ok(None),
         Err(error) => return Err(map_fs_err(error)),
     };
     let content_identity = stable_content_identity(mount_gen, identity, node);
@@ -101,6 +119,26 @@ pub(crate) fn open_stable_node(mount_gen : u64, path : &str) -> VfsResult<Option
                                       node,
                                       identity,
                                       content_identity })))
+}
+
+pub(crate) fn create_tmpfile_stable(
+    mount_gen : u64,
+    directory : &str,
+    mode : u32,
+    uid : u32,
+    gid : u32,
+) -> VfsResult<Arc<StableNodeLease>> {
+    let (fs, rel, identity) = match resolve_route(directory)? {
+        FsRoute::Root { abs, identity } => (root_rw()?, abs, identity),
+        FsRoute::AuxRw { fs, rel, identity, .. } => (fs, rel, identity),
+        FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } |
+        FsRoute::PseudoSecurity { .. } => return Err(VfsError::ReadOnlyFs),
+    };
+    let node = fs.lock()
+                 .create_tmpfile_node(rel.as_str(), mode, uid, gid)
+                 .map_err(map_fs_err)?;
+    let content_identity = stable_content_identity(mount_gen, identity, node);
+    Ok(Arc::new(StableNodeLease { fs, node, identity, content_identity }))
 }
 
 pub(crate) struct DetachedState {

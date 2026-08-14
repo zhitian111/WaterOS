@@ -41,7 +41,7 @@ mod block_io;
 #[path = "path_lookup.rs"]
 mod path_lookup;
 use block_io::{check_backend_error, map_error, map_type, BlockAdapter};
-pub(crate) use path_lookup::{lookup, metadata, parent_name, write_with_ordered_size};
+pub(crate) use path_lookup::{lookup, metadata, metadata_open, parent_name, write_with_ordered_size};
 pub(crate) use dentry_cache::NegativeDentryCache;
 #[cfg(test)]
 pub(crate) use dentry_cache::negative_path_hash;

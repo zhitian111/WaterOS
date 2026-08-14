@@ -18,6 +18,7 @@ const S_IFCHR : u32 = 0o20_000;
 const S_IFBLK : u32 = 0o60_000;
 const S_IFSOCK : u32 = 0o140_000;
 const AT_SYMLINK_FOLLOW : u32 = 0x400;
+const AT_EMPTY_PATH : u32 = 0x1000;
 
 pub(crate) fn sys_mkdirat(args : SyscallArgs) -> UserRet {
     let dirfd = args.arg(0) as isize;
@@ -81,6 +82,22 @@ fn check_parent_create(path : &str, cred : &ProcessCredentials) -> Result<VfsMet
         Ok(_) => return Err(ErrNo::ENOTDIR),
         Err(VfsError::NotFound) => return Err(ErrNo::ENOENT),
         Err(e) => return Err(vfs_error_to_errno(e)),
+    };
+    if can_create_in_directory(&meta, cred) {
+        Ok(meta)
+    } else {
+        Err(ErrNo::EACCES)
+    }
+}
+
+pub(crate) fn check_directory_create(
+    path : &str,
+    cred : &ProcessCredentials,
+) -> Result<VfsMetadata, ErrNo> {
+    let meta = match active_impl::backend().metadata(path) {
+        Ok(meta) if meta.node_type == VfsNodeType::Directory => meta,
+        Ok(_) => return Err(ErrNo::ENOTDIR),
+        Err(error) => return Err(vfs_error_to_errno(error)),
     };
     if can_create_in_directory(&meta, cred) {
         Ok(meta)
@@ -189,7 +206,7 @@ pub(crate) fn sys_linkat(args : SyscallArgs) -> UserRet {
     let new_path_ptr = args.arg(3);
     let flags = args.arg(4) as u32;
 
-    if flags & !AT_SYMLINK_FOLLOW != 0 {
+    if flags & !(AT_SYMLINK_FOLLOW | AT_EMPTY_PATH) != 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
@@ -205,6 +222,39 @@ pub(crate) fn sys_linkat(args : SyscallArgs) -> UserRet {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
+
+    if old_path.is_empty() {
+        if flags & AT_EMPTY_PATH == 0 {
+            return UserRet::from_error(ErrNo::ENOENT);
+        }
+        if old_dirfd < 0 {
+            return UserRet::from_error(ErrNo::EBADF);
+        }
+        let new_resolved = match resolve_path_at(new_dirfd, new_path.as_str()) {
+            Ok(path) => path,
+            Err(error) => return UserRet::from_error(error),
+        };
+        let new_resolved = match resolve_symlinks(new_resolved.as_str(), FinalSymlink::NoFollow) {
+            Ok(path) => path,
+            Err(error) => return UserRet::from_error(error),
+        };
+        let cred = cred::current_credentials();
+        if let Err(error) = check_parent_create(new_resolved.as_str(), &cred) {
+            return UserRet::from_error(error);
+        }
+        return match vfs::fd::with_current_io(old_dirfd as usize, |handle| {
+            handle.link_at_empty_path(new_resolved.as_str())
+        }) {
+            Ok(()) => {
+                super::inotify::notify_create(new_resolved.as_str(), false);
+                UserRet::from_success(0)
+            }
+            Err(VfsError::Exists) => UserRet::from_error(ErrNo::EEXIST),
+            Err(VfsError::ReadOnlyFs) => UserRet::from_error(ErrNo::EROFS),
+            Err(VfsError::Unsupported) => UserRet::from_error(ErrNo::EXDEV),
+            Err(error) => UserRet::from_error(vfs_error_to_errno(error)),
+        };
+    }
 
     let old_resolved = match resolve_path_at(old_dirfd, old_path.as_str()) {
         Ok(path) => path,

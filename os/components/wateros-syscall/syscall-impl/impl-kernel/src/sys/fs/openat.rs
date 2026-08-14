@@ -1,11 +1,7 @@
 //! `openat(2)`：经 VFS 打开 ext4 根卷文件并分配 fd。
 
 //! 本模块代码由AI完成
-extern crate alloc;
-
-use alloc::format;
 use alloc::string::String;
-use core::sync::atomic::{AtomicU64, Ordering};
 
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
@@ -13,7 +9,7 @@ use api_v0::UserRet;
 use cred::api::{Gid, ProcessCredentials};
 use vfs::active_impl;
 use vfs::api::{
-    FinalSymlink, SingleRootReadView, VfsError, VfsMetadata, VfsNodeType, VfsOpenFlags, VfsOpenOps,
+    FinalSymlink, SingleRootReadView, VfsError, VfsMetadata, VfsNodeType, VfsOpenOps,
 };
 
 use super::path_at::{resolve_path_at, resolve_symlinks};
@@ -25,7 +21,6 @@ const O_WRONLY: u32 = 1;
 const O_RDWR: u32 = 2;
 const O_CLOEXEC: u32 = 0o2000000;
 const O_PATH: u32 = 0o10000000;
-const O_TMPFILE: u32 = 0o20200000;
 const O_NOCTTY: u32 = 0o400;
 // asm-generic (and therefore RISC-V/LoongArch): O_LARGEFILE is 0100000,
 // while O_NOFOLLOW is 0400000.  musl includes O_LARGEFILE in ordinary
@@ -37,7 +32,20 @@ const O_CREAT: u32 = 0o100;
 const O_TRUNC: u32 = 0o1000;
 const FD_CLOEXEC: usize = 1;
 
-static NEXT_TMPFILE_ID: AtomicU64 = AtomicU64::new(1);
+const O_APPEND: u32 = 0o2000;
+const O_NONBLOCK: u32 = 0o4000;
+const O_LARGEFILE: u32 = 0o100_000;
+const O_DIRECTORY: u32 = 0o200_000;
+const SUPPORTED_OPEN_FLAGS: u32 = O_ACCMODE | O_CREAT | O_EXCL | O_NOCTTY | O_TRUNC |
+                                  O_APPEND | O_NONBLOCK | O_LARGEFILE | O_DIRECTORY |
+                                  O_NOFOLLOW | O_CLOEXEC | O_PATH;
+const O_DSYNC: u32 = 0o10_000;
+const O_ASYNC: u32 = 0o20_000;
+const O_DIRECT: u32 = 0o40_000;
+const O_NOATIME: u32 = 0o1_000_000;
+const O_SYNC: u32 = 0o4_010_000;
+const O_TMPFILE: u32 = 0o20_200_000;
+const KNOWN_UNSUPPORTED_OPEN_FLAGS: u32 = O_DSYNC | O_ASYNC | O_DIRECT | O_NOATIME | O_SYNC;
 
 // 本方法代码由AI完成
 pub(crate) fn sys_openat(args : SyscallArgs) -> UserRet {
@@ -56,17 +64,51 @@ pub(crate) fn sys_openat(args : SyscallArgs) -> UserRet {
 
 /// 已完成用户复制后的共用打开入口，供 `openat2` 在校验 `open_how` 后复用。
 pub(crate) fn openat_path(dirfd : isize, path : &str, flags : u32, mode : u32) -> UserRet {
-
+    if let Err(error) = validate_open_flags(flags) {
+        return UserRet::from_error(error);
+    }
     let resolved = match resolve_path_at(dirfd, path) {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
     };
+    open_resolved_path_unchecked(resolved.as_str(), flags, mode)
+}
 
-    if flags & O_TMPFILE == O_TMPFILE {
-        return open_tmpfile(resolved.as_str(), flags);
+/// 打开已经由 syscall 路径约束解析器得到的物理绝对路径。
+pub(crate) fn open_resolved_path(resolved : &str, flags : u32, mode : u32) -> UserRet {
+    if let Err(error) = validate_open_flags(flags) {
+        return UserRet::from_error(error);
     }
+    open_resolved_path_unchecked(resolved, flags, mode)
+}
 
-    let open_path = match prepare_open_path(resolved.as_str(), flags) {
+fn validate_open_flags(flags : u32) -> Result<(), ErrNo> {
+    if flags & O_ACCMODE == O_ACCMODE || flags & !(SUPPORTED_OPEN_FLAGS | O_TMPFILE |
+                                                    KNOWN_UNSUPPORTED_OPEN_FLAGS) != 0
+    {
+        return Err(ErrNo::EINVAL);
+    }
+    if flags & KNOWN_UNSUPPORTED_OPEN_FLAGS != 0 {
+        return Err(ErrNo::EOPNOTSUPP);
+    }
+    if flags & (O_TMPFILE & !O_DIRECTORY) != 0 && flags & O_TMPFILE != O_TMPFILE {
+        return Err(ErrNo::EINVAL);
+    }
+    Ok(())
+}
+
+fn open_resolved_path_unchecked(resolved : &str, flags : u32, mode : u32) -> UserRet {
+    if flags & O_TMPFILE == O_TMPFILE {
+        if flags & (O_PATH | O_CREAT) != 0 {
+            return UserRet::from_error(ErrNo::EINVAL);
+        }
+        let directory = match prepare_open_path(resolved, flags) {
+            Ok(path) => path,
+            Err(error) => return UserRet::from_error(error),
+        };
+        return open_tmpfile(directory.as_str(), flags, mode);
+    }
+    let open_path = match prepare_open_path(resolved, flags) {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
     };
@@ -132,7 +174,6 @@ pub(crate) fn openat_path(dirfd : isize, path : &str, flags : u32, mode : u32) -
                     return UserRet::from_error(vfs_error_to_errno(e));
                 }
             }
-            const O_NONBLOCK: u32 = 0o4000;
             if flags & O_NONBLOCK != 0 {
                 if let Err(e) = vfs::fd::with_current_io(fd, |h| {
                     let mut sf = h.open_status_flags();
@@ -166,49 +207,52 @@ pub(crate) fn openat_path(dirfd : isize, path : &str, flags : u32, mode : u32) -
     }
 }
 
-fn open_tmpfile(dir_path: &str, flags: u32) -> UserRet {
-    if flags & O_ACCMODE != O_RDWR {
+fn open_tmpfile(directory : &str, flags : u32, mode : u32) -> UserRet {
+    if flags & O_ACCMODE == 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-
-    let backend = active_impl::backend();
-    match backend.metadata(dir_path) {
-        Ok(meta) if meta.node_type == vfs::api::VfsNodeType::Directory => {}
-        Ok(_) => return UserRet::from_error(ErrNo::ENOTDIR),
-        Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
+    let cred = cred::current_credentials();
+    let parent = match super::dir::check_directory_create(directory, &cred) {
+        Ok(parent) => parent,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let create_mode = mode & !super::super::task::current_umask();
+    let gid = if parent.mode & 0o2000 != 0 {
+        parent.gid
+    } else {
+        cred.effective_gid.0
+    };
+    let handle = match vfs::open_tmpfile_absolute(
+        directory,
+        linux_open_flags_to_vfs(flags),
+        create_mode,
+        cred.effective_uid.0,
+        gid,
+        flags & O_EXCL == 0,
+    ) {
+        Ok(handle) => handle,
+        Err(error) => return UserRet::from_error(vfs_error_to_errno(error)),
+    };
+    let fd = match vfs::fd::alloc_fd(handle) {
+        Ok(fd) => fd,
+        Err(error) => return UserRet::from_error(vfs_error_to_errno(error)),
+    };
+    if flags & O_CLOEXEC != 0 {
+        if let Err(error) = vfs::fd::set_fd_flags(fd, FD_CLOEXEC) {
+            let _ = vfs::fd::close_fd(fd);
+            return UserRet::from_error(vfs_error_to_errno(error));
+        }
     }
-
-    let vf = VfsOpenFlags(
-        VfsOpenFlags::READ | VfsOpenFlags::WRITE | VfsOpenFlags::CREATE | VfsOpenFlags::TRUNC,
-    );
-    let task_id = task::current_task_id().unwrap_or(0);
-    for _ in 0..64 {
-        let id = NEXT_TMPFILE_ID.fetch_add(1, Ordering::Relaxed);
-        let tmp_path = if dir_path == "/" {
-            format!("/.wateros-tmpfile-{task_id}-{id}")
-        } else {
-            format!("{}/.wateros-tmpfile-{task_id}-{id}", dir_path.trim_end_matches('/'))
-        };
-        let handle = match backend.open(tmp_path.as_str(), vf) {
-            Ok(handle) => handle,
-            Err(VfsError::Exists) => continue,
-            Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
-        };
-        return match vfs::fd::alloc_fd(handle) {
-            Ok(fd) => {
-                if flags & O_CLOEXEC != 0 {
-                    if let Err(e) = vfs::fd::set_fd_flags(fd, FD_CLOEXEC) {
-                        let _ = vfs::fd::close_fd(fd);
-                        return UserRet::from_error(vfs_error_to_errno(e));
-                    }
-                }
-                UserRet::from_success(fd)
-            }
-            Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
-        };
+    if flags & O_NONBLOCK != 0 {
+        if let Err(error) = vfs::fd::with_current_io(fd, |handle| {
+            let status = handle.open_status_flags() | O_NONBLOCK;
+            handle.set_open_status_flags(status)
+        }) {
+            let _ = vfs::fd::close_fd(fd);
+            return UserRet::from_error(vfs_error_to_errno(error));
+        }
     }
-
-    UserRet::from_error(ErrNo::EEXIST)
+    UserRet::from_success(fd)
 }
 
 fn prepare_open_path(resolved: &str, flags: u32) -> Result<String, ErrNo> {

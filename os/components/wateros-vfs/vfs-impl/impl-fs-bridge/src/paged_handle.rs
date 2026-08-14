@@ -129,6 +129,8 @@ pub struct PagedFileHandle {
     on_disk_size : u64,
     detached : Arc<Mutex<DetachedState>>,
     open_ref_held : bool,
+    anonymous : bool,
+    tmpfile_linkable : bool,
     flock_owner_id : u64,
 }
 
@@ -148,6 +150,8 @@ impl Clone for PagedFileHandle {
                on_disk_size : self.on_disk_size,
                detached : self.detached.clone(),
                open_ref_held : self.open_ref_held,
+               anonymous : self.anonymous,
+               tmpfile_linkable : self.tmpfile_linkable,
                flock_owner_id : self.flock_owner_id }
     }
 }
@@ -242,6 +246,52 @@ impl PagedFileHandle {
                   on_disk_size,
                   detached,
                   open_ref_held : true,
+                  anonymous : false,
+                  tmpfile_linkable : false,
+                  flock_owner_id : NEXT_FLOCK_OWNER_ID.fetch_add(1, Ordering::Relaxed) })
+    }
+
+    pub(crate) fn open_tmpfile(
+        directory : &str,
+        flags : VfsOpenFlags,
+        mode : u32,
+        uid : u32,
+        gid : u32,
+        linkable : bool,
+    ) -> VfsResult<Self> {
+        match FILE_IO_MODE {
+            FileIoMode::Direct => {}
+            FileIoMode::Async => return Err(VfsError::Unsupported),
+        }
+        let mount_gen = fs::rootfs::active_impl::mount_generation();
+        let stable = create_tmpfile_stable(mount_gen, directory, mode, uid, gid)?;
+        let meta = stable.metadata()?;
+        let path = alloc::format!("@tmpfile:{}", stable.cache_key());
+        let detached = detached_state_for_open(mount_gen, path.as_str(), Some(stable));
+        let cache_key = file_key_for_state(mount_gen, &detached.lock());
+        global_cache(mount_gen).acquire_open_ref_key(&cache_key);
+
+        const O_WRONLY : u32 = 1;
+        const O_RDWR : u32 = 2;
+        const O_APPEND : u32 = 0o2000;
+        let writable = flags.contains(VfsOpenFlags::WRITE);
+        let accmode = if writable && flags.contains(VfsOpenFlags::READ) {
+            O_RDWR
+        } else {
+            O_WRONLY
+        };
+        let status_flags = if flags.contains(VfsOpenFlags::APPEND) { O_APPEND } else { 0 };
+        Ok(Self { path,
+                  description : Arc::new(VfsOpenDescriptionState::new(0, status_flags)),
+                  meta,
+                  writable,
+                  accmode,
+                  mount_gen,
+                  on_disk_size : 0,
+                  detached,
+                  open_ref_held : true,
+                  anonymous : true,
+                  tmpfile_linkable : linkable,
                   flock_owner_id : NEXT_FLOCK_OWNER_ID.fetch_add(1, Ordering::Relaxed) })
     }
 
@@ -560,7 +610,16 @@ impl VfsIoHandle for PagedFileHandle {
 
 // 本方法代码由AI完成
     fn backing_path(&self) -> Option<&str> {
-        Some(self.path.as_str())
+        (!self.anonymous).then_some(self.path.as_str())
+    }
+
+    fn link_at_empty_path(&self, new_path : &str) -> VfsResult<()> {
+        if self.anonymous && !self.tmpfile_linkable {
+            return Err(VfsError::OperationNotPermitted);
+        }
+        self.stable_node()
+            .ok_or(VfsError::Io)?
+            .link_tmpfile(new_path)
     }
 
 // 本方法代码由AI完成

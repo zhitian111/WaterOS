@@ -1,8 +1,8 @@
 # Arch RISC-V 软件包安装被符号链接阻断：问题汇报与修复建议
 
 日期：2026-08-14
-状态：默认 RW ext4 后端的 fast symlink 创建已修复并完成基础持久化回归；pacman/neovim
-端到端验收待执行。
+状态：默认 RW ext4 后端的 fast symlink 已完成基础持久化回归，extent symlink 已实现；
+长链接与 pacman/neovim 端到端验收待执行。
 
 ## 摘要
 
@@ -81,7 +81,7 @@ VfsError::InvalidPath | VfsError::Unsupported => ErrNo::EINVAL
 
 ## 建议拆分任务
 
-### 任务 A：another_ext4 创建 fast symlink（P0）
+### 任务 A：another_ext4 创建 fast/extent symlink（P0）
 
 责任范围：
 
@@ -91,11 +91,12 @@ VfsError::InvalidPath | VfsError::Unsupported => ErrNo::EINVAL
 实现要求：
 
 1. 在 `another_ext4::Ext4` 提供窄的 `symlink(parent, name, target)` 操作。
-2. 第一版只实现 fast symlink：目标长度不超过 ext4 inode `i_block` 的 60 字节。
+2. 目标长度不超过 ext4 inode `i_block` 的 60 字节时使用 fast symlink；
+   超过 60 字节时使用 extent 数据块。
 3. 新 inode mode 必须为 `S_IFLNK | 0777`（`InodeMode::SOFTLINK | ALL_RWX`）。
-4. 将目标原始字节写入 inode inline block，设置 inode size，保持 block count 为零，
-   写回 inode checksum，再将目录项链接到 parent。
-5. 过长目标明确返回 `ENAMETOOLONG` 或 `EOPNOTSUPP`；不要静默截断。
+4. fast 表示将原始字节写入 inode inline block 并保持 block count 为零；
+   extent 表示分配数据块。两者都设置 inode size/checksum，再链接到 parent。
+5. 任何目标都不得静默截断；分配失败应保留底层错误语义。
 6. `AnotherExt4Fs::symlink` 负责路径存在性、父目录检查、缓存更新、`flush_all` 与
    `check_backend`。不应把实现散落在 syscall 层。
 
@@ -171,15 +172,16 @@ A（底层创建） + C（文件系统回归）
 
 ## 2026-08-14 修复结果
 
-- `another_ext4::Ext4::symlink` 现在创建 `S_IFLNK | 0777` fast symlink，将目标原始字节
-  写入 inode 的 60 字节 `i_block`，清除 extent 标志，保持 block count 为零，并通过
-  inode checksum 写回路径持久化。超过 60 字节的目标返回不支持，不会截断。
+- `another_ext4::Ext4::symlink` 现在创建 `S_IFLNK | 0777` 符号链接：不超过 60 字节时
+  将目标原始字节写入 inode 的 `i_block`，清除 extent 标志并保持 block count 为零；
+  较长目标通过 extent 数据块持久化。两种表示均写回 inode checksum，且不会截断目标。
 - `AnotherExt4Fs::symlink` 完成存在性和父目录检查，成功后刷新后端、检查块设备错误状态，
   并发布 lookup cache。
 - 通用 `VfsError::Unsupported` 改为映射到 `EOPNOTSUPP`；`pread`/`pwrite`、`flock`、
   `fcntl` 等已有 syscall 专用映射保持不变。
 - RISC-V 镜像副本中已验证 `ln -s`、`readlink`、`test -L`、跟随读取、dangling link、
-  `EEXIST`、超过 60 字节目标的 `EOPNOTSUPP` 和循环链接的 `ELOOP`；重启后再次读取通过。
+  `EEXIST` 和循环链接的 `ELOOP`；fast symlink 重启后再次读取通过。extent symlink 的运行
+  与重启回归留给本轮集成测试。
   宿主 `debugfs` 确认链接 inode 为 mode `0777`、block count `0`，`e2fsck -fn` 五阶段通过。
 - 尚未执行新 Arch RISC-V root 上的 `pacman -S neovim` 与 `nvim --version`，因此动态包
   端到端验收仍保留为后续项。

@@ -73,6 +73,9 @@ pub fn set_task_cwd(task_id: task::TaskId, cwd: &str) -> VfsResult<()> {
     }
     let mut reg = registry().exclusive_access();
     reg.ensure_task_cwd(task_id);
+    if !path_within_root(abs.as_str(), reg.get_root(task_id)) {
+        return Err(VfsError::AccessDenied);
+    }
     *reg.get_cwd_mut(task_id) = abs;
     Ok(())
 }
@@ -217,7 +220,79 @@ pub fn resolve_for_current_task(path: &str) -> VfsResult<String> {
     let mut reg = registry().exclusive_access();
     reg.ensure_task_cwd(task_id);
     let cwd = reg.get_cwd(task_id);
-    resolve_against_cwd(cwd, Some(path))
+    let root = reg.get_root(task_id);
+    resolve_with_root(root, cwd, path)
+}
+
+fn path_within_root(path: &str, root: &str) -> bool {
+    root == "/" || path == root || path.starts_with(root) &&
+                                      path.as_bytes().get(root.len()) == Some(&b'/')
+}
+
+fn logical_path<'a>(path: &'a str, root: &str) -> VfsResult<&'a str> {
+    if !path_within_root(path, root) {
+        return Err(VfsError::AccessDenied);
+    }
+    if root == "/" {
+        Ok(path)
+    } else if path == root {
+        Ok("/")
+    } else {
+        Ok(&path[root.len()..])
+    }
+}
+
+fn resolve_with_root(root: &str, base: &str, path: &str) -> VfsResult<String> {
+    let logical_base = logical_path(base, root)?;
+    let logical = resolve_against_cwd(logical_base, Some(path))?;
+    if root == "/" {
+        Ok(logical)
+    } else if logical == "/" {
+        Ok(String::from(root))
+    } else {
+        Ok(alloc::format!("{}{}", root, logical))
+    }
+}
+
+pub fn resolve_with_virtual_root(root: &str, base: &str, path: &str) -> VfsResult<String> {
+    resolve_with_root(root, base, path)
+}
+
+/// 以当前任务 root 约束一个已打开目录 fd 的物理路径。
+pub fn resolve_from_directory(path: &str, relative: &str) -> VfsResult<String> {
+    let task_id = crate::fd::current_task_id()?;
+    let mut reg = registry().exclusive_access();
+    reg.ensure_task_cwd(task_id);
+    resolve_with_root(reg.get_root(task_id), path, relative)
+}
+
+pub fn current_root() -> VfsResult<String> {
+    let task_id = crate::fd::current_task_id()?;
+    let mut reg = registry().exclusive_access();
+    reg.ensure_task_cwd(task_id);
+    Ok(String::from(reg.get_root(task_id)))
+}
+
+/// 将当前任务 root 与 cwd 同时切换到已解析的物理目录。
+pub fn chroot_current(root_path: &str) -> VfsResult<()> {
+    let resolved = resolve_for_current_task(root_path)?;
+    chroot_current_resolved(resolved.as_str())
+}
+
+pub fn chroot_current_resolved(resolved: &str) -> VfsResult<()> {
+    let task_id = crate::fd::current_task_id()?;
+    let current_root = current_root()?;
+    if !path_within_root(resolved, current_root.as_str()) {
+        return Err(VfsError::AccessDenied);
+    }
+    let meta = root::read_view().metadata(resolved)?;
+    if meta.node_type != VfsNodeType::Directory {
+        return Err(VfsError::NotDirectory);
+    }
+    let mut reg = registry().exclusive_access();
+    reg.set_root(task_id, String::from(resolved));
+    *reg.get_cwd_mut(task_id) = String::from(resolved);
+    Ok(())
 }
 
 /// 切换当前任务工作目录（校验目标为已存在目录）。
@@ -230,7 +305,7 @@ pub fn chdir_current(path: &str) -> VfsResult<()> {
         let mut reg = registry().exclusive_access();
         reg.ensure_task_cwd(task_id);
         let cwd = reg.get_cwd(task_id);
-        resolve_against_cwd(cwd, Some(path))?
+        resolve_with_root(reg.get_root(task_id), cwd, path)?
     };
     if abs.len() >= PATH_MAX {
         return Err(VfsError::InvalidPath);
@@ -253,7 +328,7 @@ pub fn write_cwd_to_buf(buf: &mut [u8]) -> VfsResult<usize> {
     let task_id = crate::fd::current_task_id()?;
     let mut reg = registry().exclusive_access();
     reg.ensure_task_cwd(task_id);
-    let cwd = reg.get_cwd(task_id);
+    let cwd = logical_path(reg.get_cwd(task_id), reg.get_root(task_id))?;
     let need = cwd.len() + 1;
     if buf.len() < need {
         return Err(VfsError::InvalidPath);

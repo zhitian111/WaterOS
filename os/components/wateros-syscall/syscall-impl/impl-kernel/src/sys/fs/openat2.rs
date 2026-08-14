@@ -8,8 +8,8 @@ use api_v0::{ErrNo, SyscallArgs, UserRet};
 use vfs::api::VfsError;
 
 use super::{
-    openat::openat_path,
-    path_at::{resolve_path_at, resolve_symlinks, AT_FDCWD},
+    openat::{open_resolved_path, openat_path},
+    path_at::{resolve_path_at, resolve_symlinks},
 };
 use crate::{user_copy::{copy_from_user, copy_user_path_cstr}, vfs_util::vfs_error_to_errno};
 
@@ -26,6 +26,7 @@ const VALID_RESOLVE : u64 = RESOLVE_NO_XDEV | RESOLVE_NO_MAGICLINKS | RESOLVE_NO
                             RESOLVE_BENEATH | RESOLVE_IN_ROOT | RESOLVE_CACHED;
 
 const O_CREAT : u32 = 0o100;
+const O_NOFOLLOW : u32 = 0o400000;
 const O_TMPFILE : u32 = 0o20200000;
 const VALID_OPEN_FLAGS : u32 = 0o3 | 0o100 | 0o200 | 0o400 | 0o1000 | 0o2000 | 0o4000 |
                                0o10000 | 0o20000 | 0o40000 | 0o100000 | 0o200000 |
@@ -65,16 +66,22 @@ pub(crate) fn sys_openat2(args : SyscallArgs) -> UserRet {
         // WaterOS 尚无完整 dcache-only 路径；不能执行 I/O 后伪装缓存命中。
         return UserRet::from_error(ErrNo::EAGAIN);
     }
-    if how.resolve & RESOLVE_IN_ROOT != 0 {
-        // IN_ROOT 还要求把绝对 symlink 重新解释为 dirfd 内路径，当前解析器
-        // 无该命名空间语义。明确拒绝比允许逃逸 dirfd 更安全。
-        return UserRet::from_error(ErrNo::EOPNOTSUPP);
+    if how.resolve & (RESOLVE_IN_ROOT | RESOLVE_BENEATH) ==
+       (RESOLVE_IN_ROOT | RESOLVE_BENEATH)
+    {
+        return UserRet::from_error(ErrNo::EINVAL);
     }
 
     let user_path = match copy_user_path_cstr(path_ptr, crate::user_copy::USER_PATH_MAX) {
         Ok(path) => path,
         Err(error) => return UserRet::from_error(error),
     };
+    if user_path.is_empty() {
+        return UserRet::from_error(ErrNo::ENOENT);
+    }
+    if how.resolve & RESOLVE_IN_ROOT != 0 {
+        return open_in_root(dirfd, user_path.as_str(), flags, mode, how.resolve);
+    }
     if how.resolve & !(RESOLVE_NO_MAGICLINKS) == 0 {
         return openat_path(dirfd, user_path.as_str(), flags, mode);
     }
@@ -92,7 +99,7 @@ pub(crate) fn sys_openat2(args : SyscallArgs) -> UserRet {
             return UserRet::from_error(error);
         }
     }
-    let final_path = match resolve_for_open(lexical.as_str(), flags & O_CREAT != 0) {
+    let final_path = match resolve_for_open(lexical.as_str(), flags) {
         Ok(path) => path,
         Err(error) => return UserRet::from_error(error),
     };
@@ -110,19 +117,72 @@ pub(crate) fn sys_openat2(args : SyscallArgs) -> UserRet {
     }
 
     // 已经得到受约束的规范化绝对路径；从 AT_FDCWD 打开不会再受调用者 cwd 变化影响。
-    openat_path(AT_FDCWD, final_path.as_str(), flags, mode)
+    open_resolved_path(final_path.as_str(), flags, mode)
 }
 
-fn resolve_for_open(path : &str, may_create : bool) -> Result<String, ErrNo> {
-    match resolve_symlinks(path, vfs::api::FinalSymlink::Follow) {
+fn open_in_root(dirfd : isize, path : &str, flags : u32, mode : u32, resolve : u64) -> UserRet {
+    let root = match resolve_path_at(dirfd, ".") {
+        Ok(path) => path,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let lexical = match vfs::cwd::resolve_with_virtual_root(root.as_str(), root.as_str(), path) {
+        Ok(path) => path,
+        Err(error) => return UserRet::from_error(vfs_error_to_errno(error)),
+    };
+    if resolve & RESOLVE_NO_SYMLINKS != 0 {
+        if let Err(error) = reject_any_symlink_in_root(lexical.as_str(), root.as_str()) {
+            return UserRet::from_error(error);
+        }
+    }
+    let final_path = match resolve_for_open_in_root(lexical.as_str(), root.as_str(), flags) {
+        Ok(path) => path,
+        Err(error) => return UserRet::from_error(error),
+    };
+    if resolve & RESOLVE_NO_XDEV != 0 &&
+       vfs::mount_statfs_magic(root.as_str()) != vfs::mount_statfs_magic(final_path.as_str())
+    {
+        return UserRet::from_error(ErrNo::EXDEV);
+    }
+    open_resolved_path(final_path.as_str(), flags, mode)
+}
+
+fn resolve_for_open(path : &str, flags : u32) -> Result<String, ErrNo> {
+    let final_symlink = if flags & O_NOFOLLOW != 0 {
+        vfs::api::FinalSymlink::NoFollow
+    } else {
+        vfs::api::FinalSymlink::Follow
+    };
+    match resolve_symlinks(path, final_symlink) {
         Ok(path) => Ok(path),
-        Err(ErrNo::ENOENT) if may_create => {
+        Err(ErrNo::ENOENT) if flags & O_CREAT != 0 => {
             let (parent, name) = path.rsplit_once('/').unwrap_or(("/", path));
             let parent = if parent.is_empty() { "/" } else { parent };
             let parent = resolve_symlinks(parent, vfs::api::FinalSymlink::Follow)?;
             vfs::api::resolve_against_cwd(parent.as_str(), Some(name)).map_err(vfs_error_to_errno)
         }
         Err(error) => Err(error),
+    }
+}
+
+fn resolve_for_open_in_root(path : &str, root : &str, flags : u32) -> Result<String, ErrNo> {
+    let final_symlink = if flags & O_NOFOLLOW != 0 {
+        vfs::api::FinalSymlink::NoFollow
+    } else {
+        vfs::api::FinalSymlink::Follow
+    };
+    match vfs::resolve_symlink_in_root_absolute(path, root, final_symlink) {
+        Ok(path) => Ok(path),
+        Err(VfsError::NotFound) if flags & O_CREAT != 0 => {
+            let (parent, name) = path.rsplit_once('/').unwrap_or((root, path));
+            let parent = if parent.is_empty() { root } else { parent };
+            let parent = vfs::resolve_symlink_in_root_absolute(parent,
+                                                                root,
+                                                                vfs::api::FinalSymlink::Follow)
+                .map_err(vfs_error_to_errno)?;
+            vfs::cwd::resolve_with_virtual_root(root, parent.as_str(), name)
+                .map_err(vfs_error_to_errno)
+        }
+        Err(error) => Err(vfs_error_to_errno(error)),
     }
 }
 
@@ -151,8 +211,22 @@ fn read_open_how(ptr : usize, size : usize) -> Result<OpenHow, ErrNo> {
 }
 
 fn reject_any_symlink(path : &str) -> Result<(), ErrNo> {
-    let mut current = String::from("/");
-    let components : Vec<&str> = path.split('/').filter(|component| !component.is_empty()).collect();
+    let root = vfs::cwd::current_root().map_err(vfs_error_to_errno)?;
+    reject_any_symlink_in_root(path, root.as_str())
+}
+
+fn reject_any_symlink_in_root(path : &str, root : &str) -> Result<(), ErrNo> {
+    let suffix = if root == "/" {
+        path
+    } else if path == root {
+        "/"
+    } else {
+        path.strip_prefix(root)
+            .filter(|suffix| suffix.starts_with('/'))
+            .ok_or(ErrNo::EACCES)?
+    };
+    let mut current = String::from(root);
+    let components : Vec<&str> = suffix.split('/').filter(|component| !component.is_empty()).collect();
     for (index, component) in components.iter().enumerate() {
         if current != "/" {
             current.push('/');

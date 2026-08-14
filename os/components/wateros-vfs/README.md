@@ -100,14 +100,18 @@ Nano-X 打开 /dev/fb0
   写端/对端生命周期独立管理。
 - 提供各类设备句柄：null、zero、urandom、CPU-dma-latency 等特殊设备，以及 RTC 等字符设备
   句柄（含 devfs 路径元数据查询）。
-- 提供 per-task cwd 与文件锁：`PerTaskCwdRegistry` 维护工作目录（`PATH_MAX`）；`Flock` 按
-  inode 索引实现 `LOCK_SH` / `LOCK_EX` / `LOCK_UN` / `LOCK_NB` 语义。
+- 提供 per-task cwd、进程 root 与文件锁：`PerTaskCwdRegistry` 维护工作目录及 `chroot(2)`
+  根边界，fork 复制、`CLONE_FS` 共享，并约束绝对路径、`..`、符号链接和保存的 dirfd；
+  `Flock` 按 inode 索引实现 `LOCK_SH` / `LOCK_EX` / `LOCK_UN` / `LOCK_NB` 语义。
 - 提供用户图形特殊设备：`user-graphics` 下打开 `/dev/fb0` 与 evdev，并以低优先级 worker 轮询
   输入、广播给各打开者；未启用时这些入口编译为空实现。
 
 ### impl-fs-bridge / 文件系统桥接
 
 主要实现在 `vfs-impl/impl-fs-bridge/src/`。
+
+普通文件句柄以稳定 inode 支撑 unlink 后 I/O；`O_TMPFILE` 直接创建无目录项节点，支持
+`linkat(AT_EMPTY_PATH)` 同挂载发布，并在最后一个 fd 关闭时回收未发布节点。
 
 - 把 VFS 桥接到 `wateros-fs`：零大小 `FsBridge` 后端把 `FsError` / `FsKind` 映射为
   `VfsError` / `VfsFsKind`，使 VFS 层不依赖具体 ext4 实现即可访问根卷与 devfs。

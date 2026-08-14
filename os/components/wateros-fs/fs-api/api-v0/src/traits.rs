@@ -120,6 +120,25 @@ pub trait ReadWriteFs: Send {
         Err(FsError::Unsupported)
     }
 
+    /// 在 `directory` 所在文件系统中创建没有目录项的普通 inode，并持有一次 open 引用。
+    /// 返回的节点必须由调用方通过 [`Self::close_node`] 释放；若从未发布，最后一次关闭时回收。
+    fn create_tmpfile_node(
+        &mut self,
+        directory: &str,
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    ) -> FsResult<FsNodeId> {
+        let _ = (directory, mode, uid, gid);
+        Err(FsError::Unsupported)
+    }
+
+    /// 将已打开且尚无名称的普通节点链接到 `new_path`。
+    fn link_node(&mut self, node: FsNodeId, new_path: &str) -> FsResult<()> {
+        let _ = (node, new_path);
+        Err(FsError::Unsupported)
+    }
+
     /// 在根目录下创建或替换名为 `name` 的普通文件（不含 `/`，如 `hello`），写入 `data`。
     fn write_regular_file_at_root(&mut self, name: &str, data: &[u8]) -> FsResult<()>;
 

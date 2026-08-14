@@ -133,6 +133,61 @@ impl ReadWriteFs for RamFs {
         Ok(())
     }
 
+    fn create_tmpfile_node(&mut self,
+                           directory : &str,
+                           mode : u32,
+                           uid : u32,
+                           gid : u32)
+                           -> FsResult<api_v0::FsNodeId> {
+        let parts = Self::split_path(directory)?;
+        if Self::node_ref(&self.root, &parts)?.kind() != NodeKind::Dir {
+            return Err(FsError::NotAFile);
+        }
+        let number = self.alloc_inode();
+        let node = Node::file(number, &[])?;
+        {
+            let mut inode = node.inode.lock();
+            inode.mode = 0o100000 | (mode as u16 & 0o7777);
+            inode.uid = uid;
+            inode.gid = gid;
+            inode.nlink = 0;
+        }
+        self.open_nodes.insert(number, OpenNode { inode : node.inode, refs : 1 });
+        Ok(api_v0::FsNodeId::new(number))
+    }
+
+    fn link_node(&mut self,
+                 node : api_v0::FsNodeId,
+                 new_path : &str)
+                 -> FsResult<()> {
+        let parts = Self::split_path(new_path)?;
+        if parts.is_empty() {
+            return Err(FsError::InvalidPath);
+        }
+        let inode = self.open_nodes
+                        .get(&node.raw())
+                        .ok_or(FsError::NotFound)?
+                        .inode
+                        .clone();
+        if inode.lock().kind != NodeKind::File {
+            return Err(FsError::NotAFile);
+        }
+        {
+            let (children, name) = Self::parent_mut(&mut self.root, &parts)?;
+            if children.contains_key(name) {
+                return Err(FsError::Exists);
+            }
+        }
+        {
+            let mut data = inode.lock();
+            data.nlink = data.nlink.checked_add(1).ok_or(FsError::NoSpace)?;
+        }
+        let node = Node { inode, children : BTreeMap::new() };
+        let (children, name) = Self::parent_mut(&mut self.root, &parts)?;
+        children.insert(String::from(name), node);
+        Ok(())
+    }
+
     fn write_regular_file_at_root(&mut self, name : &str, data : &[u8]) -> FsResult<()> {
         self.write_regular_file(alloc::format!("/{name}").as_str(), data)
     }

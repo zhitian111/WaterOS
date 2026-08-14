@@ -65,12 +65,37 @@ pub fn read_symlink_absolute(path: &str) -> VfsResult<alloc::vec::Vec<u8>> {
     impl_fs_bridge::read_symlink_path(path)
 }
 
+/// 在指定目录所属的可写挂载上创建 Linux `O_TMPFILE` 匿名文件句柄。
+#[cfg(feature = "bridge-fs-api")]
+pub fn open_tmpfile_absolute(
+    directory: &str,
+    flags: VfsOpenFlags,
+    mode: u32,
+    uid: u32,
+    gid: u32,
+    linkable: bool,
+) -> VfsResult<alloc::boxed::Box<dyn VfsIoHandle>> {
+    impl_fs_bridge::open_tmpfile_path(directory, flags, mode, uid, gid, linkable)
+}
+
 /// 展开绝对路径的中间符号链接，并按 `final_symlink` 决定是否跟随最终链接。
 #[cfg(feature = "bridge-fs-api")]
 pub fn resolve_symlink_absolute(
     path: &str,
     final_symlink: FinalSymlink,
 ) -> VfsResult<alloc::string::String> {
+    #[cfg(feature = "impl-fd-session")]
+    if let Ok(root) = cwd::current_root() {
+        let physical = if root != "/" && path != root &&
+                          !(path.starts_with(root.as_str()) &&
+                            path.as_bytes().get(root.len()) == Some(&b'/'))
+        {
+            cwd::resolve_for_current_task(path)?
+        } else {
+            alloc::string::String::from(path)
+        };
+        return resolve_symlink_in_root_absolute(physical.as_str(), root.as_str(), final_symlink);
+    }
     resolve_symlink_path_with(
         path,
         final_symlink,
@@ -88,6 +113,82 @@ pub fn resolve_symlink_absolute(
                 .map(|meta| meta.node_type == VfsNodeType::Directory)
         },
     )
+}
+
+#[cfg(all(feature = "impl-fd-session", feature = "bridge-fs-api"))]
+pub fn resolve_symlink_in_root_absolute(
+    path: &str,
+    root: &str,
+    final_symlink: FinalSymlink,
+) -> VfsResult<alloc::string::String> {
+    use alloc::{string::String, vec::Vec};
+    const MAX_SYMLINKS: usize = 40;
+
+    let logical = if root == "/" {
+        path
+    } else if path == root {
+        "/"
+    } else {
+        path.strip_prefix(root)
+            .filter(|suffix| suffix.starts_with('/'))
+            .ok_or(VfsError::AccessDenied)?
+    };
+    let mut pending: Vec<String> = logical.split('/')
+                                             .filter(|part| !part.is_empty())
+                                             .map(String::from)
+                                             .collect();
+    let mut resolved = String::from(root);
+    let mut followed = 0usize;
+    while !pending.is_empty() {
+        let component = pending.remove(0);
+        let candidate = if resolved == "/" {
+            alloc::format!("/{component}")
+        } else {
+            alloc::format!("{}/{component}", resolved.trim_end_matches('/'))
+        };
+        let is_final = pending.is_empty();
+        if !is_final || final_symlink == FinalSymlink::Follow {
+            match impl_fs_bridge::read_symlink_path(candidate.as_str()) {
+                Ok(target) => {
+                    if followed == MAX_SYMLINKS {
+                        return Err(VfsError::TooManySymlinks);
+                    }
+                    followed += 1;
+                    let target = String::from_utf8(target).map_err(|_| VfsError::NotUtf8)?;
+                    let mut combined = cwd::resolve_with_virtual_root(root,
+                                                                      resolved.as_str(),
+                                                                      target.as_str())?;
+                    if !pending.is_empty() {
+                        combined = cwd::resolve_with_virtual_root(root,
+                                                                  combined.as_str(),
+                                                                  pending.join("/").as_str())?;
+                    }
+                    let suffix = if root == "/" {
+                        combined.as_str()
+                    } else if combined == root {
+                        "/"
+                    } else {
+                        combined.strip_prefix(root).ok_or(VfsError::AccessDenied)?
+                    };
+                    pending = suffix.split('/')
+                                    .filter(|part| !part.is_empty())
+                                    .map(String::from)
+                                    .collect();
+                    resolved = String::from(root);
+                    continue;
+                }
+                Err(VfsError::NotAFile) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        if !is_final && impl_fs_bridge::metadata_path(candidate.as_str())?.node_type !=
+                        VfsNodeType::Directory
+        {
+            return Err(VfsError::NotDirectory);
+        }
+        resolved = candidate;
+    }
+    Ok(resolved)
 }
 
 /// 在已解析绝对路径处创建符号链接（`bridge-fs-api`）。

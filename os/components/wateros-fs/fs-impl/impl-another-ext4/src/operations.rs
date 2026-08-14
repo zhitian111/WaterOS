@@ -147,6 +147,13 @@ impl ReadWriteFs for AnotherExt4Fs {
         if count == 0 {
             return Err(FsError::Io);
         }
+        if self.get()?.getattr_open(inode).links == 0 {
+            self.get_mut()?.discard_tmpfile(inode).map_err(map_error)?;
+            self.get_mut()?.flush_all();
+            self.check_backend()?;
+            self.open_nodes.remove(&inode);
+            return Ok(());
+        }
         if let Some(name) = self.orphan_nodes.get(&inode).cloned() {
             let dir = self.orphan_dir.ok_or(FsError::Io)?;
             self.get_mut()?.unlink(dir, name.as_str()).map_err(map_error)?;
@@ -159,7 +166,7 @@ impl ReadWriteFs for AnotherExt4Fs {
     }
 
     fn metadata_node(&self, node : FsNodeId) -> FsResult<FsMetadata> {
-        let result = metadata(self.get()?, self.open_inode(node)?);
+        let result = Ok(metadata_open(self.get()?, self.open_inode(node)?));
         self.check_backend()?;
         result
     }
@@ -273,6 +280,46 @@ impl ReadWriteFs for AnotherExt4Fs {
         let result = write_with_ordered_size(fs, inode, offset, data);
         self.check_backend()?;
         result
+    }
+
+    fn create_tmpfile_node(
+        &mut self,
+        directory : &str,
+        mode : u32,
+        uid : u32,
+        gid : u32,
+    ) -> FsResult<FsNodeId> {
+        let fs = self.get_mut()?;
+        let parent = lookup(fs, directory)?;
+        if metadata(fs, parent)?.node_type != FsNodeType::Directory {
+            return Err(FsError::NotAFile);
+        }
+        let inode = fs.create_tmpfile(InodeMode::from_bits_retain(mode as u16), uid, gid)
+                      .map_err(map_error)?;
+        fs.flush_all();
+        self.open_nodes.insert(inode, 1);
+        self.check_backend()?;
+        Ok(FsNodeId::new(inode as u64))
+    }
+
+    fn link_node(&mut self, node : FsNodeId, new_path : &str) -> FsResult<()> {
+        let inode = self.open_inode(node)?;
+        match self.lookup(new_path) {
+            Ok(_) => return Err(FsError::Exists),
+            Err(FsError::NotFound) => {}
+            Err(error) => return Err(error),
+        }
+        let (parent_path, name) = parent_name(new_path)?;
+        let fs = self.get_mut()?;
+        let parent = lookup(fs, parent_path)?;
+        if metadata(fs, parent)?.node_type != FsNodeType::Directory {
+            return Err(FsError::NotAFile);
+        }
+        fs.link(inode, parent, name).map_err(map_error)?;
+        fs.flush_all();
+        self.check_backend()?;
+        self.cache_insert(new_path, inode);
+        Ok(())
     }
 
     fn truncate(&mut self, path : &str, len : u64) -> FsResult<()> {
@@ -400,4 +447,3 @@ impl ReadWriteFs for AnotherExt4Fs {
         Ok(())
     }
 }
-

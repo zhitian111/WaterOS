@@ -6,6 +6,6 @@ See [here](https://github.com/LearningOS/osbiglab-2024s-fuzzingfilesystem) for d
 Initial version is forked from [ext4_rs](https://github.com/yuoo655/ext4_rs).
 
 The WaterOS-maintained fork includes read/write integration fixes required by the
-default kernel backend, including creation and reading of ext4 fast symlinks. Fast
-symlink targets are stored in the inode's 60-byte `i_block` area; longer targets
-are rejected rather than truncated.
+default kernel backend, including creation and reading of ext4 symbolic links.
+Targets up to 60 bytes use the inode's inline `i_block` area; longer targets are
+stored in ordinary extents and are never truncated.

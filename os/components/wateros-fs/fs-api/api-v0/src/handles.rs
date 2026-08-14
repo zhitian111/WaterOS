@@ -66,6 +66,20 @@ impl ReadWriteFs for LocalRwFs {
         self.deref_mut().truncate_node(node, len)
     }
 
+    fn create_tmpfile_node(
+        &mut self,
+        directory: &str,
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    ) -> FsResult<FsNodeId> {
+        self.deref_mut().create_tmpfile_node(directory, mode, uid, gid)
+    }
+
+    fn link_node(&mut self, node: FsNodeId, new_path: &str) -> FsResult<()> {
+        self.deref_mut().link_node(node, new_path)
+    }
+
     fn write_regular_file_at_root(&mut self, name: &str, data: &[u8]) -> FsResult<()> {
         self.deref_mut().write_regular_file_at_root(name, data)
     }

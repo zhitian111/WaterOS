@@ -70,6 +70,31 @@ pub(crate) fn sys_chdir(args: SyscallArgs) -> UserRet {
     }
 }
 
+pub(crate) fn sys_chroot(args : SyscallArgs) -> UserRet {
+    if cred::current_credentials().effective_uid.0 != 0 {
+        return UserRet::from_error(ErrNo::EPERM);
+    }
+    let path = match copy_user_path_cstr(args.arg(0), crate::user_copy::USER_PATH_MAX) {
+        Ok(path) => path,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let resolved = match resolve_path_at(AT_FDCWD, path.as_str()) {
+        Ok(path) => path,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let resolved = match resolve_symlinks(resolved.as_str(), FinalSymlink::Follow) {
+        Ok(path) => path,
+        Err(error) => return UserRet::from_error(error),
+    };
+    match vfs::cwd::chroot_current_resolved(resolved.as_str()) {
+        Ok(()) => UserRet::from_success(0),
+        Err(VfsError::NotAFile | VfsError::NotDirectory) => {
+            UserRet::from_error(ErrNo::ENOTDIR)
+        }
+        Err(error) => UserRet::from_error(vfs_error_to_errno(error)),
+    }
+}
+
 pub(crate) fn sys_fchdir(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let path = match vfs::fd::with_current_io(fd, |handle| {

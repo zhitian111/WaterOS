@@ -30,8 +30,21 @@ impl Ext4 {
         if inode.inode.link_count() == 0 {
             return_error!(ErrCode::EINVAL, "Invalid inode {}", id);
         }
-        Ok(FileAttr {
-            ino: id,
+        Ok(Self::file_attr(&inode))
+    }
+
+    /// Get attributes for an inode protected by an active open reference.
+    ///
+    /// Unlike [`Self::getattr`], this accepts link count zero so an anonymous
+    /// `O_TMPFILE` inode remains usable until its final close.
+    pub fn getattr_open(&self, id: InodeId) -> FileAttr {
+        let inode = self.read_inode(id);
+        Self::file_attr(&inode)
+    }
+
+    fn file_attr(inode: &InodeRef) -> FileAttr {
+        FileAttr {
+            ino: inode.id,
             size: inode.inode.size(),
             blocks: inode.inode.block_count(),
             atime: inode.inode.atime(),
@@ -43,7 +56,7 @@ impl Ext4 {
             links: inode.inode.link_count(),
             uid: inode.inode.uid(),
             gid: inode.inode.gid(),
-        })
+        }
     }
 
     /// Set file attributes.
@@ -156,16 +169,35 @@ impl Ext4 {
         Ok(child.id)
     }
 
-    /// Create a fast symbolic link whose target is stored in the inode's
-    /// 60-byte inline `i_block` area.
+    /// Allocate an unlinked regular inode for Linux `O_TMPFILE`.
     ///
-    /// Longer targets are rejected explicitly; this implementation never
-    /// truncates a link target or allocates data blocks for it.
-    pub fn symlink(&self, parent: InodeId, name: &str, target: &str) -> Result<InodeId> {
-        if target.as_bytes().len() > 60 {
-            return_error!(ErrCode::ENOTSUP, "Symlink target is longer than 60 bytes");
-        }
+    /// The inode starts with link count zero. The caller must either publish it
+    /// with [`Self::link`] or release it with [`Self::discard_tmpfile`].
+    pub fn create_tmpfile(
+        &self,
+        mode: InodeMode,
+        uid: u32,
+        gid: u32,
+    ) -> Result<InodeId> {
+        let mut inode = self.create_inode(InodeMode::FILE | mode)?;
+        inode.inode.set_uid(uid);
+        inode.inode.set_gid(gid);
+        self.write_inode_with_csum(&mut inode);
+        Ok(inode.id)
+    }
 
+    /// Release an unlinked inode allocated by [`Self::create_tmpfile`].
+    pub fn discard_tmpfile(&self, id: InodeId) -> Result<()> {
+        let mut inode = self.read_inode(id);
+        if !inode.inode.is_file() || inode.inode.link_count() != 0 {
+            return_error!(ErrCode::EINVAL, "Inode {} is not an unlinked tmpfile", id);
+        }
+        self.free_inode(&mut inode)
+    }
+
+    /// Create a symbolic link. Targets up to 60 bytes use ext4's inline
+    /// `i_block` representation; longer targets are stored in extents.
+    pub fn symlink(&self, parent: InodeId, name: &str, target: &str) -> Result<InodeId> {
         let mut parent = self.read_inode(parent);
         if !parent.inode.is_dir() {
             return_error!(ErrCode::ENOTDIR, "Inode {} is not a directory", parent.id);
@@ -173,10 +205,35 @@ impl Ext4 {
         self.dir_ensure_entry_absent(&parent, name)?;
 
         let mut child = self.create_inode(InodeMode::SOFTLINK | InodeMode::ALL_RWX)?;
-        child.inode.set_fast_symlink_target(target.as_bytes());
-        self.write_inode_with_csum(&mut child);
+        if target.len() <= 60 {
+            child.inode.set_fast_symlink_target(target.as_bytes());
+            self.write_inode_with_csum(&mut child);
+        } else {
+            self.write_inode_extent_data(&mut child, target.as_bytes())?;
+        }
         self.link_inode(&mut parent, &mut child, name)?;
         Ok(child.id)
+    }
+
+    /// Store data in an extent-backed inode created by [`Self::create_inode`].
+    ///
+    /// Symlinks cannot use [`Self::write`], because that public operation is
+    /// intentionally restricted to regular files.
+    fn write_inode_extent_data(&self, inode: &mut InodeRef, data: &[u8]) -> Result<()> {
+        let mut cursor = 0;
+        let mut iblock = 0;
+        while cursor < data.len() {
+            let write_len = min(BLOCK_SIZE, data.len() - cursor);
+            let fblock = self.extent_query_or_create(inode, iblock, 1)?;
+            let mut block = self.read_block(fblock);
+            block.write_offset(0, &data[cursor..cursor + write_len]);
+            self.write_block(&block);
+            cursor += write_len;
+            iblock += 1;
+        }
+        inode.inode.set_size(data.len() as u64);
+        self.write_inode_with_csum(inode);
+        Ok(())
     }
 
     /// Read data from a file. This function will read exactly `buf.len()`
