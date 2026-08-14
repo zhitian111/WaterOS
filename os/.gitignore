@@ -33,7 +33,6 @@
 *.log
 *log/
 *log.txt
-cache*
 
 # `wateros-klog` 是源码目录，不是生成的日志目录
 !components/

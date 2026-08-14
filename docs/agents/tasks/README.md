@@ -8,6 +8,7 @@
 - `audit_*.md`：系统调用、锁和资源生命周期审计。
 - `commenting.md`：代码注释与 rustdoc 整理。
 - `export_*.md`：生成架构、feature、API、实现和发布概览。
+- `export_to_gitlab.md`：将指定源提交的 `docs/` 与 `os/` 安全导出、离线验证并推送到 GitLab。
 - `ltp_*.md`：LTP 自动迭代与 fast-exit 分析。
 - `run_testsuits_qemu.md`：分阶段 QEMU 测例运行与判读。
 - `CODEX_HANDOFF_EXPORT_PROMPT.md`：从当前对话导出可验证的任务交接。
