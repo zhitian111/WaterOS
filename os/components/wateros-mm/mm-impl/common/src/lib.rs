@@ -32,6 +32,15 @@ use vfs_api::VfsFileContentIdentity;
 /// （例如 glibc pthread 每线程 8 MiB 栈，批量创建会瞬间耗尽帧池 → `ENOMEM`）。
 pub struct ZeroAnonLoader;
 
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[mm/common] self_test begin");
+    let mut page = [0xA5; 16];
+    ZeroAnonLoader.load_page(0, &mut page).expect("zero loader must accept a page");
+    assert_eq!(page, [0xA5; 16]);
+    log::info!("[mm/common] self_test complete");
+}
+
 impl DemandPageLoader for ZeroAnonLoader {
     fn duplicate_box(&self) -> MmResult<Box<dyn DemandPageLoader>> { Ok(Box::new(ZeroAnonLoader)) }
 

@@ -97,6 +97,7 @@ pub fn self_test() {
     log::info!("[mm] self_test begin");
     api::test();
     frame_alloctor::self_test();
+    impl_common::self_test();
     #[cfg(all(feature = "impl-sv39", target_arch = "riscv64"))]
     impl_sv39::self_test();
     #[cfg(all(feature = "impl-loongarch64", target_arch = "loongarch64"))]

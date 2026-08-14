@@ -9,9 +9,11 @@
     runtime = { package = "wateros-runtime", path = "../../../wateros-runtime", default-features = false }
     spin = { version = "0.10.0", default-features = false, features = [ "mutex", "spin_mutex" ] }
     vfs-api = { path = "../../../wateros-vfs/vfs-api/api-v0", package = "wateros-vfs-api-v0", default-features = true }
+    log = "0.4"
 
 [features]
     cache-layer-diagnostics = [  ]
+    self_test = []
     default = [  ]
 
 [profile.dev]

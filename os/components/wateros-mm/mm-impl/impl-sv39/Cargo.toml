@@ -24,7 +24,7 @@
     fdt = { version = "0.1.5" }
 
 [features]
-    self_test = [  ]
+    self_test = [ "impl-common/self_test" ]
     api-v0 = [  ]
     default = [ "api-v0", "elf-lazy-map" ]
     elf-lazy-map = [  ]
