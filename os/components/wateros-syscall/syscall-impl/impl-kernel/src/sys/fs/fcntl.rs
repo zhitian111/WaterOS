@@ -22,6 +22,8 @@ const F_SETLKW : usize = 7;
 const F_DUPFD_CLOEXEC : usize = 1030;
 const F_SETPIPE_SZ : usize = 1031;
 const F_GETPIPE_SZ : usize = 1032;
+const F_ADD_SEALS : usize = 1033;
+const F_GET_SEALS : usize = 1034;
 
 const FD_CLOEXEC : usize = 1;
 const O_RDWR : usize = 2;
@@ -51,6 +53,8 @@ pub(crate) fn sys_fcntl(args : SyscallArgs) -> UserRet {
         F_SETLKW => fcntl_setlk(fd, arg, true),
         F_GETPIPE_SZ => fcntl_getpipe_sz(fd),
         F_SETPIPE_SZ => fcntl_setpipe_sz(fd, arg),
+        F_ADD_SEALS => super::memfd::fcntl_add_seals(fd, arg as u32),
+        F_GET_SEALS => super::memfd::fcntl_get_seals(fd),
         _ => fcntl_unknown_cmd(fd),
     };
 

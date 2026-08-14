@@ -31,6 +31,8 @@ struct VfsMmapPageLoader {
     file_size : usize,
     allow_readonly_sharing : bool,
     content_identity : Option<VfsFileContentIdentity>,
+    /// 持有 memfd 可写共享映射计数，VMA/地址空间销毁后自动释放。
+    memfd_mapping_lease : Option<Arc<crate::sys::fs::memfd::MemFdMappingLease>>,
 }
 
 impl DemandPageLoader for VfsMmapPageLoader {
@@ -41,7 +43,8 @@ impl DemandPageLoader for VfsMmapPageLoader {
         Ok(Box::new(Self { handle,
                            file_size : self.file_size,
                            allow_readonly_sharing : self.allow_readonly_sharing,
-                           content_identity : self.content_identity.clone() }))
+                           content_identity : self.content_identity.clone(),
+                           memfd_mapping_lease : self.memfd_mapping_lease.clone() }))
     }
 
     fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()> {
@@ -250,7 +253,19 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
             let allow_readonly_sharing = mf.contains(MapFlags::PRIVATE) &&
                                          perm.executable() &&
                                          !perm.writable();
-            let loader = match mmap_page_loader(fd, file_size, allow_readonly_sharing) {
+            let memfd_mapping_lease = match vfs::fd::with_current_io(fd, |handle| {
+                crate::sys::fs::memfd::prepare_mapping(handle,
+                                                        mf.contains(MapFlags::SHARED),
+                                                        perm.writable(),
+                                                        perm.executable())
+            }) {
+                Ok(lease) => lease,
+                Err(error) => return UserRet::from_error(vfs_error_to_errno(error)),
+            };
+            let loader = match mmap_page_loader(fd,
+                                                file_size,
+                                                allow_readonly_sharing,
+                                                memfd_mapping_lease) {
                 Ok(loader) => loader,
                 Err(e) => return UserRet::from_error(e),
             };
@@ -278,7 +293,8 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
 
 fn mmap_page_loader(fd : usize,
                     file_size : usize,
-                    allow_readonly_sharing : bool)
+                    allow_readonly_sharing : bool,
+                    memfd_mapping_lease : Option<Arc<crate::sys::fs::memfd::MemFdMappingLease>>)
                     -> Result<Box<dyn DemandPageLoader>, ErrNo> {
     let handle = vfs::fd::with_current_io(fd, |handle| handle.duplicate())
         .map_err(vfs_error_to_errno)?;
@@ -286,7 +302,8 @@ fn mmap_page_loader(fd : usize,
     Ok(Box::new(VfsMmapPageLoader { handle,
                                      file_size,
                                      allow_readonly_sharing,
-                                     content_identity }))
+                                     content_identity,
+                                     memfd_mapping_lease }))
 }
 
 fn file_size_for_mmap(fd : usize) -> Result<usize, ErrNo> {
@@ -465,10 +482,24 @@ pub(crate) fn sys_madvise(args : SyscallArgs) -> UserRet {
                 Err(e) => UserRet::from_error(mm_err_to_errno(e)),
             }
         }
+        MADV_POPULATE_READ | MADV_POPULATE_WRITE => {
+            let handle = match require_user_aspace("madvise") {
+                Ok(h) => h,
+                Err(e) => return UserRet::from_error(e),
+            };
+            match mm::kernel_mm::prefault_user_range(handle,
+                                                     addr,
+                                                     len,
+                                                     advice == MADV_POPULATE_WRITE) {
+                Ok(()) => UserRet::from_success(0),
+                Err(e) => UserRet::from_error(mm_err_to_errno(e)),
+            }
+        }
+        // DONTFORK/DOFORK 会改变 fork 后地址空间内容，不能作为提示静默忽略。
+        MADV_DONTFORK | MADV_DOFORK => UserRet::from_error(ErrNo::EOPNOTSUPP),
         MADV_NORMAL | MADV_RANDOM | MADV_SEQUENTIAL | MADV_WILLNEED |
-        MADV_DONTFORK | MADV_DOFORK | MADV_HUGEPAGE | MADV_NOHUGEPAGE | MADV_DONTDUMP |
-        MADV_DODUMP | MADV_COLD | MADV_PAGEOUT | MADV_POPULATE_READ | MADV_POPULATE_WRITE |
-        MADV_DONTNEED_LOCKED => {
+        MADV_HUGEPAGE | MADV_NOHUGEPAGE | MADV_DONTDUMP | MADV_DODUMP | MADV_COLD |
+        MADV_PAGEOUT | MADV_DONTNEED_LOCKED => {
             let handle = match require_user_aspace("madvise") {
                 Ok(h) => h,
                 Err(e) => return UserRet::from_error(e),
@@ -492,13 +523,8 @@ pub(crate) fn sys_madvise(args : SyscallArgs) -> UserRet {
 }
 
 fn validate_mlock_range(addr : usize, len : usize) -> Result<(), ErrNo> {
-    use mm::api::addr::PAGE_SIZE;
-
     if len == 0 {
-        return Err(ErrNo::EINVAL);
-    }
-    if addr % PAGE_SIZE != 0 {
-        return Err(ErrNo::EINVAL);
+        return Ok(());
     }
     addr.checked_add(len)
         .ok_or(ErrNo::EINVAL)?;
@@ -512,8 +538,17 @@ pub(crate) fn sys_mlock(args : SyscallArgs) -> UserRet {
     if validate_mlock_range(addr, len).is_err() {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    log::trace!("[syscall] mlock(nr=149) no-op success");
-    UserRet::from_success(0)
+    if len == 0 {
+        return UserRet::from_success(0);
+    }
+    let handle = match require_user_aspace("mlock") {
+        Ok(handle) => handle,
+        Err(error) => return UserRet::from_error(error),
+    };
+    match mm::kernel_mm::prefault_user_range(handle, addr, len, false) {
+        Ok(()) => UserRet::from_success(0),
+        Err(error) => UserRet::from_error(mm_err_to_errno(error)),
+    }
 }
 
 // 本方法代码由AI完成
@@ -523,7 +558,19 @@ pub(crate) fn sys_munlock(args : SyscallArgs) -> UserRet {
     if validate_mlock_range(addr, len).is_err() {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    UserRet::from_success(0)
+    if len == 0 {
+        return UserRet::from_success(0);
+    }
+    let handle = match require_user_aspace("munlock") {
+        Ok(handle) => handle,
+        Err(error) => return UserRet::from_error(error),
+    };
+    match mm::kernel_mm::madvise_range_mapped(handle, addr, len) {
+        // 无 swap/页回收时所有驻留页本来就不可换出，解除锁不需修改 PTE。
+        Ok(true) => UserRet::from_success(0),
+        Ok(false) => UserRet::from_error(ErrNo::ENOMEM),
+        Err(error) => UserRet::from_error(mm_err_to_errno(error)),
+    }
 }
 
 // 本方法代码由AI完成
@@ -537,8 +584,16 @@ pub(crate) fn sys_mlockall(args : SyscallArgs) -> UserRet {
     if flags & !MCL_KNOWN != 0 || flags == 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
+    if flags & MCL_CURRENT != 0 {
+        // 尚无枚举完整地址空间 VMA 的公共接口，不能伪装已锁定当前全部映射。
+        return UserRet::from_error(ErrNo::EOPNOTSUPP);
+    }
+    // MCL_FUTURE 在当前无 swap、无用户页回收的内存模型下天然满足。
     UserRet::from_success(0)
 }
 
 // 本方法代码由AI完成
-pub(crate) fn sys_munlockall(_args : SyscallArgs) -> UserRet { UserRet::from_success(0) }
+pub(crate) fn sys_munlockall(_args : SyscallArgs) -> UserRet {
+    // 与 `MCL_FUTURE` 相同：当前没有需要清除的换出/回收锁状态。
+    UserRet::from_success(0)
+}

@@ -68,7 +68,10 @@ pub(crate) fn sys_truncate(args: SyscallArgs) -> UserRet {
     }
 
     match vfs::truncate_absolute(resolved.as_str(), len) {
-        Ok(()) => UserRet::from_success(0),
+        Ok(()) => {
+            super::inotify::notify_modify(resolved.as_str());
+            UserRet::from_success(0)
+        }
         Err(VfsError::NotAFile) => UserRet::from_error(ErrNo::EISDIR),
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
     }
@@ -170,7 +173,10 @@ pub(crate) fn sys_ftruncate(args: SyscallArgs) -> UserRet {
         task::yield_now();
     };
     match result {
-        Ok(()) => UserRet::from_success(0),
+        Ok(()) => {
+            super::inotify::notify_fd_modify(fd);
+            UserRet::from_success(0)
+        }
         Err(vfs::api::VfsError::Unsupported) => UserRet::from_error(ErrNo::EINVAL),
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
     }

@@ -109,19 +109,14 @@ fn parse_futex_timeout(timeout_ptr : usize,
     Ok(Some(deadline))
 }
 
-fn reject_unsupported_futex_bitset(cmd : u32, bitset : u32) -> Result<(), ErrNo> {
+fn validate_futex_bitset(cmd : u32, bitset : u32) -> Result<(), ErrNo> {
     if cmd != FUTEX_WAIT_BITSET && cmd != FUTEX_WAKE_BITSET {
         return Ok(());
     }
     if bitset == 0 {
         return Err(ErrNo::EINVAL);
     }
-    if bitset == FUTEX_BITSET_MATCH_ALL {
-        return Ok(());
-    }
-    log::warn!("[syscall] futex(nr=98) op={cmd} unsupported bitset={bitset:#x} (only !0 \
-                implemented)",);
-    Err(ErrNo::ENOSYS)
+    Ok(())
 }
 
 #[inline]
@@ -202,7 +197,7 @@ fn futex_wait(uaddr : usize,
             return Err(ErrNo::ETIMEDOUT);
         }
         let mut condition_error = None;
-        let outcome = ipc::futex::wait_while(task_id, key, timeout_ticks, || {
+        let outcome = ipc::futex::wait_while(task_id, key, bitset, timeout_ticks, || {
             match read_user_u32_in_aspace(current_aspace, uaddr) {
                 Ok(value) => value == val,
                 Err(error) => {
@@ -245,10 +240,13 @@ fn futex_wait(uaddr : usize,
 }
 
 fn futex_wake(uaddr : usize, max_wake : u32, bitset : u32, futex_op : u32) -> Result<usize, ErrNo> {
-    let _ = bitset;
     validate_futex_uaddr(uaddr)?;
     let key = futex_key_in_aspace(uaddr, futex_op, current_futex_scope())?;
-    Ok(ipc::futex::wake(key, max_wake))
+    Ok(if bitset == FUTEX_BITSET_MATCH_ALL {
+        ipc::futex::wake(key, max_wake)
+    } else {
+        ipc::futex::wake_bitset(key, max_wake, bitset)
+    })
 }
 
 fn futex_requeue(uaddr : usize,
@@ -353,7 +351,7 @@ pub(crate) fn sys_futex(args : SyscallArgs) -> UserRet {
                                          cmd,
                                          futex_op,
                                          timeout_ptr),
-                FUTEX_WAIT_BITSET => match reject_unsupported_futex_bitset(cmd, val3) {
+                FUTEX_WAIT_BITSET => match validate_futex_bitset(cmd, val3) {
                     Ok(()) => futex_wait(uaddr,
                                          val,
                                          val3,
@@ -363,7 +361,7 @@ pub(crate) fn sys_futex(args : SyscallArgs) -> UserRet {
                     Err(e) => Err(e),
                 },
                 FUTEX_WAKE => futex_wake(uaddr, val, 0, futex_op),
-                FUTEX_WAKE_BITSET => match reject_unsupported_futex_bitset(cmd, val3) {
+                FUTEX_WAKE_BITSET => match validate_futex_bitset(cmd, val3) {
                     Ok(()) => futex_wake(uaddr, val, val3, futex_op),
                     Err(e) => Err(e),
                 },

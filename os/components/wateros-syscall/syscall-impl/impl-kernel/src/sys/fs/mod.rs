@@ -13,7 +13,10 @@ pub(crate) mod flock;
 pub(crate) mod fstat;
 pub(crate) mod getdents64;
 pub(crate) mod io;
+pub(crate) mod inotify;
+pub(crate) mod memfd;
 pub(crate) mod openat;
+pub(crate) mod openat2;
 pub(crate) mod path_at;
 pub(crate) mod pipe2;
 pub(crate) mod renameat2;
@@ -41,7 +44,10 @@ pub(crate) use io::{
     sys_lseek, sys_pread64, sys_preadv, sys_pwrite64, sys_pwritev, sys_read, sys_readv, sys_write,
     sys_writev,
 };
+pub(crate) use inotify::{sys_inotify_add_watch, sys_inotify_init1, sys_inotify_rm_watch};
+pub(crate) use memfd::sys_memfd_create;
 pub(crate) use openat::sys_openat;
+pub(crate) use openat2::sys_openat2;
 pub(crate) use pipe2::sys_pipe2;
 pub(crate) use renameat2::{sys_renameat, sys_renameat2};
 pub(crate) use sendfile::sys_sendfile;
@@ -54,4 +60,9 @@ pub(crate) use xattr::{
 };
 
 #[cfg(feature = "self_test")]
-pub(crate) fn self_test() { transfer::self_test(); }
+pub(crate) fn self_test() {
+    inotify::self_test();
+    memfd::self_test();
+    openat2::self_test();
+    transfer::self_test();
+}

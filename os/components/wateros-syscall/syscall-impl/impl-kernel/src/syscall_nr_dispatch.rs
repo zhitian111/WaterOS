@@ -52,6 +52,7 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::FTRUNCATE => sys::sys_ftruncate(syscall_args).0,
         n if n == api_v0::FALLOCATE => sys::sys_fallocate(syscall_args).0,
         n if n == api_v0::OPENAT => sys::sys_openat(syscall_args).0,
+        n if n == api_v0::OPENAT2 => sys::sys_openat2(syscall_args).0,
         n if n == api_v0::CLOSE => sys::sys_close(syscall_args).0,
         n if n == api_v0::FSTAT => sys::sys_fstat(syscall_args).0,
         n if n == api_v0::LSEEK => sys::sys_lseek(syscall_args).0,
@@ -77,6 +78,9 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::BRK => sys::sys_brk(syscall_args.arg(0)).0,
         n if n == api_v0::FORK => sys::sys_clone(syscall_args).0,
         n if n == api_v0::CLONE3 => sys::sys_clone3(syscall_args).0,
+        n if n == api_v0::PIDFD_OPEN => sys::sys_pidfd_open(syscall_args).0,
+        n if n == api_v0::PIDFD_SEND_SIGNAL => sys::sys_pidfd_send_signal(syscall_args).0,
+        n if n == api_v0::PIDFD_GETFD => sys::sys_pidfd_getfd(syscall_args).0,
         n if n == api_v0::UNSHARE => sys::sys_unshare(syscall_args).0,
         n if n == api_v0::EXEC => sys::sys_execve(syscall_args).0,
         n if n == api_v0::MMAP => sys::sys_mmap(syscall_args).0,
@@ -89,6 +93,7 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::MUNLOCK => sys::sys_munlock(syscall_args).0,
         n if n == api_v0::MLOCKALL => sys::sys_mlockall(syscall_args).0,
         n if n == api_v0::MUNLOCKALL => sys::sys_munlockall(syscall_args).0,
+        n if n == api_v0::MINCORE => sys::sys_mincore(syscall_args).0,
         n if n == api_v0::GET_MEMPOLICY => sys::sys_get_mempolicy(syscall_args).0,
         n if n == api_v0::SHMGET => sys::sys_shmget(syscall_args).0,
         n if n == api_v0::SHMCTL => sys::sys_shmctl(syscall_args).0,
@@ -166,6 +171,7 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         #[cfg(target_arch = "riscv64")]
         n if n == api_v0::RISCV_FLUSH_ICACHE => sys::sys_riscv_flush_icache(syscall_args).0,
         n if n == api_v0::GETRANDOM => sys::sys_getrandom(syscall_args).0,
+        n if n == api_v0::MEMFD_CREATE => sys::sys_memfd_create(syscall_args).0,
         n if n == api_v0::GETITIMER => sys::sys_getitimer(syscall_args).0,
         n if n == api_v0::SETITIMER => sys::sys_setitimer(syscall_args).0,
         n if n == api_v0::GETRLIMIT => sys::sys_getrlimit(syscall_args).0,
@@ -227,6 +233,9 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::REMOVEXATTR => sys::sys_removexattr(syscall_args).0,
         n if n == api_v0::LREMOVEXATTR => sys::sys_lremovexattr(syscall_args).0,
         n if n == api_v0::FREMOVEXATTR => sys::sys_fremovexattr(syscall_args).0,
+        n if n == api_v0::INOTIFY_INIT1 => sys::sys_inotify_init1(syscall_args).0,
+        n if n == api_v0::INOTIFY_ADD_WATCH => sys::sys_inotify_add_watch(syscall_args).0,
+        n if n == api_v0::INOTIFY_RM_WATCH => sys::sys_inotify_rm_watch(syscall_args).0,
         _ => api_v0::UserRet::from_error(api_v0::ErrNo::ENOSYS).0,
     }
 }

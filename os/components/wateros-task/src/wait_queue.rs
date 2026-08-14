@@ -1,6 +1,7 @@
 //! 内核同步原语用的等待队列句柄：封装 `WaitQueueId`，提供 `wait`/`wake` 便捷方法。
 
 use crate::{scheduler, TaskId, TaskTick, TaskWaitResult, TaskWaitTarget, WaitQueueId};
+pub use crate::scheduler::WaitQueueRequeueResult;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WaitQueue {
     /// 调度器内部分配的队列编号。
@@ -87,5 +88,21 @@ impl WaitQueue {
                                             wake_count,
                                             requeue_count,
                                             condition)
+    }
+
+    /// 条件成立时执行 requeue，并返回实际唤醒/迁移的任务 ID。
+    #[inline]
+    pub fn requeue_to_detailed_while(
+        &self,
+        target : Self,
+        wake_count : usize,
+        requeue_count : usize,
+        condition : impl FnOnce() -> bool)
+        -> Option<WaitQueueRequeueResult> {
+        scheduler::requeue_wait_queue_detailed_while(self.id,
+                                                      target.id,
+                                                      wake_count,
+                                                      requeue_count,
+                                                      condition)
     }
 }

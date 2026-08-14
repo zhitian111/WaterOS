@@ -23,6 +23,7 @@ pub(crate) fn vfs_error_to_errno(err : VfsError) -> ErrNo {
         VfsError::NotFound => ErrNo::ENOENT,
         VfsError::NoDevice => ErrNo::ENXIO,
         VfsError::AccessDenied => ErrNo::EACCES,
+        VfsError::OperationNotPermitted => ErrNo::EPERM,
         VfsError::NotDirectory => ErrNo::ENOTDIR,
         VfsError::TooManySymlinks => ErrNo::ELOOP,
         VfsError::NotAFile => ErrNo::EISDIR,

@@ -32,6 +32,25 @@ unsafe extern "C" {
 }
 pub type SwitchPair = api_v0::SwitchPair;
 
+/// 显式等待队列 requeue 的实际结果。
+///
+/// `changed` 只能回答 syscall 返回值，不能让 futex 等上层同步自己的 waiter
+/// 侧表；因此同时保留经 scheduler 状态校验后真正被唤醒和迁移的任务 ID。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WaitQueueRequeueResult {
+    pub woken : Vec<TaskId>,
+    pub moved : Vec<TaskId>,
+}
+
+impl WaitQueueRequeueResult {
+    #[inline]
+    pub fn changed(&self) -> usize {
+        self.woken
+            .len()
+            .saturating_add(self.moved.len())
+    }
+}
+
 // ── 内部静态 ──────────────────────────────────────────────────────
 #[unsafe(link_section = ".bss.scheduler")]
 static mut SCHEDULER : MaybeUninit<MultiprocessorSafeCell<MultiClassScheduler>> =
@@ -917,6 +936,31 @@ pub fn requeue_wait_queue(from_wait_queue_id : WaitQueueId,
     changed
 }
 
+/// 与 [`requeue_wait_queue`] 相同，但返回实际被唤醒和迁移的任务 ID。
+///
+/// 该接口供 futex 等维护额外 waiter 元数据的子系统使用；结果在 scheduler
+/// 锁内确定，调用方不能靠锁外扫描重建它。
+pub fn requeue_wait_queue_detailed(from_wait_queue_id : WaitQueueId,
+                                    to_wait_queue_id : WaitQueueId,
+                                    wake_count : usize,
+                                    requeue_count : usize)
+                                    -> WaitQueueRequeueResult {
+    let cpu_id = cpu::current_cpu_id();
+    let (result, targets) = {
+        let _guard = InterruptGuard::new();
+        with_scheduler(|scheduler| {
+            let result = scheduler.requeue_wait_queue_detailed(from_wait_queue_id,
+                                                                to_wait_queue_id,
+                                                                wake_count,
+                                                                requeue_count);
+            let targets = scheduler.take_pending_reschedule_cpus();
+            (result, targets)
+        })
+    };
+    dispatch_reschedules(targets, cpu_id);
+    result
+}
+
 /// 在同一个 scheduler 临界区内复查条件并执行等待队列迁移。
 pub fn requeue_wait_queue_while(from_wait_queue_id : WaitQueueId,
                                 to_wait_queue_id : WaitQueueId,
@@ -939,6 +983,31 @@ pub fn requeue_wait_queue_while(from_wait_queue_id : WaitQueueId,
     };
     dispatch_reschedules(targets, cpu_id);
     changed
+}
+
+/// 在 scheduler 临界区复查条件，并返回详细 requeue 结果。
+pub fn requeue_wait_queue_detailed_while(
+    from_wait_queue_id : WaitQueueId,
+    to_wait_queue_id : WaitQueueId,
+    wake_count : usize,
+    requeue_count : usize,
+    condition : impl FnOnce() -> bool)
+    -> Option<WaitQueueRequeueResult> {
+    let cpu_id = cpu::current_cpu_id();
+    let (result, targets) = {
+        let _guard = InterruptGuard::new();
+        with_scheduler(|scheduler| {
+            let result = scheduler.requeue_wait_queue_detailed_while(from_wait_queue_id,
+                                                                      to_wait_queue_id,
+                                                                      wake_count,
+                                                                      requeue_count,
+                                                                      condition);
+            let targets = scheduler.take_pending_reschedule_cpus();
+            (result, targets)
+        })
+    };
+    dispatch_reschedules(targets, cpu_id);
+    result
 }
 
 // =============================================================================

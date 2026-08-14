@@ -14,6 +14,7 @@ pub use api_v0::TaskWaitResult;
 pub use api_v0::TaskWaitTarget;
 /// 等待队列编号类型（重导出自 `api-v0`）。
 pub use api_v0::WaitQueueId;
+pub use wateros_task::wait_queue::WaitQueueRequeueResult;
 
 use wateros_task::wait_queue::WaitQueue as TaskWaitQueue;
 
@@ -109,6 +110,15 @@ impl WaitQueue {
             .wake_all()
     }
 
+    /// 定向唤醒一个已由上层 registry 确认属于本对象的任务。
+    ///
+    /// futex bitset 使用此入口选择匹配 waiter；实际摘队、状态更新和远端 IPI
+    /// 仍由 task scheduler 原子完成。
+    #[inline]
+    pub fn wake_task(&self, task_id: TaskId) -> bool {
+        wateros_task::wake_task(task_id)
+    }
+
     /// 唤醒本队列中的部分任务，并把其余等待者迁移到另一个等待队列。
     #[inline]
     pub fn requeue_to(&self, target: Self, wake_count: usize, requeue_count: usize) -> usize {
@@ -132,6 +142,22 @@ impl WaitQueue {
                 requeue_count,
                 condition,
             )
+    }
+
+    /// 条件成立时执行 requeue，并返回 scheduler 验证后的任务集合。
+    #[inline]
+    pub fn requeue_to_detailed_while(
+        &self,
+        target: Self,
+        wake_count: usize,
+        requeue_count: usize,
+        condition: impl FnOnce() -> bool,
+    ) -> Option<WaitQueueRequeueResult> {
+        self.inner
+            .requeue_to_detailed_while(target.inner,
+                                       wake_count,
+                                       requeue_count,
+                                       condition)
     }
 }
 

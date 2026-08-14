@@ -51,7 +51,13 @@ pub(crate) fn sys_openat(args : SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
 
-    let resolved = match resolve_path_at(dirfd, path.as_str()) {
+    openat_path(dirfd, path.as_str(), flags, mode)
+}
+
+/// 已完成用户复制后的共用打开入口，供 `openat2` 在校验 `open_how` 后复用。
+pub(crate) fn openat_path(dirfd : isize, path : &str, flags : u32, mode : u32) -> UserRet {
+
+    let resolved = match resolve_path_at(dirfd, path) {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
     };
@@ -141,6 +147,17 @@ pub(crate) fn sys_openat(args : SyscallArgs) -> UserRet {
                 if let Err(e) = vfs::fd::set_path_only_fd(fd) {
                     let _ = vfs::fd::close_fd(fd);
                     return UserRet::from_error(vfs_error_to_errno(e));
+                }
+            }
+            let is_dir = active_impl::backend().metadata(open_path.as_str())
+                                    .map(|meta| meta.node_type == VfsNodeType::Directory)
+                                    .unwrap_or(false);
+            if creates_new_file {
+                super::inotify::notify_create(open_path.as_str(), false);
+            } else {
+                super::inotify::notify_open(open_path.as_str(), is_dir);
+                if flags & O_TRUNC != 0 {
+                    super::inotify::notify_modify(open_path.as_str());
                 }
             }
             UserRet::from_success(fd)

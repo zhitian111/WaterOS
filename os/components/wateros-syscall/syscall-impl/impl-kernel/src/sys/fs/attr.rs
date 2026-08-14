@@ -60,7 +60,10 @@ pub(crate) fn sys_fchmodat(args : SyscallArgs) -> UserRet {
     mode = adjust_chmod_mode(mode, &meta);
 
     match vfs::chmod_absolute(resolved.as_str(), mode) {
-        Ok(()) => UserRet::from_success(0),
+        Ok(()) => {
+            super::inotify::notify_attrib(resolved.as_str(), meta.node_type == VfsNodeType::Directory);
+            UserRet::from_success(0)
+        }
         Err(VfsError::Unsupported) => UserRet::from_error(ErrNo::EPERM),
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
     }
@@ -102,7 +105,10 @@ pub(crate) fn sys_fchmod(args : SyscallArgs) -> UserRet {
     mode = adjust_chmod_mode(mode, &meta);
 
     match vfs::chmod_absolute(path.as_str(), mode) {
-        Ok(()) => UserRet::from_success(0),
+        Ok(()) => {
+            super::inotify::notify_attrib(path.as_str(), meta.node_type == VfsNodeType::Directory);
+            UserRet::from_success(0)
+        }
         Err(VfsError::Unsupported) => UserRet::from_error(ErrNo::EPERM),
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
     }
@@ -220,7 +226,11 @@ fn chown_path(path : &str, uid : Option<u32>, gid : Option<u32>) -> UserRet {
 
         return match vfs::chown_absolute(path, uid, gid) {
             Ok(()) => match apply_chown_mode_fixup(path, &meta) {
-                Ok(()) => UserRet::from_success(0),
+                Ok(()) => {
+                    super::inotify::notify_attrib(path,
+                                                  meta.node_type == VfsNodeType::Directory);
+                    UserRet::from_success(0)
+                }
                 Err(e) => UserRet::from_error(e),
             },
             Err(VfsError::Unsupported) => UserRet::from_error(ErrNo::EPERM),
@@ -229,7 +239,13 @@ fn chown_path(path : &str, uid : Option<u32>, gid : Option<u32>) -> UserRet {
     }
 
     match vfs::chown_absolute(path, uid, gid) {
-        Ok(()) => UserRet::from_success(0),
+        Ok(()) => {
+            let is_dir = active_impl::backend().metadata(path)
+                                    .map(|meta| meta.node_type == VfsNodeType::Directory)
+                                    .unwrap_or(false);
+            super::inotify::notify_attrib(path, is_dir);
+            UserRet::from_success(0)
+        }
         Err(VfsError::Unsupported) => UserRet::from_error(ErrNo::EPERM),
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
     }
@@ -312,6 +328,7 @@ pub(crate) fn sys_utimensat(args : SyscallArgs) -> UserRet {
     // the existing inode-keyed syscall sidecar so stat/statx observe Linux
     // utimensat semantics without coupling this syscall to an ext4 backend.
     stat_times::set(&meta, atime, mtime);
+    super::inotify::notify_attrib(_path.as_str(), meta.node_type == VfsNodeType::Directory);
     UserRet::from_success(0)
 }
 

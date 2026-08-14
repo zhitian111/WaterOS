@@ -177,6 +177,13 @@ pub fn alloc_fd(handle : Box<dyn VfsIoHandle>) -> VfsResult<usize> {
     with_current_task(|reg, task_id| reg.alloc_fd_for_task(task_id, handle))
 }
 
+/// 复制另一个任务 fd 表中的打开文件描述，供 `pidfd_getfd` 等内核接口使用。
+pub fn duplicate_fd_from_task(task_id : task::TaskId,
+                              fd : usize)
+                              -> VfsResult<Box<dyn VfsIoHandle>> {
+    with_fd_registry(|registry| registry.duplicate_io_for_task(task_id, fd))
+}
+
 // 本方法代码由AI完成
 fn release_locks_for_current_process(handle : &(dyn VfsIoHandle + '_)) {
     let Some(pid) = task::current_process_task_snapshot().map(|snap| snap.pid) else {

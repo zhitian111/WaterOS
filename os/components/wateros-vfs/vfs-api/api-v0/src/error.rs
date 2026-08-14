@@ -11,6 +11,8 @@ pub enum VfsError {
     NoDevice,
     /// 权限或设备锁定状态拒绝本次访问。
     AccessDenied,
+    /// 操作本身不被允许；与路径访问权限失败区分，对应 Linux `EPERM`。
+    OperationNotPermitted,
     /// 操作要求普通文件，当前节点类型不符。
     NotAFile,
     /// 路径的中间分量不是目录。

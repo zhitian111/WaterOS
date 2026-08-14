@@ -10,7 +10,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/syscall.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
@@ -45,6 +47,25 @@
 #ifndef __NR_signalfd4
 #define __NR_signalfd4 74
 #endif
+#ifndef __NR_memfd_create
+#define __NR_memfd_create 279
+#endif
+#ifndef __NR_inotify_init1
+#define __NR_inotify_init1 26
+#define __NR_inotify_add_watch 27
+#define __NR_inotify_rm_watch 28
+#endif
+#ifndef __NR_openat2
+#define __NR_openat2 437
+#endif
+#ifndef __NR_futex
+#define __NR_futex 98
+#endif
+#ifndef __NR_pidfd_send_signal
+#define __NR_pidfd_send_signal 424
+#define __NR_pidfd_open 434
+#define __NR_pidfd_getfd 438
+#endif
 
 #define IOPRIO_WHO_PROCESS 1
 #define IOPRIO_CLASS_BE 2
@@ -54,9 +75,60 @@
 #define TFD_CLOEXEC 02000000
 #define SFD_NONBLOCK 04000
 #define SFD_CLOEXEC 02000000
+#ifndef MFD_CLOEXEC
+#define MFD_CLOEXEC 0x0001U
+#define MFD_ALLOW_SEALING 0x0002U
+#endif
+#ifndef F_ADD_SEALS
+#define F_ADD_SEALS 1033
+#define F_GET_SEALS 1034
+#define F_SEAL_SEAL 0x0001
+#define F_SEAL_SHRINK 0x0002
+#define F_SEAL_GROW 0x0004
+#define F_SEAL_WRITE 0x0008
+#endif
 #ifndef MSG_WAITFORONE
 #define MSG_WAITFORONE 0x10000
 #endif
+#ifndef MADV_POPULATE_WRITE
+#define MADV_POPULATE_WRITE 23
+#endif
+
+#define IN_ACCESS       0x00000001U
+#define IN_MODIFY       0x00000002U
+#define IN_ATTRIB       0x00000004U
+#define IN_MOVED_FROM   0x00000040U
+#define IN_MOVED_TO     0x00000080U
+#define IN_CREATE       0x00000100U
+#define IN_DELETE       0x00000200U
+#define IN_DELETE_SELF  0x00000400U
+#define IN_IGNORED      0x00008000U
+#define IN_NONBLOCK     00004000
+#define IN_CLOEXEC      02000000
+
+struct wos_inotify_event {
+    int32_t wd;
+    uint32_t mask;
+    uint32_t cookie;
+    uint32_t len;
+    char name[];
+};
+
+struct wos_open_how {
+    uint64_t flags;
+    uint64_t mode;
+    uint64_t resolve;
+};
+
+#define RESOLVE_NO_SYMLINKS 0x04U
+#define RESOLVE_BENEATH     0x08U
+#define RESOLVE_CACHED      0x20U
+#define FUTEX_WAIT_BITSET   9
+#define FUTEX_WAKE_BITSET   10
+#define FUTEX_CMP_REQUEUE   4
+
+_Static_assert(sizeof(struct wos_inotify_event) == 16,
+               "inotify_event ABI size");
 
 static void fail(const char *step) {
     fprintf(stderr, "[FAIL] %s: errno=%d (%s)\n", step, errno, strerror(errno));
@@ -367,6 +439,326 @@ int main(void) {
     if (sigprocmask(SIG_UNBLOCK, &signal_mask, NULL) < 0)
         fail("unblock signalfd signals");
 
+    int memfd = syscall(__NR_memfd_create, "wateros-smoke",
+                        MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (memfd < 0)
+        fail("memfd_create");
+    require((fcntl(memfd, F_GETFD) & FD_CLOEXEC) != 0,
+            "memfd cloexec");
+    require(fcntl(memfd, F_GET_SEALS) == 0, "memfd initial seals");
+    require(ftruncate(memfd, 4096) == 0, "memfd grow");
+    require(pwrite(memfd, "memfd", 5, 0) == 5, "memfd pwrite");
+    char *memfd_map = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, memfd, 0);
+    require(memfd_map != MAP_FAILED && memcmp(memfd_map, "memfd", 5) == 0,
+            "memfd shared mmap");
+    memcpy(memfd_map, "MAP", 3);
+    require(msync(memfd_map, 4096, MS_SYNC) == 0, "memfd msync");
+    char memfd_verify[6] = {0};
+    require(pread(memfd, memfd_verify, 5, 0) == 5 &&
+            memcmp(memfd_verify, "MAPfd", 5) == 0,
+            "memfd shared writeback");
+    errno = 0;
+    require(fcntl(memfd, F_ADD_SEALS, F_SEAL_WRITE) == -1 && errno == EBUSY,
+            "memfd rejects write seal while writable mapped");
+    require(munmap(memfd_map, 4096) == 0, "memfd munmap");
+    require(fcntl(memfd, F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_GROW) == 0,
+            "memfd size seals");
+    errno = 0;
+    require(ftruncate(memfd, 2048) == -1 && errno == EPERM,
+            "memfd shrink seal");
+    errno = 0;
+    require(ftruncate(memfd, 8192) == -1 && errno == EPERM,
+            "memfd grow seal");
+    require(fcntl(memfd, F_ADD_SEALS, F_SEAL_WRITE) == 0,
+            "memfd write seal");
+    errno = 0;
+    require(pwrite(memfd, "x", 1, 0) == -1 && errno == EPERM,
+            "memfd sealed write");
+    require(fcntl(memfd, F_GET_SEALS) ==
+            (F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE),
+            "memfd seal query");
+
+    int fixed_seal_memfd = syscall(__NR_memfd_create, "wateros-fixed", 0);
+    if (fixed_seal_memfd < 0)
+        fail("memfd_create no sealing");
+    require(fcntl(fixed_seal_memfd, F_GET_SEALS) == F_SEAL_SEAL,
+            "memfd no-allow-sealing starts sealed");
+    errno = 0;
+    require(fcntl(fixed_seal_memfd, F_ADD_SEALS, F_SEAL_GROW) == -1 && errno == EPERM,
+            "memfd seal-seal blocks additions");
+
+    const char *notify_dir = "/tmp/wos-inotify";
+    const char *notify_old = "/tmp/wos-inotify/old";
+    const char *notify_new = "/tmp/wos-inotify/new";
+    unlink(notify_old);
+    unlink(notify_new);
+    rmdir(notify_dir);
+    require(mkdir(notify_dir, 0700) == 0, "inotify test mkdir");
+    int notify_fd = syscall(__NR_inotify_init1, IN_NONBLOCK | IN_CLOEXEC);
+    if (notify_fd < 0)
+        fail("inotify_init1");
+    require((fcntl(notify_fd, F_GETFD) & FD_CLOEXEC) != 0,
+            "inotify cloexec");
+    int dir_wd = syscall(__NR_inotify_add_watch, notify_fd, notify_dir,
+                         IN_CREATE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO | IN_DELETE);
+    if (dir_wd < 0)
+        fail("inotify_add_watch directory");
+    int notify_file = open(notify_old, O_CREAT | O_TRUNC | O_RDWR, 0600);
+    if (notify_file < 0 || write(notify_file, "event", 5) != 5)
+        fail("create inotify file");
+    int file_wd = syscall(__NR_inotify_add_watch, notify_fd, notify_old,
+                          IN_ATTRIB | IN_DELETE_SELF);
+    if (file_wd < 0)
+        fail("inotify_add_watch file");
+    require(chmod(notify_old, 0640) == 0, "inotify chmod");
+    require(rename(notify_old, notify_new) == 0, "inotify rename");
+    require(unlink(notify_new) == 0, "inotify unlink");
+
+    struct pollfd notify_poll = {.fd = notify_fd, .events = POLLIN};
+    require(poll(&notify_poll, 1, 100) == 1 && (notify_poll.revents & POLLIN) != 0,
+            "inotify poll");
+    unsigned char notify_events[2048];
+    ssize_t notify_bytes = read(notify_fd, notify_events, sizeof(notify_events));
+    if (notify_bytes < 0)
+        fail("inotify event read");
+    int saw_create = 0, saw_modify = 0, saw_from = 0, saw_to = 0, saw_delete = 0;
+    int saw_attrib = 0, saw_delete_self = 0, saw_ignored = 0;
+    uint32_t from_cookie = 0, to_cookie = 0;
+    for (size_t offset = 0; offset + sizeof(struct wos_inotify_event) <= (size_t)notify_bytes;) {
+        struct wos_inotify_event *event =
+            (struct wos_inotify_event *)(notify_events + offset);
+        size_t event_size = sizeof(*event) + event->len;
+        require(event_size >= sizeof(*event) && offset + event_size <= (size_t)notify_bytes,
+                "inotify event bounds");
+        if (event->wd == dir_wd && event->len != 0 && strcmp(event->name, "old") == 0) {
+            saw_create |= (event->mask & IN_CREATE) != 0;
+            saw_modify |= (event->mask & IN_MODIFY) != 0;
+            if (event->mask & IN_MOVED_FROM) {
+                saw_from = 1;
+                from_cookie = event->cookie;
+            }
+        }
+        if (event->wd == dir_wd && event->len != 0 && strcmp(event->name, "new") == 0) {
+            if (event->mask & IN_MOVED_TO) {
+                saw_to = 1;
+                to_cookie = event->cookie;
+            }
+            saw_delete |= (event->mask & IN_DELETE) != 0;
+        }
+        if (event->wd == file_wd) {
+            saw_attrib |= (event->mask & IN_ATTRIB) != 0;
+            saw_delete_self |= (event->mask & IN_DELETE_SELF) != 0;
+            saw_ignored |= (event->mask & IN_IGNORED) != 0;
+        }
+        offset += event_size;
+    }
+    require(saw_create && saw_modify && saw_from && saw_to && saw_delete,
+            "inotify directory event set");
+    require(from_cookie != 0 && from_cookie == to_cookie,
+            "inotify rename cookie");
+    require(saw_attrib && saw_delete_self && saw_ignored,
+            "inotify watched-file lifecycle");
+
+    notify_file = open(notify_old, O_CREAT | O_TRUNC | O_RDWR, 0600);
+    if (notify_file < 0)
+        fail("inotify rollback seed");
+    errno = 0;
+    require(syscall(__NR_read, notify_fd, (void *)invalid_user_address,
+                    sizeof(notify_events)) == -1 && errno == EFAULT,
+            "inotify user fault");
+    notify_bytes = read(notify_fd, notify_events, sizeof(notify_events));
+    require(notify_bytes >= (ssize_t)sizeof(struct wos_inotify_event),
+            "inotify EFAULT rollback");
+    require(syscall(__NR_inotify_rm_watch, notify_fd, dir_wd) == 0,
+            "inotify_rm_watch");
+
+    const char *openat2_dir = "/tmp/wos-openat2";
+    const char *openat2_file = "/tmp/wos-openat2/file";
+    const char *openat2_link = "/tmp/wos-openat2/link";
+    unlink(openat2_link);
+    unlink(openat2_file);
+    rmdir(openat2_dir);
+    require(mkdir(openat2_dir, 0700) == 0, "openat2 test mkdir");
+    int openat2_dirfd = open(openat2_dir, O_RDONLY | O_DIRECTORY);
+    if (openat2_dirfd < 0)
+        fail("openat2 directory fd");
+    struct wos_open_how how = {.flags = O_CREAT | O_RDWR | O_CLOEXEC, .mode = 0600};
+    int openat2_fd = syscall(__NR_openat2, openat2_dirfd, "file", &how, sizeof(how));
+    if (openat2_fd < 0)
+        fail("openat2 create");
+    require((fcntl(openat2_fd, F_GETFD) & FD_CLOEXEC) != 0 &&
+            write(openat2_fd, "openat2", 7) == 7,
+            "openat2 flags and I/O");
+    require(symlink("file", openat2_link) == 0, "openat2 symlink seed");
+    how.flags = O_RDONLY;
+    how.mode = 0;
+    how.resolve = RESOLVE_NO_SYMLINKS;
+    errno = 0;
+    require(syscall(__NR_openat2, openat2_dirfd, "link", &how, sizeof(how)) == -1 &&
+            errno == ELOOP, "openat2 no symlinks");
+    how.resolve = RESOLVE_BENEATH;
+    errno = 0;
+    require(syscall(__NR_openat2, openat2_dirfd, "../escape", &how, sizeof(how)) == -1 &&
+            errno == EXDEV, "openat2 beneath escape");
+    how.resolve = RESOLVE_CACHED;
+    errno = 0;
+    require(syscall(__NR_openat2, openat2_dirfd, "file", &how, sizeof(how)) == -1 &&
+            errno == EAGAIN, "openat2 cached fallback");
+    struct {
+        struct wos_open_how how;
+        uint64_t extension;
+    } extended_how = {.how = {.flags = O_RDONLY}};
+    int extended_fd = syscall(__NR_openat2, openat2_dirfd, "file", &extended_how,
+                              sizeof(extended_how));
+    if (extended_fd < 0)
+        fail("openat2 zero extension");
+    close(extended_fd);
+    extended_how.extension = 1;
+    errno = 0;
+    require(syscall(__NR_openat2, openat2_dirfd, "file", &extended_how,
+                    sizeof(extended_how)) == -1 && errno == E2BIG,
+            "openat2 rejects nonzero extension");
+
+    int futex_memfd = syscall(__NR_memfd_create, "futex-bitset", 0);
+    if (futex_memfd < 0 || ftruncate(futex_memfd, 4096) < 0)
+        fail("futex bitset backing");
+    uint32_t *futex_words = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+                                 MAP_SHARED, futex_memfd, 0);
+    require(futex_words != MAP_FAILED, "futex bitset shared map");
+    futex_words[0] = 0;
+    futex_words[1] = 0;
+    pid_t bit_child_one = fork();
+    if (bit_child_one < 0)
+        fail("fork futex waiter one");
+    if (bit_child_one == 0) {
+        __atomic_fetch_add(&futex_words[1], 1, __ATOMIC_SEQ_CST);
+        long result = syscall(__NR_futex, &futex_words[0], FUTEX_WAIT_BITSET,
+                              0, NULL, NULL, 0x1U);
+        _exit(result == 0 ? 0 : 1);
+    }
+    pid_t bit_child_two = fork();
+    if (bit_child_two < 0)
+        fail("fork futex waiter two");
+    if (bit_child_two == 0) {
+        __atomic_fetch_add(&futex_words[1], 1, __ATOMIC_SEQ_CST);
+        long result = syscall(__NR_futex, &futex_words[0], FUTEX_WAIT_BITSET,
+                              0, NULL, NULL, 0x2U);
+        _exit(result == 0 ? 0 : 1);
+    }
+    for (int attempt = 0; attempt < 100 &&
+                              __atomic_load_n(&futex_words[1], __ATOMIC_SEQ_CST) != 2;
+         ++attempt) {
+        struct timespec short_pause = {.tv_sec = 0, .tv_nsec = 1000000L};
+        nanosleep(&short_pause, NULL);
+    }
+    require(__atomic_load_n(&futex_words[1], __ATOMIC_SEQ_CST) == 2,
+            "futex waiters started");
+    struct timespec futex_settle = {.tv_sec = 0, .tv_nsec = 30000000L};
+    nanosleep(&futex_settle, NULL);
+    require(syscall(__NR_futex, &futex_words[0], FUTEX_WAKE_BITSET,
+                    1, NULL, NULL, 0x1U) == 1,
+            "futex bitset selective wake one");
+    require(waitpid(bit_child_one, &status, 0) == bit_child_one &&
+            WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "futex bitset first waiter result");
+    require(waitpid(bit_child_two, &status, WNOHANG) == 0,
+            "futex bitset leaves nonmatching waiter asleep");
+    require(syscall(__NR_futex, &futex_words[0], FUTEX_WAKE_BITSET,
+                    1, NULL, NULL, 0x2U) == 1,
+            "futex bitset selective wake two");
+    require(waitpid(bit_child_two, &status, 0) == bit_child_two &&
+            WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "futex bitset second waiter result");
+
+    /* requeue 后 waiter 的 bitset 与生命周期登记必须跟随目标地址。 */
+    futex_words[0] = 0;
+    futex_words[1] = 0;
+    futex_words[2] = 0;
+    pid_t requeue_child = fork();
+    if (requeue_child < 0)
+        fail("fork futex requeue waiter");
+    if (requeue_child == 0) {
+        __atomic_store_n(&futex_words[2], 1, __ATOMIC_SEQ_CST);
+        long result = syscall(__NR_futex, &futex_words[0], FUTEX_WAIT_BITSET,
+                              0, NULL, NULL, 0x4U);
+        _exit(result == 0 ? 0 : 1);
+    }
+    for (int attempt = 0; attempt < 100 &&
+                              __atomic_load_n(&futex_words[2], __ATOMIC_SEQ_CST) != 1;
+         ++attempt) {
+        struct timespec short_pause = {.tv_sec = 0, .tv_nsec = 1000000L};
+        nanosleep(&short_pause, NULL);
+    }
+    require(__atomic_load_n(&futex_words[2], __ATOMIC_SEQ_CST) == 1,
+            "futex requeue waiter started");
+    nanosleep(&futex_settle, NULL);
+    require(syscall(__NR_futex, &futex_words[0], FUTEX_CMP_REQUEUE,
+                    0, 1, &futex_words[1], 0) == 1,
+            "futex cmp requeue one");
+    require(waitpid(requeue_child, &status, WNOHANG) == 0,
+            "futex requeue does not wake moved waiter");
+    require(syscall(__NR_futex, &futex_words[1], FUTEX_WAKE_BITSET,
+                    1, NULL, NULL, 0x4U) == 1,
+            "futex wake bitset after requeue");
+    require(waitpid(requeue_child, &status, 0) == requeue_child &&
+            WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "futex requeue waiter result");
+
+    int pidfd_pipe[2];
+    require(pipe(pidfd_pipe) == 0, "pidfd pipe");
+    pid_t pidfd_child = fork();
+    if (pidfd_child < 0)
+        fail("fork pidfd child");
+    if (pidfd_child == 0) {
+        close(pidfd_pipe[0]);
+        sleep(30);
+        _exit(0);
+    }
+    close(pidfd_pipe[1]);
+    int pidfd = syscall(__NR_pidfd_open, pidfd_child, 0);
+    if (pidfd < 0)
+        fail("pidfd_open");
+    require((fcntl(pidfd, F_GETFD) & FD_CLOEXEC) != 0,
+            "pidfd close-on-exec");
+    int copied_child_fd = syscall(__NR_pidfd_getfd, pidfd, pidfd_pipe[1], 0);
+    if (copied_child_fd < 0)
+        fail("pidfd_getfd");
+    require(write(copied_child_fd, "P", 1) == 1,
+            "pidfd_getfd duplicated write endpoint");
+    char pidfd_byte = 0;
+    require(read(pidfd_pipe[0], &pidfd_byte, 1) == 1 && pidfd_byte == 'P',
+            "pidfd_getfd shared open file description");
+    require(syscall(__NR_pidfd_send_signal, pidfd, SIGTERM, NULL, 0) == 0,
+            "pidfd_send_signal");
+    struct pollfd pidfd_poll = {.fd = pidfd, .events = POLLIN};
+    require(poll(&pidfd_poll, 1, 5000) == 1 &&
+            (pidfd_poll.revents & (POLLIN | POLLHUP)) != 0,
+            "pidfd poll exit readiness");
+    siginfo_t pidfd_info;
+    memset(&pidfd_info, 0, sizeof(pidfd_info));
+    require(syscall(__NR_waitid, 3, pidfd, &pidfd_info, WEXITED, NULL) == 0 &&
+            pidfd_info.si_pid == pidfd_child,
+            "waitid P_PIDFD");
+
+    unsigned char *lock_area = mmap(NULL, 8192, PROT_READ | PROT_WRITE,
+                                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(lock_area != MAP_FAILED, "mlock anonymous mapping");
+    unsigned char residency[2] = {0, 0};
+    require(mincore(lock_area, 8192, residency) == 0,
+            "mincore lazy mapping");
+    require(madvise(lock_area, 8192, MADV_POPULATE_WRITE) == 0,
+            "madvise populate write");
+    residency[0] = residency[1] = 0;
+    require(mincore(lock_area, 8192, residency) == 0 &&
+            (residency[0] & 1) != 0 && (residency[1] & 1) != 0,
+            "mincore populated residency");
+    require(mlock(lock_area + 1, 4096) == 0,
+            "mlock accepts unaligned address and prefaults");
+    require(munlock(lock_area + 1, 4096) == 0,
+            "munlock mapped range");
+    require(mlockall(MCL_FUTURE) == 0 && munlockall() == 0,
+            "mlockall future in non-swapping kernel");
+
     close(pipefd[0]);
     close(pipefd[1]);
     close(source);
@@ -382,6 +774,23 @@ int main(void) {
     close(receive_socket);
     close(send_socket);
     close(signal_fd);
+    close(memfd);
+    close(fixed_seal_memfd);
+    close(notify_file);
+    close(notify_fd);
+    close(openat2_fd);
+    close(openat2_dirfd);
+    munmap(futex_words, 4096);
+    close(futex_memfd);
+    close(copied_child_fd);
+    close(pidfd_pipe[0]);
+    close(pidfd);
+    munmap(lock_area, 8192);
+    unlink(notify_old);
+    rmdir(notify_dir);
+    unlink(openat2_link);
+    unlink(openat2_file);
+    rmdir(openat2_dir);
     unlink(source_path);
     unlink(output_path);
     puts("[PASS] copy_file_range: content, offsets, flags");
@@ -392,5 +801,11 @@ int main(void) {
     puts("[PASS] timerfd: nonblock, gettime, poll, periodic accumulation, dup sharing");
     puts("[PASS] recvmmsg: UDP batch data, lengths and timeout");
     puts("[PASS] signalfd: mask, poll, batch read, EFAULT rollback, source and update");
+    puts("[PASS] memfd: shared mmap/writeback, CLOEXEC, size/write seals and seal locking");
+    puts("[PASS] inotify: create/modify/move/delete, cookies, poll and EFAULT rollback");
+    puts("[PASS] openat2: versioned open_how, CLOEXEC, symlink/beneath/cache constraints");
+    puts("[PASS] futex bitset/requeue: selective wake and migrated waiter bookkeeping");
+    puts("[PASS] pidfd: open, getfd, signal, poll and waitid(P_PIDFD)");
+    puts("[PASS] memory residency: mincore, MADV_POPULATE, mlock and MCL_FUTURE");
     return 0;
 }

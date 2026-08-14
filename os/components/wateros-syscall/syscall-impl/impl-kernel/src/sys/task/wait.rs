@@ -660,7 +660,16 @@ pub(crate) fn sys_waitid(args : SyscallArgs) -> UserRet {
             };
             WaitTarget::ProcessGroup(pgid)
         }
-        WAITID_P_PIDFD => return UserRet::from_error(ErrNo::EINVAL),
+        WAITID_P_PIDFD => {
+            if id < 0 {
+                return UserRet::from_error(ErrNo::EINVAL);
+            }
+            let pid = match super::pidfd::pidfd_process_id(id as usize) {
+                Ok(pid) => pid,
+                Err(error) => return UserRet::from_error(error),
+            };
+            WaitTarget::Specific(pid)
+        }
         _ => return UserRet::from_error(ErrNo::EINVAL),
     };
     if let WaitTarget::Specific(child_pid) = target {
