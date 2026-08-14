@@ -75,6 +75,10 @@ cd /tmp/wateros-kernel-heap-slab/os/components/wateros-runtime
 cargo test -p wateros-runtime-heap-allocator --lib
 ```
 
+若 host 测试因 `wateros-platform-arch` 的目标汇编（RISC-V/LoongArch inline asm）无法
+编译，记录该环境限制，并改用 `make rv_check` / `make la_check` 验证 lib 编译；测试
+逻辑的运行验证推迟到 Task 03 的 QEMU 冒烟/回归中执行。
+
 再跑两架构 check：
 
 ```bash
