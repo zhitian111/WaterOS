@@ -54,4 +54,35 @@ git diff --check
 
 ## 任务简报
 
-（完成后追加，格式见目录 README。）
+- 完成日期：2026-08-15
+- commit：本任务实现提交（见 `git log --oneline -1`，分支 `feat/real-hardware-porting`）
+- 实际改动：
+  - 新增 `driver-block/block-impl/impl-dw-mmc`（迁移自 `feat/visionfive2-port`）：
+    `mmc.rs`（DW MSHC PIO/polling 原语：`RegisterIo`/`MmioRegisters`/`DwMmc`、
+    `clock_divider`、probe/reset/clock/命令/单块读）、`sd.rs`（`SdTransport`/`SdCard`
+    初始化协议、CSD 容量解析、`BlockDevice` 只读实现）。
+  - 适配 main 的 `BlockDevice` trait：`SdCard` 与测试 fake 补 `flush`（只读 PIO
+    无写缓冲，no-op）。
+  - `impl-jh7110-visionfive2/src/mmc.rs` 从占位换成完整实现：`register_readonly_
+    block_device`（容量/首扇区 bounded probe 后注册）、`initialize_controller`/
+    `initialize_sd_card`（经 `MmcHardwareEvidence` fail-closed 门控，不注册设备）。
+  - 接线：driver-block workspace 成员；驱动 Cargo.toml 增 `block`/`dw-mmc` 依赖。
+- 轮子评估（dwmmc-host + sdmmc-protocol）：
+  - `dwmmc-host` 提供 DW_mshc 的 SDIO host 实现，但 JH7110 的 tuning/DLL、时钟/
+    reset/syscon 属板级，仍需自持；迁移实现与 `RegisterIo` 抽象已带 12 个 host
+    单测且与 WaterOS `BlockDevice` 直接对齐。结论：不引入，保留迁移实现（简报记录）。
+- 验收结果：
+  - `cargo test -p wateros-driver-block-impl-dw-mmc`：12 passed（mmc 6 + sd 6）。
+  - `cargo test -p wateros-driver-impl-jh7110-visionfive2`：17 passed（含 mmc 门控/
+    plan 测试；`register_readonly_block_device` 注册后不做注销）。
+  - `cargo check --no-default-features --features jh7110-visionfive2,pre
+    --target riscv64gc-unknown-none-elf`：通过。
+  - `make rv_check`、`make la_check`：无回归。
+  - `git diff --check`：clean。
+- 计划调整（基于当前 main 证据）：
+  - 旧分支测试里的 `unregister_block_device` 与 `BlockDeviceRole`（Disk/Partition）
+    依赖旧块注册表，main 尚无；相关断言（分区快照、注销）顺延任务 08 落地，本任务
+    保留 `register_readonly_block_device` 与门控测试。
+- 未验证/风险：
+  - 真机 SD 枚举/读未跑（真机项，任务 08 一并验收）；时钟/reset/pinmux/卡时序
+    未验证，全部激活仍 fail-closed（`HardwareEvidence` 门控）。

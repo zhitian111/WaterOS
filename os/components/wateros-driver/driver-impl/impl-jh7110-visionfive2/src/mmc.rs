@@ -1,10 +1,14 @@
-//! JH7110 MMC 资源描述与 fail-closed 激活门控（任务 06 范围）。
+//! VisionFive 2 MMC resources and compatibility exports.
 //!
-//! 任务 06 只迁移类型与 `bring_up_plan`（不触达硬件）；DW MMC 控制器 PIO 与
-//! SD 协议实现（`impl-dw-mmc`）在任务 07 接入，届时本模块补齐 probe/register 路径。
-
-use alloc::vec::Vec;
+//! Clock/reset/syscon descriptions belong to this board layer. Controller PIO
+//! and SD protocol logic live in `wateros-driver-block-impl-dw-mmc` so another
+//! platform can reuse them without importing JH7110 topology assumptions.
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use api_v0::MmioRegion;
+use block::{BlockDevice, DriverError, Lba, SharedBlockDevice, BLOCK_SIZE};
+
+pub use dw_mmc::mmc::{clock_divider, DwMmc, MmcError, MmioRegisters, RegisterIo};
+use dw_mmc::sd::SdCard;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MmcActivationBlocker {
@@ -36,6 +40,42 @@ pub enum MmcConfigError {
     MissingFifoDepth,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MmcInitializationError {
+    NotReady,
+    Core(MmcError),
+    Card(MmcError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MmcRegistrationError {
+    InvalidBlockSize,
+    UnknownCapacity,
+    EmptyDevice,
+    Read(DriverError),
+}
+
+/// Register an already initialized SD device only after a bounded read probe.
+///
+/// This helper is intentionally separate from controller/card initialization:
+/// callers can run it after explicit board evidence, and a failed probe never
+/// mutates the global block registry.
+pub fn register_readonly_block_device(device : SharedBlockDevice)
+                                     -> Result<usize, MmcRegistrationError> {
+    let mut guard = device.lock();
+    if guard.block_size() != BLOCK_SIZE {
+        return Err(MmcRegistrationError::InvalidBlockSize);
+    }
+    let total = guard.total_blocks().ok_or(MmcRegistrationError::UnknownCapacity)?;
+    if total == 0 {
+        return Err(MmcRegistrationError::EmptyDevice);
+    }
+    let mut sample = [0u8; BLOCK_SIZE];
+    guard.read_blocks(Lba(0), &mut sample).map_err(MmcRegistrationError::Read)?;
+    drop(guard);
+    Ok(block::register_block_device(device))
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MmcHardwareEvidence {
     pub clock_verified : bool,
@@ -51,12 +91,13 @@ pub struct MmcBringUpPlan {
 }
 
 impl MmcBringUpPlan {
-    /// 硬件激活保持不可用，直到板级时钟/reset/pinmux/卡与控制器行为得到验证。
-    pub const fn can_activate(&self) -> bool {
-        false
-    }
+    /// Hardware activation remains deliberately unavailable until board
+    /// clock/reset/pinmux/card and controller behavior are verified.
+    pub const fn can_activate(&self) -> bool { false }
 
-    /// 不访问任何寄存器，仅按外部证据评估是否可解除静态 `HardwareEvidence` 门控。
+    /// Evaluate externally supplied board evidence without performing any
+    /// register access. This is the only path that may eventually clear the
+    /// static `HardwareEvidence` blocker.
     pub fn activation_ready(&self, evidence : MmcHardwareEvidence) -> bool {
         self.blockers.len() == 1 &&
         self.blockers[0] == MmcActivationBlocker::HardwareEvidence &&
@@ -64,15 +105,16 @@ impl MmcBringUpPlan {
         evidence.card_path_verified
     }
 
-    /// 只产生协议/控制器参数；不触碰时钟、reset、pinmux、电源或 MMIO。
+    /// Produce only protocol/controller parameters; this does not touch
+    /// clocks, reset, pinmux, power or MMIO.
     pub fn controller_config(&self) -> Result<MmcControllerConfig, MmcConfigError> {
         if self.blockers.iter().any(|blocker| {
             !matches!(blocker, MmcActivationBlocker::HardwareEvidence)
         }) {
             return Err(MmcConfigError::InvalidStaticResources);
         }
-        let target_frequency_hz =
-            self.host.max_frequency_hz.ok_or(MmcConfigError::MissingTargetFrequency)?;
+        let target_frequency_hz = self.host.max_frequency_hz.ok_or(
+            MmcConfigError::MissingTargetFrequency)?;
         let fifo_depth = self.host.fifo_depth.ok_or(MmcConfigError::MissingFifoDepth)?;
         Ok(MmcControllerConfig { target_frequency_hz,
                                   fifo_depth,
@@ -143,4 +185,251 @@ pub fn bring_up_plan(host : &MmcHostDescription) -> MmcBringUpPlan {
     }
     blockers.push(MmcActivationBlocker::HardwareEvidence);
     MmcBringUpPlan { host : host.clone(), blockers }
+}
+
+/// Construct and initialize the shared controller only after explicit board
+/// evidence has been supplied. This function is not called during generic
+/// machine bring-up and does not register a block device.
+pub fn initialize_controller<R : RegisterIo>(plan : &MmcBringUpPlan,
+                                              evidence : MmcHardwareEvidence,
+                                              registers : R,
+                                              input_frequency_hz : u32,
+                                              poll_limit : usize)
+                                              -> Result<DwMmc<R>, MmcInitializationError> {
+    if !plan.activation_ready(evidence) {
+        return Err(MmcInitializationError::NotReady);
+    }
+    let config = plan.controller_config().map_err(|_| MmcInitializationError::NotReady)?;
+    let mut controller = DwMmc::probe(registers, poll_limit)
+        .map_err(MmcInitializationError::Core)?;
+    controller.initialize_polling_with_bus_width(input_frequency_hz,
+                                                 config.target_frequency_hz,
+                                                 config.fifo_depth,
+                                                 config.bus_width)
+               .map_err(MmcInitializationError::Core)?;
+    Ok(controller)
+}
+
+/// Explicitly initialize the shared SD protocol after the controller has been
+/// configured and board evidence has been supplied. This remains opt-in: the
+/// generic machine startup path does not call it or register a block device.
+pub fn initialize_sd_card<R : RegisterIo>(plan : &MmcBringUpPlan,
+                                          evidence : MmcHardwareEvidence,
+                                          registers : R,
+                                          input_frequency_hz : u32,
+                                          poll_limit : usize,
+                                          ocr_attempts : usize)
+                                          -> Result<SdCard<DwMmc<R>>, MmcInitializationError> {
+    let controller = initialize_controller(plan,
+                                            evidence,
+                                            registers,
+                                            input_frequency_hz,
+                                            poll_limit)?;
+    SdCard::initialize(controller, ocr_attempts).map_err(MmcInitializationError::Card)
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+    use spin::Mutex;
+    use super::*;
+
+    fn host() -> MmcHostDescription {
+        MmcHostDescription { mmio : MmioRegion { base : 0x1602_0000, size : 0x1000 },
+                              irq : 91,
+                              bus_width : 4,
+                              max_frequency_hz : Some(50_000_000),
+                              fifo_depth : Some(32),
+                              non_removable : false,
+                              biu_clock : ResourceSpecifier { provider : 1, args : vec![0] },
+                              ciu_clock : ResourceSpecifier { provider : 2, args : vec![1] },
+                              reset : ResourceSpecifier { provider : 3, args : vec![0] },
+                              sysreg : Some(SysregField { provider : 4,
+                                                          offset : 0x10,
+                                                          shift : 0,
+                                                          mask : 0x3 }) }
+    }
+
+    struct ProbeDisk {
+        total : Option<u64>,
+        fail : bool,
+    }
+    impl BlockDevice for ProbeDisk {
+        fn total_blocks(&self) -> Option<u64> { self.total }
+        fn read_blocks(&mut self, _start : Lba, output : &mut [u8]) -> block::DriverResult<()> {
+            if self.fail { return Err(DriverError::IoError); }
+            output.fill(0xA5);
+            Ok(())
+        }
+        fn write_blocks(&mut self, _start : Lba, _input : &[u8]) -> block::DriverResult<()> {
+            Err(DriverError::Unsupported)
+        }
+
+        fn flush(&mut self) -> block::DriverResult<()> {
+            Ok(())
+        }
+    }
+    fn probe_disk(total : Option<u64>, fail : bool) -> SharedBlockDevice {
+        Arc::new(Mutex::new(Box::new(ProbeDisk { total, fail })))
+    }
+
+    struct MbrDisk {
+        bytes : Vec<u8>,
+    }
+
+    impl BlockDevice for MbrDisk {
+        fn total_blocks(&self) -> Option<u64> {
+            Some((self.bytes.len() / BLOCK_SIZE) as u64)
+        }
+
+        fn read_blocks(&mut self, start : Lba, output : &mut [u8]) -> block::DriverResult<()> {
+            if output.len() != BLOCK_SIZE {
+                return Err(DriverError::InvalidParam);
+            }
+            let offset = usize::try_from(start.0)
+                .ok()
+                .and_then(|lba| lba.checked_mul(BLOCK_SIZE))
+                .ok_or(DriverError::InvalidParam)?;
+            let end = offset.checked_add(output.len()).ok_or(DriverError::InvalidParam)?;
+            if end > self.bytes.len() {
+                return Err(DriverError::IoError);
+            }
+            output.copy_from_slice(&self.bytes[offset..end]);
+            Ok(())
+        }
+
+        fn write_blocks(&mut self, _start : Lba, _input : &[u8]) -> block::DriverResult<()> {
+            Err(DriverError::Unsupported)
+        }
+
+        fn flush(&mut self) -> block::DriverResult<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn registration_requires_capacity_and_first_read() {
+        let before = block::block_device_count();
+        assert_eq!(register_readonly_block_device(probe_disk(None, false)),
+                   Err(MmcRegistrationError::UnknownCapacity));
+        assert_eq!(register_readonly_block_device(probe_disk(Some(1), true)),
+                   Err(MmcRegistrationError::Read(DriverError::IoError)));
+        assert_eq!(block::block_device_count(), before);
+        let index = register_readonly_block_device(probe_disk(Some(1), false)).unwrap();
+        assert!(block::block_device_count() > before);
+        let _ = index;
+    }
+
+    #[test]
+    fn valid_topology_still_requires_hardware_evidence() {
+        let plan = bring_up_plan(&host());
+        assert_eq!(plan.blockers, vec![MmcActivationBlocker::HardwareEvidence]);
+        assert!(!plan.can_activate());
+        assert!(!plan.activation_ready(MmcHardwareEvidence::default()));
+        assert!(plan.activation_ready(MmcHardwareEvidence { clock_verified : true,
+                                                            reset_verified : true,
+                                                            irq_verified : true,
+                                                            card_path_verified : true }));
+        assert_eq!(plan.controller_config(),
+                   Ok(MmcControllerConfig { target_frequency_hz : 50_000_000,
+                                             fifo_depth : 32,
+                                             bus_width : 4 }));
+    }
+
+    #[test]
+    fn malformed_resources_are_reported_without_mmio() {
+        let mut value = host();
+        value.mmio.base = 0;
+        value.bus_width = 2;
+        value.biu_clock.provider = 0;
+        value.sysreg = None;
+        let plan = bring_up_plan(&value);
+        assert!(plan.blockers.contains(&MmcActivationBlocker::InvalidMmio));
+        assert!(plan.blockers.contains(&MmcActivationBlocker::InvalidBusWidth));
+        assert!(plan.blockers.contains(&MmcActivationBlocker::MissingBiuClock));
+        assert!(plan.blockers.contains(&MmcActivationBlocker::MissingSysreg));
+        assert!(!plan.can_activate());
+        assert_eq!(plan.controller_config(), Err(MmcConfigError::InvalidStaticResources));
+    }
+
+    #[test]
+    fn missing_controller_tuning_is_a_static_blocker() {
+        let mut value = host();
+        value.max_frequency_hz = None;
+        value.fifo_depth = None;
+        let plan = bring_up_plan(&value);
+        assert!(plan.blockers.contains(&MmcActivationBlocker::MissingTargetFrequency));
+        assert!(plan.blockers.contains(&MmcActivationBlocker::MissingFifoDepth));
+        assert!(!plan.activation_ready(MmcHardwareEvidence { clock_verified : true,
+                                                             reset_verified : true,
+                                                             irq_verified : true,
+                                                             card_path_verified : true }));
+        assert_eq!(plan.controller_config(), Err(MmcConfigError::InvalidStaticResources));
+    }
+
+    #[test]
+    fn zero_controller_tuning_is_rejected_before_mmio() {
+        let mut value = host();
+        value.max_frequency_hz = Some(0);
+        value.fifo_depth = Some(0);
+        let plan = bring_up_plan(&value);
+        assert!(plan.blockers.contains(&MmcActivationBlocker::InvalidTargetFrequency));
+        assert!(plan.blockers.contains(&MmcActivationBlocker::InvalidFifoDepth));
+        assert_eq!(plan.controller_config(), Err(MmcConfigError::InvalidStaticResources));
+    }
+
+    #[test]
+    fn fifo_depth_outside_controller_range_is_rejected_before_mmio() {
+        for depth in [1, 4097] {
+            let mut value = host();
+            value.fifo_depth = Some(depth);
+            let plan = bring_up_plan(&value);
+            assert!(plan.blockers.contains(&MmcActivationBlocker::InvalidFifoDepth));
+            assert_eq!(plan.controller_config(), Err(MmcConfigError::InvalidStaticResources));
+        }
+    }
+
+    struct Registers { values : [u32; 32] }
+
+    impl RegisterIo for Registers {
+        fn read32(&mut self, offset : usize) -> Result<u32, MmcError> {
+            if offset == 0x000 || offset == 0x02c || offset == 0x044 {
+                return Ok(0);
+            }
+            self.values.get(offset / 4).copied().ok_or(MmcError::RegisterOutOfRange)
+        }
+
+        fn write32(&mut self, offset : usize, value : u32) -> Result<(), MmcError> {
+            *self.values.get_mut(offset / 4).ok_or(MmcError::RegisterOutOfRange)? = value;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn gated_initializer_consumes_controller_config_only_with_evidence() {
+        let plan = bring_up_plan(&host());
+        let evidence = MmcHardwareEvidence { clock_verified : true,
+                                              reset_verified : true,
+                                              irq_verified : true,
+                                              card_path_verified : true };
+        let initialized = initialize_controller(&plan,
+                                                evidence,
+                                                Registers { values : [0; 32] },
+                                                50_000_000,
+                                                4);
+        assert!(initialized.is_ok(), "initializer failed: {:?}", initialized.err());
+        assert!(matches!(initialize_controller(&plan,
+                                                MmcHardwareEvidence::default(),
+                                                Registers { values: [0; 32] },
+                                                50_000_000,
+                                                4),
+                         Err(MmcInitializationError::NotReady)));
+        assert!(matches!(initialize_sd_card(&plan,
+                                            MmcHardwareEvidence::default(),
+                                            Registers { values: [0; 32] },
+                                            50_000_000,
+                                            4,
+                                            1),
+                         Err(MmcInitializationError::NotReady)));
+    }
 }

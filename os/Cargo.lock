@@ -701,6 +701,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wateros-driver-block-impl-dw-mmc"
+version = "0.1.0"
+dependencies = [
+ "spin",
+ "wateros-driver-api-v0",
+ "wateros-driver-block-api-v0",
+]
+
+[[package]]
 name = "wateros-driver-block-impl-virtio-mmio"
 version = "0.1.0"
 dependencies = [
@@ -838,6 +847,8 @@ dependencies = [
  "log",
  "spin",
  "wateros-driver-api-v0",
+ "wateros-driver-block-api-v0",
+ "wateros-driver-block-impl-dw-mmc",
  "wateros-driver-character",
  "wateros-driver-impl-common",
  "wateros-platform",
