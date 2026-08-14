@@ -19,6 +19,14 @@
    - 保留现有 `parse_irq` 调用方兼容，新增完整 `interrupt-parent`/`interrupt-map` 解析。
 3. 设计顶层 feature 传播：`wateros-irq` 由 `wateros-platform`/`wateros-driver` 依赖，避免反向依赖。
 
+## 实施备注（T01 完成后）
+
+- `interrupts` / `interrupt-parent` / `#interrupt-cells` 已完整解析为 [`IrqSpec`]；
+  `interrupt-map` / `interrupt-map-mask` 只做原始 cells 读取，语义解码（PCI 子设备
+  解析）留待 T03（LoongArch PCI）与 irq domain 对接时实现。
+- `wateros-irq` 保持零平台依赖，由 `wateros-platform` 聚合并 `pub use irq` 再导出，
+  供后续 `platform-impl`（PLIC/EIOINTC）与驱动层共同使用。
+
 ## 涉及文件
 
 - `os/components/wateros-irq/**`（新增）
