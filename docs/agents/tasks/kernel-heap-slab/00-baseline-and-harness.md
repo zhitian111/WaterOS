@@ -11,8 +11,8 @@
 - 分支：`perf/kernel-heap-slab`
 - 基线提交：`59f50c44`
 - 基线内核已保留：
-  - `/tmp/wateros-kernel-heap-slab-baseline/kernel-rv-final`
-  - `/tmp/wateros-kernel-heap-slab-baseline/kernel-la-final`
+  - `/home/zhitian/project/WaterOS_refactor/os/.perf-baseline-main/kernel-rv-final`
+  - `/home/zhitian/project/WaterOS_refactor/os/.perf-baseline-main/kernel-la-final`
 
 ## 实施方案
 
@@ -26,7 +26,8 @@
    sha256sum kernel-rv-final kernel-la-final
    ```
 
-3. 把产物复制到 `/tmp/wateros-kernel-heap-slab-baseline/`，命名保持不变。
+3. 把产物复制到 `/home/zhitian/project/WaterOS_refactor/os/.perf-baseline-main/`，
+   命名保持不变。
 4. 对每个架构执行一次“镜像准备 → 完整 buildstorm → 保存日志”的流程，先验证
    功能通过；基线性能采样建议每个架构 3 轮。
 5. 将每轮日志、镜像 SHA、`elapsed_s` 记录到
@@ -43,7 +44,7 @@ pgrep -af 'qemu-system-(riscv64|loongarch64)' || true
 ## 涉及文件/目录
 
 - `os/kernel-rv-final`、`os/kernel-la-final`：构建产物，不提交。
-- `/tmp/wateros-kernel-heap-slab-baseline/`：基线产物保存目录。
+- `/home/zhitian/project/WaterOS_refactor/os/.perf-baseline-main/`：基线产物保存目录。
 - `docs/agents/tasks/kernel-heap-slab/README.md`：本任务目录总览。
 - `docs/agents/tasks/kernel-heap-slab/history/00-brief.md`：完成后简报。
 
@@ -67,14 +68,14 @@ codegraph impact "HEAP_ALLOCATOR"
 
 ```bash
 cd /tmp/wateros-kernel-heap-slab/os
-gzip -dc /home/zhitian/Downloads/sdcard-la-pub.img.gz > /tmp/wateros-slab-la.img
-debugfs -w -R 'rm /glibc/buildstorm_testcode.sh' /tmp/wateros-slab-la.img
-debugfs -w -R 'write /home/zhitian/Downloads/buildstorm_testcode.recovered.sh /glibc/buildstorm_testcode.sh' /tmp/wateros-slab-la.img
-debugfs -w -R 'set_inode_field /glibc/buildstorm_testcode.sh mode 0100755' /tmp/wateros-slab-la.img
+gzip -dc /home/zhitian/Downloads/sdcard-la-pub.img.gz > /home/zhitian/Downloads/wateros-slab-la.img
+debugfs -w -R 'rm /glibc/buildstorm_testcode.sh' /home/zhitian/Downloads/wateros-slab-la.img
+debugfs -w -R 'write /home/zhitian/Downloads/buildstorm_testcode.recovered.sh /glibc/buildstorm_testcode.sh' /home/zhitian/Downloads/wateros-slab-la.img
+debugfs -w -R 'set_inode_field /glibc/buildstorm_testcode.sh mode 0100755' /home/zhitian/Downloads/wateros-slab-la.img
 
 /home/zhitian/qemu_9_2_1/qemu-9.2.1/build/qemu-system-loongarch64 \
   -kernel kernel-la-final -m 36G -nographic -smp 12 \
-  -drive file=/tmp/wateros-slab-la.img,if=none,format=raw,id=x0 \
+  -drive file=/home/zhitian/Downloads/wateros-slab-la.img,if=none,format=raw,id=x0 \
   -device virtio-blk-pci,drive=x0 -no-reboot \
   -device virtio-net-pci,netdev=net0 -netdev user,id=net0 -rtc base=utc -snapshot \
   2>&1 | tee /tmp/wateros-slab-la-baseline-N.log
@@ -84,14 +85,14 @@ debugfs -w -R 'set_inode_field /glibc/buildstorm_testcode.sh mode 0100755' /tmp/
 
 ```bash
 cd /tmp/wateros-kernel-heap-slab/os
-gzip -dc /home/zhitian/Downloads/sdcard-rv-pub.img.gz > /tmp/wateros-slab-rv.img
-debugfs -w -R 'rm /glibc/buildstorm_testcode.sh' /tmp/wateros-slab-rv.img
-debugfs -w -R 'write /home/zhitian/Downloads/buildstorm_testcode.recovered.sh /glibc/buildstorm_testcode.sh' /tmp/wateros-slab-rv.img
-debugfs -w -R 'set_inode_field /glibc/buildstorm_testcode.sh mode 0100755' /tmp/wateros-slab-rv.img
+gzip -dc /home/zhitian/Downloads/sdcard-rv-pub.img.gz > /home/zhitian/Downloads/wateros-slab-rv.img
+debugfs -w -R 'rm /glibc/buildstorm_testcode.sh' /home/zhitian/Downloads/wateros-slab-rv.img
+debugfs -w -R 'write /home/zhitian/Downloads/buildstorm_testcode.recovered.sh /glibc/buildstorm_testcode.sh' /home/zhitian/Downloads/wateros-slab-rv.img
+debugfs -w -R 'set_inode_field /glibc/buildstorm_testcode.sh mode 0100755' /home/zhitian/Downloads/wateros-slab-rv.img
 
 /home/zhitian/qemu_9_2_1/qemu-9.2.1/build/qemu-system-riscv64 \
   -machine virt -kernel kernel-rv-final -m 16G -nographic -smp 8 -bios default \
-  -drive file=/tmp/wateros-slab-rv.img,if=none,format=raw,id=x0 \
+  -drive file=/home/zhitian/Downloads/wateros-slab-rv.img,if=none,format=raw,id=x0 \
   -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 -no-reboot \
   -device virtio-net-device,netdev=net -netdev user,id=net -rtc base=utc -snapshot \
   2>&1 | tee /tmp/wateros-slab-rv-baseline-N.log

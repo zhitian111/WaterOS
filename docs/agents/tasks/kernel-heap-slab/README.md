@@ -12,8 +12,8 @@
 - CodeGraph：已在 `/tmp/wateros-kernel-heap-slab/.codegraph` 初始化，任务内优先使用
   `codegraph explore` / `codegraph impact` 定位调用链。
 - 当前 main 基线构建：
-  - RV：`/tmp/wateros-kernel-heap-slab-baseline/kernel-rv-final`
-  - LA：`/tmp/wateros-kernel-heap-slab-baseline/kernel-la-final`
+  - RV：`/home/zhitian/project/WaterOS_refactor/os/.perf-baseline-main/kernel-rv-final`
+  - LA：`/home/zhitian/project/WaterOS_refactor/os/.perf-baseline-main/kernel-la-final`
 
 基线 SHA-256（当前 HEAD `59f50c44` 的 `make kernel-*-final` 产物）：
 
@@ -69,23 +69,23 @@ pgrep -af 'qemu-system-(riscv64|loongarch64)' && { echo 'wait for existing QEMU'
 
 ## 镜像准备通用命令
 
-以下命令假设从 `os/` 执行，且磁盘只剩一个 15 GB raw 镜像的空间时必须先删除上一轮
-临时镜像。不要覆盖 `~/Downloads` 下唯一压缩包。
+以下命令假设从 `os/` 执行。所有 raw 临时镜像统一解压到 `~/Downloads`，且磁盘只保留
+一个 15 GB raw 镜像时必须先删除上一轮临时镜像。不要覆盖 `~/Downloads` 下唯一压缩包。
 
 ```bash
 cd /tmp/wateros-kernel-heap-slab/os
 
 # LA 临时镜像 + 覆写 buildstorm 脚本
-gzip -dc /home/zhitian/Downloads/sdcard-la-pub.img.gz > /tmp/wateros-slab-la.img
-debugfs -w -R 'rm /glibc/buildstorm_testcode.sh' /tmp/wateros-slab-la.img
-debugfs -w -R 'write /home/zhitian/Downloads/buildstorm_testcode.recovered.sh /glibc/buildstorm_testcode.sh' /tmp/wateros-slab-la.img
-debugfs -w -R 'set_inode_field /glibc/buildstorm_testcode.sh mode 0100755' /tmp/wateros-slab-la.img
+gzip -dc /home/zhitian/Downloads/sdcard-la-pub.img.gz > /home/zhitian/Downloads/wateros-slab-la.img
+debugfs -w -R 'rm /glibc/buildstorm_testcode.sh' /home/zhitian/Downloads/wateros-slab-la.img
+debugfs -w -R 'write /home/zhitian/Downloads/buildstorm_testcode.recovered.sh /glibc/buildstorm_testcode.sh' /home/zhitian/Downloads/wateros-slab-la.img
+debugfs -w -R 'set_inode_field /glibc/buildstorm_testcode.sh mode 0100755' /home/zhitian/Downloads/wateros-slab-la.img
 
 # RV 临时镜像 + 覆写 buildstorm 脚本
-gzip -dc /home/zhitian/Downloads/sdcard-rv-pub.img.gz > /tmp/wateros-slab-rv.img
-debugfs -w -R 'rm /glibc/buildstorm_testcode.sh' /tmp/wateros-slab-rv.img
-debugfs -w -R 'write /home/zhitian/Downloads/buildstorm_testcode.recovered.sh /glibc/buildstorm_testcode.sh' /tmp/wateros-slab-rv.img
-debugfs -w -R 'set_inode_field /glibc/buildstorm_testcode.sh mode 0100755' /tmp/wateros-slab-rv.img
+gzip -dc /home/zhitian/Downloads/sdcard-rv-pub.img.gz > /home/zhitian/Downloads/wateros-slab-rv.img
+debugfs -w -R 'rm /glibc/buildstorm_testcode.sh' /home/zhitian/Downloads/wateros-slab-rv.img
+debugfs -w -R 'write /home/zhitian/Downloads/buildstorm_testcode.recovered.sh /glibc/buildstorm_testcode.sh' /home/zhitian/Downloads/wateros-slab-rv.img
+debugfs -w -R 'set_inode_field /glibc/buildstorm_testcode.sh mode 0100755' /home/zhitian/Downloads/wateros-slab-rv.img
 ```
 
 若 `debugfs set_inode_field` 被本机版本拒绝，先 `debugfs -R 'stat /glibc/buildstorm_testcode.sh'`，
@@ -98,14 +98,14 @@ QEMU=/home/zhitian/qemu_9_2_1/qemu-9.2.1/build
 
 # LoongArch64
 "$QEMU/qemu-system-loongarch64" -kernel kernel-la-final -m 36G -nographic -smp 12 \
-  -drive file=/tmp/wateros-slab-la.img,if=none,format=raw,id=x0 \
+  -drive file=/home/zhitian/Downloads/wateros-slab-la.img,if=none,format=raw,id=x0 \
   -device virtio-blk-pci,drive=x0 -no-reboot \
   -device virtio-net-pci,netdev=net0 -netdev user,id=net0 -rtc base=utc -snapshot
 
 # RISC-V64
 "$QEMU/qemu-system-riscv64" -machine virt -kernel kernel-rv-final -m 16G -nographic -smp 8 \
   -bios default \
-  -drive file=/tmp/wateros-slab-rv.img,if=none,format=raw,id=x0 \
+  -drive file=/home/zhitian/Downloads/wateros-slab-rv.img,if=none,format=raw,id=x0 \
   -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 -no-reboot \
   -device virtio-net-device,netdev=net -netdev user,id=net -rtc base=utc -snapshot
 ```
