@@ -79,9 +79,9 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
         }
     };
 
-    if is_qemu_system_executable(executable_path.as_str()) {
+    if let Some(qemu_path) = qemu_system_invocation(executable_path.as_str(), &final_argv_refs) {
         log_qemu_host_capability(&new_elf,
-                                 executable_path.as_str(),
+                                 qemu_path,
                                  new_sp,
                                  final_argv_refs.len(),
                                  envp_refs.len());
@@ -179,6 +179,19 @@ fn is_qemu_system_executable(path : &str) -> bool {
         .is_some_and(|name| name.starts_with("qemu-system-"))
 }
 
+/// Return the nested QEMU path for both direct execution and the image-bundled
+/// `ld-linux --library-path ... qemu-system-*` form used by online BuildStorm.
+fn qemu_system_invocation<'a>(executable_path : &'a str,
+                              argv : &'a [&'a str])
+                              -> Option<&'a str> {
+    if is_qemu_system_executable(executable_path) {
+        return Some(executable_path);
+    }
+    argv.iter()
+        .copied()
+        .find(|argument| is_qemu_system_executable(argument))
+}
+
 /// Read back the auxv bytes from the newly prepared address space.  This checks
 /// what the QEMU process will actually receive instead of merely logging the
 /// constant used while constructing the stack.
@@ -252,6 +265,27 @@ fn read_auxv_hwcap<Ops : UserMemoryOps>(ops : &Ops,
         }
     }
     Err(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_direct_and_dynamic_loader_qemu_invocations() {
+        assert_eq!(qemu_system_invocation("/opt/qemu/bin/qemu-system-loongarch64", &[]),
+                   Some("/opt/qemu/bin/qemu-system-loongarch64"));
+
+        let loader_argv = ["/opt/qemu/lib/ld-linux-loongarch-lp64d.so.1",
+                           "--library-path",
+                           "/opt/qemu/lib",
+                           "/opt/qemu/bin/qemu-system-loongarch64",
+                           "-machine",
+                           "virt"];
+        assert_eq!(qemu_system_invocation(loader_argv[0], &loader_argv),
+                   Some("/opt/qemu/bin/qemu-system-loongarch64"));
+        assert_eq!(qemu_system_invocation("/bin/sh", &["sh", "test.sh"]), None);
+    }
 }
 
 const fn current_arch_name() -> &'static str {
