@@ -12,7 +12,9 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
-use another_ext4::{Ext4, FileType, InodeMode, BLOCK_SIZE, EXT4_ROOT_INO};
+use another_ext4::{Ext4, FileType, InodeMode, EXT4_ROOT_INO};
+#[cfg(feature = "self_test")]
+use another_ext4::BLOCK_SIZE;
 use api_v0::{
     FsAccessMode, FsCapability, FsDirEntry, FsError, FsImpl, FsKind, FsMetadata, FsNodeId,
     FsNodeType, FsResult, LocalFs, LocalRwFs, ReadOnlyFs, ReadWriteFs, SharedFs, SharedRwFs,

@@ -1,7 +1,6 @@
 use crate::cfs_queue::CfsQueue;
 use crate::fifo_queue::FifoQueue;
 use crate::rr_queue::RrQueue;
-use crate::{registry, TaskRegistry, WaitQueues};
 use arch::task::{ActiveArchTaskContext, ArchTaskContext};
 use config::task::{MAX_TICKS_PER_TASK, NICE_0_WEIGHT, NICE_TO_WEIGHT};
 use task_api::{
