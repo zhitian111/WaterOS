@@ -24,7 +24,7 @@ impl Drop for SocketShared {
         let handle = *self.handle
                           .get_mut();
         if let Err(err) = stack::socket_close(handle) {
-            log::warn!("[socket-ref] final close failed handle={:?} err={}",
+            log::warn!("[socket-ref] final close failed handle={:?} err={:?}",
                        handle,
                        err);
         }

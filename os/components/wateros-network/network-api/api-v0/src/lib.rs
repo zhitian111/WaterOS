@@ -5,8 +5,6 @@
 
 #![no_std]
 
-use core::fmt;
-
 /// IPv4 地址和端口的后端无关表示。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Ipv4Endpoint {
@@ -44,30 +42,6 @@ pub enum NetworkError {
 }
 
 pub type NetworkResult<T> = Result<T, NetworkError>;
-
-impl fmt::Display for NetworkError {
-    fn fmt(&self, f : &mut fmt::Formatter<'_>) -> fmt::Result {
-        let message = match self {
-            Self::StackUnavailable => "network stack unavailable",
-            Self::AlreadyInitialized => "network stack already initialized",
-            Self::InvalidSocket => "invalid socket",
-            Self::WrongSocketType => "wrong socket type",
-            Self::InvalidState => "invalid socket state",
-            Self::InvalidArgument => "invalid argument",
-            Self::AddressNotAvailable => "address not available",
-            Self::AddressInUse => "address in use",
-            Self::NotBound => "socket not bound",
-            Self::NotConnected => "socket not connected",
-            Self::NotListening => "socket not listening",
-            Self::NoPendingConnection => "no pending connection",
-            Self::ConnectionRefused => "connection refused",
-            Self::Unsupported => "operation unsupported",
-            Self::Internal => "network stack internal error",
-            Self::Io => "network I/O error",
-        };
-        f.write_str(message)
-    }
-}
 
 /// 协议栈支持的 socket 类型。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

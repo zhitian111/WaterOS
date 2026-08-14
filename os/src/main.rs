@@ -136,7 +136,7 @@ fn init_services_after_boot() -> bool {
                 Ok(()) => {
                     task::spawn_kernel_task(network_poller_task, 0);
                 }
-                Err(e) => warn!("network stack init skipped: {}", e),
+                Err(e) => warn!("network stack init skipped: {:?}", e),
             }
             fs::init_when_boot();
             fs::init_after_boot();
