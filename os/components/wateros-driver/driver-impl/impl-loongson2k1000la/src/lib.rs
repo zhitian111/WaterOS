@@ -6,6 +6,8 @@
 
 use api_v0::{DriverResult, MachineDriver};
 
+pub mod liointc;
+
 pub struct Machine;
 static MACHINE : Machine = Machine;
 
@@ -15,18 +17,41 @@ pub fn machine() -> &'static dyn MachineDriver {
 
 impl MachineDriver for Machine {
     fn init_after_boot(&self) -> DriverResult<()> {
-        match ahci::init() {
-            Ok(index) => {
-                log::info!("[driver][2k1000] AHCI/SATA registered as block device #{}",
-                           index);
-                Ok(())
-            }
-            Err(error) => {
-                log::warn!("[driver][2k1000] AHCI probe failed: {:?}",
-                           error);
-                Err(error)
+        #[cfg(target_arch = "loongarch64")]
+        {
+            match ahci::init() {
+                Ok(index) => {
+                    log::info!("[driver][2k1000] AHCI/SATA registered as block device #{}",
+                               index);
+                    Ok(())
+                }
+                Err(error) => {
+                    log::warn!("[driver][2k1000] AHCI probe failed: {:?}",
+                               error);
+                    Err(error)
+                }
             }
         }
+        #[cfg(not(target_arch = "loongarch64"))]
+        {
+            Ok(())
+        }
+    }
+
+    fn handle_external_interrupt(&self, cpu_raw : usize) -> DriverResult<bool> {
+        #[cfg(target_arch = "loongarch64")]
+        {
+            liointc::handle_external_interrupt_la()
+        }
+        #[cfg(not(target_arch = "loongarch64"))]
+        {
+            let _ = cpu_raw;
+            Err(api_v0::DriverError::Unsupported)
+        }
+    }
+
+    fn init_current_cpu(&self, cpu_raw : usize) -> DriverResult<()> {
+        liointc::init_current_cpu(cpu_raw)
     }
 
     fn test(&self) {

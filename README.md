@@ -511,8 +511,8 @@ make la_symbol_at ADDR=0x9000000000200000
 
 WaterOS 的核心架构、`wateros-*` 组件和用户空间构建系统由团队维护，同时使用 Rust
 生态中的基础库完成设备访问、网络协议、数据结构和底层解析。较关键的内核依赖包括
-`virtio-drivers`、`isomorphic_drivers`（AHCI/SATA）、`pci`、`smoltcp`、`fdt`、
-`riscv`、`sbi-rt`、`spin` 与 `rlsf`。
+`virtio-drivers`、`isomorphic_drivers`（AHCI/SATA）、`pci`、`irq-loongarch`
+（LIOINTC/EIOINTC/PCH-PIC）、`smoltcp`、`fdt`、`riscv`、`sbi-rt`、`spin` 与 `rlsf`。
 
 `os/vendor/` 保存项目直接维护的文件系统依赖：`another_ext4` 作为当前 ext4 后端，并维护
 包括 ext4 fast/extent 符号链接创建与读取、WaterOS 块设备适配的容量/溢出检查，以及运行期 unlink 延迟回收在内的 WaterOS 集成补丁；
@@ -569,6 +569,7 @@ BusyBox 1.33.1，以及以 MPL-1.1 许可发布的 Microwindows/Nano-X。构建�
 | `pci` | 0.0.1 | MIT/Apache-2.0（vendor fork） |
 | `hash32` | 0.3.1 | MIT OR Apache-2.0 |
 | `heapless` | 0.8.0 | MIT OR Apache-2.0 |
+| `irq-loongarch` | 0.1.1-pre.1 | MIT OR Apache-2.0 |
 | `libc` | 0.2.186 | MIT OR Apache-2.0 |
 | `lock_api` | 0.4.14 | MIT OR Apache-2.0 |
 | `log` | 0.4.29 | MIT OR Apache-2.0 |

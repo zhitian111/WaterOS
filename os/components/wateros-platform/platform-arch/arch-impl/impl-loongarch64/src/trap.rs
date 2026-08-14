@@ -66,6 +66,8 @@ const LOONGARCH_USER_PLV : usize = 0x3;
 const TIMER_INTERRUPT_PENDING : usize = 1 << 11;
 /// `ESTAT.IS.IPI`：核间中断挂起位。
 const IPI_INTERRUPT_PENDING : usize = 1 << 12;
+/// `ESTAT.IS.HWI0..HWI7`：硬件外部中断挂起位（LoongArch 位 2..=9）。
+const EXTERNAL_INTERRUPT_PENDING : usize = 0b1111_1111 << 2;
 /// 单次定时器中断后重新武装的切片长度（StableCounter
 /// 刻度）；与调度策略相关，非用户 ABI。
 const TIMER_SLICE_TICKS : u64 = 10_000_000;
@@ -82,6 +84,9 @@ fn decode_loongarch64_trap_cause(estat : usize) -> TrapCause {
     }
     if (estat & TIMER_INTERRUPT_PENDING) != 0 {
         return TrapCause::Interrupt(Interrupt::SupervisiorTimer);
+    }
+    if (estat & EXTERNAL_INTERRUPT_PENDING) != 0 {
+        return TrapCause::Interrupt(Interrupt::SupervisiorExternel);
     }
 
     let ecode = (estat >> 16) & 0x3F;

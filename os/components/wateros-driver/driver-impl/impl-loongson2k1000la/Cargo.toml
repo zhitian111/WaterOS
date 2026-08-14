@@ -4,9 +4,12 @@
     edition = "2024"
 
 [dependencies]
-    ahci = { path = "../../driver-block/block-impl/impl-ahci", package = "wateros-driver-block-impl-ahci", default-features = true, features = [ "dma" ] }
     api-v0 = { path = "../../driver-api/api-v0", package = "wateros-driver-api-v0", default-features = true }
     log = "0.4.29"
+
+[target.'cfg(target_arch = "loongarch64")'.dependencies]
+    ahci = { path = "../../driver-block/block-impl/impl-ahci", package = "wateros-driver-block-impl-ahci", default-features = true, features = [ "dma" ] }
+    irq-loongarch = { version = "0.1.1-pre.1", features = [ "liointc" ] }
 
 [features]
     api-v0 = [  ]

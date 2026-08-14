@@ -53,4 +53,34 @@ git diff --check
 
 ## 任务简报
 
-（完成后追加，格式见目录 README。）
+- 完成日期：2026-08-15
+- commit：本任务实现提交（见 `git log --oneline -1`，分支 `feat/real-hardware-porting`）
+- 实际改动：
+  - **轮子评估结论**：引入 `irq-loongarch` 0.1.1-pre.1（MIT/Apache-2.0，no_std，
+    `Liointc` 提供 init/enable/disable/claim/complete）替代手写 LIOINTC；核对
+    `loongArch64` crate 的 ESTAT 位布局：HWI0=bit2，与 WaterOS 的 IPI（bit12）/
+    Timer（bit11）不冲突。
+  - LA trap 解码：`decode_loongarch64_trap_cause` 在 IPI/Timer 之后、异常之前增加
+    `ESTAT.IS.HWI0..HWI7`（bit2..=9）→ `Interrupt::SupervisiorExternel` 分支
+    （QEMU LA 无外部中断，休眠路径，无回归）。
+  - 2K1000 驱动新增 `liointc.rs`：
+    - `ClaimComplete` trait 抽象 claim/complete（host 单测闭环）；
+    - 真实实现包住 `irq-loongarch::Liointc`（LoongArch 目标）；
+    - `init_current_cpu`（BSP 上 `init()` 一次，路由 core0/HWI0，开 ECFG LIE）；
+    - `handle_external_interrupt`：claim → 无设备 handler 记日志 → complete；
+    - 基址用 Linux 2K1000 DTS 常量 `0x1fe0_1400`（main）/`0x1fe0_1540`（isr0），
+      标注真机确认 TODO。
+  - 接线：`MachineDriver::handle_external_interrupt` / `init_current_cpu` 接入；
+    `irq-loongarch` 依赖 target-gated（host 不编译，liointc 单测可跑）。
+  - 根 README 第三方依赖新增 `irq-loongarch`。
+- 验收结果：
+  - `cargo test -p wateros-driver-impl-loongson2k1000la`：3 passed（host：
+    claim→派发→complete 闭环、空 claim、越界拒绝）。
+  - `cargo check --no-default-features --features loongson2k1000la,pre
+    --target loongarch64-unknown-none`：通过（`loongArch64` 0.2.6 编译正常）。
+  - `make la_check`、`make rv_check`：无回归；`git diff --check`：clean。
+- 未验证/风险：
+  - 真机 LIOINTC 时序与分发未验证（定时器/外部中断闭环需 2K1000 板）。
+  - LIOINTC 基址为 Linux DTS 常量，未经真机确认；无 DTB 时不做 DTB 发现
+    （后续可接 `loongson,liointc-2.0` 节点解析）。
+  - 第一阶段无设备 handler 表；SATA 保持 polled，外部中断为后续 DMA/网络铺路。
