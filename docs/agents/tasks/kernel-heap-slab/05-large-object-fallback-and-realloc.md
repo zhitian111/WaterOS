@@ -74,6 +74,8 @@ git diff --check
 - 两架构至少各 1 轮完整 buildstorm；
 - 重点观察 `Vec`/cargo/rustc 路径下无 `realloc` 相关 panic 或内存破坏。
 
+所有 QEMU 运行均加 `-snapshot`。
+
 ## 完成后
 
 新增 `history/05-brief.md`，记录 realloc 策略、测试覆盖和运行结果。

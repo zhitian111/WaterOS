@@ -80,6 +80,7 @@ git diff --check
 1. 用当前镜像准备脚本跑至少一轮完整 buildstorm：
    - LA：QEMU 9.2.1，`-m 36G -smp 12`；
    - RV：QEMU 9.2.1，`-m 16G -smp 8`。
+   - 所有 QEMU 运行必须加 `-snapshot`，避免污染临时镜像。
 2. 必须满足功能验收：
 
    ```text

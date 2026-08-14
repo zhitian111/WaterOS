@@ -76,7 +76,7 @@ debugfs -w -R 'set_inode_field /glibc/buildstorm_testcode.sh mode 0100755' /tmp/
   -kernel kernel-la-final -m 36G -nographic -smp 12 \
   -drive file=/tmp/wateros-slab-la.img,if=none,format=raw,id=x0 \
   -device virtio-blk-pci,drive=x0 -no-reboot \
-  -device virtio-net-pci,netdev=net0 -netdev user,id=net0 -rtc base=utc \
+  -device virtio-net-pci,netdev=net0 -netdev user,id=net0 -rtc base=utc -snapshot \
   2>&1 | tee /tmp/wateros-slab-la-baseline-N.log
 ```
 
@@ -93,7 +93,7 @@ debugfs -w -R 'set_inode_field /glibc/buildstorm_testcode.sh mode 0100755' /tmp/
   -machine virt -kernel kernel-rv-final -m 16G -nographic -smp 8 -bios default \
   -drive file=/tmp/wateros-slab-rv.img,if=none,format=raw,id=x0 \
   -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 -no-reboot \
-  -device virtio-net-device,netdev=net -netdev user,id=net -rtc base=utc \
+  -device virtio-net-device,netdev=net -netdev user,id=net -rtc base=utc -snapshot \
   2>&1 | tee /tmp/wateros-slab-rv-baseline-N.log
 ```
 

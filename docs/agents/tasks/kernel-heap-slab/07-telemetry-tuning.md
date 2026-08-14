@@ -74,6 +74,8 @@ git diff --check
 - `heap_mem_stats`、`frame_mem_stats` 和 dashboard 不再出现负数或溢出；
 - 新增诊断日志默认不进入热路径；`stall-debug`/tuning feature 下可观测。
 
+所有 QEMU 运行均加 `-snapshot`。
+
 ## 完成后
 
 新增 `history/07-brief.md`，记录统计字段变化、调参结果、文档同步清单和最终

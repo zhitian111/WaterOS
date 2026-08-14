@@ -100,15 +100,18 @@ QEMU=/home/zhitian/qemu_9_2_1/qemu-9.2.1/build
 "$QEMU/qemu-system-loongarch64" -kernel kernel-la-final -m 36G -nographic -smp 12 \
   -drive file=/tmp/wateros-slab-la.img,if=none,format=raw,id=x0 \
   -device virtio-blk-pci,drive=x0 -no-reboot \
-  -device virtio-net-pci,netdev=net0 -netdev user,id=net0 -rtc base=utc
+  -device virtio-net-pci,netdev=net0 -netdev user,id=net0 -rtc base=utc -snapshot
 
 # RISC-V64
 "$QEMU/qemu-system-riscv64" -machine virt -kernel kernel-rv-final -m 16G -nographic -smp 8 \
   -bios default \
   -drive file=/tmp/wateros-slab-rv.img,if=none,format=raw,id=x0 \
   -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 -no-reboot \
-  -device virtio-net-device,netdev=net -netdev user,id=net -rtc base=utc
+  -device virtio-net-device,netdev=net -netdev user,id=net -rtc base=utc -snapshot
 ```
+
+所有 QEMU 运行都必须加 `-snapshot`，只允许内存中的写操作，避免污染
+`~/Downloads` 解压出的临时镜像；镜像准备阶段的 `debugfs` 修改发生在 QEMU 启动前。
 
 ## 任务顺序
 

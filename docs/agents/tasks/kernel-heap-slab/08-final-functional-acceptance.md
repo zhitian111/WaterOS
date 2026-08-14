@@ -19,7 +19,8 @@
 1. 每次测试从 `~/Downloads/*.img.gz` 重新解压新镜像；
 2. 覆写 `/glibc/buildstorm_testcode.sh` 为恢复脚本；
 3. 使用 QEMU 9.2.1 和线上等价参数；
-4. 每轮同时满足：
+4. 所有 QEMU 运行均加 `-snapshot`，避免污染镜像；
+5. 每轮同时满足：
 
    ```text
    TOOLCHAIN_RESULT status=OK
@@ -28,7 +29,7 @@
    WaterOS: all commands finished
    ```
 
-5. 无以下异常：
+6. 无以下异常：
 
    ```text
    panic / Panicked at
