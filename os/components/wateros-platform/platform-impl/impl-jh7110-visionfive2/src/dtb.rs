@@ -1,4 +1,4 @@
-//! 引导期 DTB 物理指针占位（任务 05 按 U-Boot/固件约定保存）。
+//! 引导期 DTB 物理指针（板级 boot 状态）。
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 

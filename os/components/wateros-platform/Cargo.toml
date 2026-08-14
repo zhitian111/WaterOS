@@ -6,6 +6,7 @@
         "./platform-arch/arch-impl/impl-loongarch64/",
         "./platform-arch/arch-impl/impl-riscv64/",
         "./platform-impl/impl-jh7110-visionfive2/",
+        "./platform-impl/impl-opensbi-common/",
         "./platform-impl/impl-qemu-loongarch64-virt/",
         "./platform-impl/impl-qemu-riscv64-opensbi/",
         "./platform-impl/impl-loongson2k1000la/",

@@ -1,22 +1,28 @@
-//! StarFive VisionFive 2 / JH7110 平台 profile 占位骨架（任务 04）。
+//! StarFive JH7110 VisionFive 2 板级平台 profile（任务 05 迁移自
+//! `feat/visionfive2-port`，按当前 main 审计接合）。
 //!
-//! 当前仅提供可编译的最小平台表面（保守回退值），保证
-//! `--features jh7110-visionfive2` 可 `cargo check`；真实板级实现（DTB 内存布局、
-//! OpenSBI/U-Boot 启动参数、DW APB UART、PLIC 等）在任务 05 落地，本 crate 各模块
-//! 将被替换内容。
+//! OpenSBI 运输层（reset/smp/timer）由 `impl-opensbi-common` 共享；入口地址、
+//! DW APB UART 与物理内存布局属板级所有。真机硬件执行尚未验证。
 
 #![no_std]
+
+#[cfg(target_arch = "riscv64")]
+use core::arch::global_asm;
+
+#[cfg(target_arch = "riscv64")]
+global_asm!(include_str!("asm/_start.S"));
 
 pub mod boot;
 pub mod console;
 pub mod dtb;
 pub mod memory;
-pub mod reset;
-pub mod smp;
+#[cfg(target_arch = "riscv64")]
+pub use opensbi_common::{reset, smp, timer};
 pub mod time;
-pub mod timer;
 
 #[cfg(feature = "self_test")]
 pub fn self_test() {
-    log::info!("[platform/impl-jh7110-visionfive2] self_test: stub skeleton only");
+    log::info!("[platform/impl-jh7110-visionfive2] self_test begin");
+    assert!(memory::physical_ram_end_exclusive() > 0);
+    log::info!("[platform/impl-jh7110-visionfive2] self_test complete");
 }

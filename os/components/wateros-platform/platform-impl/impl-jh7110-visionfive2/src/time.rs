@@ -1,13 +1,14 @@
-//! 平台 timebase 频率占位：任务 05 从 OpenSBI/DTB 探测。
+//! VisionFive 2 timebase 频率回退值。
 
-use api_v0::time::{PlatformTime, PlatformTimeError, PlatformTimeResult};
+use api_v0::time::{PlatformTime, PlatformTimeResult};
 
-pub struct JH7110Time;
+pub struct VisionFive2Time;
 
-impl PlatformTime for JH7110Time {
+impl PlatformTime for VisionFive2Time {
     fn get_time_frequency_hz() -> PlatformTimeResult<u64> {
-        Err(PlatformTimeError::Unsupported)
+        // Shipping OpenSBI reports a 4 MHz ACLINT timer; DTB overrides this.
+        Ok(4_000_000)
     }
 }
 
-pub use JH7110Time as PlatformTimeImpl;
+pub use VisionFive2Time as PlatformTimeImpl;

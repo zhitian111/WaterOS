@@ -26,9 +26,9 @@
   是目标 CPU 的 ISA 操作（arch `interrupt::clear_soft_interrupt`）。不要在 `platform-impl`
   中重新实现 `sip`、`sie`、`satp` 等 arch 原语。
 - `active_impl` 按构建 feature 选一：`impl-qemu-riscv64-opensbi`、`impl-qemu-loongarch64-virt`
-  为 QEMU profile；`impl-jh7110-visionfive2`、`impl-loongson2k1000la` 为板级占位
-  （任务 04 骨架，任务 05/09 填充真实实现）；任一构建只启用一个 arch impl 与一个
-  platform impl。
+  为 QEMU profile；`impl-jh7110-visionfive2`（VisionFive 2，任务 05 已落地真实实现）、
+  `impl-loongson2k1000la`（任务 09 落地）为板级 profile；任一构建只启用一个 arch impl
+  与一个 platform impl。
 - RISC-V QEMU profile 使用 OpenSBI 提供 HSM、IPI、timer 与 reset；LoongArch QEMU profile 的
   mailbox/IPI 运输在 platform profile，本地 IOCSR pending 清除及中断使能在 arch interrupt。
 - `init_when_boot(dtb_pa)` 保存平台持有的 DTB 物理指针；`memory::kernel_layout()` 给出

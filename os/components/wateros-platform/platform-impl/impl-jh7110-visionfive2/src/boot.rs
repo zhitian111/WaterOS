@@ -1,11 +1,27 @@
-//! 板级启动参数占位：真实实现从固件寄存器（a0/a1 或 mailbox）读取。
+//! VisionFive 2 启动参数：`a0`/`a1` 分别承载 hart id 与 DTB 物理地址。
 
 use api_v0::boot::PlatformBootArgs;
 
 #[derive(Debug, Clone, Copy)]
-/// JH7110 启动参数占位（任务 05 填充真实解析）。
-pub struct JH7110BootArgs;
+pub struct VisionFive2BootArgs {
+    hart_id : usize,
+    dtb_pa : usize,
+}
 
-impl PlatformBootArgs for JH7110BootArgs {}
+impl VisionFive2BootArgs {
+    pub const fn new(hart_id : usize, dtb_pa : usize) -> Self {
+        Self { hart_id, dtb_pa }
+    }
+}
 
-pub use JH7110BootArgs as BootArgs;
+impl PlatformBootArgs for VisionFive2BootArgs {
+    fn arg0(&self) -> Option<usize> {
+        Some(self.hart_id)
+    }
+
+    fn arg1(&self) -> Option<usize> {
+        Some(self.dtb_pa)
+    }
+}
+
+pub use VisionFive2BootArgs as BootArgs;

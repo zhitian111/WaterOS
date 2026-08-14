@@ -1465,10 +1465,10 @@ dependencies = [
 name = "wateros-platform-impl-jh7110-visionfive2"
 version = "0.1.0"
 dependencies = [
+ "fdt",
  "log",
- "wateros-base",
- "wateros-base-config",
  "wateros-platform-api-v0",
+ "wateros-platform-impl-opensbi-common",
 ]
 
 [[package]]
@@ -1476,6 +1476,16 @@ name = "wateros-platform-impl-loongson2k1000la"
 version = "0.1.0"
 dependencies = [
  "log",
+ "wateros-base",
+ "wateros-base-config",
+ "wateros-platform-api-v0",
+]
+
+[[package]]
+name = "wateros-platform-impl-opensbi-common"
+version = "0.1.0"
+dependencies = [
+ "sbi-rt",
  "wateros-base",
  "wateros-base-config",
  "wateros-platform-api-v0",
