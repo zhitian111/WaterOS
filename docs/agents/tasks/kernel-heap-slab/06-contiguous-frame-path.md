@@ -70,6 +70,8 @@ git diff --check
 - 页数记录与归还数量一致；
 - 两架构完整 buildstorm 仍通过。
 
+所有 QEMU 运行均加 `-snapshot`。
+
 ## 完成后
 
 新增 `history/06-brief.md`，记录连续帧接口、失败回退策略、大对象覆盖率和性能变化。

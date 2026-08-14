@@ -86,6 +86,8 @@ git diff --check
 - 两架构至少各 1 轮完整 buildstorm；
 - 多核压力下无 panic、无 `[heap]` 错误、无 `all commands finished` 缺失。
 
+所有 QEMU 运行均加 `-snapshot`。
+
 ## 完成后
 
 新增 `history/04-brief.md`，记录 remote-free 实现选择、压力测试结果和两架构
