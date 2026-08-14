@@ -27,10 +27,11 @@ find 看到 \3232\032、:\t\220 等乱码目录项
 每个任务对应一个可回归、可验收的提交。完成后在
 `docs/agents/tasks/ext4-dir-tail-corruption/history/` 写对应简报。
 
-1. [01 修复 DirBlock 目录块校验尾被覆盖](./01-fix-dirblock-tail-reserve.md)
-2. [02 新增 host 侧目录块边界回归](./02-add-host-dir-tail-regression.md)
-3. [03 QEMU apt/dpkg 端到端回归](./03-qemu-apt-dpkg-regression.md)
-4. [04 文档同步与任务简报归档](./04-sync-docs-and-briefs.md)
+1. [01 修复 DirBlock 目录块校验尾被覆盖](./01-fix-dirblock-tail-reserve.md) — 已完成
+2. [02 新增 host 侧目录块边界回归](./02-add-host-dir-tail-regression.md) — 已完成
+3. [03 QEMU 端到端回归](./03-qemu-apt-dpkg-regression.md) — fs 模式已完成，
+   apt 模式被 main 分支 syscall 缺口阻断
+4. [04 文档同步与任务简报归档](./04-sync-docs-and-briefs.md) — 进行中
 
 ## 测试镜像
 

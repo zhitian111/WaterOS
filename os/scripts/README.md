@@ -158,6 +158,7 @@ make rv_symbol_at ADDR=0x80200000
 | `ltp_sum_passed.py` | 汇总 LTP Summary 中的 passed 数量 | 只读 |
 | `guest_buildstorm_parallel_probe.sh` | guest 内构造无网络 Cargo 并发负载 | 修改 guest `/tmp` |
 | `guest_read_family_regression.sh` | guest 内运行 read/pipe/socket 等 LTP 用例 | guest 内执行测试 |
+| `regress_ext4_dir_tail.sh`（scripts 根目录） | QEMU 内验证 ext4 目录块 tail 边界；可选 apt/dpkg 模式 | 创建 overlay、注入 guest 脚本 |
 
 这类脚本通常绑定具体性能任务和镜像布局。运行前应阅读文件头与参数解析部分，并确保
 Git 工作区可恢复。会写镜像的脚本只能针对副本或可丢弃 overlay 使用。
