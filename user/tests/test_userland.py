@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import tempfile
 import unittest
@@ -57,7 +58,8 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn("openjdk21", la)
         self.assertNotIn("minecraft-server", rv)
         self.assertNotIn("minecraft-server", la)
-        self.assertNotIn("pacman", rv)
+        self.assertIn("pacman", rv)
+        self.assertNotIn("pacman", la)
         self.assertEqual(userland.parse_package_names("busybox, operator-tools", "rv"),
                          ("busybox", "operator-tools"))
 
@@ -279,6 +281,41 @@ class CompositionTests(unittest.TestCase):
                                    owners=owners)
             self.assertEqual((staging / "bin/tool").read_text(encoding="utf-8"), "two")
             self.assertEqual(owners["/bin/tool"], "second")
+
+    def test_identical_file_from_two_packages_is_shared(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            first = root / "first"
+            second = root / "second"
+            staging = root / "staging"
+            for source in (first, second):
+                (source / "etc").mkdir(parents=True)
+                (source / "etc/certificates").write_text("same", encoding="utf-8")
+            owners: dict[str, str] = {}
+            userland.merge_package(first, staging, package=self.package("first"),
+                                   owners=owners)
+            userland.merge_package(second, staging, package=self.package("second"),
+                                   owners=owners)
+            self.assertEqual(owners["/etc/certificates"], "first")
+
+    def test_preserve_existing_keeps_compatible_shared_loader(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            first = root / "first"
+            second = root / "second"
+            staging = root / "staging"
+            for source, content in ((first, "compatible"), (second, "other")):
+                (source / "lib").mkdir(parents=True)
+                (source / "lib/ld-musl-riscv64.so.1").write_text(content, encoding="utf-8")
+            owners: dict[str, str] = {}
+            userland.merge_package(first, staging, package=self.package("first"),
+                                   owners=owners)
+            package = self.package("second")
+            package = dataclasses.replace(package,
+                                          preserve_existing=("/lib/ld-musl-riscv64.so.1",))
+            userland.merge_package(second, staging, package=package, owners=owners)
+            self.assertEqual((staging / "lib/ld-musl-riscv64.so.1").read_text(encoding="utf-8"),
+                             "compatible")
 
     def test_cache_key_changes_with_input(self) -> None:
         architecture = userland.load_architecture("rv")

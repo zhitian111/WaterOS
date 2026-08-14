@@ -54,6 +54,7 @@ class Package:
     install_prefix: str
     allow_overwrite: tuple[str, ...]
     inputs: tuple[Path, ...]
+    preserve_existing: tuple[str, ...] = ()
 
 
 OVERLAY_REPLACE_PREFIXES = (
@@ -148,7 +149,8 @@ def load_package(name: str) -> Package:
                       build_script=build_script,
                       install_prefix=str(raw.get("install_prefix", "/")),
                       allow_overwrite=tuple(raw.get("allow_overwrite", ())),
-                      inputs=inputs)
+                      inputs=inputs,
+                      preserve_existing=tuple(raw.get("preserve_existing", ())))
     if not package.build_script.is_file():
         raise UserlandError(f"package {name} build script is missing: {package.build_script}")
     if package.source is not None and not package.source.is_dir():
@@ -466,6 +468,7 @@ def _lexists(path: Path) -> bool:
 def merge_package(source: Path, staging: Path, *, package: Package,
                   owners: dict[str, str]) -> None:
     allowed = set(package.allow_overwrite)
+    preserved = set(package.preserve_existing)
     for entry in iter_entries(source):
         relative = entry.relative_to(source)
         logical = "/" + relative.as_posix()
@@ -479,7 +482,16 @@ def merge_package(source: Path, staging: Path, *, package: Package,
             owners.setdefault(logical, package.name)
             continue
         if _lexists(target):
+            if logical in preserved:
+                continue
             if logical not in allowed:
+                # Independent packages may ship an identical shared asset
+                # (for example the CA bundle).  It has a single owner in the
+                # composed rootfs, so keep that copy without requiring an
+                # arbitrary overwrite declaration.
+                if (entry.is_file() and target.is_file()
+                        and entry.read_bytes() == target.read_bytes()):
+                    continue
                 raise UserlandError(f"{package.name}: path {logical} is already owned by {previous}")
             _remove(target)
         target.parent.mkdir(parents=True, exist_ok=True)

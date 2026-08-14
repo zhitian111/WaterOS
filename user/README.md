@@ -554,7 +554,8 @@ make -C os run ARCH=rv PROFILE=pre MODE=run \
 
 ## Pacman（RISC-V）
 
-`pacman` 是当前自有 musl 用户镜像中的可选包，不会随 `PACKAGE=all` 自动加入。构建时会从
+`pacman` 是当前自有 musl 用户镜像的 RISC-V 默认包，会随 `PACKAGE=all` 自动加入；LoongArch
+镜像不包含它。构建时会从
 公开上游下载并校验 pacman、libarchive、zlib、xz、zstd 和 OpenSSL 的锁定源码版本；下载归档
 缓存于 `user/build/downloads/pacman/`，不属于 Git 提交内容。
 

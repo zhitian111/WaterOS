@@ -3,9 +3,12 @@ name = "pacman"
 version = "7.0.0-wateros-1"
 source = ""
 architectures = ["rv"]
-default = false
+default = true
 dependencies = ["base-layout", "busybox"]
 build = "build.py"
 install_prefix = "/usr"
+# A standalone pacman image needs this loader.  In the full image OpenJDK has
+# already installed its compatible loader, which must remain in place.
 allow_overwrite = []
+preserve_existing = ["/lib/ld-musl-riscv64.so.1"]
 inputs = ["packages/pacman/assets/pacman.conf", "packages/pacman/assets/mirrorlist", "packages/pacman/assets/archriscv-pacman", "packages/pacman/assets/archriscv-run"]
