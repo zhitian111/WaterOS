@@ -12,6 +12,10 @@ pub(crate) fn linux_vd_disk_path(idx: usize) -> String {
     format!("/dev/vd{}", letter)
 }
 
+pub(crate) fn linux_vd_partition_path(disk_number : usize, partition_number : u32) -> String {
+    format!("{}{}", linux_vd_disk_path(disk_number), partition_number)
+}
+
 pub(crate) fn push_block_alias(inner: &mut DevFsImpl, path: String, dev: SharedBlockDevice) {
     if inner.block_bindings.iter().any(|(p, _)| p == &path) { return; }
     inner.nodes.push(DevNode { path: path.clone(), node_type: DevNodeType::Block });

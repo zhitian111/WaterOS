@@ -6,7 +6,8 @@ extern crate alloc;
 
 use alloc::{format, string::String, string::ToString, vec::Vec};
 use api_v0::{DevFsManager, DevNode};
-use driver_block_api_v0::{block_device_at, block_device_count, SharedBlockDevice};
+use driver_block_api_v0::{block_device_at, block_device_count, block_devices_snapshot,
+                          BlockDeviceRole, SharedBlockDevice};
 use driver_character_api_v0::{character_device_at, character_device_count,
                                character_device_kind_at, CharacterDeviceKind,
                                SharedCharacterDevice};

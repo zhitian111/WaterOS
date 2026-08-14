@@ -320,6 +320,36 @@ mod tests {
         let _ = index;
     }
 
+    fn mbr_disk() -> SharedBlockDevice {
+        let mut bytes = vec![0u8; 4096 * BLOCK_SIZE];
+        bytes[510] = 0x55;
+        bytes[511] = 0xaa;
+        // One Linux-style primary partition: LBA 1..16.
+        let entry = 446;
+        bytes[entry + 4] = 0x83;
+        bytes[entry + 8..entry + 12].copy_from_slice(&1u32.to_le_bytes());
+        bytes[entry + 12..entry + 16].copy_from_slice(&16u32.to_le_bytes());
+        Arc::new(Mutex::new(Box::new(MbrDisk { bytes })))
+    }
+
+    #[test]
+    fn registration_exposes_mbr_partition_and_removes_it_with_parent() {
+        let disk_index = register_readonly_block_device(mbr_disk()).unwrap();
+        let snapshot = block::block_devices_snapshot();
+        let partition_index = snapshot.iter()
+            .find_map(|(index, _, role)| match role {
+                block::BlockDeviceRole::Partition { parent_device_index, partition_number }
+                    if *parent_device_index == disk_index && *partition_number == 1 => Some(*index),
+                _ => None,
+            })
+            .expect("registered MBR partition");
+        assert!(snapshot.iter().any(|(index, _, role)| {
+            *index == disk_index && matches!(role, block::BlockDeviceRole::Disk { .. })
+        }));
+        assert!(block::unregister_block_device(disk_index));
+        assert!(block::block_device_at(partition_index).is_none());
+    }
+
     #[test]
     fn valid_topology_still_requires_hardware_evidence() {
         let plan = bring_up_plan(&host());

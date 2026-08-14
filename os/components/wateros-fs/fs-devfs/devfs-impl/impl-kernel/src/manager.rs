@@ -3,7 +3,7 @@ use super::*;
 #[path = "aliases.rs"]
 mod aliases;
 pub(crate) use aliases::linux_vd_disk_path;
-use aliases::{push_block_alias, push_char_alias};
+use aliases::{linux_vd_partition_path, push_block_alias, push_char_alias};
 
 #[derive(Default)]
 // 本结构代码由AI完成
@@ -35,9 +35,7 @@ static DEVFS: Mutex<DevFsImpl> = Mutex::new(DevFsImpl {
 impl DevFsManager for KernelDevFsManager {
 // 本方法代码由AI完成
     fn refresh(&mut self) {
-        let block_snapshot: alloc::vec::Vec<_> = (0..block_device_count())
-            .filter_map(|idx| block_device_at(idx).map(|dev| (idx, dev)))
-            .collect();
+        let block_snapshot = block_devices_snapshot();
         let char_snapshot: alloc::vec::Vec<_> = (0..character_device_count())
             .filter_map(|idx| {
                 character_device_at(idx).map(|dev| {
@@ -58,13 +56,27 @@ impl DevFsManager for KernelDevFsManager {
         inner.block_bindings.clear();
         inner.character_bindings.clear();
 
-        for (idx, dev) in block_snapshot {
-            let vd = linux_vd_disk_path(idx);
-            push_block_alias(&mut inner, format!("/dev/vblk{}", idx), dev.clone());
-            push_block_alias(&mut inner, vd.clone(), dev.clone());
-            if idx == 0 {
-                push_block_alias(&mut inner, alloc::format!("{vd}1"), dev.clone());
-                push_block_alias(&mut inner, alloc::format!("{vd}2"), dev.clone());
+        for (idx, dev, role) in &block_snapshot {
+            match role {
+                BlockDeviceRole::Disk { disk_number } => {
+                    let vd = linux_vd_disk_path(*disk_number);
+                    push_block_alias(&mut inner, format!("/dev/vblk{}", idx), dev.clone());
+                    push_block_alias(&mut inner, vd.clone(), dev.clone());
+                }
+                BlockDeviceRole::Partition { parent_device_index, partition_number } => {
+                    let disk_number = block_snapshot.iter().find_map(|(index, _, role)| {
+                        if *index == *parent_device_index {
+                            if let BlockDeviceRole::Disk { disk_number } = role {
+                                return Some(*disk_number);
+                            }
+                        }
+                        None
+                    });
+                    if let Some(disk_number) = disk_number {
+                        let path = linux_vd_partition_path(disk_number, *partition_number);
+                        push_block_alias(&mut inner, path, dev.clone());
+                    }
+                }
             }
         }
 
