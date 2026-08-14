@@ -24,6 +24,7 @@
     debug = { package = "wateros-debug", path = "./components/wateros-debug/", default-features = false }
     gui = { package = "wateros-gui", path = "./components/wateros-gui/", default-features = true, optional = true }
     fdt = { version = "0.1.5", optional = true }
+    spin = "0.10.0"
 
 # 使用本地 vendor 的 ext4plus（修复了块分配器在 block group
 # 空闲块够但无连续段时 find_first / find_first_n 返回 None 后

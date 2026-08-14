@@ -580,6 +580,7 @@ name = "wateros"
 version = "0.1.0"
 dependencies = [
  "fdt",
+ "spin",
  "wateros-base",
  "wateros-base-config",
  "wateros-cred",

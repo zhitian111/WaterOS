@@ -23,6 +23,7 @@ mod boot_timebase;
 mod dashboard;
 #[cfg(feature = "gdb-fault-injection")]
 mod debug_fault;
+mod irq_bottom_half;
 #[cfg(feature = "stall-debug")]
 mod stall_debug;
 mod trap_handler;
@@ -187,6 +188,7 @@ fn init_after_boot(dtb_pa: usize, memory_end: usize, cpu_id: task::CpuId) {
     platform::init_after_boot();
     crate::boot_timebase::probe_and_init_timebase(dtb_pa);
     task::init();
+    crate::irq_bottom_half::init();
     task::set_timekeeper_cpu(cpu_id);
     #[cfg(feature = "dashboard-debug")]
     crate::dashboard::init();

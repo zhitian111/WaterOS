@@ -12,6 +12,7 @@
 extern crate alloc;
 
 pub mod action;
+pub mod bottom_half;
 pub mod chip;
 pub mod domain;
 pub mod types;
@@ -24,6 +25,7 @@ pub fn self_test() {
     use crate::action::IrqReturn;
     use crate::chip::IrqChip;
     use crate::types::HwIrq;
+    use core::sync::atomic::{AtomicUsize, Ordering};
 
     struct DummyChip;
     impl IrqChip for DummyChip {
@@ -33,6 +35,9 @@ pub fn self_test() {
     }
 
     fn dummy_handler(_virq : Virq, _dev_id : usize) -> IrqReturn { IrqReturn::Handled }
+
+    static BH_RAN : AtomicUsize = AtomicUsize::new(0);
+    fn bh_handler(_virq : Virq, _dev_id : usize) { BH_RAN.fetch_add(1, Ordering::SeqCst); }
 
     static CHIP : DummyChip = DummyChip;
     let virq =
@@ -47,6 +52,26 @@ pub fn self_test() {
             "free must succeed once");
     assert!(action::action(handle).is_none(),
             "freed action must be gone");
+
+    let bh_virq =
+        domain::register_line(HwIrq(9), &CHIP, IrqTrigger::EdgeRising).expect("register bh line \
+                                                                               in self_test");
+    let bh_handle =
+        action::request_irq_with_bottom_half(bh_virq, dummy_handler, bh_handler, 0x55)
+            .expect("request bh irq in self_test");
+    assert_eq!(action::dispatch(bh_virq),
+               IrqReturn::Handled,
+               "top-half must handle");
+    assert!(bottom_half::has_pending(),
+            "dispatch must schedule bottom-half");
+    bottom_half::run_pending();
+    assert_eq!(BH_RAN.load(Ordering::SeqCst),
+               1,
+               "bottom-half must run once");
+    assert!(!bottom_half::has_pending(),
+            "queue must drain");
+    assert!(action::free_irq(bh_handle));
+
     log::info!("[irq] self_test ok: virq={:?}", virq);
 }
 
@@ -55,6 +80,7 @@ mod tests {
     use super::*;
     use crate::action::IrqReturn;
     use crate::chip::IrqChip;
+    use core::sync::atomic::{AtomicUsize, Ordering};
 
     struct DummyChip;
     impl IrqChip for DummyChip {
@@ -98,5 +124,32 @@ mod tests {
         assert_eq!(action::request_irq(Virq(4242), dummy_handler, 0),
                    Err(IrqError::Invalid),
                    "request on unknown virq must be rejected");
+    }
+
+    #[test]
+    fn bottom_half_roundtrip() {
+        domain::reset_for_test();
+        bottom_half::reset_for_test();
+        static BH_RAN : AtomicUsize = AtomicUsize::new(0);
+        fn bh_handler(_virq : Virq, _dev_id : usize) { BH_RAN.fetch_add(1, Ordering::SeqCst); }
+        static CHIP : DummyChip = DummyChip;
+
+        let virq =
+            domain::register_line(HwIrq(9), &CHIP, IrqTrigger::EdgeRising).expect("register line");
+        let handle =
+            action::request_irq_with_bottom_half(virq, dummy_handler, bh_handler, 0x55)
+                .expect("request irq with bottom-half");
+        assert_eq!(action::dispatch(virq),
+                   IrqReturn::Handled,
+                   "top-half must handle");
+        assert!(bottom_half::has_pending(),
+                "bottom-half must be scheduled");
+        bottom_half::run_pending();
+        assert_eq!(BH_RAN.load(Ordering::SeqCst),
+                   1,
+                   "bottom-half must run exactly once");
+        assert!(!bottom_half::has_pending(),
+                "queue must drain");
+        assert!(action::free_irq(handle));
     }
 }

@@ -24,6 +24,12 @@ pub enum IrqReturn {
 /// 调用时回传，保证 `fn` 指针无需闭包捕获即可定位设备状态。
 pub type IrqHandler = fn(Virq, usize) -> IrqReturn;
 
+/// bottom-half 处理器签名：在可调度上下文执行（回收 virtqueue / 唤醒等待任务）。
+///
+/// 由 bottom-half 内核任务调用，禁止在其中执行阻塞睡眠；需要睡眠的等待方由
+/// 处理器自行唤醒（如 waitqueue）。
+pub type BottomHalfFn = fn(Virq, usize);
+
 /// 一条已注册的 IRQ action。
 #[derive(Debug, Clone, Copy)]
 pub struct IrqAction {
@@ -31,6 +37,9 @@ pub struct IrqAction {
     pub virq : Virq,
     /// top-half 处理器。
     pub handler : IrqHandler,
+    /// 可选的 bottom-half 处理器；top-half 返回 [`IrqReturn::Handled`] 时由分发
+    /// 路径自动调度（见 [`dispatch`]）。
+    pub bottom_half : Option<BottomHalfFn>,
     /// 设备上下文 token。
     pub dev_id : usize,
 }
@@ -44,6 +53,27 @@ static ACTIONS : Mutex<Vec<Option<IrqAction>>> = Mutex::new(Vec::new());
 /// 为已注册的中断线注册一个处理器；同一条 virq 允许多个 action，当前分发只调用
 /// 首个匹配（见 [`dispatch`]）。
 pub fn request_irq(virq : Virq, handler : IrqHandler, dev_id : usize) -> IrqResult<IrqHandle> {
+    request_irq_impl(virq, IrqAction { virq,
+                                       handler,
+                                       bottom_half : None,
+                                       dev_id })
+}
+
+/// 注册 top-half + bottom-half 处理器；top-half 返回 [`IrqReturn::Handled`] 时
+/// 自动把 bottom-half 调度到可调度上下文（见 [`dispatch`]）。
+pub fn request_irq_with_bottom_half(virq : Virq,
+                                    handler : IrqHandler,
+                                    bottom_half : BottomHalfFn,
+                                    dev_id : usize)
+                                    -> IrqResult<IrqHandle> {
+    request_irq_impl(virq, IrqAction { virq,
+                                       handler,
+                                       bottom_half:
+                                           Some(bottom_half),
+                                       dev_id })
+}
+
+fn request_irq_impl(virq : Virq, action : IrqAction) -> IrqResult<IrqHandle> {
     if line(virq).is_none() {
         return Err(IrqError::Invalid);
     }
@@ -52,15 +82,11 @@ pub fn request_irq(virq : Virq, handler : IrqHandler, dev_id : usize) -> IrqResu
                               .enumerate()
     {
         if slot.is_none() {
-            *slot = Some(IrqAction { virq,
-                                     handler,
-                                     dev_id });
+            *slot = Some(action);
             return Ok(IrqHandle(idx));
         }
     }
-    actions.push(Some(IrqAction { virq,
-                                  handler,
-                                  dev_id }));
+    actions.push(Some(action));
     Ok(IrqHandle(actions.len() - 1))
 }
 
@@ -99,8 +125,33 @@ pub fn dispatch(virq : Virq) -> IrqReturn {
                .copied()
     };
     match target {
-        Some(action) => (action.handler)(action.virq, action.dev_id),
+        Some(action) => {
+            let ret = (action.handler)(action.virq, action.dev_id);
+            if ret == IrqReturn::Handled &&
+               action.bottom_half
+                     .is_some()
+            {
+                crate::bottom_half::schedule(action.virq, action.dev_id);
+            }
+            ret
+        }
         None => IrqReturn::Unhandled,
+    }
+}
+
+/// 运行 virq 上首个匹配 action 的 bottom-half（由 bottom-half 内核任务调用）。
+pub fn run_bottom_half(virq : Virq, dev_id : usize) {
+    let target = {
+        let actions = ACTIONS.lock();
+        actions.iter()
+               .flatten()
+               .find(|action| action.virq == virq && action.dev_id == dev_id)
+               .copied()
+    };
+    if let Some(action) = target {
+        if let Some(bottom_half) = action.bottom_half {
+            bottom_half(action.virq, action.dev_id);
+        }
     }
 }
 
