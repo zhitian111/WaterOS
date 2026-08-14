@@ -12,6 +12,7 @@
 #include <sys/syscall.h>
 #include <sys/mman.h>
 #include <sys/msg.h>
+#include <sys/sem.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -97,6 +98,13 @@
 #ifndef MADV_POPULATE_WRITE
 #define MADV_POPULATE_WRITE 23
 #endif
+
+/* glibc/musl 都可能要求调用方自行声明 semctl 的 union。 */
+union wos_semun {
+    int val;
+    struct semid_ds *buf;
+    unsigned short *array;
+};
 
 #define IN_ACCESS       0x00000001U
 #define IN_MODIFY       0x00000002U
@@ -977,6 +985,91 @@ int main(void) {
     require(msgctl(msg_priv_id, IPC_RMID, NULL) == 0, "msgctl remove private queue");
     require(msgctl(msg_stat_id, IPC_RMID, NULL) == 0, "msgctl remove stat queue");
 
+    /* ── SysV 信号量：原子操作、阻塞、超时、UNDO 与删除唤醒 ───────── */
+    int semid = semget(IPC_PRIVATE, 2, 0600);
+    if (semid < 0)
+        fail("semget private");
+    unsigned short sem_values[2] = {2, 0};
+    union wos_semun sem_arg = {.array = sem_values};
+    require(semctl(semid, 0, SETALL, sem_arg) == 0, "semctl SETALL");
+    sem_values[0] = sem_values[1] = 0;
+    require(semctl(semid, 0, GETALL, sem_arg) == 0 &&
+            sem_values[0] == 2 && sem_values[1] == 0,
+            "semctl GETALL");
+
+    struct sembuf sem_atomic[2] = {
+        {.sem_num = 0, .sem_op = -1, .sem_flg = 0},
+        {.sem_num = 1, .sem_op = 3, .sem_flg = 0},
+    };
+    require(semop(semid, sem_atomic, 2) == 0 &&
+            semctl(semid, 0, GETVAL) == 1 && semctl(semid, 1, GETVAL) == 3,
+            "semop atomic multi-operation commit");
+
+    struct sembuf sem_nowait[2] = {
+        {.sem_num = 0, .sem_op = -2, .sem_flg = IPC_NOWAIT},
+        {.sem_num = 1, .sem_op = 1, .sem_flg = 0},
+    };
+    errno = 0;
+    require(semop(semid, sem_nowait, 2) == -1 && errno == EAGAIN &&
+            semctl(semid, 0, GETVAL) == 1 && semctl(semid, 1, GETVAL) == 3,
+            "semop failed transaction leaves every semval unchanged");
+
+    sem_arg.val = 0;
+    require(semctl(semid, 0, SETVAL, sem_arg) == 0, "semctl SETVAL zero");
+    pid_t sem_waiter = fork();
+    if (sem_waiter < 0)
+        fail("fork sem waiter");
+    if (sem_waiter == 0) {
+        struct sembuf operation = {.sem_num = 0, .sem_op = -1, .sem_flg = 0};
+        _exit(semop(semid, &operation, 1) == 0 ? 0 : 1);
+    }
+    nanosleep(&msg_grace, NULL);
+    require(semctl(semid, 0, GETNCNT) >= 1, "semctl GETNCNT sees blocked waiter");
+    sem_arg.val = 1;
+    require(semctl(semid, 0, SETVAL, sem_arg) == 0, "SETVAL releases waiter");
+    require(waitpid(sem_waiter, &status, 0) == sem_waiter &&
+            WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "blocked semop resumes after value becomes available");
+
+    struct sembuf sem_timeout_op = {.sem_num = 0, .sem_op = -1, .sem_flg = 0};
+    struct timespec sem_timeout = {.tv_sec = 0, .tv_nsec = 20000000L};
+    errno = 0;
+    require(semtimedop(semid, &sem_timeout_op, 1, &sem_timeout) == -1 &&
+            errno == EAGAIN,
+            "semtimedop relative timeout");
+
+    sem_arg.val = 1;
+    require(semctl(semid, 0, SETVAL, sem_arg) == 0, "SETVAL before SEM_UNDO");
+    pid_t sem_undo_child = fork();
+    if (sem_undo_child < 0)
+        fail("fork sem undo child");
+    if (sem_undo_child == 0) {
+        struct sembuf operation = {.sem_num = 0, .sem_op = -1, .sem_flg = SEM_UNDO};
+        _exit(semop(semid, &operation, 1) == 0 ? 0 : 1);
+    }
+    require(waitpid(sem_undo_child, &status, 0) == sem_undo_child &&
+            WIFEXITED(status) && WEXITSTATUS(status) == 0 &&
+            semctl(semid, 0, GETVAL) == 1,
+            "SEM_UNDO restores adjustment when task exits");
+
+    int sem_eidrm = semget(IPC_PRIVATE, 1, 0600);
+    if (sem_eidrm < 0)
+        fail("semget eidrm set");
+    pid_t sem_removed_waiter = fork();
+    if (sem_removed_waiter < 0)
+        fail("fork removed sem waiter");
+    if (sem_removed_waiter == 0) {
+        struct sembuf operation = {.sem_num = 0, .sem_op = -1, .sem_flg = 0};
+        int result = semop(sem_eidrm, &operation, 1);
+        _exit(result == -1 && errno == EIDRM ? 0 : 1);
+    }
+    nanosleep(&msg_grace, NULL);
+    require(semctl(sem_eidrm, 0, IPC_RMID) == 0, "semctl IPC_RMID");
+    require(waitpid(sem_removed_waiter, &status, 0) == sem_removed_waiter &&
+            WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "IPC_RMID wakes blocked semop with EIDRM");
+    require(semctl(semid, 0, IPC_RMID) == 0, "remove primary semaphore set");
+
     int pidfd_pipe[2];
     require(pipe(pidfd_pipe) == 0, "pidfd pipe");
     pid_t pidfd_child = fork();
@@ -1082,6 +1175,7 @@ int main(void) {
     puts("[PASS] futex wake-op: conditional miss and unsupported opcode");
     puts("[PASS] pidfd: clone3, open, getfd, signal, poll and waitid(P_PIDFD)");
     puts("[PASS] SysV message queues: get/snd/rcv/ctl selection, truncation and EIDRM");
+    puts("[PASS] SysV semaphores: atomic ops, wait, timeout, SEM_UNDO and EIDRM");
     puts("[PASS] memory residency: mincore, MADV_POPULATE, mlock and MCL_CURRENT/FUTURE");
     return 0;
 }

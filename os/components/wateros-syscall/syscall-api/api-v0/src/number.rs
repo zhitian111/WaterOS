@@ -26,6 +26,9 @@ pub const PREAD64 : usize = 67;
 pub const PWRITE64 : usize = 68;
 pub const PREADV : usize = 69;
 pub const PWRITEV : usize = 70;
+/// 带逐次 I/O 标志的向量定位读写。
+pub const PREADV2 : usize = 286;
+pub const PWRITEV2 : usize = 287;
 pub const SENDFILE : usize = 71;
 pub const FADVISE64 : usize = 223;
 pub const READAHEAD : usize = 213;

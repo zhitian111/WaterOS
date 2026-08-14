@@ -15,9 +15,11 @@ use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
 const CLOCK_REALTIME : usize = 0;
 const CLOCK_MONOTONIC : usize = 1;
 const CLOCK_PROCESS_CPUTIME_ID : usize = 2;
+const CLOCK_THREAD_CPUTIME_ID : usize = 3;
 const CLOCK_MONOTONIC_RAW : usize = 4;
 const CLOCK_REALTIME_COARSE : usize = 5;
 const CLOCK_MONOTONIC_COARSE : usize = 6;
+const CLOCK_BOOTTIME : usize = 7;
 
 const TIMER_ABSTIME : usize = 1;
 
@@ -138,9 +140,11 @@ fn is_supported_getres_clock(clock_id : usize) -> bool {
              CLOCK_REALTIME |
              CLOCK_MONOTONIC |
              CLOCK_PROCESS_CPUTIME_ID |
+             CLOCK_THREAD_CPUTIME_ID |
              CLOCK_MONOTONIC_RAW |
              CLOCK_REALTIME_COARSE |
-             CLOCK_MONOTONIC_COARSE)
+             CLOCK_MONOTONIC_COARSE |
+             CLOCK_BOOTTIME)
 }
 
 fn is_sleepable_clock(clock_id : usize) -> bool {
@@ -149,14 +153,18 @@ fn is_sleepable_clock(clock_id : usize) -> bool {
              CLOCK_MONOTONIC |
              CLOCK_MONOTONIC_RAW |
              CLOCK_REALTIME_COARSE |
-             CLOCK_MONOTONIC_COARSE)
+             CLOCK_MONOTONIC_COARSE |
+             CLOCK_BOOTTIME)
 }
 
 fn clock_id_to_ns(clock_id : usize) -> Result<u128, ErrNo> {
     match clock_id {
         CLOCK_REALTIME | CLOCK_REALTIME_COARSE => realtime_ns().map_err(|_| ErrNo::EIO),
-        CLOCK_MONOTONIC | CLOCK_MONOTONIC_RAW | CLOCK_MONOTONIC_COARSE => monotonic_now_ns(),
-        CLOCK_PROCESS_CPUTIME_ID => {
+        CLOCK_MONOTONIC |
+        CLOCK_MONOTONIC_RAW |
+        CLOCK_MONOTONIC_COARSE |
+        CLOCK_BOOTTIME => monotonic_now_ns(),
+        CLOCK_PROCESS_CPUTIME_ID | CLOCK_THREAD_CPUTIME_ID => {
             let snapshot = task::current_task_snapshot().ok_or(ErrNo::ESRCH)?;
             Ok((snapshot.stats
                         .tick_count as u128) *
@@ -335,19 +343,34 @@ pub(crate) fn sys_clock_adjtime(args : SyscallArgs) -> UserRet {
 
 pub(crate) fn sys_gettimeofday(args : SyscallArgs) -> UserRet {
     let timeval_ptr = args.arg(0);
-    if timeval_ptr == 0 {
-        return UserRet::from_success(0);
+    let timezone_ptr = args.arg(1);
+    if timeval_ptr != 0 {
+        let ns = match clock_id_to_ns(CLOCK_REALTIME) {
+            Ok(ns) => ns,
+            Err(e) => return UserRet::from_error(e),
+        };
+        let timeval = UserTimeVal { sec : (ns / 1_000_000_000) as isize,
+                                    usec : ((ns % 1_000_000_000) / 1_000) as isize };
+        if let Err(error) = copy_to_user_struct(timeval_ptr, &timeval) {
+            return UserRet::from_error(error);
+        }
     }
-    let ns = match clock_id_to_ns(CLOCK_REALTIME) {
-        Ok(ns) => ns,
-        Err(e) => return UserRet::from_error(e),
-    };
-    let timeval = UserTimeVal { sec : (ns / 1_000_000_000) as isize,
-                                usec : ((ns % 1_000_000_000) / 1_000) as isize };
-    match copy_to_user_struct(timeval_ptr, &timeval) {
-        Ok(()) => UserRet::from_success(0),
-        Err(e) => UserRet::from_error(e),
+    if timezone_ptr != 0 {
+        // `struct timezone` 已废弃，但 Linux 的原始 syscall 仍会校验并
+        // 写入非空指针。忽略该参数会把坏地址错误地报告成成功。
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct UserTimezone {
+            minutes_west : i32,
+            dst_time : i32,
+        }
+        let timezone = UserTimezone { minutes_west : 0,
+                                      dst_time : 0 };
+        if let Err(error) = copy_to_user_struct(timezone_ptr, &timezone) {
+            return UserRet::from_error(error);
+        }
     }
+    UserRet::from_success(0)
 }
 
 pub(crate) fn sys_clock_gettime(args : SyscallArgs) -> UserRet {
@@ -417,6 +440,9 @@ pub(crate) fn sys_clock_nanosleep(args : SyscallArgs) -> UserRet {
     let flags = args.arg(1);
     let req_ptr = args.arg(2);
     let rem_ptr = args.arg(3);
+    if matches!(clock_id, CLOCK_PROCESS_CPUTIME_ID | CLOCK_THREAD_CPUTIME_ID) {
+        return UserRet::from_error(ErrNo::EOPNOTSUPP);
+    }
     if !is_sleepable_clock(clock_id) {
         return UserRet::from_error(ErrNo::EINVAL);
     }

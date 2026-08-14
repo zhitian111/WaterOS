@@ -135,13 +135,6 @@ pub(crate) fn sys_getcwd(args: SyscallArgs) -> UserRet {
     let buf_ptr = args.arg(0);
     let size = args.arg(1);
 
-    if buf_ptr == 0 {
-        return UserRet::from_error(ErrNo::EFAULT);
-    }
-    if size == 0 {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
-
     let mut kernel_buf = [0u8; 4096];
     let written = match vfs::cwd::write_cwd_to_buf(&mut kernel_buf) {
         Ok(n) => n,
@@ -151,6 +144,11 @@ pub(crate) fn sys_getcwd(args: SyscallArgs) -> UserRet {
 
     if size < written {
         return UserRet::from_error(ErrNo::ERANGE);
+    }
+    // Linux 先判断调用方给出的容量。即使 buf 是坏指针，只要容量不足也应
+    // 返回 ERANGE；容量足够后才触碰用户地址并可能返回 EFAULT。
+    if buf_ptr == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
     }
 
     match copy_to_user(buf_ptr, &kernel_buf[..written]) {

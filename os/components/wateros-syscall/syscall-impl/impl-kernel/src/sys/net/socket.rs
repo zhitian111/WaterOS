@@ -10,15 +10,22 @@ const AF_INET : usize = 2;
 const AF_UNIX : usize = 1;
 const SOCK_STREAM : usize = 1;
 const SOCK_DGRAM : usize = 2;
+const SOCK_RAW : usize = 3;
 const SOCK_NONBLOCK : usize = 0o4000;
 const SOCK_CLOEXEC : usize = 0o2000000;
 const FD_CLOEXEC : usize = 1;
+const IPPROTO_TCP : usize = 6;
+const IPPROTO_UDP : usize = 17;
 
 // 本方法代码由AI完成
 pub(crate) fn sys_socket(args : SyscallArgs) -> UserRet {
     let domain = args.arg(0);
     let mut typ = args.arg(1);
-    let _protocol = args.arg(2);
+    let protocol = args.arg(2);
+
+    if typ & !(0xf | SOCK_NONBLOCK | SOCK_CLOEXEC) != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
 
     if domain == AF_UNIX {
         let cloexec = typ & SOCK_CLOEXEC != 0;
@@ -28,6 +35,9 @@ pub(crate) fn sys_socket(args : SyscallArgs) -> UserRet {
             0
         };
         typ &= !(SOCK_NONBLOCK | SOCK_CLOEXEC);
+        if !matches!(typ, SOCK_STREAM | SOCK_DGRAM) || protocol != 0 {
+            return UserRet::from_error(ErrNo::EINVAL);
+        }
         let (io_handle, sock) = match crate::unix_sock::alloc_unix_socket(typ, status_flags) {
             Ok(v) => v,
             Err(e) => return UserRet::from_error(e),
@@ -57,10 +67,12 @@ pub(crate) fn sys_socket(args : SyscallArgs) -> UserRet {
     };
     typ &= !(SOCK_NONBLOCK | SOCK_CLOEXEC);
 
-    let socket_result = match typ {
-        SOCK_STREAM => SocketRef::new_tcp(status_flags),
-        SOCK_DGRAM => SocketRef::new_udp(status_flags),
-        _ => return UserRet::from_error(ErrNo::EPROTONOSUPPORT),
+    let socket_result = match (typ, protocol) {
+        (SOCK_STREAM, 0 | IPPROTO_TCP) => SocketRef::new_tcp(status_flags),
+        (SOCK_DGRAM, 0 | IPPROTO_UDP) => SocketRef::new_udp(status_flags),
+        (SOCK_STREAM | SOCK_DGRAM, _) => return UserRet::from_error(ErrNo::EPROTONOSUPPORT),
+        (SOCK_RAW, _) => return UserRet::from_error(ErrNo::EPROTONOSUPPORT),
+        _ => return UserRet::from_error(ErrNo::EINVAL),
     };
 
     let socket_ref = match socket_result {

@@ -152,6 +152,9 @@ impl VfsIoHandle for ProcDirectoryHandle {
             let d_type = node_type_to_dt(ent.node_type);
             let slice = &mut buf[off..];
             let Some(reclen) = encode_one(slice, 1, next_off, ent.name.as_str(), d_type) else {
+                if out == 0 {
+                    return Err(VfsError::InvalidPath);
+                }
                 break;
             };
             off += reclen;

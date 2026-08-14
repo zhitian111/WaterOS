@@ -29,20 +29,36 @@ pub fn fork_current(child_stack : usize,
                     new_aspace_ptr : usize,
                     new_satp : usize)
                     -> Option<TaskId> {
+    fork_current_parented(child_stack, new_aspace_ptr, new_satp, false)
+}
+
+/// fork 子进程；`clone_parent` 为真时，新进程与调用进程成为兄弟。
+pub fn fork_current_parented(child_stack : usize,
+                             new_aspace_ptr : usize,
+                             new_satp : usize,
+                             clone_parent : bool)
+                             -> Option<TaskId> {
     let parent_task = crate::process::current_process_task_snapshot()?;
     let parent_pid = parent_task.pid;
-    let parent_leader = crate::process::process_snapshot(parent_pid)?.leader_task_id;
+    let parent_process = crate::process::process_snapshot(parent_pid)?;
+    let child_parent_pid = if clone_parent {
+        parent_process.parent_pid?
+    } else {
+        parent_pid
+    };
+    let child_parent_leader = crate::process::process_snapshot(child_parent_pid)?.leader_task_id;
     let child_id = scheduler::create_fork_child(child_stack,
                                                 new_aspace_ptr,
                                                 new_satp,
-                                                parent_leader)?;
+                                                child_parent_leader)?;
     let address_space = Some(AddressSpaceRef::new(AddressSpaceHandle::from_raw(new_satp),
                                                   new_aspace_ptr));
     let registered = active_impl::with_process_registry(|registry| {
-        registry.create_process_like_fork(parent_pid,
-                                          parent_task.task_id,
-                                          child_id,
-                                          address_space)
+        registry.create_process_like_fork_with_parent(parent_pid,
+                                                      child_parent_pid,
+                                                      parent_task.task_id,
+                                                      child_id,
+                                                      address_space)
     });
     if registered.is_err() {
         scheduler::discard_unstarted_task(child_id);
@@ -57,18 +73,34 @@ pub fn vfork_current(child_stack : usize,
                      shared_aspace_ptr : usize,
                      shared_satp : usize)
                      -> Option<TaskId> {
+    vfork_current_parented(child_stack, shared_aspace_ptr, shared_satp, false)
+}
+
+/// vfork 版本的 `CLONE_PARENT` 语义；地址空间仍从当前调用者共享。
+pub fn vfork_current_parented(child_stack : usize,
+                              shared_aspace_ptr : usize,
+                              shared_satp : usize,
+                              clone_parent : bool)
+                              -> Option<TaskId> {
     let parent_task = crate::process::current_process_task_snapshot()?;
     let parent_pid = parent_task.pid;
-    let parent_leader = crate::process::process_snapshot(parent_pid)?.leader_task_id;
+    let parent_process = crate::process::process_snapshot(parent_pid)?;
+    let child_parent_pid = if clone_parent {
+        parent_process.parent_pid?
+    } else {
+        parent_pid
+    };
+    let child_parent_leader = crate::process::process_snapshot(child_parent_pid)?.leader_task_id;
     let child_id = scheduler::create_fork_child(child_stack,
                                                 shared_aspace_ptr,
                                                 shared_satp,
-                                                parent_leader)?;
+                                                child_parent_leader)?;
     let registered = active_impl::with_process_registry(|registry| {
-        registry.create_process_like_fork(parent_pid,
-                                          parent_task.task_id,
-                                          child_id,
-                                          None)
+        registry.create_process_like_fork_with_parent(parent_pid,
+                                                      child_parent_pid,
+                                                      parent_task.task_id,
+                                                      child_id,
+                                                      None)
     });
     if registered.is_err() {
         scheduler::discard_unstarted_task(child_id);

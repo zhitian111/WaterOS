@@ -95,7 +95,9 @@ pub(crate) fn sys_uname(args: SyscallArgs) -> UserRet {
     let machine = "unknown";
     let identity = *UTS_IDENTITY.lock();
     let uts = UserUtsName {
-        sysname: make_uts_field("WaterOS"),
+        // 用户态按 Linux syscall ABI 运行，许多构建脚本、LTP 与运行库会用
+        // uname.sysname 选择代码路径；内核品牌保留在 version 字段。
+        sysname: make_uts_field("Linux"),
         nodename: identity.nodename,
         release: make_uts_field("5.15.0"),
         version: make_uts_field("WaterOS #1 SMP"),

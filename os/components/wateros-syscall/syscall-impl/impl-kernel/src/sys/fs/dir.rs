@@ -507,7 +507,15 @@ fn check_readlink_parent_search(path : &str, cred : &ProcessCredentials) -> Resu
         current.push_str(part);
         match active_impl::backend().metadata(current.as_str()) {
             Ok(meta) if meta.node_type == VfsNodeType::Directory => {
-                if meta.mode & 0o111 == 0 {
+                let mode = u32::from(meta.mode);
+                let execute = if cred.effective_uid.0 == meta.uid {
+                    0o100
+                } else if cred_has_group(cred, Gid(meta.gid)) {
+                    0o010
+                } else {
+                    0o001
+                };
+                if mode & execute == 0 {
                     return Err(ErrNo::EACCES);
                 }
             }

@@ -107,6 +107,8 @@ impl ErrNo {
     pub const EFBIG: Self = Self(27);
     /// 操作不被支持（socket 等场景）。
     pub const EOPNOTSUPP: Self = Self(95);
+    /// 指定层级不存在该 socket 选项。
+    pub const ENOPROTOOPT: Self = Self(92);
     /// 协议不支持。
     pub const EPROTONOSUPPORT: Self = Self(93);
     /// 地址族不支持。
@@ -125,6 +127,8 @@ impl ErrNo {
     pub const EMSGSIZE: Self = Self(90);
     /// 未连接。
     pub const ENOTCONN: Self = Self(107);
+    /// socket 已经连接。
+    pub const EISCONN: Self = Self(106);
     /// 连接超时。
     pub const ETIMEDOUT: Self = Self(110);
     /// 连接被拒绝。

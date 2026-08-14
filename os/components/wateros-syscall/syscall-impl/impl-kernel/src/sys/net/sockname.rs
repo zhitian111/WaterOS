@@ -2,7 +2,7 @@
 
 //! 本模块代码由AI完成
 use crate::socket_fd;
-use crate::user_copy::copy_to_user_struct;
+use crate::user_copy::{copy_from_user_struct, copy_to_user, copy_to_user_struct};
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
@@ -15,6 +15,31 @@ struct SockAddrIn {
     sin_port : u16,
     sin_addr : [u8; 4],
     sin_zero : [u8; 8],
+}
+
+fn copy_socket_address(addr_ptr : usize,
+                       addrlen_ptr : usize,
+                       addr : &SockAddrIn)
+                       -> Result<(), ErrNo> {
+    if addr_ptr == 0 || addrlen_ptr == 0 {
+        return Err(ErrNo::EFAULT);
+    }
+    let supplied = copy_from_user_struct::<u32>(addrlen_ptr)? as usize;
+    // socklen_t 是无符号类型，但 Linux 拒绝由负 int 转换得到的巨大长度。
+    if supplied > i32::MAX as usize {
+        return Err(ErrNo::EINVAL);
+    }
+    let actual = core::mem::size_of::<SockAddrIn>();
+    let write_len = actual.min(supplied);
+    if write_len != 0 {
+        let bytes = unsafe {
+            core::slice::from_raw_parts(addr as *const SockAddrIn as *const u8, write_len)
+        };
+        copy_to_user(addr_ptr, bytes)?;
+    }
+    // getsockname/getpeername 的 addrlen 是 value-result 参数；即使用户缓冲区
+    // 被截断，也必须回写完整地址所需的真实大小。
+    copy_to_user_struct(addrlen_ptr, &(actual as u32))
 }
 
 // 本方法代码由AI完成
@@ -46,19 +71,10 @@ pub(crate) fn sys_getsockname(args : SyscallArgs) -> UserRet {
                             sin_addr : endpoint.address,
                             sin_zero : [0; 8] };
 
-    if addr_ptr != 0 && addrlen_ptr != 0 {
-        if let Ok(addrlen_val) = crate::user_copy::copy_from_user_struct::<u32>(addrlen_ptr) {
-            let write_len : usize = core::mem::size_of::<SockAddrIn>().min(addrlen_val as usize);
-            let addr_bytes = unsafe {
-                core::slice::from_raw_parts(&addr as *const SockAddrIn as *const u8,
-                                            write_len)
-            };
-            let _ = crate::user_copy::copy_to_user(addr_ptr, addr_bytes);
-            let _ = copy_to_user_struct(addrlen_ptr, &(write_len as u32));
-        }
+    match copy_socket_address(addr_ptr, addrlen_ptr, &addr) {
+        Ok(()) => UserRet::from_success(0),
+        Err(error) => UserRet::from_error(error),
     }
-
-    UserRet::from_success(0)
 }
 
 // 本方法代码由AI完成
@@ -90,17 +106,8 @@ pub(crate) fn sys_getpeername(args : SyscallArgs) -> UserRet {
                             sin_addr : endpoint.address,
                             sin_zero : [0; 8] };
 
-    if addr_ptr != 0 && addrlen_ptr != 0 {
-        if let Ok(addrlen_val) = crate::user_copy::copy_from_user_struct::<u32>(addrlen_ptr) {
-            let write_len : usize = core::mem::size_of::<SockAddrIn>().min(addrlen_val as usize);
-            let addr_bytes = unsafe {
-                core::slice::from_raw_parts(&addr as *const SockAddrIn as *const u8,
-                                            write_len)
-            };
-            let _ = crate::user_copy::copy_to_user(addr_ptr, addr_bytes);
-            let _ = copy_to_user_struct(addrlen_ptr, &(write_len as u32));
-        }
+    match copy_socket_address(addr_ptr, addrlen_ptr, &addr) {
+        Ok(()) => UserRet::from_success(0),
+        Err(error) => UserRet::from_error(error),
     }
-
-    UserRet::from_success(0)
 }

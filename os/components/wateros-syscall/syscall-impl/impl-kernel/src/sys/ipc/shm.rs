@@ -16,8 +16,13 @@ pub(crate) fn sys_shmget(args : SyscallArgs) -> UserRet {
     let key = args.arg(0);
     let size = args.arg(1);
     let flags = args.arg(2);
+    let credentials = cred::current_credentials();
     match ipc::shm::registry().lock()
-                              .create_or_get(key, size, flags)
+                              .create_or_get(key,
+                                             size,
+                                             flags,
+                                             credentials.effective_uid.0,
+                                             credentials.effective_gid.0)
     {
         Ok(shmid) => UserRet::from_success(shmid),
         Err(error) => UserRet::from_error(shm_error_to_errno(error)),
@@ -49,9 +54,17 @@ pub(crate) fn sys_shmat(args : SyscallArgs) -> UserRet {
     let shmaddr = args.arg(1);
     let shmflg = args.arg(2);
     let readonly = shmflg & SHM_RDONLY != 0;
+    let credentials = cred::current_credentials();
 
     let (reservation, segment) = {
         let mut reg = ipc::shm::registry().lock();
+        let segment = match reg.segment_info(shmid) {
+            Ok(segment) => segment,
+            Err(error) => return UserRet::from_error(shm_error_to_errno(error)),
+        };
+        if !may_attach_segment(&segment, &credentials, readonly) {
+            return UserRet::from_error(ErrNo::EACCES);
+        }
         match reg.begin_attach(shmid) {
             Ok(reservation) => reservation,
             Err(error) => return UserRet::from_error(shm_error_to_errno(error)),
@@ -93,6 +106,29 @@ pub(crate) fn sys_shmat(args : SyscallArgs) -> UserRet {
             UserRet::from_error(shm_error_to_errno(error))
         }
     }
+}
+
+fn may_attach_segment(segment : &ipc::shm::ShmSegmentInfo,
+                      credentials : &cred::api::ProcessCredentials,
+                      readonly : bool)
+                      -> bool {
+    if credentials.effective_uid.0 == 0 {
+        return true;
+    }
+    let permission = if credentials.effective_uid.0 == segment.owner_uid {
+        (segment.mode >> 6) & 0o7
+    } else if credentials.effective_gid.0 == segment.owner_gid ||
+              credentials.supplementary_groups
+                         .iter()
+                         .take(credentials.supplementary_group_len)
+                         .any(|gid| gid.0 == segment.owner_gid)
+    {
+        (segment.mode >> 3) & 0o7
+    } else {
+        segment.mode & 0o7
+    };
+    let required = if readonly { 0o4 } else { 0o6 };
+    permission & required == required
 }
 
 // 本方法代码由AI完成

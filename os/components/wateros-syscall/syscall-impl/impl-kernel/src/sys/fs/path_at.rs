@@ -16,10 +16,25 @@ pub(crate) const AT_FDCWD: isize = -100;
 /// Linux `AT_REMOVEDIR`（`unlinkat` 删目录）。
 pub(crate) const AT_REMOVEDIR: u32 = 0x200;
 
+/// Linux 文件名分量上限；PATH_MAX 限制整条字符串，NAME_MAX 限制每个
+/// `/` 之间的分量。后者必须在查询后端前检查，否则超长名字会被误报 ENOENT。
+const NAME_MAX : usize = 255;
+
+fn validate_path_components(path : &str) -> Result<(), ErrNo> {
+    if path.split('/')
+           .any(|component| component.len() > NAME_MAX)
+    {
+        Err(ErrNo::ENAMETOOLONG)
+    } else {
+        Ok(())
+    }
+}
+
 pub(crate) fn resolve_path_at(dirfd: isize, path: &str) -> Result<String, ErrNo> {
     if path.is_empty() {
         return Err(ErrNo::ENOENT);
     }
+    validate_path_components(path)?;
     if path.starts_with('/') {
         return resolve_open_path(path).map_err(super::super::super::vfs_util::vfs_error_to_errno);
     }

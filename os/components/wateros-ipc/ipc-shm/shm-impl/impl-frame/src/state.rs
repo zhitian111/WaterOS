@@ -20,6 +20,8 @@ pub(super) struct ShmSegment {
     pub(super) key: usize,
     pub(super) size: usize,
     pub(super) mode: usize,
+    pub(super) owner_uid : u32,
+    pub(super) owner_gid : u32,
     pub(super) pages: Vec<PhysPageNum>,
     /// 已完成或正在进行 MM 映射的 attachment 计数。
     pub(super) nattch: usize,

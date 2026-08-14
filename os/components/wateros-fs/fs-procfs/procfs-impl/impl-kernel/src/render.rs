@@ -173,9 +173,7 @@ pub(crate) fn format_status(pid : ProcessId) -> FsResult<Vec<u8>> {
         _ => "R (running)",
     };
     let line = format!("Name:\t{comm}\nState:\t{state_str} \
-                        ({sc})\nTgid:\t{}\nPid:\t{}\nPPid:\t{ppid}\nUid:\t{}\t{}\t{}\t{}\nGid:\\
-                        t{}\t{}\t{}\t{}\nVmPeak:\t{}\tkB\nVmSize:\t{}\tkB\nVmRSS:\t{}\tkB\\
-                        nVmData:\t{}\tkB\nVmStk:\t128\tkB\n",
+                        ({sc})\nTgid:\t{}\nPid:\t{}\nPPid:\t{ppid}\nUid:\t{}\t{}\t{}\t{}\nGid:\t{}\t{}\t{}\t{}\nVmPeak:\t{}\tkB\nVmSize:\t{}\tkB\nVmRSS:\t{}\tkB\nVmData:\t{}\tkB\nVmStk:\t128\tkB\n",
                        pid.raw(),
                        pid.raw(),
                        cred.real_uid.0,
@@ -323,6 +321,5 @@ pub(crate) fn format_proc_net_table(protocol : SocketKind) -> Vec<u8> {
     }
     out.into_bytes()
 }
-
 
 
