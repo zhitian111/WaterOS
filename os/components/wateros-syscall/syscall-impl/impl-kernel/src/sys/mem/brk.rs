@@ -18,10 +18,23 @@ fn sys_brk_mm(handle: usize, addr: usize) -> UserRet {
         }
         match HeapBrk::brk(aspace, &mut alloc, VirtAddr(addr)) {
             Ok(new) => Ok(new.0),
-            Err(e) => Err(e),
+            Err(error) => {
+                // Linux 的原始 brk(2) ABI 不返回负 errno。扩展失败时仍返回
+                // 旧 break；glibc/musl 通过“返回值小于请求值”转换成 ENOMEM。
+                let current = HeapBrk::brk_region(aspace).current_end.0;
+                log::warn!("[brk] rejected requested={:#x} current={:#x} start={:#x} max={:#x} \
+                            error={:?}",
+                           addr,
+                           current,
+                           HeapBrk::brk_region(aspace).start.0,
+                           HeapBrk::brk_region(aspace).max.0,
+                           error);
+                Ok(current)
+            }
         }
     }) {
         Ok(v) => UserRet::from_success(v),
+        // 地址空间句柄本身失效属于内核内部错误，和 brk 区间拒绝不同。
         Err(e) => UserRet::from_error(mm_err_to_errno(e)),
     }
 }

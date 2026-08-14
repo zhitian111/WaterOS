@@ -49,6 +49,9 @@ pub(crate) fn sys_fchmodat(args : SyscallArgs) -> UserRet {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
+    if let Err(error) = check_parent_search(resolved.as_str(), &cred::current_credentials()) {
+        return UserRet::from_error(error);
+    }
 
     let meta = match active_impl::backend().metadata(resolved.as_str()) {
         Ok(meta) => meta,
@@ -176,8 +179,46 @@ pub(crate) fn sys_fchownat(args : SyscallArgs) -> UserRet {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
+    if let Err(error) = check_parent_search(resolved.as_str(), &cred::current_credentials()) {
+        return UserRet::from_error(error);
+    }
 
     chown_path(resolved.as_str(), uid, gid)
+}
+
+/// 检查路径前缀目录的搜索（执行）权限。必须先于目标 inode 的 owner/
+/// capability 检查，否则无权穿越目录的调用会错误返回 EPERM。
+fn check_parent_search(path : &str, credentials : &ProcessCredentials) -> Result<(), ErrNo> {
+    if credentials.effective_uid.0 == 0 {
+        return Ok(());
+    }
+    let components : alloc::vec::Vec<&str> = path.trim_start_matches('/')
+                                                        .split('/')
+                                                        .filter(|part| !part.is_empty())
+                                                        .collect();
+    let mut current = alloc::string::String::from("/");
+    for component in components.iter().take(components.len().saturating_sub(1)) {
+        if current != "/" {
+            current.push('/');
+        }
+        current.push_str(component);
+        let metadata = active_impl::backend().metadata(current.as_str())
+                                          .map_err(vfs_error_to_errno)?;
+        if metadata.node_type != VfsNodeType::Directory {
+            return Err(ErrNo::ENOTDIR);
+        }
+        let search_bit = if credentials.effective_uid.0 == metadata.uid {
+            0o100
+        } else if cred_has_group(credentials, Gid(metadata.gid)) {
+            0o010
+        } else {
+            0o001
+        };
+        if u32::from(metadata.mode) & search_bit == 0 {
+            return Err(ErrNo::EACCES);
+        }
+    }
+    Ok(())
 }
 
 // 本方法代码由AI完成

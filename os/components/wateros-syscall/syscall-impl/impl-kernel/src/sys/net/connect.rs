@@ -68,6 +68,15 @@ pub(crate) fn sys_connect(args : SyscallArgs) -> UserRet {
         Err(_) => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
 
+    // Linux 对已经建立连接的 stream socket 再次 connect 返回 EISCONN。
+    // 先观察状态，避免后端的宽泛 InvalidState 被错误翻译成 ECONNREFUSED。
+    if matches!(kind, SocketKind::Tcp) &&
+       socket.poll_snapshot()
+             .is_ok_and(|snapshot| snapshot.is_connected)
+    {
+        return UserRet::from_error(ErrNo::EISCONN);
+    }
+
     match socket.connect(Ipv4Endpoint { address : ip, port }) {
         Ok(()) if matches!(kind, SocketKind::Udp) => UserRet::from_success(0),
         Ok(()) if socket_fd::is_nonblocking(fd) => UserRet::from_error(ErrNo::EINPROGRESS),

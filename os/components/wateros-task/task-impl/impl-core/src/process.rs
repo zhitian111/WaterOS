@@ -311,9 +311,28 @@ impl ProcessRegistry {
                                     child_task_id : TaskId,
                                     address_space : Option<AddressSpaceRef>)
                                     -> ProcessResult<ProcessId> {
+        self.create_process_like_fork_with_parent(parent_pid,
+                                                  parent_pid,
+                                                  parent_task_id,
+                                                  child_task_id,
+                                                  address_space)
+    }
+
+    /// 按 `source_pid` 复制进程属性，但将新进程挂到 `child_parent_pid`
+    /// 名下。两者在普通 fork 中相同，在 `CLONE_PARENT` 中不同。
+    pub fn create_process_like_fork_with_parent(&mut self,
+                                                source_pid : ProcessId,
+                                                child_parent_pid : ProcessId,
+                                                source_task_id : TaskId,
+                                                child_task_id : TaskId,
+                                                address_space : Option<AddressSpaceRef>)
+                                                -> ProcessResult<ProcessId> {
         let parent = self.processes
-                         .get(&parent_pid)
+                         .get(&source_pid)
                          .ok_or(ProcessError::ProcessNotFound)?;
+        if !self.processes.contains_key(&child_parent_pid) {
+            return Err(ProcessError::ProcessNotFound);
+        }
         let parent_rlimits = parent.rlimits
                                    .clone();
         let parent_pgid = parent.pgid;
@@ -321,11 +340,11 @@ impl ProcessRegistry {
         let parent_dumpable = parent.dumpable;
         let parent_umask = parent.umask;
         let parent_comm = parent.tasks
-                                .get(&parent_task_id)
+                                .get(&source_task_id)
                                 .ok_or(ProcessError::TaskNotFound)?
                                 .comm;
         let child_pid = self.create_process_for_task(child_task_id,
-                                                     Some(parent_pid),
+                                                     Some(child_parent_pid),
                                                      address_space)?;
         if let Some(process) = self.process_mut(child_pid) {
             process.rlimits = parent_rlimits;
@@ -333,7 +352,7 @@ impl ProcessRegistry {
             process.sid = parent_sid;
             process.dumpable = parent_dumpable;
             process.umask = parent_umask;
-            process.parent_death_source = Some(ParentDeathSource::Task(parent_task_id));
+            process.parent_death_source = Some(ParentDeathSource::Task(source_task_id));
             if let Some(task) = process.tasks
                                        .get_mut(&child_task_id)
             {

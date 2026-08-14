@@ -159,6 +159,12 @@ impl VfsIoHandle for DirectoryHandle {
                                           ent.name.as_str(),
                                           d_type)
             else {
+                // Linux 要求：目录尚有条目但调用方缓冲区连下一条完整
+                // linux_dirent64 都容纳不下时返回 EINVAL，而不是把 0
+                // 误报成目录 EOF。游标保持不变，调用方可以扩大缓冲重试。
+                if out == 0 {
+                    return Err(VfsError::InvalidPath);
+                }
                 break;
             };
             off += reclen;

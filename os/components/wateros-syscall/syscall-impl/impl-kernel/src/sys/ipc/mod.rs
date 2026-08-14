@@ -11,6 +11,7 @@ pub(crate) mod shm;
 pub(crate) mod signal;
 pub(crate) mod signalfd;
 pub(crate) mod sysv_msg;
+pub(crate) mod sysv_sem;
 
 pub(crate) use eventfd::sys_eventfd2;
 pub(crate) use futex::sys_futex;
@@ -29,6 +30,7 @@ pub(crate) use signal::{
 };
 pub(crate) use signalfd::sys_signalfd4;
 pub(crate) use sysv_msg::{sys_msgctl, sys_msgget, sys_msgrcv, sys_msgsnd};
+pub(crate) use sysv_sem::{sys_semctl, sys_semget, sys_semop, sys_semtimedop};
 
 fn futex_error_to_errno(error : FutexError) -> ErrNo {
     match error {

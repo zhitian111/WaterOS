@@ -41,8 +41,8 @@ pub(crate) use flock::sys_flock;
 pub(crate) use fstat::{sys_fstat, sys_fstatat, sys_statx};
 pub(crate) use getdents64::sys_getdents64;
 pub(crate) use io::{
-    sys_lseek, sys_pread64, sys_preadv, sys_pwrite64, sys_pwritev, sys_read, sys_readv, sys_write,
-    sys_writev,
+    sys_lseek, sys_pread64, sys_preadv, sys_preadv2, sys_pwrite64, sys_pwritev, sys_pwritev2,
+    sys_read, sys_readv, sys_write, sys_writev,
 };
 pub(crate) use inotify::{sys_inotify_add_watch, sys_inotify_init1, sys_inotify_rm_watch};
 pub(crate) use memfd::sys_memfd_create;

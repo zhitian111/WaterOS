@@ -106,9 +106,17 @@ pub fn log_stall_diagnostics() {
             }
             _ => None,
         };
+        let (user_pc, user_sp, trap_cause, fault_addr) = snapshot.trap_frame
+                                                                  .map(|frame| {
+                                                                      (frame.user_pc,
+                                                                       frame.user_sp,
+                                                                       frame.raw_cause,
+                                                                       frame.fault_addr)
+                                                                  })
+                                                                  .unwrap_or((0, 0, 0, 0));
         log::warn!("[stall-debug][task] id={} parent={:?} kind={:?} state={:?} wait={:?} \
                     policy={:?} ready_cpu={:?} running_cpu={:?} last_cpu={:?} schedules={} \
-                    ticks={} aspace={:#x}",
+                    ticks={} aspace={:#x} user_pc={:#x} user_sp={:#x} trap={:#x} fault={:#x}",
                    snapshot.id,
                    snapshot.parent_id,
                    snapshot.kind,
@@ -122,7 +130,11 @@ pub fn log_stall_diagnostics() {
                            .schedule_count,
                    snapshot.stats
                            .tick_count,
-                   snapshot.user_aspace_ptr);
+                   snapshot.user_aspace_ptr,
+                   user_pc,
+                   user_sp,
+                   trap_cause,
+                   fault_addr);
     }
 }
 

@@ -18,6 +18,7 @@ const CLONE_PIDFD : usize = 0x0000_1000;
 const CLONE_VM_RAW : usize = 0x0000_0100;
 const CLONE_FS_RAW : usize = 0x0000_0200;
 const CLONE_FILES_RAW : usize = 0x0000_0400;
+const CLONE_PARENT_RAW : usize = 0x0000_8000;
 const CLONE_VFORK : usize = 0x0000_4000;
 const CLONE_PARENT_SETTID_RAW : usize = 0x0010_0000;
 const CLONE_CHILD_CLEARTID_RAW : usize = 0x0020_0000;
@@ -28,8 +29,14 @@ const CLONE_INTO_CGROUP : usize = 0x0000_0002_0000_0000;
 /// Linux `CSIGNAL`：fork 路径仅允许低 8 位退出信号号。
 const CLONE_CSIGNAL_MASK : usize = 0xFF;
 const CLONE_FORK_COMPAT_MASK : usize = CLONE_CSIGNAL_MASK |
+                                       // 非线程 CLONE_VM 需要地址空间生命周期引用计数才能
+                                       // 完全共享。当前先按独立地址空间兼容创建，保证
+                                       // CLONE_PARENT_SETTID 等进程型 clone 的生命周期安全；
+                                       // pthread 的 CLONE_VM|CLONE_THREAD 仍走真正共享路径。
+                                       CLONE_VM_RAW |
                                        CLONE_FS_RAW |
                                        CLONE_FILES_RAW |
+                                       CLONE_PARENT_RAW |
                                        CLONE_NEWNS_RAW |
                                        CLONE_PARENT_SETTID_RAW |
                                        CLONE_CHILD_CLEARTID_RAW |
@@ -237,6 +244,7 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
     }
 
     let is_vfork = clone_flags.bits() & CLONE_VFORK != 0;
+    let clone_parent = clone_flags.contains(task::CloneFlags::CLONE_PARENT);
     let parent_aspace = task::current_task_user_aspace_ptr();
     let (new_aspace_ptr, new_satp) = if is_vfork {
         let Some(address_space) =
@@ -264,9 +272,15 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
         }
     };
     let child = if is_vfork {
-        task::vfork_current(child_stack, new_aspace_ptr, new_satp)
+        task::vfork_current_parented(child_stack,
+                                     new_aspace_ptr,
+                                     new_satp,
+                                     clone_parent)
     } else {
-        task::fork_current(child_stack, new_aspace_ptr, new_satp)
+        task::fork_current_parented(child_stack,
+                                    new_aspace_ptr,
+                                    new_satp,
+                                    clone_parent)
     };
     let child_id = match child {
         Some(id) => id,
@@ -294,6 +308,21 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
     if clone_flags.contains(task::CloneFlags::CLONE_PARENT_SETTID) &&
        parent_tid != 0 &&
        copy_to_user_struct(parent_tid, &child_tid_value).is_err()
+    {
+        let _ = task::abort_fork_child(child_id);
+        super::task::drop_timer_slack(child_id);
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+    // 非线程 CLONE_VM 目前仍通过复制页表建立兼容子进程。Linux 语义要求
+    // parent_tid 的写入对共享 VM 中的子进程立即可见，因此在完成真正的
+    // 地址空间引用计数共享前，同时镜像写入子地址空间，避免子进程观察到
+    // fork 时复制的旧值。
+    if clone_flags.contains(task::CloneFlags::CLONE_VM) &&
+       clone_flags.contains(task::CloneFlags::CLONE_PARENT_SETTID) &&
+       parent_tid != 0 &&
+       copy_to_user_struct_in_aspace(new_aspace_ptr,
+                                     parent_tid,
+                                     &child_tid_value).is_err()
     {
         let _ = task::abort_fork_child(child_id);
         super::task::drop_timer_slack(child_id);

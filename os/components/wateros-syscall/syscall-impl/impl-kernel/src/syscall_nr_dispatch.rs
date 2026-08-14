@@ -29,6 +29,8 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::PWRITE64 => sys::sys_pwrite64(syscall_args).0,
         n if n == api_v0::PREADV => sys::sys_preadv(syscall_args).0,
         n if n == api_v0::PWRITEV => sys::sys_pwritev(syscall_args).0,
+        n if n == api_v0::PREADV2 => sys::sys_preadv2(syscall_args).0,
+        n if n == api_v0::PWRITEV2 => sys::sys_pwritev2(syscall_args).0,
         n if n == api_v0::SENDFILE => sys::sys_sendfile(syscall_args).0,
         n if n == api_v0::SPLICE => sys::sys_splice(syscall_args).0,
         n if n == api_v0::TEE => sys::sys_tee(syscall_args).0,
@@ -103,6 +105,10 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::MSGCTL => sys::sys_msgctl(syscall_args).0,
         n if n == api_v0::MSGRCV => sys::sys_msgrcv(syscall_args).0,
         n if n == api_v0::MSGSND => sys::sys_msgsnd(syscall_args).0,
+        n if n == api_v0::SEMGET => sys::sys_semget(syscall_args).0,
+        n if n == api_v0::SEMCTL => sys::sys_semctl(syscall_args).0,
+        n if n == api_v0::SEMTIMEDOP => sys::sys_semtimedop(syscall_args).0,
+        n if n == api_v0::SEMOP => sys::sys_semop(syscall_args).0,
         n if n == api_v0::GET_TIME => sys::sys_gettimeofday(syscall_args).0,
         n if n == api_v0::CLOCK_SETTIME => sys::sys_clock_settime(syscall_args).0,
         n if n == api_v0::CLOCK_GETTIME => sys::sys_clock_gettime(syscall_args).0,
@@ -262,4 +268,8 @@ pub fn is_restartable_syscall_nr(syscall_nr : usize) -> bool {
     syscall_nr == api_v0::RECVMSG ||
     syscall_nr == api_v0::SENDMMSG ||
     syscall_nr == api_v0::RECVMMSG
+    || syscall_nr == api_v0::MSGRCV
+    || syscall_nr == api_v0::MSGSND
+    || syscall_nr == api_v0::SEMOP
+    || syscall_nr == api_v0::SEMTIMEDOP
 }

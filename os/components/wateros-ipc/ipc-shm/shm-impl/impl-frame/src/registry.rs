@@ -53,7 +53,13 @@ impl ShmRegistry {
     }
 
     /// `FLOW:` `shmget` 语义子集：按 key 查找，或在允许创建时分配并清零物理帧。
-    pub fn create_or_get(&mut self, key: usize, size: usize, flags: usize) -> ShmResult<ShmId> {
+    pub fn create_or_get(&mut self,
+                         key : usize,
+                         size : usize,
+                         flags : usize,
+                         owner_uid : u32,
+                         owner_gid : u32)
+                         -> ShmResult<ShmId> {
         if size == 0 || size > MAX_SHM_SEGMENT_SIZE {
             return Err(ShmError::Invalid);
         }
@@ -79,6 +85,8 @@ impl ShmRegistry {
             key,
             size: round_up_pages(size)?,
             mode: flags & 0o777,
+            owner_uid,
+            owner_gid,
             pages,
             nattch: 0,
             marked_removed: false,
@@ -103,6 +111,8 @@ impl ShmRegistry {
             key: segment.key,
             size: segment.size,
             mode: segment.mode,
+            owner_uid : segment.owner_uid,
+            owner_gid : segment.owner_gid,
             pages: segment
                 .pages
                 .clone(),

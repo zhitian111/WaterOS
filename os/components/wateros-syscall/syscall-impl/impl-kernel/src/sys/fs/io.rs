@@ -26,6 +26,10 @@ const TCP_LOOPBACK_POLL_ROUNDS : usize = 4;
 const UDP_SMALL_WRITE_YIELD_THRESHOLD : usize = 256;
 const UDP_BULK_WRITE_YIELD_INTERVAL : u64 = 4;
 
+// WaterOS 尚未实现 Linux `rwf_t` 的 per-call direct-I/O/elevator 语义。
+// Linux 对当前文件不支持的 RWF 位（也包括未知位组合）返回 EOPNOTSUPP；
+// 不能返回 EINVAL，否则 LTP 和依赖回退逻辑的 libc 会误判参数本身非法。
+
 static UDP_BULK_WRITE_COUNT : AtomicU64 = AtomicU64::new(0);
 
 const SEEK_SET : u32 = 0;
@@ -588,6 +592,21 @@ fn write_udp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
 }
 
 fn offset_from_arg(raw : usize) -> Result<u64, ErrNo> {
+    offset_from_bits(raw as u64)
+}
+
+/// Linux asm-generic 的 `preadv*`/`pwritev*` 把 `loff_t` 拆成两个
+/// 32 位槽位，低位在前、高位在后。显式截成 `u32` 也可正确处理调用方
+/// 对负值参数做了机器字宽符号扩展的情况。
+fn split_offset_bits(low : usize, high : usize) -> u64 {
+    u64::from(low as u32) | (u64::from(high as u32) << 32)
+}
+
+fn split_offset_from_args(low : usize, high : usize) -> Result<u64, ErrNo> {
+    offset_from_bits(split_offset_bits(low, high))
+}
+
+fn offset_from_bits(raw : u64) -> Result<u64, ErrNo> {
     let off = raw as i64;
     if off < 0 {
         return Err(ErrNo::EINVAL);
@@ -745,13 +764,18 @@ pub(crate) fn sys_preadv(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let iov_ptr = args.arg(1);
     let iovcnt = args.arg(2);
-    if let Err(error) = validate_pread_fd(fd) {
-        return UserRet::from_error(error);
-    }
-    let offset = match offset_from_arg(args.arg(3)) {
+    let offset = match split_offset_from_args(args.arg(3), args.arg(4)) {
         Ok(offset) => offset,
         Err(error) => return UserRet::from_error(error),
     };
+    preadv_at(fd, iov_ptr, iovcnt, offset)
+}
+
+/// 执行已经完成 Linux 分槽 ABI 解码的向量定位读。
+fn preadv_at(fd : usize, iov_ptr : usize, iovcnt : usize, offset : u64) -> UserRet {
+    if let Err(error) = validate_pread_fd(fd) {
+        return UserRet::from_error(error);
+    }
     let iovecs = match import_iovecs(iov_ptr, iovcnt) {
         Ok(iovecs) => iovecs,
         Err(error) => return UserRet::from_error(error),
@@ -810,19 +834,45 @@ pub(crate) fn sys_preadv(args : SyscallArgs) -> UserRet {
     UserRet::from_success(cursor.copied)
 }
 
+/// `preadv2(2)`：零 flags 复用完整的 `preadv` 路径；offset=-1 按 Linux
+/// 语义使用并推进文件描述符当前位置。高级 RWF 能力尚无后端时返回
+/// `EOPNOTSUPP`，未知位返回 `EINVAL`。
+pub(crate) fn sys_preadv2(args : SyscallArgs) -> UserRet {
+    // Linux 的原始 ABI 是
+    // (fd, iov, iovcnt, offset_low, offset_high, flags)，即便在 64 位
+    // asm-generic 架构上 offset 也占两个参数槽。不能把 offset_high 当 flags。
+    let flags = args.arg(5);
+    if flags != 0 {
+        return UserRet::from_error(ErrNo::EOPNOTSUPP);
+    }
+    let raw_offset = split_offset_bits(args.arg(3), args.arg(4));
+    if raw_offset == u64::MAX {
+        return sys_readv(args);
+    }
+    let offset = match offset_from_bits(raw_offset) {
+        Ok(offset) => offset,
+        Err(error) => return UserRet::from_error(error),
+    };
+    preadv_at(args.arg(0), args.arg(1), args.arg(2), offset)
+}
+
 // 本方法代码由AI完成
 pub(crate) fn sys_pwritev(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let iov_ptr = args.arg(1);
     let iovcnt = args.arg(2);
+    let offset = match split_offset_from_args(args.arg(3), args.arg(4)) {
+        Ok(offset) => offset,
+        Err(error) => return UserRet::from_error(error),
+    };
+    pwritev_at(fd, iov_ptr, iovcnt, offset)
+}
+
+/// 执行已经完成 Linux 分槽 ABI 解码的向量定位写。
+fn pwritev_at(fd : usize, iov_ptr : usize, iovcnt : usize, offset : u64) -> UserRet {
     if let Err(error) = validate_write_fd(fd) {
         return UserRet::from_error(error);
     }
-    let offset = match offset_from_arg(args.arg(3)) {
-        Ok(v) => v,
-        Err(e) => return UserRet::from_error(e),
-    };
-
     let iovecs = match import_iovecs(iov_ptr, iovcnt) {
         Ok(iovecs) => iovecs,
         Err(error) => return UserRet::from_error(error),
@@ -845,6 +895,23 @@ pub(crate) fn sys_pwritev(args : SyscallArgs) -> UserRet {
         }
         Err(err) => UserRet::from_error(vfs_io_at_error_to_errno(err)),
     }
+}
+
+/// `pwritev2(2)` 的基础兼容实现，规则与 [`sys_preadv2`] 对称。
+pub(crate) fn sys_pwritev2(args : SyscallArgs) -> UserRet {
+    let flags = args.arg(5);
+    if flags != 0 {
+        return UserRet::from_error(ErrNo::EOPNOTSUPP);
+    }
+    let raw_offset = split_offset_bits(args.arg(3), args.arg(4));
+    if raw_offset == u64::MAX {
+        return sys_writev(args);
+    }
+    let offset = match offset_from_bits(raw_offset) {
+        Ok(offset) => offset,
+        Err(error) => return UserRet::from_error(error),
+    };
+    pwritev_at(args.arg(0), args.arg(1), args.arg(2), offset)
 }
 
 pub(crate) fn sys_lseek(args : SyscallArgs) -> UserRet {

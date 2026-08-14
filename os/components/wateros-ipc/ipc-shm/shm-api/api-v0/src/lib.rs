@@ -55,6 +55,9 @@ pub struct ShmSegmentInfo {
     pub size: usize,
     /// 创建时 mode 低 9 位。
     pub mode: usize,
+    /// 创建者的有效 uid/gid，用于 `shmat` 权限判断。
+    pub owner_uid : u32,
+    pub owner_gid : u32,
     pub pages: Vec<PhysPageNum>,
 }
 

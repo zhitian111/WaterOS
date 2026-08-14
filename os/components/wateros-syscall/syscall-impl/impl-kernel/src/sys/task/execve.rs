@@ -9,14 +9,18 @@ use alloc::vec::Vec;
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
+use cred::api::{Gid, ProcessCredentials};
 use mm::api::executable::ExecResolveError;
 use mm::api::kernel_bringup::{
     LoadElfError, LoadProgramError, PrepareUserStackError, RootVolumeReadError,
 };
 use mm::api::user_access::UserMemoryOps;
 use mm::ActiveUserMemoryOps;
+use vfs::api::{FinalSymlink, VfsError, VfsNodeType};
+use vfs::SingleRootReadView;
 
 use crate::user_copy::copy_user_path_cstr;
+use crate::vfs_util::vfs_error_to_errno;
 
 /// Linux-compatible upper bound reported for the combined argv/envp payload.
 const EXEC_ARG_MAX : usize = 2 * 1024 * 1024;
@@ -43,7 +47,10 @@ pub(crate) fn sys_execve(args : SyscallArgs) -> UserRet {
 fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(), ErrNo> {
     let path = copy_user_path_cstr(path_ptr,
                                    crate::user_copy::USER_PATH_MAX)?;
-    let abs_path = vfs::cwd::resolve_for_current_task(&path).unwrap_or(path);
+    // execve 和其他 pathname syscall 一样，必须先完成 NAME_MAX、路径前缀和
+    // 搜索权限检查。直接把字符串交给 ELF loader 会把这些错误折叠成
+    // ENOENT/EIO/ENOEXEC，破坏 Linux 规定的 errno 优先级。
+    let abs_path = preflight_executable_path(path.as_str())?;
 
     let mut arg_budget = EXEC_ARG_MAX - EXEC_STACK_OVERHEAD;
     let argv = read_string_array(argv_ptr, &mut arg_budget)?;
@@ -171,6 +178,91 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     }
 
     Ok(())
+}
+
+fn preflight_executable_path(path : &str) -> Result<String, ErrNo> {
+    let resolved = super::super::fs::path_at::resolve_path_at(
+        super::super::fs::path_at::AT_FDCWD,
+        path,
+    )?;
+    let credentials = cred::current_credentials();
+    check_parent_search(resolved.as_str(), &credentials)?;
+    let resolved = super::super::fs::path_at::resolve_symlinks(
+        resolved.as_str(),
+        FinalSymlink::Follow,
+    )?;
+    let metadata = vfs::active_impl::backend()
+        .metadata(resolved.as_str())
+        .map_err(|error| match error {
+            VfsError::NotAFile => ErrNo::ENOTDIR,
+            other => vfs_error_to_errno(other),
+        })?;
+    if metadata.node_type != VfsNodeType::File ||
+       !may_execute(metadata.mode,
+                    metadata.uid,
+                    metadata.gid,
+                    &credentials)
+    {
+        return Err(ErrNo::EACCES);
+    }
+    Ok(resolved)
+}
+
+fn check_parent_search(path : &str,
+                       credentials : &ProcessCredentials)
+                       -> Result<(), ErrNo> {
+    if credentials.effective_uid.0 == 0 {
+        return Ok(());
+    }
+    let components : Vec<&str> = path.trim_start_matches('/')
+                                      .split('/')
+                                      .filter(|component| !component.is_empty())
+                                      .collect();
+    let mut current = String::from("/");
+    for component in components.iter().take(components.len().saturating_sub(1)) {
+        if current != "/" {
+            current.push('/');
+        }
+        current.push_str(component);
+        let metadata = vfs::active_impl::backend()
+            .metadata(current.as_str())
+            .map_err(vfs_error_to_errno)?;
+        if metadata.node_type != VfsNodeType::Directory {
+            return Err(ErrNo::ENOTDIR);
+        }
+        if !may_execute(metadata.mode,
+                        metadata.uid,
+                        metadata.gid,
+                        credentials)
+        {
+            return Err(ErrNo::EACCES);
+        }
+    }
+    Ok(())
+}
+
+fn may_execute(mode : u16,
+               owner_uid : u32,
+               owner_gid : u32,
+               credentials : &ProcessCredentials)
+               -> bool {
+    let mode = u32::from(mode);
+    if credentials.effective_uid.0 == 0 {
+        return mode & 0o111 != 0;
+    }
+    let bit = if credentials.effective_uid.0 == owner_uid {
+        0o100
+    } else if credentials.effective_gid == Gid(owner_gid) ||
+              credentials.supplementary_groups
+                         .iter()
+                         .take(credentials.supplementary_group_len)
+                         .any(|group| *group == Gid(owner_gid))
+    {
+        0o010
+    } else {
+        0o001
+    };
+    mode & bit != 0
 }
 
 fn is_qemu_system_executable(path : &str) -> bool {
