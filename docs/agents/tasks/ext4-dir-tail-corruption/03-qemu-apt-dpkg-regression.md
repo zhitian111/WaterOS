@@ -1,116 +1,94 @@
-# 任务 03：QEMU apt/dpkg 端到端回归
+# 任务 03：QEMU 端到端回归（内核级目录边界 + 可选 apt/dpkg）
 
 ## 状态
 
-待实施。
+fs 模式已完成并通过；apt 模式被 main 分支缺失的 syscall 兼容阻断（见下文证据）。
 
 ## 目标
 
-在 RISC-V QEMU 中真实执行 Debian apt/dpkg 的 `neovim-runtime` 解包路径，
-验证任务 01 的修复消除了：
+在 RISC-V QEMU 中验证任务 01 的修复：
 
-```text
-syntax/vim/generated.vim.dpkg-new ENOENT
-清理时 Directory not empty
-find 看到乱码目录项
-```
-
-并把回归步骤固化为可复用的脚本。
+- 默认模式 `REGRESS_MODE=fs`：guest 直接用 shell 构造“目录块填满到 12 字节
+  tail 边界 + 3 字符子目录”的写路径，宿主对 overlay 执行 e2fsck，验证无乱码
+  目录项。该模式不依赖 apt/网络。
+- 可选模式 `REGRESS_MODE=apt`：真实执行 `apt-get install neovim-runtime`，
+  验证原始报错场景。
 
 ## 测试镜像
 
-优先使用仓库已解压镜像：
-
-```sh
-ls -lh /home/zhitian/project/WaterOS_refactor/os/sdcard-rv.img
-ls -lh /home/zhitian/project/WaterOS_refactor/test_case/sdcard-rv.img
-```
-
-若确认需要 apt/pub 镜像，再解压：
-
-```sh
-gzip -dc ~/Downloads/sdcard-rv-pub.img.gz > /tmp/wateros-apt-rv.img
-```
-
-注意：必须先确认目标分区磁盘空间；压缩包约 2.1GB，解压后约 4GB。解压前先
-`df -h /tmp`。
+- 使用解压出来的工作副本：
+  `/home/zhitian/project/WaterOS_refactor/os/sdcard-rv-pub.img`（约 14G）。
+- 原始镜像保持在 `~/Downloads/sdcard-rv-pub.img.gz`，不会被修改。
+- 首次使用前对工作副本执行过一次 `e2fsck -fy`，清除镜像自带 journal 的
+  陈旧事务与空闲计数偏差；该偏差在解压后即存在，与本次任务无关。
 
 ## 涉及文件
 
-建议新增一个回归脚本，避免手工命令漂移：
+- `os/scripts/regress_ext4_dir_tail.sh`（本次新增）
 
-- `os/scripts/regress_ext4_dir_tail.sh`
-
-该脚本负责镜像副本/overlay 准备、QEMU 启动、guest 内 apt/dpkg 命令下发、
-日志落盘、退出后宿主 `e2fsck -fn`。脚本必须只读/写副本，绝不修改唯一基准镜像。
+脚本固定使用 qcow2 overlay（backing 为只读工作副本），guest 写盘不落回基准
+镜像；QEMU 启动通过 `scripts/run/rv_qemu_run_snapshot.sh`，满足 snapshot 约束。
 
 ## 实施方案
 
-1. 在 `os/scripts/regress_ext4_dir_tail.sh` 中封装：
-
-   - 选择镜像：`RV_IMG` 可覆盖，默认优先 `os/sdcard-rv.img`，其次解压 pub 镜像；
-   - 制作副本或 qcow2 overlay，保护基准镜像；
-   - 启动 QEMU 时必须带 `-snapshot`，保证即使脚本中途失败也不会写穿基准镜像；
-   - 进入 guest 后执行：
-
-     ```sh
-     apt-get update
-     apt-get install -y neovim-runtime
-     # 若安装被既有状态阻断，则：
-     dpkg --configure -a
-     # 观察 syntax/ 目录枚举
-     find /usr/share/vim/vim*/syntax -maxdepth 1 -type d
-     ```
-
-   - 收集内核/QEMU 日志到 `tem/`；
-   - 关机后对镜像副本执行 `e2fsck -fn`。
-
-   日志策略：不要全量阅读 QEMU 日志或 `make` 构建日志；只用
-   `rg -n "error|FAIL|generated.vim|dpkg-new|ENOENT|Directory not empty|illegal characters"`
-   和 `tail -n` 定位关键片段，必要时再取上下文。
-
-2. 关键验收点：
-
-   - 无 `generated.vim.dpkg-new ENOENT`；
-   - `find` 输出无非法目录项名；
-   - `dpkg --configure -a` 返回 0；
-   - `e2fsck -fn` 通过。
-
-3. 提交脚本，提交信息：
-
-   ```text
-   [test] 新增 ext4 目录尾损坏的 QEMU apt 回归脚本
-   ```
+1. 注入 guest 脚本 `/root/regress_dir_tail.sh` 到工作副本。
+2. 构建 `MODE=run SCRIPT=/root/regress_dir_tail.sh` 的 operator-run 内核。
+3. 用 qcow2 overlay 启动 QEMU，guest 执行脚本后内核自动关机。
+4. 将 overlay 转 raw，先 `e2fsck -fy`（回放 journal/修复计数），再
+   `e2fsck -fn` 只读校验。
+5. 日志只 grep 关键标记，不输出全量 QEMU 日志。
 
 ## CodeGraph 查询命令
 
 ```sh
-codegraph explore "sys_execve sys_wait4 getdents64"
-codegraph node "os/scripts/run_phase_tests.sh"
+codegraph explore "sys_lseek sys_ioctl unlockpt"
+codegraph node "os/src/user_operator.rs"
 codegraph files
 ```
 
 索引不可用时回退：
 
 ```sh
-rg -n "rv_final_run|qemu-system-riscv64|sdcard-rv" os/Makefile os/scripts
+rg -n "operator-run|WATEROS_OPERATOR_SCRIPT|rv_qemu_run_snapshot" os/Makefile os/scripts
 ```
 
 ## 验收命令
 
 ```sh
 cd /tmp/WaterOS_ext4_dir_tail_fix/os
-bash scripts/regress_ext4_dir_tail.sh
+REGRESS_MODE=fs bash scripts/regress_ext4_dir_tail.sh
 ```
 
-验收标准：
+验收标准（fs 模式）：
 
-- 脚本退出码为 0；
-- 日志中无上述错误文本；
-- 宿主 `e2fsck -fn` 五阶段通过；
-- 基准镜像未被修改（脚本使用副本/overlay）。
+- guest 输出 `REG DIR TAIL FSCK PASS`；
+- `e2fsck -fy` 与 `e2fsck -fn` 均通过，Pass 2 无 `illegal characters`、
+  `fails checksum` 等目录结构错误；
+- 基准镜像未被 guest 写穿（使用 overlay）。
+
+## apt/dpkg 模式的已知阻断
+
+`REGRESS_MODE=apt` 在 main（本分支基座）上复现了原始安装路径，但 apt 在
+解包阶段提前中止，证据如下（`os/tem/regress-dir-tail.qemu.log`）：
+
+```text
+E: Unlocking the slave of master fd 11 failed! - unlockpt (22: Invalid argument)
+dpkg: error processing archive .../neovim-runtime_0.10.4-8_all.deb (--unpack):
+ cannot skip padding for file './usr/share/applications/nvim.desktop':
+ failed to seek (Operation not supported)
+dpkg-deb: error: paste subprocess was killed by signal (Broken pipe)
+```
+
+另外 guest 中 `grep -P` 从管道读 stdin 时返回
+`grep: (standard input): Operation not supported`。
+
+这三个问题都是 syscall 层兼容缺口（PTY `unlockpt`/`TIOCSPTLCK`、普通文件
+seek、管道读），与 ext4 目录块 tail 修复无关，也不是本任务引入的。队友此前
+声称的 `unlockpt/ptsname` 与 `lseek ESPIPE` 修复不在 main HEAD
+（`59f50c44`）中，需要先合入对应分支的 syscall 修复后，apt 模式才能作为
+本任务的验收项。
 
 ## 完成后简报
 
-写 `history/03-qemu-apt-dpkg-regression-brief.md`，记录镜像路径、QEMU 命令、
-guest 输出摘要和 e2fsck 结果。
+写 `history/03-qemu-apt-dpkg-regression-brief.md`，记录两种模式的结果与
+apt 阻断证据。
