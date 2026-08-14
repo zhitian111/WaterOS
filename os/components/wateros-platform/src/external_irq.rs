@@ -12,7 +12,7 @@ use irq::types::HwIrq;
 #[cfg(feature = "impl-qemu-riscv64-opensbi")]
 mod active {
     pub use crate::active_impl::plic::{
-        claim, complete, init_current_cpu, set_enabled, ExternalIrqError,
+        claim, complete, init_current_cpu, register_device_line, set_enabled, ExternalIrqError,
     };
 }
 
@@ -53,6 +53,15 @@ pub fn claim() -> Option<u32> {
 pub fn complete(irq : u32) {
     let cpu = crate::arch::cpu::current_cpu_id().raw();
     active::complete(cpu, irq);
+}
+
+/// 注册一条设备中断线并返回 virq（chip 绑定当前 board 的默认投递上下文）。
+#[cfg(feature = "impl-qemu-riscv64-opensbi")]
+pub fn register_device_line(irq : u32,
+                            trigger : crate::irq::types::IrqTrigger)
+                            -> crate::irq::IrqResult<crate::irq::types::Virq> {
+    let cpu = crate::arch::cpu::current_cpu_id().raw();
+    active::register_device_line(cpu, irq, trigger)
 }
 
 /// 分发当前 CPU 全部 pending 外部中断：claim → 查找/调用 action → complete。

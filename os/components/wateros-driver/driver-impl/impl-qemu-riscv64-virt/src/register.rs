@@ -23,9 +23,34 @@ use character::{
     character_device_count, character_subsystem_claims_device, register_builtin_character_devices,
 };
 use common::dtb::is_virtio_mmio_compatible;
+use platform::irq as irq;
 use spin::Mutex;
 
 use crate::{enumerate, uart};
+
+/// 块设备 IRQ 完成模式开关（实验性）。
+///
+/// 基础设施已验证：boot 阶段（FS 探测/根卷挂载）IRQ 读盘可工作，IRQ claim/ack
+/// 与 used-ring 回收链路完整；但用户态全量负载（cagent 模型加载）下仍偶发卡死，
+/// 需要专项调试（疑似用户态 syscall 上下文与等待窗口/PLIC 投递交互）。默认关闭
+/// 以保持同步路径正确性，调试时可临时置 `true`。
+const BLOCK_IRQ_MODE_ENABLED : bool = false;
+
+/// block IRQ top-half：无锁原始 MMIO ack 设备 ISR（`dev_id` = MMIO 基址），
+/// 不触碰设备锁、不做 PLIC mask，避免 ISR 重入与 mask 卡死；完成回收由等待者
+/// 自旋 + 定期 drain used ring 保证。
+#[allow(dead_code)] // 由 BLOCK_IRQ_MODE_ENABLED 控制是否接线；关闭时保留代码。
+fn blk_irq_top(_virq : irq::types::Virq, dev_id : usize) -> irq::action::IrqReturn {
+    // SAFETY: dev_id 是已恒等映射的 virtio-mmio 窗口基址；ISR 状态/ACK 寄存器
+    // 偏移固定为 0x60/0x64（VirtIO MMIO 规范）。
+    let isr = unsafe { core::ptr::read_volatile((dev_id + 0x60) as *const u32) };
+    if isr != 0 {
+        unsafe {
+            core::ptr::write_volatile((dev_id + 0x64) as *mut u32, isr);
+        }
+    }
+    irq::action::IrqReturn::Handled
+}
 
 /// 成功注册为 virtio-blk 的 MMIO 窗口列表（供自检读取块 0）。
 pub(crate) static VIRTIO_BLK_MMIO: Mutex<Vec<MmioRegion>> = Mutex::new(Vec::new());
@@ -89,6 +114,41 @@ pub(crate) fn probe_virtio_devices() -> Vec<String> {
                         }
                     };
                     let idx = register_block_device(shared);
+                    // IRQ 完成路径（实验性开关）：DTB 中断线注册 + 启用 IRQ 模式；
+                    // 完成由等待者自旋 + 定期 drain used ring 保证。
+                    if BLOCK_IRQ_MODE_ENABLED {
+                        if let Some(hwirq) = info.irqs
+                                                 .first()
+                                                 .and_then(|spec| spec.cells.first())
+                                                 .copied()
+                        {
+                            match platform::external_irq::register_device_line(hwirq,
+                                                                               irq::IrqTrigger::LevelHigh)
+                            {
+                                Ok(virq) => {
+                                    let _ = irq::action::request_irq(virq,
+                                                                     blk_irq_top,
+                                                                     mmio.base);
+                                    if let Some(dev) = block::block_device_at(idx) {
+                                        dev.enable_irq();
+                                    }
+                                    log::info!(
+                                        "[driver] virtio-blk #{} IRQ mode enabled hwirq={} virq={:?}",
+                                        idx,
+                                        hwirq,
+                                        virq
+                                    );
+                                }
+                                Err(err) => {
+                                    log::warn!(
+                                        "[driver] virtio-blk #{} IRQ register failed: {:?}",
+                                        idx,
+                                        err
+                                    );
+                                }
+                            }
+                        }
+                    }
                     blk_regions.push(mmio);
                     log::info!("[driver] registered virtio-blk #{}", idx);
                     log::info!(

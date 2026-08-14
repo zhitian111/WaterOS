@@ -72,6 +72,20 @@ pub trait BlockDevice: Send + Sync {
     /// Commit all previously accepted writes to stable storage.
     fn flush(&self) -> DriverResult<()>;
 
+    /// 启用中断驱动的完成路径（默认无操作；实现自持状态）。
+    ///
+    /// 由设备注册路径在 IRQ 成功接线后调用；此后 [`Self::read_blocks`] /
+    /// [`Self::write_blocks`] 可走提交-等待-完成路径，否则保持同步轮询回退。
+    fn enable_irq(&self) {}
+
+    /// IRQ bottom-half：在可调度上下文回收设备完成（默认无操作）。
+    ///
+    /// 由全局 bottom-half 内核任务在设备中断后调用，用于 ack 设备 ISR、按序
+    /// 回收 used ring 并唤醒/置位等待方。实现必须可重入且不得阻塞。
+    fn irq_bottom_half(&self) -> DriverResult<()> {
+        Ok(())
+    }
+
     /// 任意字节对齐读取：通过整段块缓冲实现，调用方须保证 `dst` 非空且偏移合法。
     fn read_bytes(&self, offset : u64, dst : &mut [u8]) -> DriverResult<()> {
         if dst.is_empty() {

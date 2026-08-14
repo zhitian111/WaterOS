@@ -16,6 +16,7 @@ pub mod bottom_half;
 pub mod chip;
 pub mod domain;
 pub mod types;
+pub mod wait;
 
 pub use types::{HwIrq, IrqAffinity, IrqError, IrqResult, IrqTrigger, Virq};
 

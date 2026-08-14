@@ -459,4 +459,12 @@ impl BlockDevice for CachingBlockDevice {
     }
 
     fn flush(&self) -> DriverResult<()> { self.inner.flush() }
+
+    fn enable_irq(&self) {
+        self.inner.enable_irq();
+    }
+
+    fn irq_bottom_half(&self) -> DriverResult<()> {
+        self.inner.irq_bottom_half()
+    }
 }

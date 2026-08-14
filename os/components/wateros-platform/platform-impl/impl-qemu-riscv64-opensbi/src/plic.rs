@@ -8,7 +8,7 @@
 use core::ptr::{read_volatile, write_volatile};
 
 use irq::chip::IrqChip;
-use irq::types::{HwIrq, IrqAffinity, IrqError, IrqResult};
+use irq::types::{HwIrq, IrqAffinity, IrqError, IrqResult, IrqTrigger, Virq};
 
 const PLIC_BASE : usize = 0x0C00_0000;
 const PRIORITY_BASE : usize = PLIC_BASE;
@@ -115,6 +115,7 @@ pub fn complete(cpu : usize, irq : u32) {
 /// 设备注册时把 hwirq 绑定到目标 CPU 的上下文（当前策略为 BSP/提交者上下文）；
 /// claim/complete 由 trap 路径的 [`claim`]/[`complete`] 完成，chip 只负责使能/
 /// 关断与 EOI。
+#[derive(Clone, Copy)]
 pub struct PlicChip(pub usize);
 
 impl IrqChip for PlicChip {
@@ -136,4 +137,30 @@ impl IrqChip for PlicChip {
     fn set_affinity(&self, _irq : HwIrq, _affinity : IrqAffinity) -> IrqResult<()> {
         Err(IrqError::Unsupported)
     }
+}
+
+/// 每 CPU 一个的 PLIC irqchip 实例（设备 IRQ 绑定到注册时的当前 CPU 上下文）。
+const fn make_plic_chips<const N : usize>() -> [PlicChip; N] {
+    let mut chips = [PlicChip(0); N];
+    let mut cpu = 1;
+    while cpu < N {
+        chips[cpu] = PlicChip(cpu);
+        cpu += 1;
+    }
+    chips
+}
+
+static PLIC_CHIPS : [PlicChip; { config::task::MAX_CPUS }] =
+    make_plic_chips::<{ config::task::MAX_CPUS }>();
+
+/// 为设备中断线注册 virq 并绑定到 `cpu` 的 PLIC S-mode 上下文；同时使能该线。
+pub fn register_device_line(cpu : usize,
+                            irq : u32,
+                            trigger : IrqTrigger)
+                            -> irq::IrqResult<Virq> {
+    if cpu >= config::task::MAX_CPUS {
+        return Err(irq::IrqError::Invalid);
+    }
+    set_enabled(irq, cpu, true).map_err(|_| IrqError::Controller)?;
+    irq::domain::register_line(HwIrq(irq), &PLIC_CHIPS[cpu], trigger)
 }
