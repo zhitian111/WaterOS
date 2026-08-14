@@ -134,9 +134,9 @@ pub(crate) fn sys_clone3(args : SyscallArgs) -> UserRet {
         }
         Some(clone_args.pidfd)
     } else {
-        if clone_args.pidfd != 0 {
-            return UserRet::from_error(ErrNo::EINVAL);
-        }
+        // Linux only interprets this field when CLONE_PIDFD is set.  In
+        // particular, glibc's pthread clone3 path reuses the parent TID
+        // address in `pidfd` while leaving CLONE_PIDFD clear.
         None
     };
     if clone_args.set_tid != 0 || clone_args.set_tid_size != 0 {
