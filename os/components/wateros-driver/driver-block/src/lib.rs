@@ -73,6 +73,8 @@ pub fn test() {
 pub fn self_test() {
     log::info!("[driver/block] self_test begin");
     test();
+    #[cfg(feature = "impl-block-cache")]
+    impl_block_cache::self_test();
     assert!(supported_devices().iter().all(|device| !device.compatible.is_empty()));
     log::info!("[driver/block] self_test complete");
 }

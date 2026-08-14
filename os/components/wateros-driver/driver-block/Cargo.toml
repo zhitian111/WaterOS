@@ -13,7 +13,7 @@
 
 
 [features]
-    self_test = []
+    self_test = [ "impl-block-cache", "impl-block-cache/self_test" ]
     api-v0 = [ "impl-virtio-mmio?/api-v0", "impl-virtio-pci?/api-v0", "impl-block-cache?/api-v0" ]
     default = [ "api-v0", "impl-virtio-mmio" ]
     block-cache-diagnostics = [ "impl-block-cache/diagnostics" ]
