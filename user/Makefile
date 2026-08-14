@@ -12,6 +12,10 @@ OUTPUT ?=
 JOBS ?=
 TOOLCHAIN_ARCHIVE ?=
 FORCE ?=0
+# 整盘镜像（带 GPT/MBR 分区表）开关与参数。
+DISK ?= 0
+PARTITION_TABLE ?= gpt
+DISK_SIZE_MB ?=
 
 PYTHON ?= python3
 TOOL := $(PYTHON) ./tools/userland.py
@@ -97,7 +101,12 @@ build:
 image:
 	$(TOOL) image $(COMMON) --image-size-mb $(IMAGE_SIZE_MB) \
 		--block-size $(BLOCK_SIZE) --inode-size $(INODE_SIZE) \
-		$(if $(strip $(OUTPUT)),--output $(OUTPUT),)
+		$(if $(strip $(OUTPUT)),--output $(OUTPUT),) \
+		$(if $(filter 1,$(DISK)),--disk --partition-table $(PARTITION_TABLE) \
+			$(if $(strip $(DISK_SIZE_MB)),--disk-size-mb $(DISK_SIZE_MB),),)
+
+disk:
+	$(MAKE) image DISK=1
 
 overlay:
 	@test -n "$(BASE_IMAGE)" || { echo "BASE_IMAGE is required" >&2; exit 2; }

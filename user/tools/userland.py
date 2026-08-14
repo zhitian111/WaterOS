@@ -595,6 +595,11 @@ def parse_arguments() -> argparse.Namespace:
     image_parser.add_argument("--block-size", type=int, default=4096)
     image_parser.add_argument("--inode-size", type=int, default=256)
     image_parser.add_argument("--output", type=Path)
+    image_parser.add_argument("--disk", action="store_true",
+                              help="also build a partitioned GPT/MBR disk image (.img)")
+    image_parser.add_argument("--partition-table", choices=("gpt", "mbr"), default="gpt")
+    image_parser.add_argument("--disk-size-mb", type=int, default=0,
+                              help="disk image size in MiB (default: --image-size-mb)")
     overlay_parser = commands.add_parser("overlay", help="copy and augment an EXT4 image")
     add_build_arguments(overlay_parser)
     overlay_parser.add_argument("--base-image", type=Path, required=True)
@@ -638,6 +643,11 @@ def main() -> int:
             output = args.output or image_tool.default_image_path(architecture.name)
             image_tool.create_image(staging, output, architecture.name,
                                     args.image_size_mb, args.block_size, args.inode_size)
+            if args.disk:
+                disk_output = output.with_suffix(".img")
+                disk_size = args.disk_size_mb or args.image_size_mb
+                image_tool.create_disk_image(staging, disk_output, architecture.name,
+                                             disk_size, args.partition_table)
             return 0
         if args.command == "overlay":
             staging = build_packages(architecture, package_names, args.jobs)

@@ -60,4 +60,27 @@ git diff --check
 
 ## 任务简报
 
-（完成后追加，格式见目录 README。）
+- 完成日期：2026-08-15
+- commit：本任务实现提交（见 `git log --oneline -1`，分支 `feat/real-hardware-porting`）
+- 实际改动：
+  - `os/scripts/root_image/root_image.py` 新增 `--copy-tree <staging>`：直接把既有
+    staging 树作为 rootfs（保留模式/符号链接），`verify` 也支持以树为期望路径；
+    原 manifest 路径保持兼容（任务 03 已迁移该工具）。
+  - `user/tools/image.py` 新增 `create_disk_image`：调用 root_image.py 构建并校验
+    整盘镜像（`e2fsck -fn` + 路径检查），成功后原子替换产物。
+  - `user/tools/userland.py` 的 `image` 命令新增 `--disk`/`--partition-table`/
+    `--disk-size-mb`：产出 `wateros-<arch>.img`（GPT 默认），raw `.ext4` 保留。
+  - `user/Makefile` 新增 `DISK`/`PARTITION_TABLE`/`DISK_SIZE_MB` 参数与 `disk`
+    目标；`user/README.md`、`os/scripts/README.md` 同步。
+- 验收结果：
+  - `root_image.py build/verify --copy-tree`：合成 staging 树产出 MBR 与 GPT 整盘
+    镜像，`fdisk -l` 分区表正确，内部 `e2fsck -fn` 通过。
+  - `image.create_disk_image`（staging → `.img`）：GPT 整盘镜像产出并校验通过。
+  - `make -n disk` 命令展开正确（`--disk --partition-table gpt`）。
+  - `make rv_check`：无回归；`git diff --check`：clean。
+- 计划调整/未验证：
+  - boot FAT 分区未实现：本机无 `mkfs.vfat`，且 VisionFive 2 官方固件镜像自带
+    U-Boot/DTB 的 FAT 引导分区；rootfs 分区已满足两块板挂载需要，boot 分区留待
+    需要时补充。
+  - 未跑完整 `make image DISK=1`（需交叉编译 busybox，时间长）；用合成 staging
+    直接验证了工具链与产物路径。真机烧写后置任务 08/10。

@@ -66,6 +66,11 @@ build/images/wateros-rv.ext4.sha256
 - `.manifest.json` 记录镜像内各路径的类型、权限和摘要；
 - `.sha256` 记录整个镜像的 SHA-256。
 
+物理板需要带分区表的整盘镜像时，使用 `make image DISK=1` 或 `make disk`，会在同一目录
+额外产出 `wateros-<arch>.img`（GPT 默认；可用 `PARTITION_TABLE=mbr` 切换）。该镜像
+由 `os/scripts/root_image/root_image.py` 构建并校验（分区表 + `e2fsck -fn`），
+rootfs 分区内容与 staging 树一致；raw `.ext4` 仍保留供 QEMU 使用。
+
 ## Make 参数
 
 运行 `make help` 可以查看当前入口和默认值。
@@ -76,6 +81,9 @@ build/images/wateros-rv.ext4.sha256
 | `ARCH`          | `rv`                               | 目标架构，可选`rv`、`la`          |
 | `PACKAGE`       | `all`                              | 要组合的 package 预设或自定义列表 |
 | `IMAGE_SIZE_MB` | `256`                              | EXT4 镜像容量，单位 MiB           |
+| `DISK`          | `0`                                | 置 `1` 额外产出带分区表的整盘镜像 `.img` |
+| `PARTITION_TABLE`| `gpt`                             | 整盘镜像分区表：`gpt` 或 `mbr`     |
+| `DISK_SIZE_MB`  | 空（沿用 `IMAGE_SIZE_MB`）          | 整盘镜像容量，单位 MiB             |
 | `BLOCK_SIZE`    | `4096`                             | EXT4 块大小                       |
 | `INODE_SIZE`    | `256`                              | EXT4 inode 大小                   |
 | `JOBS`          | 宿主 CPU 数                        | 并行编译任务数                    |

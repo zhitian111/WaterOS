@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -41,6 +42,47 @@ class ImageError(RuntimeError):
 
 def default_image_path(arch: str) -> Path:
     return BUILD_ROOT / "images" / f"wateros-{arch}.ext4"
+
+
+def create_disk_image(staging: Path, output: Path, arch: str,
+                      size_mb: int, table: str = "gpt") -> Path:
+    """Build a partitioned (GPT/MBR) whole-disk image from a staging tree.
+
+    The rootfs partition is produced by `os/scripts/root_image/root_image.py`
+    (loopback, no root required) and verified with `e2fsck -fn`. The raw EXT4
+    from [`create_image`] remains the QEMU-facing artifact.
+    """
+    del arch
+    staging = staging.resolve()
+    output = output.resolve()
+    if not staging.is_dir():
+        raise ImageError(f"staging directory does not exist: {staging}")
+    if size_mb < 16:
+        raise ImageError("disk image size must be at least 16 MiB")
+    root_image = USER_ROOT.parent / "os" / "scripts" / "root_image" / "root_image.py"
+    if not root_image.is_file():
+        raise ImageError(f"root_image.py not found: {root_image}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(output.name + ".tmp")
+    if temporary.exists():
+        temporary.unlink()
+    build = subprocess.run(
+        [sys.executable, str(root_image), "build",
+         "--output", str(temporary), "--copy-tree", str(staging),
+         "--size-mib", str(size_mb), "--partition-table", table, "--force"],
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    if build.returncode != 0:
+        raise ImageError(f"root_image build failed: {build.stdout.strip()}")
+    verify = subprocess.run(
+        [sys.executable, str(root_image), "verify",
+         "--image", str(temporary), "--copy-tree", str(staging)],
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    if verify.returncode != 0:
+        raise ImageError(f"root_image verify failed: {verify.stdout.strip()}")
+    os.replace(temporary, output)
+    return output
 
 
 def default_overlay_path(base: Path, arch: str) -> Path:

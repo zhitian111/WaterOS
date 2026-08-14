@@ -169,6 +169,37 @@ def populate_staging(manifest_path: Path,
     return required_paths
 
 
+def copy_staging_tree(source: Path, dest: Path) -> list[str]:
+    """Copy an existing rootfs staging tree into `dest`, preserving modes/symlinks."""
+    if not source.is_dir():
+        raise ImageError(f"copy-tree source is not a directory: {source}")
+    for entry in sorted(source.rglob("*")):
+        relative = entry.relative_to(source)
+        target = dest / relative
+        if entry.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            target.chmod(entry.stat().st_mode & 0o7777)
+        elif entry.is_symlink():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.symlink_to(os.readlink(entry))
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(entry, target)
+            target.chmod(entry.stat().st_mode & 0o7777)
+    return tree_guest_paths(source)
+
+
+def tree_guest_paths(source: Path) -> list[str]:
+    """List guest-absolute paths of files/symlinks in a staging tree (no copy)."""
+    if not source.is_dir():
+        raise ImageError(f"copy-tree source is not a directory: {source}")
+    paths: list[str] = []
+    for entry in sorted(source.rglob("*")):
+        if entry.is_file() or entry.is_symlink():
+            paths.append(f"/{entry.relative_to(source).as_posix()}")
+    return paths
+
+
 def parse_mbr_sector(sector: bytes, image_bytes: int) -> list[Partition]:
     if len(sector) != SECTOR_SIZE:
         raise ImageError("short MBR sector")
@@ -321,8 +352,12 @@ def build_image(args: argparse.Namespace) -> list[str]:
         with tempfile.TemporaryDirectory(prefix="wateros-root-staging-") as temporary:
             staging = Path(temporary)
             source_root = getattr(args, "source_root", None)
-            required_paths = populate_staging(args.manifest.resolve(), staging,
-                                              source_root.resolve() if source_root else None)
+            copy_tree = getattr(args, "copy_tree", None)
+            if copy_tree is not None:
+                required_paths = copy_staging_tree(copy_tree.resolve(), staging)
+            else:
+                required_paths = populate_staging(args.manifest.resolve(), staging,
+                                                  source_root.resolve() if source_root else None)
             descriptor, raw_path = tempfile.mkstemp(
                 prefix=f".{image.name}.", suffix=".tmp", dir=image.parent
             )
@@ -357,11 +392,10 @@ def build_image(args: argparse.Namespace) -> list[str]:
                 raise ImageError(f"mkfs.ext4 failed with status {error.returncode}") from error
             # Do not replace a known-good image before the replacement passes
             # both filesystem and manifest validation.
-            verify_image(
-                temporary_image,
-                required_paths,
-                manifest_file_contents(args.manifest.resolve()),
+            expected_files = None if copy_tree is not None else manifest_file_contents(
+                args.manifest.resolve()
             )
+            verify_image(temporary_image, required_paths, expected_files)
             os.replace(temporary_image, image)
             temporary_image = None
             return required_paths
@@ -482,12 +516,16 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--label", default=DEFAULT_LABEL)
     build.add_argument("--source-root", type=Path,
                        help="root directory for relative manifest source files")
+    build.add_argument("--copy-tree", type=Path,
+                       help="copy an existing staging tree as the rootfs (instead of a manifest)")
     build.add_argument("--force", action="store_true")
     verify = subcommands.add_parser("verify", help="verify partition, ext4 and manifest paths")
     verify.add_argument("--image", type=Path, required=True)
     verify.add_argument("--manifest", type=Path, default=default_manifest)
     verify.add_argument("--source-root", type=Path,
                         help="root directory for relative manifest source files")
+    verify.add_argument("--copy-tree", type=Path,
+                        help="expected paths come from this staging tree instead of a manifest")
     return result
 
 
@@ -496,21 +534,28 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "build":
             required = build_image(args)
-            manifest = args.manifest.resolve()
-            partition = verify_image(args.output.resolve(), required,
-                                     manifest_file_contents(manifest,
-                                                            args.source_root.resolve()
-                                                            if args.source_root else None))
+            expected = None
+            if args.copy_tree is None:
+                manifest = args.manifest.resolve()
+                expected = manifest_file_contents(manifest,
+                                                  args.source_root.resolve()
+                                                  if args.source_root else None)
+            partition = verify_image(args.output.resolve(), required, expected)
             print(
                 f"built {args.output}: start={partition.start_sector} "
                 f"sectors={partition.sectors} bytes={args.output.stat().st_size}"
             )
         else:
-            manifest = args.manifest.resolve()
-            partition = verify_image(args.image.resolve(), manifest_paths(manifest),
-                                     manifest_file_contents(manifest,
-                                                            args.source_root.resolve()
-                                                            if args.source_root else None))
+            expected = None
+            if args.copy_tree is not None:
+                required = tree_guest_paths(args.copy_tree.resolve())
+            else:
+                manifest = args.manifest.resolve()
+                required = manifest_paths(manifest)
+                expected = manifest_file_contents(manifest,
+                                                  args.source_root.resolve()
+                                                  if args.source_root else None)
+            partition = verify_image(args.image.resolve(), required, expected)
             print(
                 f"verified {args.image}: start={partition.start_sector} "
                 f"sectors={partition.sectors}"
