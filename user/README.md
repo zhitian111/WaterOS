@@ -31,6 +31,9 @@ cd /path/to/WaterOS/user
 make setup ARCH=rv
 # 或：make setup ARCH=la
 
+# Arch Linux：安装 riscv64-gnu-toolchain-musl-bin 后可直接构建；
+# 构建器会自动配对它的 musl GCC 与 GNU binutils。
+
 # 构建当前架构支持的全部 package，并生成 EXT4 镜像
 make image ARCH=rv
 # 跳过 mGBA；依赖 mGBA 的 waterfm 也会自动跳过
@@ -539,6 +542,22 @@ make -C os run ARCH=rv PROFILE=pre MODE=run \
   SCRIPT=/opt/wateros/bin/wos-jvm-network \
   SDCARD=../user/build/images/wateros-rv-openjdk21.ext4 SMP=4
 ```
+
+## Arch Linux 的 RISC-V musl 工具链
+
+Arch 的 `riscv64-gnu-toolchain-musl-bin` 通常只以 `riscv64-linux-musl-` 前缀提供 GCC，
+而 `ar`、`strip`、`readelf` 位于 `riscv64-linux-gnu-` 前缀。构建器检测到这一组合时会在
+`user/build/toolchains/rv/archlinux-compat/bin/` 生成私有兼容前缀；无需手动设置
+`RV_CROSS_COMPILE`。
+
+构建当前图形用户空间（mGBA 与 WaterFM，且避开 OpenJDK）使用：
+
+```bash
+make image ARCH=rv PACKAGE=waterfm JOBS=4
+```
+
+`PACKAGE=waterfm` 会自动包含 `mgba`、Nano-X 和它们的基础依赖。显式设置
+`RV_CROSS_COMPILE` 时仍完全由该环境变量接管。
 
 ## EXT4 生成规则
 

@@ -70,6 +70,38 @@ def load_toml(path: Path) -> dict:
         raise UserlandError(f"cannot read {path}: {error}") from error
 
 
+def _is_arch_linux() -> bool:
+    try:
+        return "ID=arch" in Path("/etc/os-release").read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
+def _archlinux_rv_musl_prefix() -> str | None:
+    """Return a complete RV musl prefix for Arch's split toolchain packages."""
+    if not _is_arch_linux():
+        return None
+    tools = {
+        "gcc": shutil.which("riscv64-linux-musl-gcc"),
+        "ar": shutil.which("riscv64-linux-gnu-ar"),
+        "strip": shutil.which("riscv64-linux-gnu-strip"),
+        "readelf": shutil.which("riscv64-linux-gnu-readelf"),
+    }
+    if not all(tools.values()):
+        return None
+    directory = BUILD_ROOT / "toolchains" / "rv" / "archlinux-compat" / "bin"
+    directory.mkdir(parents=True, exist_ok=True)
+    prefix = directory / "riscv64-linux-musl-"
+    for suffix, target in tools.items():
+        link = Path(f"{prefix}{suffix}")
+        if link.is_symlink() and os.readlink(link) == target:
+            continue
+        if link.exists() or link.is_symlink():
+            raise UserlandError(f"Arch RV compatibility tool is not a symlink: {link}")
+        link.symlink_to(target)
+    return str(prefix)
+
+
 def load_architecture(name: str) -> Architecture:
     raw = load_toml(CONFIG_ROOT / "architectures.toml").get("architectures", {})
     if name not in raw:
@@ -80,7 +112,9 @@ def load_architecture(name: str) -> Architecture:
         managed_prefix = (BUILD_ROOT / "toolchains" / name / "bin"
                           / entry["cross_compile"])
         managed_compiler = Path(f"{managed_prefix}gcc")
-        cross = str(managed_prefix) if managed_compiler.is_file() else entry["cross_compile"]
+        compat_prefix = _archlinux_rv_musl_prefix() if name == "rv" else None
+        cross = (str(managed_prefix) if managed_compiler.is_file()
+                 else compat_prefix or entry["cross_compile"])
     if not cross:
         raise UserlandError(f"empty cross compiler prefix for architecture {name}")
     return Architecture(name=name, triple=entry["triple"], cross_compile=cross,
