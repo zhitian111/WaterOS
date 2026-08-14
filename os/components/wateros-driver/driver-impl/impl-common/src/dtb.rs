@@ -70,3 +70,26 @@ pub fn compatible_list(node: &fdt::node::FdtNode<'_, '_>) -> Vec<String> {
 pub fn is_virtio_mmio_compatible(compatibles: &[String]) -> bool {
     compatibles.iter().any(|c| c.as_str() == "virtio,mmio")
 }
+
+#[cfg(test)]
+mod tests {
+    use alloc::string::String;
+    use super::{is_virtio_mmio_compatible, read_be_u32};
+
+    #[test]
+    fn reads_big_endian_u32_at_offset() {
+        let raw = [0x12, 0x34, 0x56, 0x78, 0x9A];
+        assert_eq!(read_be_u32(&raw, 0), Some(0x1234_5678));
+        assert_eq!(read_be_u32(&raw, 1), Some(0x3456_789A));
+        assert_eq!(read_be_u32(&raw, 2), None);
+    }
+
+    #[test]
+    fn matches_virtio_mmio_compatible_exactly() {
+        let compatibles = alloc::vec![String::from("virtio,mmio"),
+                                      String::from("other")];
+        assert!(is_virtio_mmio_compatible(&compatibles));
+        let unrelated = alloc::vec![String::from("riscv,uart0")];
+        assert!(!is_virtio_mmio_compatible(&unrelated));
+    }
+}

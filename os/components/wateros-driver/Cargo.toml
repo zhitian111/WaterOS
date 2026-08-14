@@ -20,6 +20,7 @@
         "./driver-input/input-impl/impl-virtio-mmio/",
         "./driver-input/input-impl/impl-virtio-pci/",
         "./driver-impl/impl-common/",
+        "./driver-impl/impl-dummy/",
         "./driver-impl/impl-qemu-loongarch64-virt/",
         "./driver-impl/impl-qemu-riscv64-virt/",
         "./driver-network/",
@@ -37,6 +38,7 @@
 
 [dependencies]
     api-v0 = { path = "./driver-api/api-v0/", package = "wateros-driver-api-v0", default-features = true }
+    impl-dummy = { path = "./driver-impl/impl-dummy/", package = "wateros-driver-impl-dummy", default-features = true }
     impl-qemu-riscv64-virt = { path = "./driver-impl/impl-qemu-riscv64-virt/", package = "wateros-driver-impl-qemu-riscv64-virt", default-features = true, optional = true }
     impl-qemu-loongarch64-virt = { path = "./driver-impl/impl-qemu-loongarch64-virt/", package = "wateros-driver-impl-qemu-loongarch64-virt", default-features = true, optional = true }
     block = { path = "./driver-block/", package = "wateros-driver-block", default-features = true }

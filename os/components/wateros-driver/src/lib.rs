@@ -39,21 +39,17 @@ pub use impl_qemu_riscv64_virt::uart;
 use alloc::vec::Vec;
 use api_v0::{MachineDriver, SupportedDeviceEntry};
 
-/// 当前 feature 选中的机器驱动契约实现（QEMU RV/LA）。
+/// 当前 feature 选中的机器驱动契约实现（QEMU RV/LA，缺省回退 dummy 占位）。
 pub fn machine() -> &'static dyn MachineDriver {
     #[cfg(feature = "impl-qemu-loongarch64-virt")]
     {
-        impl_qemu_loongarch64_virt::machine()
+        return impl_qemu_loongarch64_virt::machine();
     }
     #[cfg(feature = "impl-qemu-riscv64-virt")]
     {
-        impl_qemu_riscv64_virt::machine()
+        return impl_qemu_riscv64_virt::machine();
     }
-    #[cfg(not(any(feature = "impl-qemu-loongarch64-virt",
-                  feature = "impl-qemu-riscv64-virt")))]
-    {
-        core::unreachable!("no machine driver feature selected")
-    }
+    impl_dummy::machine()
 }
 
 /// 合并各子系统 [`supported_devices()`]
