@@ -3,18 +3,16 @@
 use core::sync::atomic::Ordering;
 
 use api_v0::{DriverError, DriverResult};
-use block::{BlockDevice, Lba, VirtioBlkDevice, BLOCK_SIZE};
+use block::{first_block_device, Lba, BLOCK_SIZE};
 
-use crate::{devfs, register::VIRTIO_BLK_MMIO, INIT_AFTER_BOOT_DONE};
+use crate::{devfs, INIT_AFTER_BOOT_DONE};
 
 /// 对已注册的首个 virtio-blk 执行块 0 读取自检；无设备时 [`DriverError::NotFound`]。
 pub fn virtio_blk_probe_test() -> DriverResult<()> {
-    let blk = VIRTIO_BLK_MMIO.lock();
-    let Some(mmio) = blk.first().copied() else {
+    let Some(dev) = first_block_device() else {
         return Err(DriverError::NotFound);
     };
-    drop(blk);
-    let mut dev = VirtioBlkDevice::from_mmio(mmio)?;
+    let mut dev = dev.lock();
     let mut buf = [0u8; BLOCK_SIZE];
     dev.read_blocks(Lba(0), &mut buf)?;
     log::info!("[driver] virtio-blk read block0 ok, first16={:02x?}", &buf[..16]);

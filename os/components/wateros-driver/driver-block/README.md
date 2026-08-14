@@ -21,7 +21,11 @@
 - 块 API 只暴露“逻辑块寻址 + 按块/按字节读写”，不感知文件系统格式，也不转换 Linux errno；
   错误统一走 `DriverResult`（`DriverError` 分类来自 `driver-api`）。
 - `BLOCK_SIZE` 固定为 512；`Lba` 从 0 起算。`read_bytes` / `read_prefix` 通过临时整段块缓冲
-  实现任意字节对齐读取，设备侧仍只看到整倍数 `block_size` 的 `read_blocks` 调用。
+  实现任意字节对齐读取，设备侧仍只看到整倍数 `block_size` 的 `read_blocks` 调用；已知容量的
+  设备会在提交请求前用 `total_blocks` 拒绝越界范围。
+- VirtIO 适配层保留上游错误语义：队列暂满/未就绪、DMA 内存不足、请求越界、协议状态错误和
+  设备 I/O 错误分别映射为 `NotReady`、`NoMemory`、`OutOfRange`、`Protocol` 与 `IoError`，并在
+  失败日志中记录 LBA、扇区数、设备容量和上游错误。
 - 注册顺序稳定：`register_block_device` 返回的下标即全局表中的位置；`first_block_device()`
   常用于根文件系统绑定单盘场景。
 - DMA / HAL：virtio 队列与内部缓冲通过 `Hal::dma_alloc` 向全局帧分配器申请**物理连续、页
@@ -70,11 +74,14 @@ probe_virtio_devices()
 
 - 从 DTB 枚举得到的 MMIO 窗口初始化 virtio-blk（`VirtioBlkDevice::from_mmio`）。
 - 通过恒等映射帧分配向帧池申请连续物理页（`VirtioMmioHal`），不连续或 OOM 时整体回滚。
+- 从 VirtIO 配置读取扇区容量；每次读写在进入队列前检查对齐、整数溢出和 LBA 上界。
 
 ### impl-virtio-pci / LoongArch VirtIO 块
 
 - 走 PCI ECAM 枚举并初始化 virtio-blk（`VirtioPciBlkDevice`），为 BAR 分配 MMIO 地址并开启
   `MEMORY_SPACE` / `BUS_MASTER`。
+- 与 MMIO 实现使用相同的容量校验和 `virtio-drivers` 错误分类，避免把参数或队列状态误报为
+  泛化的设备 I/O 故障。
 
 ### impl-block-cache / 块缓存
 

@@ -71,10 +71,15 @@ pub trait BlockDevice: Send {
         let scratch_len = block_count
             .checked_mul(block_size)
             .ok_or(DriverError::InvalidParam)?;
+        let end_lba = u64::try_from(end_block).map_err(|_| DriverError::OutOfRange)?;
+        if self.total_blocks().is_some_and(|total| end_lba > total) {
+            return Err(DriverError::OutOfRange);
+        }
         // 临时覆盖跨块区间；设备侧仍只看到整倍数 `block_size` 的 `read_blocks` 调用。
         let mut scratch = vec![0u8; scratch_len];
 
-        self.read_blocks(Lba(start_block as u64), &mut scratch)?;
+        let start_lba = u64::try_from(start_block).map_err(|_| DriverError::OutOfRange)?;
+        self.read_blocks(Lba(start_lba), &mut scratch)?;
 
         let offset_in_block = start_byte % block_size;
         let read_end = offset_in_block
@@ -143,6 +148,8 @@ impl SampleBlockDevice {
 }
 
 impl BlockDevice for SampleBlockDevice {
+    fn total_blocks(&self) -> Option<u64> { Some(2) }
+
     fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
         if buf.len() % BLOCK_SIZE != 0 {
             return Err(DriverError::InvalidParam);
@@ -154,7 +161,7 @@ impl BlockDevice for SampleBlockDevice {
         let end = start
             .checked_add(buf.len())
             .ok_or(DriverError::InvalidParam)?;
-        let src = self.bytes.get(start..end).ok_or(DriverError::InvalidParam)?;
+        let src = self.bytes.get(start..end).ok_or(DriverError::OutOfRange)?;
         buf.copy_from_slice(src);
         Ok(())
     }

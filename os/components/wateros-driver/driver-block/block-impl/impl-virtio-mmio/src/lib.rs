@@ -13,16 +13,30 @@ use alloc::vec::Vec;
 use core::ptr;
 use core::ptr::NonNull;
 
-use api_v0::{BlockDevice, DriverError, DriverResult, Lba};
+use api_v0::{BlockDevice, DriverError, DriverResult, Lba, BLOCK_SIZE};
 use driver_api::MmioRegion;
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
 use mm_api::addr::PhysPageNum;
-use virtio_drivers::device::blk::VirtIOBlk;
+use virtio_drivers::device::blk::{VirtIOBlk, SECTOR_SIZE};
 use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
-use virtio_drivers::{BufferDirection, Hal, PhysAddr, PAGE_SIZE};
+use virtio_drivers::{BufferDirection, Error as VirtioError, Hal, PhysAddr, PAGE_SIZE};
 
 const _: () = assert!(PAGE_SIZE == mm_api::addr::PAGE_SIZE);
+const _: () = assert!(BLOCK_SIZE == SECTOR_SIZE);
 const IOZONE_PROBE_MIN_WRITE_BYTES: usize = 4096;
+
+fn map_virtio_error(error: VirtioError) -> DriverError {
+    match error {
+        VirtioError::InvalidParam => DriverError::InvalidParam,
+        VirtioError::QueueFull | VirtioError::NotReady => DriverError::NotReady,
+        VirtioError::DmaError => DriverError::NoMemory,
+        VirtioError::Unsupported |
+        VirtioError::ConfigSpaceTooSmall |
+        VirtioError::ConfigSpaceMissing => DriverError::Unsupported,
+        VirtioError::WrongToken | VirtioError::AlreadyUsed => DriverError::Protocol,
+        VirtioError::IoError | VirtioError::SocketDeviceError(_) => DriverError::IoError,
+    }
+}
 
 /// 将内核帧分配器接到 `virtio-drivers` 的 [`Hal`]：恒等映射下返回的 `PhysAddr` 与可写虚拟指针相同。
 struct VirtioMmioHal;
@@ -122,21 +136,52 @@ impl VirtioBlkDevice {
         let transport =
             unsafe { MmioTransport::new(header, mmio.size) }.map_err(|_| DriverError::Unsupported)?;
         let inner = VirtIOBlk::<VirtioMmioHal, MmioTransport>::new(transport)
-            .map_err(|_| DriverError::Unsupported)?;
+            .map_err(map_virtio_error)?;
         Ok(Self { inner })
+    }
+
+    fn validate_io(&self, start_block: Lba, byte_len: usize) -> DriverResult<usize> {
+        if byte_len == 0 {
+            return Ok(0);
+        }
+        if byte_len % BLOCK_SIZE != 0 {
+            return Err(DriverError::InvalidParam);
+        }
+        let start = usize::try_from(start_block.0).map_err(|_| DriverError::OutOfRange)?;
+        let sectors = u64::try_from(byte_len / BLOCK_SIZE).map_err(|_| DriverError::OutOfRange)?;
+        let end = start_block.0.checked_add(sectors).ok_or(DriverError::OutOfRange)?;
+        if end > self.inner.capacity() {
+            return Err(DriverError::OutOfRange);
+        }
+        Ok(start)
     }
 }
 
 impl BlockDevice for VirtioBlkDevice {
+    fn total_blocks(&self) -> Option<u64> { Some(self.inner.capacity()) }
+
     /// 以 LBA 为单位读入 `buf`；长度须为块大小的整数倍，否则由 VirtIO 层返回错误。
     fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
-        self.inner
-            .read_blocks(start_block.0 as usize, buf)
-            .map_err(|_| DriverError::IoError)
+        let start = self.validate_io(start_block, buf.len())?;
+        if buf.is_empty() {
+            return Ok(());
+        }
+        self.inner.read_blocks(start, buf).map_err(|error| {
+            logging::error!("[virtio-blk] read failed lba={} sectors={} capacity={} source={:?}",
+                            start_block.0,
+                            buf.len() / BLOCK_SIZE,
+                            self.inner.capacity(),
+                            error);
+            map_virtio_error(error)
+        })
     }
 
     /// 将 `buf` 写回磁盘；语义与 [`read_blocks`] 对称。
     fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> DriverResult<()> {
+        let start = self.validate_io(start_block, buf.len())?;
+        if buf.is_empty() {
+            return Ok(());
+        }
         let probe = buf.len() >= IOZONE_PROBE_MIN_WRITE_BYTES;
         if probe {
             logging::trace!("[virtio-blk-write] begin lba={} bytes={}",
@@ -144,8 +189,15 @@ impl BlockDevice for VirtioBlkDevice {
                             buf.len());
         }
         let result = self.inner
-                         .write_blocks(start_block.0 as usize, buf)
-                         .map_err(|_| DriverError::IoError);
+                         .write_blocks(start, buf)
+                         .map_err(|error| {
+                             logging::error!("[virtio-blk] write failed lba={} sectors={} capacity={} source={:?}",
+                                             start_block.0,
+                                             buf.len() / BLOCK_SIZE,
+                                             self.inner.capacity(),
+                                             error);
+                             map_virtio_error(error)
+                         });
         if probe {
             match &result {
                 Ok(()) => {

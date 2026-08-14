@@ -2,7 +2,7 @@ use super::*;
 
 pub struct AnotherExt4Fs {
     pub(crate) fs : Option<Ext4>,
-    pub(crate) io_error_state : Option<Arc<AtomicBool>>,
+    pub(crate) io_error_state : Option<BackendErrorState>,
     pub(crate) lookup_cache : Mutex<BTreeMap<String, u32>>,
     pub(crate) negative_cache : Mutex<Option<Box<NegativeDentryCache>>>,
     pub(crate) open_nodes : BTreeMap<u32, usize>,
@@ -230,18 +230,8 @@ impl AnotherExt4Fs {
 
 #[cfg(test)]
 mod tests {
-    use super::{AnotherExt4Fs, AtomicBool, FsError, FsNodeId, Ordering, ReadWriteFs,
-                check_backend_error};
+    use super::{AnotherExt4Fs, FsNodeId, ReadWriteFs};
     use alloc::boxed::Box;
-    use alloc::sync::Arc;
-
-    #[test]
-    pub(crate) fn backend_error_latch_reports_io_after_failure() {
-        let state = Some(Arc::new(AtomicBool::new(false)));
-        assert_eq!(check_backend_error(&state), Ok(()));
-        state.as_ref().unwrap().store(true, Ordering::Release);
-        assert_eq!(check_backend_error(&state), Err(FsError::Io));
-    }
 
     #[test]
     pub(crate) fn lookup_cache_rename_moves_only_source_subtree() {
