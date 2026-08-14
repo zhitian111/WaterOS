@@ -41,8 +41,8 @@ pub struct IrqHandle(pub usize);
 
 static ACTIONS : Mutex<Vec<Option<IrqAction>>> = Mutex::new(Vec::new());
 
-/// 为已注册的中断线注册一个处理器；同一条 virq 允许多个 action（共享语义，
-/// 分发时逐个尝试直到 [`IrqReturn::Handled`]）。
+/// 为已注册的中断线注册一个处理器；同一条 virq 允许多个 action，当前分发只调用
+/// 首个匹配（见 [`dispatch`]）。
 pub fn request_irq(virq : Virq, handler : IrqHandler, dev_id : usize) -> IrqResult<IrqHandle> {
     if line(virq).is_none() {
         return Err(IrqError::Invalid);
@@ -82,6 +82,26 @@ pub fn action(handle : IrqHandle) -> Option<IrqAction> {
            .get(handle.0)
            .copied()
            .flatten()
+}
+
+/// 分发 virq 上注册的处理器（当前取首个匹配 action）。
+///
+/// 处理器在锁释放后调用，避免 handler 内注册/释放 action 造成自死锁；handler
+/// 仍不得调用会长时间持锁的注册表操作。注册表目前是 `spin` 锁，一旦启用真实
+/// 设备 IRQ（T06），需要把注册表访问改为中断安全（掩中断/排队），否则同一 CPU
+/// 在注册期间被外部中断打断时会自旋死锁。
+pub fn dispatch(virq : Virq) -> IrqReturn {
+    let target = {
+        let actions = ACTIONS.lock();
+        actions.iter()
+               .flatten()
+               .find(|action| action.virq == virq)
+               .copied()
+    };
+    match target {
+        Some(action) => (action.handler)(action.virq, action.dev_id),
+        None => IrqReturn::Unhandled,
+    }
 }
 
 /// 当前有效 action 数量（诊断用）。

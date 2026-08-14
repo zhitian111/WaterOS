@@ -22,6 +22,8 @@ pub mod console;
 pub mod dtb;
 /// QEMU RISC-V 平台物理内存布局解析。
 pub mod memory;
+/// QEMU RISC-V `virt` PLIC S-mode 支持（irqchip + claim/complete）。
+pub mod plic;
 /// OpenSBI system reset 后端。
 pub mod reset;
 /// SBI HSM based secondary-hart control for QEMU RISC-V.

@@ -1479,6 +1479,7 @@ dependencies = [
  "sbi-rt",
  "wateros-base",
  "wateros-base-config",
+ "wateros-irq",
  "wateros-platform-api-v0",
 ]
 

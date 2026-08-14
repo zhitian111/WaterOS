@@ -10,6 +10,7 @@ config = { path = "../../../wateros-base/base-config/", package = "wateros-base-
     sbi = { version = "0.0.3", package = "sbi-rt" }
     fdt = { version = "0.1.5" }
     log = "0.4"
+    irq = { path = "../../../wateros-irq", package = "wateros-irq", default-features = false }
 
 [features]
     api-v0 = [  ]

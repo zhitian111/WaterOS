@@ -49,6 +49,14 @@ pub fn line(virq : Virq) -> Option<IrqLine> {
          .copied()
 }
 
+/// 按硬件中断号反查中断线（分发路径用；同一 hwirq 重复注册时返回首个）。
+pub fn line_by_hwirq(hwirq : HwIrq) -> Option<IrqLine> {
+    LINES.lock()
+         .iter()
+         .copied()
+         .find(|entry| entry.hwirq == hwirq)
+}
+
 /// 已注册中断线数量（诊断与自检用）。
 pub fn line_count() -> usize { LINES.lock().len() }
 

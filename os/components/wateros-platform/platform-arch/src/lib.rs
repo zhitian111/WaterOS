@@ -203,6 +203,20 @@ pub mod interrupt {
         #[cfg(feature = "impl-loongarch64")]
         impl_loongarch64::interrupt::disable_soft_interrupt();
     }
+
+    /// 开启监管态外部中断（RISC-V `sie.SEIE`；LoongArch 在 T03 接入）。
+    #[cfg(feature = "impl-riscv64")]
+    #[inline]
+    pub fn enable_external_interrupt() {
+        impl_riscv64::interrupt::enable_external_interrupt();
+    }
+
+    /// 关闭监管态外部中断。
+    #[cfg(feature = "impl-riscv64")]
+    #[inline]
+    pub fn disable_external_interrupt() {
+        impl_riscv64::interrupt::disable_external_interrupt();
+    }
 }
 
 /// 地址空间激活与必要的地址翻译缓存刷新原语；页表内容在 MM 组件。

@@ -97,3 +97,19 @@ pub fn disable_soft_interrupt() {
         sie::clear_ssoft();
     }
 }
+
+/// 开启当前 hart 的监管态外部中断（PLIC 设备 IRQ）。
+#[inline]
+pub fn enable_external_interrupt() {
+    unsafe {
+        sie::set_sext();
+    }
+}
+
+/// 关闭当前 hart 的监管态外部中断。
+#[inline]
+pub fn disable_external_interrupt() {
+    unsafe {
+        sie::clear_sext();
+    }
+}

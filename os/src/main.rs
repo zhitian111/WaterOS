@@ -288,6 +288,7 @@ mod qemu_riscv64_opensbi {
         platform::arch::init();
         let _ = platform::smp::init_ipi();
         platform::arch::paging::activate_address_space_token_and_flush(mm::kernel_mm::kernel_satp());
+        platform::external_irq::init_current_cpu().expect("AP init PLIC external IRQ");
         // 开 AP 定时器中断，使 idle 能被 tick 唤醒从而从全局就绪队列取任务
         platform::interrupt::enable_timer_interrupt().expect("AP enable timer interrupt");
         platform::arch::interrupt::enable_soft_interrupt();
@@ -341,6 +342,10 @@ mod qemu_riscv64_opensbi {
 
         let requested_aps = start_secondary_harts(cpu_id, dtb_pa);
         wait_for_secondary_online(requested_aps);
+
+        // PLIC 上下文初始化必须在 Sv39 页表（含 PLIC 恒等映射）就绪后、全局中断
+        // 打开前完成；当前仅设阈值，尚未使能任何设备 IRQ。
+        platform::external_irq::init_current_cpu().expect("BSP init PLIC external IRQ");
 
         if init_services_after_boot() {
             bringup_user_and_optional_services();

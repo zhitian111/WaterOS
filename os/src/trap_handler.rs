@@ -386,6 +386,12 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 task::schedule_tick();
             }
         }
+        #[cfg(feature = "qemu-riscv64-opensbi")]
+        TrapCause::Interrupt(Interrupt::SupervisiorExternel) => {
+            // 平台外部设备中断：claim → 分发 action → complete。不推进 sepc，
+            // 不触碰 syscall 语义；返回用户态的公共尾部照常执行。
+            platform::external_irq::dispatch_external();
+        }
         _ => {
             if cx.returns_to_user() {
                 let (signal, code, address) = match trap_cause {
