@@ -1235,6 +1235,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wateros-irq"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "spin",
+]
+
+[[package]]
 name = "wateros-klog"
 version = "0.1.0"
 dependencies = [
@@ -1397,6 +1405,7 @@ dependencies = [
  "wateros-base",
  "wateros-base-config",
  "wateros-debug",
+ "wateros-irq",
  "wateros-platform-api-v0",
  "wateros-platform-arch",
  "wateros-platform-impl-qemu-loongarch64-virt",

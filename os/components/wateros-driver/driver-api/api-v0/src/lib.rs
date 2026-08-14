@@ -43,6 +43,19 @@ pub struct IrqLine {
     pub parent: Option<u32>,
 }
 
+/// 设备节点上一条完整的中断描述：DTB `interrupts` 的原始 cells + 父控制器 phandle。
+///
+/// 与 [`IrqLine`] 的单 cell 简化形态不同，本类型保留多 cell / 多行信息，供 irq
+/// domain 与后续 PCI `interrupt-map` 解析使用；`interrupt-map` 的语义换算在
+/// irq domain 层完成，DTB 扫描层不提前丢弃字段。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IrqSpec {
+    /// 中断父控制器节点 phandle（显式 `interrupt-parent`；缺省 `None`）。
+    pub parent: Option<u32>,
+    /// `interrupts` 中一行的全部 cells（如 PLIC 单 cell、PCI 多 cell）。
+    pub cells: Vec<u32>,
+}
+
 /// 子系统在 DTB 扫描阶段声明的「可绑定」设备描述（非排他；多个子系统可同时匹配同一 `compatible`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SupportedDeviceEntry {
@@ -69,6 +82,8 @@ pub struct DeviceInfo {
     pub mmio: Option<MmioRegion>,
     /// 解析到的中断线；属性缺失或格式不支持时为 `None`。
     pub irq: Option<IrqLine>,
+    /// 解析到的全部中断描述（`interrupts` 中每行一组 cells）；无中断属性为空列表。
+    pub irqs: Vec<IrqSpec>,
 }
 
 /// 驱动子系统与 DTB 解析共用的错误分类（不区分 errno 细节）。
@@ -122,8 +137,14 @@ pub fn test() {
             irq: 1,
             parent: Some(0),
         }),
+        irqs: Vec::from([IrqSpec {
+            parent: Some(0),
+            cells: Vec::from([1u32]),
+        }]),
     };
     assert_eq!(info.device_type, DeviceType::Block);
     assert!(info.mmio.is_some());
+    assert_eq!(info.irqs.len(), 1);
+    assert_eq!(info.irqs[0].cells, [1u32]);
     log::trace!("[driver-api] test end");
 }

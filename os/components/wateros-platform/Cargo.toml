@@ -22,9 +22,10 @@
 log = { version = "0.4.29" }
 base = { path = "../wateros-base/", package = "wateros-base", default-features = true }
 debug = { path = "../wateros-debug/", package = "wateros-debug", default-features = false }
+irq = { path = "../wateros-irq", package = "wateros-irq", default-features = false }
 
 [features]
-    self_test = [ "impl-qemu-loongarch64-virt?/self_test", "impl-qemu-riscv64-opensbi?/self_test" ]
+    self_test = [ "impl-qemu-loongarch64-virt?/self_test", "impl-qemu-riscv64-opensbi?/self_test", "irq/self_test" ]
     api-v0 = [
         "arch/api-v0",
         "impl-qemu-loongarch64-virt?/api-v0",

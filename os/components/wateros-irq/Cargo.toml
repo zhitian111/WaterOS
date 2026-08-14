@@ -1,0 +1,20 @@
+[workspace]
+    members = [ "." ]
+
+[package]
+    name = "wateros-irq"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    log = { version = "0.4.29" }
+    spin = { version = "0.10.0", default-features = false, features = ["mutex", "spin_mutex"] }
+
+[features]
+    self_test = [  ]
+
+[profile.dev]
+    panic = "abort"
+
+[profile.release]
+    panic = "abort"

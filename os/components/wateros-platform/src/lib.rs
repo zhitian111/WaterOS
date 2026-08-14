@@ -42,6 +42,12 @@ pub fn init_after_boot() {
     log::info!("[platform] init_after_boot: platform services ready");
 }
 
+/// IRQ 核心抽象（irqchip / irq domain / irq action）。
+///
+/// 本模块只承载通用契约与运行期注册表；具体板级控制器（PLIC / EIOINTC 等）
+/// 实现位于 `platform-impl`，通过 [`irq::chip::IrqChip`] 接入。
+pub use irq;
+
 /// 平台持有的 DTB 物理指针（未保存时为 0）。
 pub fn dtb_pa() -> usize {
     #[cfg(feature = "impl-qemu-riscv64-opensbi")]
@@ -87,6 +93,7 @@ pub fn self_test() {
     impl_qemu_riscv64_opensbi::self_test();
     #[cfg(feature = "impl-qemu-loongarch64-virt")]
     impl_qemu_loongarch64_virt::self_test();
+    irq::self_test();
     log::info!("[platform] self_test ok: dtb={:#x} ram_end={:#x}", dtb, ram_end);
 }
 

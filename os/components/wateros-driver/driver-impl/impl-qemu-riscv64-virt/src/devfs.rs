@@ -18,14 +18,15 @@ pub(crate) fn dump_device_and_devfs_info() {
     let infos = DEVICE_INFOS.lock();
     for (idx, info) in infos.iter().enumerate() {
         log::info!(
-            "[driver][test] dev#{} node={} compatible={} compatibles={:?} type={:?} mmio={:?} irq={:?}",
+            "[driver][test] dev#{} node={} compatible={} compatibles={:?} type={:?} mmio={:?} irq={:?} irqs={:?}",
             idx,
             info.node_name,
             info.compatible,
             info.compatibles,
             info.device_type,
             info.mmio,
-            info.irq
+            info.irq,
+            info.irqs
         );
     }
     drop(infos);

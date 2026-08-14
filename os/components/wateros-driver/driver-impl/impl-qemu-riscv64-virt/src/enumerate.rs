@@ -93,6 +93,7 @@ pub fn scan_device_info() -> DriverResult<usize> {
             device_type: dtype,
             mmio,
             irq: dtb::parse_irq(&node),
+            irqs: dtb::parse_irq_specs(&fdt, &node),
         });
     }
     Ok(devices.len())
