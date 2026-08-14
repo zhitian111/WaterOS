@@ -529,6 +529,15 @@ impl SignalRegistry {
 
     /// 从 pending 中取出 `wait_set` 内第一个信号（`sigwait`）。
     pub fn take_pending(&mut self, task_id : usize, wait_set : SignalSet) -> Option<usize> {
+        self.take_pending_record(task_id, wait_set)
+            .map(|record| record.signal)
+    }
+
+    /// 取出一个 pending 信号并保留其线程/进程归属，供可回滚读取使用。
+    pub fn take_pending_record(&mut self,
+                               task_id : usize,
+                               wait_set : SignalSet)
+                               -> Option<TakenPendingSignal> {
         let thread = *self.threads
                           .get(&task_id)?;
         let thread_ready = thread.pending
@@ -538,7 +547,8 @@ impl SignalRegistry {
                 .get_mut(&task_id)?
                 .pending
                 .remove(sig);
-            return Some(sig);
+            return Some(TakenPendingSignal { signal : sig,
+                                             scope : PendingSignalScope::Thread });
         }
         let process = self.processes
                           .get_mut(&thread.pid)?;
@@ -547,7 +557,25 @@ impl SignalRegistry {
                          .first_signal()?;
         process.pending
                .remove(sig);
-        Some(sig)
+        Some(TakenPendingSignal { signal : sig,
+                                  scope : PendingSignalScope::Process })
+    }
+
+    /// 将尚未成功交付到用户空间的 pending 记录放回原集合。
+    pub fn restore_pending_record(&mut self,
+                                  task_id : usize,
+                                  record : TakenPendingSignal)
+                                  -> SignalResult<()> {
+        let pid = self.thread(task_id)?.pid;
+        match record.scope {
+            PendingSignalScope::Thread => self.thread_mut(task_id)?.pending.insert(record.signal),
+            PendingSignalScope::Process => self.processes
+                                                       .get_mut(&pid)
+                                                       .ok_or(SignalError::NoSuchProcess)?
+                                                       .pending
+                                                       .insert(record.signal),
+        }
+        Ok(())
     }
 
     /// `FLOW:` 在目标线程安全点取出最低编号可交付信号，并按**当前** disposition 决定效果。

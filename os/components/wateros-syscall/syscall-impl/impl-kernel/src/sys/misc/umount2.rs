@@ -14,6 +14,11 @@ const MNT_DETACH: u32 = 2;
 
 // 本方法代码由AI完成
 pub(crate) fn sys_umount2(args: SyscallArgs) -> UserRet {
+    // WaterOS 尚未实现 capability namespace；euid 0 对应 Linux CAP_SYS_ADMIN。
+    if cred::current_credentials().effective_uid.0 != 0 {
+        return UserRet::from_error(ErrNo::EPERM);
+    }
+
     let target_ptr = args.arg(0);
     let flags = args.arg(1) as u32;
 

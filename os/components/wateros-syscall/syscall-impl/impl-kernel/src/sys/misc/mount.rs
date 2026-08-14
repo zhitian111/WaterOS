@@ -85,6 +85,11 @@ fn parse_tmpfs_size_option(options: &str) -> Result<Option<usize>, ErrNo> {
 
 // 本方法代码由AI完成
 pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
+    // WaterOS 尚未实现 capability namespace；euid 0 对应 Linux CAP_SYS_ADMIN。
+    if cred::current_credentials().effective_uid.0 != 0 {
+        return UserRet::from_error(ErrNo::EPERM);
+    }
+
     let source_ptr = args.arg(0);
     let target_ptr = args.arg(1);
     let fstype_ptr = args.arg(2);

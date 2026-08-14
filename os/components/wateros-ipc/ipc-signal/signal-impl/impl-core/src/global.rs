@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 
 use api_v0::{
     AlternateSignalStack, IntervalTimerSpec, PosixTimerClock, SignalAction, SignalDispatch,
-    SignalEffect, SignalResult, SignalSet,
+    SignalEffect, SignalResult, SignalSet, TakenPendingSignal,
 };
 use spin::Mutex;
 
@@ -122,6 +122,18 @@ pub fn has_deliverable(task_id : usize) -> SignalResult<bool> {
 
 pub fn take_pending(task_id : usize, wait_set : SignalSet) -> Option<usize> {
     with_registry(|registry| registry.take_pending(task_id, wait_set))
+}
+
+pub fn take_pending_record(task_id : usize,
+                           wait_set : SignalSet)
+                           -> Option<TakenPendingSignal> {
+    with_registry(|registry| registry.take_pending_record(task_id, wait_set))
+}
+
+pub fn restore_pending_record(task_id : usize,
+                              record : TakenPendingSignal)
+                              -> SignalResult<()> {
+    with_registry(|registry| registry.restore_pending_record(task_id, record))
 }
 
 /// `FLOW:` 目标线程在返回用户态前消费一个可交付信号并得到最终效果。

@@ -32,9 +32,9 @@ static LAST_ACCOUNTING_NS : [AtomicU64; wateros_base_config::task::MAX_CPUS] =
     [const { AtomicU64::new(0) }; wateros_base_config::task::MAX_CPUS];
 
 #[derive(Clone, Copy, Debug, Default)]
-struct PendingSignalSource {
-    pid : usize,
-    uid : u32,
+pub(super) struct PendingSignalSource {
+    pub(super) pid : usize,
+    pub(super) uid : u32,
 }
 
 /// 用户 `kill` / `tgkill` 投递时记录的 siginfo 来源；普通信号 pending 只保存位图，
@@ -49,9 +49,20 @@ fn record_pending_signal_source(process_pid : usize, signal : usize, source : Pe
     }
 }
 
-fn take_pending_signal_source(process_pid : usize, signal : usize) -> PendingSignalSource {
+pub(super) fn take_pending_signal_source(process_pid : usize,
+                                         signal : usize)
+                                         -> PendingSignalSource {
     PENDING_SIGNAL_SOURCES.lock()
                           .remove(&(process_pid, signal))
+                          .unwrap_or_default()
+}
+
+pub(super) fn peek_pending_signal_source(process_pid : usize,
+                                         signal : usize)
+                                         -> PendingSignalSource {
+    PENDING_SIGNAL_SOURCES.lock()
+                          .get(&(process_pid, signal))
+                          .copied()
                           .unwrap_or_default()
 }
 

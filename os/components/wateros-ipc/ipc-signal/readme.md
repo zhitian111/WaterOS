@@ -124,6 +124,9 @@ task ID 是 WaterOS 内部调度标识，TID 是用户可见线程编号，PID �
 - 支持进程投递、线程投递、pending 查询、mask 更新、action 和备用栈操作。
 - `take_deliverable` 在安全点结合 pending、mask 和 disposition 生成 Default/Ignore/Handler 等
   SignalEffect。
+- `take_pending_record` 为 `signalfd` 等同步消费者预留一个 pending 信号，并连同它原本属于
+  thread pending 还是 process pending 一起返回；用户复制失败时必须调用
+  `restore_pending_record` 恢复原作用域，避免信号丢失或错误迁移。
 - timer deadline 使用 generation 过滤 setitimer 替换后残留的旧条目。
 
 全局 facade 位于 `signal-impl/impl-core/src/global.rs`。调用方应使用模块级函数，不直接取得

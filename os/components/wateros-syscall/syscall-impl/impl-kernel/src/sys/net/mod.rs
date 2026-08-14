@@ -18,7 +18,7 @@ pub(crate) use bind::sys_bind;
 pub(crate) use connect::sys_connect;
 pub(crate) use listen::sys_listen;
 pub(crate) use recvfrom::sys_recvfrom;
-pub(crate) use sendmsg::{sys_recvmsg, sys_sendmmsg, sys_sendmsg};
+pub(crate) use sendmsg::{sys_recvmmsg, sys_recvmsg, sys_sendmmsg, sys_sendmsg};
 pub(crate) use sendto::sys_sendto;
 pub(crate) use shutdown::sys_shutdown;
 pub(crate) use socket::sys_socket;

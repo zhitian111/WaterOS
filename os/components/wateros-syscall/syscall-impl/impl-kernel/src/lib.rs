@@ -25,6 +25,7 @@ pub fn self_test() {
     assert!(is_restartable_syscall(api_v0::READ));
     assert!(!is_restartable_syscall(api_v0::YIELD));
     assert!(!is_restartable_syscall(usize::MAX));
+    sys::self_test();
     log::info!("[syscall/impl-kernel] self_test complete");
 }
 

@@ -22,7 +22,7 @@
 | `src/scheduler.rs` | `MultiClassScheduler`、首次运行、普通调度和上下文切换准备。 |
 | `src/scheduler/cpu.rs` | CPU online、timekeeper、负载统计、快照和重调度请求。 |
 | `src/scheduler/tasks.rs` | task 创建、发布、查询、exec 和 affinity。 |
-| `src/scheduler/policy.rs` | policy、priority、nice 和抢占判断。 |
+| `src/scheduler/policy.rs` | policy、priority、nice、I/O priority 属性和抢占判断。 |
 | `src/scheduler/runqueue.rs` | 就绪队列选择、入队、出队和 CPU 放置。 |
 | `src/scheduler/wait.rs` | wait queue 分配、条件等待、唤醒、timeout 和 requeue。 |
 | `src/scheduler/query.rs` | task/CPU 查询以及调度停滞诊断。 |
@@ -111,7 +111,7 @@ wake_one() / wake_all()
 - 支持创建初始用户任务，以及 fork、clone 和 exec 所需的 TCB 操作。
 - 维护 `Ready`、`Running`、`Blocking`、`Sleeping`、`Exited` 状态。
 - 维护 `ready_cpu_id`、`running_cpu_id` 和 `last_cpu_id`，供队列归属检查、唤醒放置和诊断使用。
-- 保存 policy、priority、nice、vruntime、运行统计、等待结果和 TaskContext。
+- 保存 policy、priority、nice、I/O priority、vruntime、运行统计、等待结果和 TaskContext。
 - 提供稳定的 `TaskSnapshot`，避免 dashboard 和诊断代码直接长期借用 TCB。
 - 任务退出后先保留 Exited TCB 供 wait/reap 观察，确认回收时再从 registry 移除。
 

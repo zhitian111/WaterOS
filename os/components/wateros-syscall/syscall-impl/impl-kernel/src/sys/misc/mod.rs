@@ -5,6 +5,7 @@ pub(crate) mod acct;
 pub(crate) mod bringup_stats;
 pub(crate) mod ioctl;
 pub(crate) mod mount;
+pub(crate) mod reboot;
 #[cfg(target_arch = "riscv64")]
 pub(crate) mod riscv_flush_icache;
 #[cfg(target_arch = "riscv64")]
@@ -21,11 +22,20 @@ pub(crate) use bringup_stats::{
 };
 pub(crate) use ioctl::sys_ioctl;
 pub(crate) use mount::sys_mount;
+pub(crate) use reboot::sys_reboot;
 #[cfg(target_arch = "riscv64")]
 pub(crate) use riscv_flush_icache::sys_riscv_flush_icache;
 #[cfg(target_arch = "riscv64")]
 pub(crate) use riscv_hwprobe::sys_riscv_hwprobe;
-pub(crate) use sync::{sys_fdatasync, sys_fsync, sys_sync};
-pub(crate) use sysinfo::{sys_getrandom, sys_sysinfo, sys_uname};
+pub(crate) use sync::{sys_fdatasync, sys_fsync, sys_sync, sys_syncfs};
+pub(crate) use sysinfo::{
+    sys_getrandom, sys_setdomainname, sys_sethostname, sys_sysinfo, sys_uname,
+};
 pub(crate) use syslog::sys_syslog;
 pub(crate) use umount2::sys_umount2;
+
+#[cfg(feature = "self_test")]
+pub(crate) fn self_test() {
+    reboot::self_test();
+    sysinfo::self_test();
+}

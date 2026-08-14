@@ -1,43 +1,177 @@
-**当前 WaterOS 已实现并分发 140+ 个系统调用**，但对照 busybox 1.33.1（busybox-config-riscv64 启用的 applet）逐一定位，仍有 **8 类、约 20 个系统调用** 被 busybox 命令真实调用，而 WaterOS 完全未实现（未在 number.rs 定义、未在 syscall_nr_dispatch.rs 分发，全部落入 `_ => ENOSYS` 兜底）。
+# WaterOS syscall 审计与完善清单
 
-## 缺失系统调用清单（busybox 用到 → WaterOS 返回 ENOSYS）
+本文以 RISC-V64、LoongArch64 共用的 Linux asm-generic ABI 为准，记录
+`wateros-syscall` 的真实实现状态。最近一次审计时间为 2026-08-14；当前分发表
+包含 200 余个入口，但“已经分发”不等于“语义已经完整”。
 
-### 🟥 进程/文件系统类（普通命令就能触发，优先级高）
+## 1. 本轮已完成
 
+| syscall | asm-generic nr | 当前语义 |
+|---|---:|---|
+| `sethostname` | 161 | root 可修改全局 nodename，`uname` 随后返回新值；最大 64 字节 |
+| `setdomainname` | 162 | root 可修改全局 NIS domainname，`uname` 随后返回新值 |
+| `readahead` | 213 | 完整校验 fd、访问模式、偏移和普通文件类型；当前作为页缓存性能提示处理 |
+| `syncfs` | 267 | 校验 fd，随后同步当前唯一可写根卷及全局文件页缓存，并返回写回错误 |
+| `reboot` | 142 | 校验 euid、Linux magic 和 command；支持 restart、halt、poweroff |
+| `personality` | 92 | 支持查询及原生 `PER_LINUX`；不支持的执行域/标志返回 `EINVAL` |
+| `splice` | 76 | 支持 file→pipe、pipe→file、pipe→pipe；pipe 输入使用 read lease，短写不丢数据；支持显式文件 offset 与 `SPLICE_F_NONBLOCK` |
+| `tee` | 77 | 用 read lease 向第二条 pipe 复制数据并以 0 消费提交，输入 pipe 内容保持不变 |
+| `vmsplice` | 75 | 校验 iovec 后复制用户数据进 pipe；支持部分成功和非阻塞上限，暂不赠送用户物理页 |
+| `copy_file_range` | 285 | 普通文件间复制；支持独立输入/输出 offset、同 inode 重叠检查、短写和部分成功语义 |
+| `ioprio_set/get` | 30 / 31 | TCB 保存线程级编码，支持 process/pgrp/user 目标、权限检查及 fork/clone 继承 |
+| `timerfd_create/settime/gettime` | 85–87 | 支持 realtime/monotonic、绝对/相对超时、周期累计、非阻塞、poll、dup/fork 共享状态与 CLOEXEC |
+| `signalfd4` | 74 | 支持创建/更新 mask、批量读取、非阻塞、poll、dup/fork 共享；用户复制失败时按原 thread/process pending 归属回滚 |
+| `recvmmsg` | 243 | 支持批量 UDP/TCP 消息接收、每条 `msg_len`、超时、`MSG_WAITFORONE` 和部分成功语义 |
 
-| syscall (asm-generic nr) | 使用它的 busybox applet                 | 触发方式                                                    |
-| -------------------------- | ----------------------------------------- | ------------------------------------------------------------- |
-| `chroot` (51)            | `chroot`                                | `chroot dir cmd`（`libbb/xfuncs_printf.c::xchroot`）        |
-| `pivot_root` (41)        | `pivot_root`、`switch_root`、`run-init` | 切换根文件系统                                              |
-| `sethostname` (161)      | `hostname`                              | `hostname <新名>`（`networking/hostname.c`）                |
-| `setdomainname` (162)    | `hostname -d` / `dnsdomainname`         | 设置域名                                                    |
-| `syncfs` (251)           | `sync -f FILE`                          | 配置已开`CONFIG_FEATURE_SYNC_FANCY=y`（`coreutils/sync.c`） |
-| `readahead` (213)        | `readahead`                             | `readahead file`（`miscutils/readahead.c`）                 |
+同时修正了已有实现中的错误语义：
 
-### 🟨 电源/交换区/调度（对应 applet 一运行就失败）
+- `fallocate(FALLOC_FL_KEEP_SIZE)` 在确实需要预分配、但 VFS 没有该能力时改为
+  `EOPNOTSUPP`，不再“什么都没做却返回成功”。
+- `mount`、`umount2` 增加 euid 0 权限检查；能力系统/用户命名空间尚未实现，
+  因此目前以 root 近似 `CAP_SYS_ADMIN`。
+- 为未实现调用补齐统一的 asm-generic 编号，方便分发表和审计工具发现缺口。
+- 修正文档中的旧编号：`syncfs=267`、`setns=268`、`finit_module=273`。
+- `sendfile` 改用 VFS read lease；输出短写或后续错误时返回已完成字节，未交付
+  数据不会被错误地从输入流消费。
+- `signalfd` 读取使用 pending 事务：先按原作用域预留信号，完成整条 128 字节
+  `signalfd_siginfo` 用户复制后才提交；`EFAULT`、分配失败或 lease 丢弃均恢复 pending。
 
+## 2. 已登记但尚未分发的 syscall
 
-| syscall                               | 使用它的 applet                 | 触发方式                                    |
-| --------------------------------------- | --------------------------------- | --------------------------------------------- |
-| `reboot` (142)                        | `reboot`、`halt`、`poweroff`    | 关机/重启（`init/halt.c:243`）              |
-| `swapon` (224) / `swapoff` (225)      | `swapon`、`swapoff`             | 启用/停用交换区（`util-linux/swaponoff.c`） |
-| `ioprio_set` (30) / `ioprio_get` (31) | `ionice`                        | 设置 IO 优先级（`util-linux/ionice.c`）     |
-| `personality` (92)                    | `setarch`、`linux32`、`linux64` | 切换执行域（`util-linux/setarch.c`）        |
+以下 16 个编号会稳定落入分发表的 `ENOSYS` 兜底。它们不是简单加一个函数就能
+正确实现；必须先有对应内核状态和生命周期管理。
 
-### 🟦 模块 / 命名空间 / SysV IPC（需要对应内核子系统）
+### 2.1 根目录与命名空间
 
+| syscall | nr | 所需基础设施 |
+|---|---:|---|
+| `pivot_root` | 41 | mount namespace、旧根/新根引用、cwd/root 一致性与并发卸载 |
+| `chroot` | 51 | per-process root、所有 `*at` 路径解析的根边界、fork/exec 继承 |
+| `setns` | 268 | namespace fd、引用计数和各类 namespace 的切换规则 |
 
-| syscall                                                            | 使用它的 applet                                             | 说明                                                                         |
-| -------------------------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `init_module` (105) / `finit_module` (257) / `delete_module` (106) | `insmod`、`rmmod`、`lsmod`、`modinfo`、`modprobe`、`depmod` | 模块装载（`modutils/modutils.c` 直接 `syscall()`）                           |
-| `setns` (253)                                                      | `nsenter`                                                   | 进入命名空间（`util-linux/nsenter.c`）                                       |
-| `msgget/msgctl/msgrcv/msgsnd` (186–189)                           | `ipcs`、`ipcrm`                                             | SysV 消息队列                                                                |
-| `semget/semctl/semop` (190–193)                                   | `ipcs`、`ipcrm`、**`syslogd`、`logread`**                   | SysV 信号量（`syslogd`/`logread` 靠 `semget`+`semop` 做 IPC 同步，比较隐蔽） |
+`chroot` 不能仅保存一个字符串；否则 `..`、绝对路径、已打开 dirfd 和符号链接都
+可能逃出新根目录。
 
-## 补充说明
+### 2.2 I/O 调度与交换区
 
-- **当前行为**：以上全部走 `dispatch_syscall_by_nr` 的兜底分支 `_ => UserRet::from_error(ENOSYS)`，不会再 panic；用户态 busybox 会报 `Function not implemented`。
-- **优先级建议**：`chroot` / `pivot_root` / `sethostname` / `reboot` / `swapon` / `personality` / `syncfs` / `readahead` / `ionice` 这几个实现成本低（多为单函数桩 + 少量语义），对 busybox 命令可用性提升最直接；模块、`setns`、SysV msg/sem 需要对应内核子系统支撑，建议按 roadmap 排期。
-- **另一个值得注意的点**：`rt_sigreturn`(139) 在分发表里目前硬编码返回 `ENOSYS`（实际由 trap 特殊路径处理）。信号量多的命令（如 `ash` 作业控制、`timeout`）是否受影响，取决于 trap 路径是否已接管——不在本次「缺失 syscall」范围内，但建议确认。
+| syscall | nr | 所需基础设施 |
+|---|---:|---|
+| `swapon` / `swapoff` | 224 / 225 | swap area、换入换出、反向映射、页回收和并发失效 |
 
-需要的话，我可以挑其中一两个（比如 `chroot` + `sethostname`）直接落地实现。
+`ioprio` 现已具有真实的 per-task 状态、权限、查询和继承语义，但 WaterOS 的块 I/O
+仍是同步提交，没有可按优先级重排的异步 elevator。因此它不会被错误地用于 CPU
+调度，后续块层引入请求队列时再消费 `TaskSnapshot::io_priority`。
+
+### 2.3 内核模块
+
+| syscall | nr | 所需基础设施 |
+|---|---:|---|
+| `init_module` | 105 | relocatable ELF 装载、符号解析、权限和模块生命周期 |
+| `delete_module` | 106 | 引用计数、资源撤销与并发卸载 |
+| `finit_module` | 273 | fd 装载、签名/参数处理，并复用模块装载核心 |
+
+WaterOS 当前采用静态链接组件架构，因此这组暂列低优先级。
+
+### 2.4 SysV IPC
+
+| syscall | nr | 所需基础设施 |
+|---|---:|---|
+| `msgget/msgctl/msgrcv/msgsnd` | 186–189 | 消息队列 registry、权限、阻塞、删除唤醒 |
+| `semget/semctl/semtimedop/semop` | 190–193 | 信号量组、`SEM_UNDO`、超时和进程退出清理 |
+
+这组会影响 BusyBox `ipcs/ipcrm`，部分 `syslogd/logread` 配置也会依赖 SysV
+信号量。WaterOS 已有的 SysV SHM（194–197）不能替代 msg/sem。
+
+## 3. 已分发但仍需完善的实现
+
+### P0：正确性或安全性
+
+- `getrandom` 当前是基于 tick、地址和 tid 的 xorshift 伪随机数，不具备密码学
+  安全性。需要平台熵源、全局 CSPRNG、初始化状态以及 `GRND_*` 的阻塞语义。
+- `sysinfo` 的 `freeram=totalram/2`、`procs=1`、load average 全零仍是占位值；应接
+  frame allocator、process registry 和 load accounting。
+- `fallocate` 仅能用 `truncate` 实现 mode 0 的文件扩展，洞打孔、真正预分配和
+  `KEEP_SIZE` 尚无后端。
+- `mount/umount2/reboot/sethostname` 目前使用 euid 0 代替 capability 检查；加入
+  user namespace 后必须改为 `CAP_SYS_ADMIN/CAP_SYS_BOOT/CAP_SYS_CHROOT` 等检查。
+
+### P1：兼容性与性能
+
+- `readahead` 与 `fadvise64` 当前只校验并接受提示，没有异步预读队列。
+- `rseq` 明确返回 `ENOSYS`；glibc 能回退，但线程运行时性能路径不完整。
+- futex 已覆盖常用 wait/wake 路径，但部分 PI、requeue/bitset 组合仍返回
+  `ENOSYS`，需要按 LTP 用例逐项补齐。
+- `statfs/sysinfo/getrusage/times` 中部分统计仍是近似值，应避免把占位统计当成
+  精确内核计数。
+- `timerfd` 尚不支持 `TFD_TIMER_CANCEL_ON_SET`。当前 VFS 错误接口没有
+  `ECANCELED`，因此显式返回 `EINVAL`，没有伪装为成功。
+- `signalfd_siginfo` 当前可靠填写 `signo/pid/uid`；普通信号仍遵循位集合并语义，
+  不累计同号普通信号。实时信号排队及完整 `siginfo` 来源字段仍需单独建设。
+
+`rt_sigreturn(139)` 虽然在普通分发表中显示为 `ENOSYS`，但已经由
+`os/src/trap_handler.rs` 在进入普通分发前调用 `restore_signal_frame` 接管；这不是
+缺失实现。若未来合并 trap 入口，必须保留该特殊顺序。
+
+## 4. 下一批现代 Linux 能力
+
+当前 BusyBox 主路径未必需要，但 Debian、apt、编译工具和较新的 libc 会逐步触发：
+
+- 文件搬运：`splice`、`tee`、`vmsplice`、`copy_file_range` 已完成。
+- fd/事件：`timerfd_*`、`signalfd4` 已完成；下一步是 `inotify_*`、`memfd_create`。
+- 网络：`recvmmsg` 已完成，当前复用现有 IPv4 TCP/UDP `recvmsg` 后端。
+- 进程：`pidfd_open`、`pidfd_send_signal`、`pidfd_getfd`。
+- 路径安全：`openat2`。
+
+建议先通过真实用户程序或 LTP 日志收集 syscall nr，再按“有完整后端语义”的原则
+实现；不要为了让命令表面成功而增加空操作桩。
+
+## 5. 验证方式
+
+本轮提供三层验证：
+
+```bash
+cd os
+make check ARCH=rv PROFILE=pre
+make check ARCH=la PROFILE=pre
+
+# 构建含目标机测试程序的用户镜像
+make -C ../user image ARCH=rv PACKAGE=operator
+
+# 在 WaterOS shell 内执行
+wos-syscall-smoke
+```
+
+同一测试程序也已用 `ARCH=la PACKAGE=operator` 构建并在 LoongArch QEMU 中执行，
+两种架构均已在 QEMU 中输出相同的八组 `PASS`。
+
+`wos-syscall-smoke` 直接发出 asm-generic syscall 号，校验：
+
+- `copy_file_range` 的文件内容、输入/输出 offset 及非法 flags。
+- `sendfile` 的显式 offset 隔离与顺序 offset 推进。
+- `splice` 的 file→pipe→file 数据和 offset，以及“两端都不是 pipe”的 `EINVAL`。
+- `tee` 复制后输入未消费，`vmsplice` 多 iovec 内容顺序正确。
+- `ioprio` 的 set/get 和 fork 继承。
+- `timerfd` 的非阻塞读、gettime、poll、周期超时累计以及 dup 共享状态。
+- `recvmmsg` 的真实 loopback UDP 批量数据、每条长度和无数据超时。
+- `signalfd4` 的 mask、poll、批量读取、来源字段、mask 更新，以及故意触发
+  `EFAULT` 后 pending 不丢失。
+
+纯 Rust 边界断言同时接入 `syscall/self_test`，可随内核 self-test 构建在目标架构
+执行。直接在 x86_64 宿主运行
+`cargo test -p wateros-syscall-impl-kernel` 会先编译 RISC-V `sbi-rt`，因宿主没有
+`a0/a7` 寄存器而失败；这属于现有测试基础设施限制，后续应为纯 ABI 逻辑拆出
+host-test crate，不能把该失败误判为 syscall 实现错误。
+
+## 6. 现场优先级（2026）
+
+结合往届线下题和当前用户空间，后续按以下顺序推进：
+
+1. **P0 fd 与事件链路**：继续实现 `inotify_*`，随后补 `memfd_create`；已完成的
+   `timerfd_*`、`signalfd4` 进入回归集合。
+2. **P0 进程/路径兼容**：真实 `chroot`（per-process root + `*at`/symlink/dirfd
+   全链路约束）、`openat2`；不得添加只存字符串的成功桩。
+3. **P1 现代运行时**：常见 futex requeue/bitset 组合、pidfd；`recvmmsg` 已完成，
+   后续根据真实程序补齐更复杂 socket 类型和 ancillary data。
+4. **P1 可观测性**：真实 `sysinfo/statfs/getrusage/times` 计数、`/proc` 配套字段。
+5. **P2 专用设施**：SysV msg/sem、namespace、swap、内核模块；只有题目或真实程序
+   命中时再做，保持未实现时明确 `ENOSYS`。

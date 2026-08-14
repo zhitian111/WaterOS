@@ -1,0 +1,3 @@
+#!/bin/sh
+# 供 operator 的 MODE=run 使用；二进制本身也可直接执行 wos-syscall-smoke。
+exec /opt/wateros/bin/wos-syscall-smoke

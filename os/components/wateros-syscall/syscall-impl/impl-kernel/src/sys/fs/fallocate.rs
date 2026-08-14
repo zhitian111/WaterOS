@@ -51,12 +51,9 @@ pub(crate) fn sys_fallocate(args: SyscallArgs) -> UserRet {
                 if meta.size >= end {
                     return Ok(());
                 }
-                log::trace!(
-                    "[syscall] fallocate(nr=47) KEEP_SIZE prealloc stub (size {} -> {})",
-                    meta.size,
-                    end,
-                );
-                return Ok(());
+                // 当前 VFS 只能通过 truncate 改变可见文件长度，无法在保持 i_size
+                // 不变时预留块。不能让调用者误以为空间已经得到保证。
+                return Err(VfsError::Unsupported);
             }
 
             let meta = handle.metadata()?;
