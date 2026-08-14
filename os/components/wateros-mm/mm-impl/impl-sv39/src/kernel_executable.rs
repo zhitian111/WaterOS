@@ -40,9 +40,9 @@ fn load_program_from_path_rec(path : &str,
     if executable::is_elf_prefix(&prefix) {
         let final_argv = argv_vec(path, argv);
         let loaded = from_elf_path(resolved_path.as_str()).map_err(LoadProgramError::Elf)?;
-        return Ok(LoadedProgram { elf: loaded,
-                                  argv: final_argv,
-                                  executable_path: resolved_path });
+        return Ok(LoadedProgram { elf : loaded,
+                                  argv : final_argv,
+                                  executable_path : resolved_path });
     }
 
     if !executable::is_text_script_candidate(&prefix) {

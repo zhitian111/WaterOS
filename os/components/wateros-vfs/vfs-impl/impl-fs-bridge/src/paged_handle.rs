@@ -20,13 +20,17 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use api_v0::*;
+use fs::{FsError, FsNodeId, SharedRwFs};
 use impl_page_cache::{global_cache, FileCacheKey, PageCacheIo};
 use spin::Mutex;
 use wateros_base_config::fs::{FileIoMode, FILE_IO_MODE};
-use fs::{FsError, FsNodeId, SharedRwFs};
 
 use crate::read_lease::{try_zeroed, ReservationGuard, StagedReadLease};
-use crate::{map_fs_err, mount_table::{resolve_route, FsRoute, MountIdentity}, root_rw, FsBridge};
+use crate::{
+    map_fs_err,
+    mount_table::{resolve_route, FsRoute, MountIdentity},
+    root_rw, FsBridge,
+};
 
 #[path = "stable_node.rs"]
 mod stable_node;
@@ -52,14 +56,18 @@ impl FsPageIo {
     }
 
     fn new(mount_gen : u64, stable : Option<Arc<StableNodeLease>>) -> Self {
-        let stable_key = stable.as_ref().map(|node| node.cache_key());
+        let stable_key = stable.as_ref()
+                               .map(|node| node.cache_key());
         Self { mount_gen,
                stable,
                stable_key }
     }
 
     fn stable_for_key(&self, cache_key : &str) -> Option<Arc<StableNodeLease>> {
-        if self.stable_key.as_deref() == Some(cache_key) {
+        if self.stable_key
+               .as_deref() ==
+           Some(cache_key)
+        {
             return self.stable.clone();
         }
         stable_node_for_cache_key(self.mount_gen, cache_key)
@@ -69,7 +77,7 @@ impl FsPageIo {
 impl PageCacheIo for FsPageIo {
     type Error = VfsError;
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> Result<usize, VfsError> {
         if let Some(node) = self.stable_for_key(path) {
             return node.read_range(offset, buf);
@@ -80,7 +88,7 @@ impl PageCacheIo for FsPageIo {
         FsBridge.read_range(path, offset, buf)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn write_range(&mut self, path : &str, offset : u64, data : &[u8]) -> Result<usize, VfsError> {
         if let Some(node) = self.stable_for_key(path) {
             return node.write_range(offset, data);
@@ -135,20 +143,22 @@ pub struct PagedFileHandle {
 }
 
 impl Clone for PagedFileHandle {
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn clone(&self) -> Self {
         if self.open_ref_held {
             let key = self.cache_file_key();
             global_cache(self.mount_gen).acquire_open_ref_key(&key);
         }
         Self { path : self.path.clone(),
-               description : self.description.clone(),
+               description : self.description
+                                 .clone(),
                meta : self.meta.clone(),
                writable : self.writable,
                accmode : self.accmode,
                mount_gen : self.mount_gen,
                on_disk_size : self.on_disk_size,
-               detached : self.detached.clone(),
+               detached : self.detached
+                              .clone(),
                open_ref_held : self.open_ref_held,
                anonymous : self.anonymous,
                tmpfile_linkable : self.tmpfile_linkable,
@@ -171,7 +181,7 @@ impl Drop for PagedFileHandle {
 }
 
 impl PagedFileHandle {
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     pub(crate) fn open(bridge : &FsBridge,
                        path : String,
                        flags : VfsOpenFlags,
@@ -219,11 +229,11 @@ impl PagedFileHandle {
 
         cache.acquire_open_ref_key(&cache_file_key);
 
-// 本变量代码由AI完成
+        // 本变量代码由AI完成
         const O_WRONLY : u32 = 1;
-// 本变量代码由AI完成
+        // 本变量代码由AI完成
         const O_RDWR : u32 = 2;
-// 本变量代码由AI完成
+        // 本变量代码由AI完成
         const O_APPEND : u32 = 0o2000;
         let accmode = if want_write && flags.contains(VfsOpenFlags::READ) {
             O_RDWR
@@ -251,14 +261,13 @@ impl PagedFileHandle {
                   flock_owner_id : NEXT_FLOCK_OWNER_ID.fetch_add(1, Ordering::Relaxed) })
     }
 
-    pub(crate) fn open_tmpfile(
-        directory : &str,
-        flags : VfsOpenFlags,
-        mode : u32,
-        uid : u32,
-        gid : u32,
-        linkable : bool,
-    ) -> VfsResult<Self> {
+    pub(crate) fn open_tmpfile(directory : &str,
+                               flags : VfsOpenFlags,
+                               mode : u32,
+                               uid : u32,
+                               gid : u32,
+                               linkable : bool)
+                               -> VfsResult<Self> {
         match FILE_IO_MODE {
             FileIoMode::Direct => {}
             FileIoMode::Async => return Err(VfsError::Unsupported),
@@ -280,7 +289,11 @@ impl PagedFileHandle {
         } else {
             O_WRONLY
         };
-        let status_flags = if flags.contains(VfsOpenFlags::APPEND) { O_APPEND } else { 0 };
+        let status_flags = if flags.contains(VfsOpenFlags::APPEND) {
+            O_APPEND
+        } else {
+            0
+        };
         Ok(Self { path,
                   description : Arc::new(VfsOpenDescriptionState::new(0, status_flags)),
                   meta,
@@ -295,7 +308,7 @@ impl PagedFileHandle {
                   flock_owner_id : NEXT_FLOCK_OWNER_ID.fetch_add(1, Ordering::Relaxed) })
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn release_open_ref_if_held(&mut self) {
         if self.open_ref_held {
             let key = self.cache_file_key();
@@ -304,7 +317,7 @@ impl PagedFileHandle {
         }
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     /// 将当前文件的脏页写入文件系统缓存，以便 close 后回收 VFS 页缓存条目；
     /// 不把普通 close(2) 扩大为整个文件系统的 fsync。
     fn writeback_dirty(&mut self) -> VfsResult<()> {
@@ -318,12 +331,12 @@ impl PagedFileHandle {
         let key = self.cache_file_key();
         let mut io = self.page_io();
         let cache = global_cache(self.mount_gen);
-        match cache.flush_key(&mut io,
-                              &key,
-                              core::convert::identity)
-        {
+        match cache.flush_key(&mut io, &key, core::convert::identity) {
             Ok(()) => Ok(()),
-            Err(VfsError::NotFound) if self.stable_node().is_none() => {
+            Err(VfsError::NotFound)
+                if self.stable_node()
+                       .is_none() =>
+            {
                 self.mark_detached();
                 Ok(())
             }
@@ -344,7 +357,7 @@ impl PagedFileHandle {
         }
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn current_size(&self) -> u64 {
         let detached = self.detached.lock();
         if detached.detached {
@@ -357,21 +370,37 @@ impl PagedFileHandle {
         global_cache(self.mount_gen).logical_size_key(&key, self.on_disk_size)
     }
 
-    fn active_path(&self) -> String { self.detached.lock().path.clone() }
+    fn active_path(&self) -> String {
+        self.detached
+            .lock()
+            .path
+            .clone()
+    }
 
     fn cache_file_key(&self) -> FileCacheKey {
         file_key_for_state(self.mount_gen, &self.detached.lock())
     }
 
     fn stable_node(&self) -> Option<Arc<StableNodeLease>> {
-        self.detached.lock().stable.clone()
+        self.detached
+            .lock()
+            .stable
+            .clone()
     }
 
     fn page_io(&self) -> FsPageIo { FsPageIo::new(self.mount_gen, self.stable_node()) }
 
-    fn is_detached(&self) -> bool { self.detached.lock().detached }
+    fn is_detached(&self) -> bool {
+        self.detached
+            .lock()
+            .detached
+    }
 
-    fn mark_detached(&self) { self.detached.lock().detached = true; }
+    fn mark_detached(&self) {
+        self.detached
+            .lock()
+            .detached = true;
+    }
 
     fn mark_content_changed(&self) {
         if let Some(node) = self.stable_node() {
@@ -379,7 +408,7 @@ impl PagedFileHandle {
         }
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn read_detached_at(&self, offset : u64, buf : &mut [u8]) -> VfsResult<usize> {
         let start = usize::try_from(offset).map_err(|_| VfsError::Io)?;
         let detached = self.detached.lock();
@@ -391,11 +420,8 @@ impl PagedFileHandle {
         Ok(n)
     }
 
-// 本方法代码由AI完成
-    fn account_detached_write(&mut self,
-                              offset : u64,
-                              buf : &[u8])
-                              -> VfsResult<usize> {
+    // 本方法代码由AI完成
+    fn account_detached_write(&mut self, offset : u64, buf : &[u8]) -> VfsResult<usize> {
         let start = usize::try_from(offset).map_err(|_| VfsError::Io)?;
         let end = offset.checked_add(buf.len() as u64)
                         .ok_or(VfsError::Io)?;
@@ -415,25 +441,26 @@ impl PagedFileHandle {
 
 impl VfsIoHandle for PagedFileHandle {
     fn prepare_read(&mut self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
-        let reservation = ReservationGuard::begin(self.description.clone())?;
+        let reservation = ReservationGuard::begin(self.description
+                                                      .clone())?;
         let key = self.cache_file_key();
         global_cache(self.mount_gen).acquire_open_ref_key(&key);
-        Ok(Box::new(PagedPreparedRead {
-            reservation : Some(reservation),
-            mount_gen : self.mount_gen,
-            on_disk_size : self.on_disk_size,
-            detached : self.detached.clone(),
-            max_len,
-            open_ref_held : true,
-        }))
+        Ok(Box::new(PagedPreparedRead { reservation : Some(reservation),
+                                        mount_gen : self.mount_gen,
+                                        on_disk_size : self.on_disk_size,
+                                        detached : self.detached
+                                                       .clone(),
+                                        max_len,
+                                        open_ref_held : true }))
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn read(&mut self, buf : &mut [u8]) -> VfsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
         }
-        let mut reservation = ReservationGuard::begin(self.description.clone())?;
+        let mut reservation = ReservationGuard::begin(self.description
+                                                          .clone())?;
         let size = self.current_size();
         let offset = reservation.offset();
         if offset >= size {
@@ -468,18 +495,23 @@ impl VfsIoHandle for PagedFileHandle {
         Ok(n)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn write(&mut self, buf : &[u8]) -> VfsResult<usize> {
         if !self.writable {
             return Err(VfsError::Unsupported);
         }
-// 本变量代码由AI完成
+        // 本变量代码由AI完成
         if buf.is_empty() {
             return Ok(0);
         }
         const O_APPEND : u32 = 0o2000;
-        let mut reservation = ReservationGuard::begin(self.description.clone())?;
-        if self.description.status_flags() & O_APPEND != 0 {
+        let mut reservation = ReservationGuard::begin(self.description
+                                                          .clone())?;
+        if self.description
+               .status_flags() &
+           O_APPEND !=
+           0
+        {
             reservation.retarget(self.current_size())?;
         }
         let offset = reservation.offset();
@@ -500,7 +532,10 @@ impl VfsIoHandle for PagedFileHandle {
                                       core::convert::identity)
         {
             Ok(n) => n,
-            Err(VfsError::NotFound) if self.stable_node().is_none() => {
+            Err(VfsError::NotFound)
+                if self.stable_node()
+                       .is_none() =>
+            {
                 self.mark_detached();
                 let n = self.account_detached_write(offset, buf)?;
                 reservation.commit(n, n)?;
@@ -516,7 +551,7 @@ impl VfsIoHandle for PagedFileHandle {
         Ok(n)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn read_at(&mut self, offset : u64, buf : &mut [u8]) -> VfsResult<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -540,7 +575,7 @@ impl VfsIoHandle for PagedFileHandle {
         Ok(n)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn write_at(&mut self, offset : u64, buf : &[u8]) -> VfsResult<usize> {
         if !self.writable {
             return Err(VfsError::Unsupported);
@@ -563,7 +598,10 @@ impl VfsIoHandle for PagedFileHandle {
                                       core::convert::identity)
         {
             Ok(n) => n,
-            Err(VfsError::NotFound) if self.stable_node().is_none() => {
+            Err(VfsError::NotFound)
+                if self.stable_node()
+                       .is_none() =>
+            {
                 self.mark_detached();
                 return self.account_detached_write(offset, buf);
             }
@@ -576,7 +614,7 @@ impl VfsIoHandle for PagedFileHandle {
         Ok(n)
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn close(&mut self) -> VfsResult<()> {
         let writeback_err = self.writeback_dirty();
         self.release_open_ref_if_held();
@@ -587,11 +625,12 @@ impl VfsIoHandle for PagedFileHandle {
         writeback_err
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         let path = self.active_path();
         let mut m = match self.stable_node() {
-            Some(node) if !self.is_detached() => node.metadata().unwrap_or_else(|_| self.meta.clone()),
+            Some(node) if !self.is_detached() => node.metadata()
+                                                     .unwrap_or_else(|_| self.meta.clone()),
             _ => match FsBridge.metadata(path.as_str()) {
                 Ok(meta) => meta,
                 Err(_) => self.meta.clone(),
@@ -605,13 +644,15 @@ impl VfsIoHandle for PagedFileHandle {
         if self.is_detached() {
             return None;
         }
-        self.stable_node().map(|node| node.content_identity.clone())
+        self.stable_node()
+            .map(|node| {
+                node.content_identity
+                    .clone()
+            })
     }
 
-// 本方法代码由AI完成
-    fn backing_path(&self) -> Option<&str> {
-        (!self.anonymous).then_some(self.path.as_str())
-    }
+    // 本方法代码由AI完成
+    fn backing_path(&self) -> Option<&str> { (!self.anonymous).then_some(self.path.as_str()) }
 
     fn link_at_empty_path(&self, new_path : &str) -> VfsResult<()> {
         if self.anonymous && !self.tmpfile_linkable {
@@ -622,48 +663,57 @@ impl VfsIoHandle for PagedFileHandle {
             .link_tmpfile(new_path)
     }
 
-// 本方法代码由AI完成
-    fn flock_owner_id(&self) -> Option<u64> {
-        Some(self.flock_owner_id)
-    }
+    // 本方法代码由AI完成
+    fn flock_owner_id(&self) -> Option<u64> { Some(self.flock_owner_id) }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn seek(&mut self, offset : i64, whence : VfsSeekWhence) -> VfsResult<u64> {
-        let size = self.current_size();
-        let new_off = match whence {
-            VfsSeekWhence::Set => {
-                if offset < 0 {
-                    return Err(VfsError::InvalidPath);
+        log::info!("[paged_handle] seek path={} whence={whence:?} offset={offset} cur={} size={}",
+                   self.active_path(),
+                   self.description
+                       .offset(),
+                   self.current_size(),);
+        let result = (|| {
+            let size = self.current_size();
+            let new_off = match whence {
+                VfsSeekWhence::Set => {
+                    if offset < 0 {
+                        return Err(VfsError::InvalidPath);
+                    }
+                    offset as u64
                 }
-                offset as u64
-            }
-            VfsSeekWhence::Cur => {
-                return self.description.add_signed_offset_if_idle(offset);
-            }
-            VfsSeekWhence::End => {
-                if offset < 0 {
-                    size.checked_sub((-offset) as u64)
-                        .ok_or(VfsError::InvalidPath)?
-                } else {
-                    size.checked_add(offset as u64)
-                        .ok_or(VfsError::InvalidPath)?
+                VfsSeekWhence::Cur => {
+                    return self.description
+                               .add_signed_offset_if_idle(offset);
                 }
-            }
-        };
-        self.description.set_offset_if_idle(new_off)
+                VfsSeekWhence::End => {
+                    if offset < 0 {
+                        size.checked_sub((-offset) as u64)
+                            .ok_or(VfsError::InvalidPath)?
+                    } else {
+                        size.checked_add(offset as u64)
+                            .ok_or(VfsError::InvalidPath)?
+                    }
+                }
+            };
+            self.description
+                .set_offset_if_idle(new_off)
+        })();
+        log::info!("[paged_handle] seek done path={} result={result:?}",
+                   self.active_path(),);
+        result
     }
 
-// 本方法代码由AI完成
-    fn flush(&mut self) -> VfsResult<()> {
-        self.sync_dirty()
-    }
+    // 本方法代码由AI完成
+    fn flush(&mut self) -> VfsResult<()> { self.sync_dirty() }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn truncate(&mut self, len : u64) -> VfsResult<()> {
         if !self.writable {
             return Err(VfsError::Unsupported);
         }
-        let mut reservation = ReservationGuard::begin(self.description.clone())?;
+        let mut reservation = ReservationGuard::begin(self.description
+                                                          .clone())?;
         if len > 0 {
             match self.writeback_dirty() {
                 Ok(()) => {}
@@ -679,20 +729,27 @@ impl VfsIoHandle for PagedFileHandle {
                 let n = normalize_absolute_path(path.as_str())?;
                 match resolve_route(path.as_str())? {
                     FsRoute::Root { .. } => {
-                        match root_rw()?.lock().truncate(n.as_str(), len).map_err(map_fs_err) {
+                        match root_rw()?.lock()
+                                        .truncate(n.as_str(), len)
+                                        .map_err(map_fs_err)
+                        {
                             Ok(()) => {}
                             Err(VfsError::NotFound) => self.mark_detached(),
                             Err(e) => return Err(e),
                         }
                     }
                     FsRoute::AuxRw { fs, rel, .. } => {
-                        match fs.lock().truncate(rel.as_str(), len).map_err(map_fs_err) {
+                        match fs.lock()
+                                .truncate(rel.as_str(), len)
+                                .map_err(map_fs_err)
+                        {
                             Ok(()) => {}
                             Err(VfsError::NotFound) => self.mark_detached(),
                             Err(e) => return Err(e),
                         }
                     }
-                    FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } |
+                    FsRoute::AuxRo { .. } |
+                    FsRoute::PseudoProc { .. } |
                     FsRoute::PseudoSecurity { .. } => return Err(VfsError::ReadOnlyFs),
                 }
             }
@@ -710,42 +767,44 @@ impl VfsIoHandle for PagedFileHandle {
             if new_len > detached.data.len() {
                 grow_detached_data(&mut detached.data, new_len)?;
             } else {
-                detached.data.truncate(new_len);
+                detached.data
+                        .truncate(new_len);
             }
         }
-        reservation.commit_at(reservation.offset().min(len))?;
+        reservation.commit_at(reservation.offset()
+                                         .min(len))?;
         self.mark_content_changed();
         Ok(())
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn open_status_flags(&self) -> u32 {
-        self.description.status_flags()
+        self.description
+            .status_flags()
     }
 
-// 本方法代码由AI完成
-    fn open_accmode(&self) -> u32 {
-        self.accmode
-    }
+    // 本方法代码由AI完成
+    fn open_accmode(&self) -> u32 { self.accmode }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn set_open_status_flags(&mut self, flags : u32) -> VfsResult<()> {
-// 本变量代码由AI完成
+        // 本变量代码由AI完成
         const O_APPEND : u32 = 0o2000;
-// 本变量代码由AI完成
+        // 本变量代码由AI完成
         const O_NONBLOCK : u32 = 0o4000;
-        self.description.set_status_flags(flags & (O_APPEND | O_NONBLOCK));
+        self.description
+            .set_status_flags(flags & (O_APPEND | O_NONBLOCK));
         Ok(())
     }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> { Ok(Box::new(self.clone())) }
 
-// 本方法代码由AI完成
+    // 本方法代码由AI完成
     fn poll_revents(&mut self, events : i16) -> VfsResult<i16> {
-// 本变量代码由AI完成
+        // 本变量代码由AI完成
         const POLLIN : i16 = 0x001;
-// 本变量代码由AI完成
+        // 本变量代码由AI完成
         const POLLOUT : i16 = 0x004;
         let mut revents = 0i16;
         if events & POLLIN != 0 {
@@ -768,7 +827,7 @@ struct PagedPreparedRead {
 }
 
 impl VfsPreparedRead for PagedPreparedRead {
-    fn acquire(mut self : Box<Self>) -> VfsResult<Box<dyn VfsReadLease>> {
+    fn acquire(mut self: Box<Self>) -> VfsResult<Box<dyn VfsReadLease>> {
         let offset = self.reservation
                          .as_ref()
                          .ok_or(VfsError::Io)?
@@ -776,13 +835,17 @@ impl VfsPreparedRead for PagedPreparedRead {
         let detached = self.detached.lock();
         let (mut staged, n) = if detached.detached {
             let start = usize::try_from(offset).map_err(|_| VfsError::Io)?;
-            let len = self.max_len.min(detached.data.len().saturating_sub(start));
+            let len = self.max_len
+                          .min(detached.data
+                                       .len()
+                                       .saturating_sub(start));
             let mut staged = try_zeroed(len)?;
             staged.copy_from_slice(&detached.data[start..start + len]);
             (staged, len)
         } else {
             let key = file_key_for_state(self.mount_gen, &detached);
-            let stable = detached.stable.clone();
+            let stable = detached.stable
+                                 .clone();
             drop(detached);
             let cache = global_cache(self.mount_gen);
             let backing_size = stable.as_ref()
@@ -791,7 +854,8 @@ impl VfsPreparedRead for PagedPreparedRead {
                                      .unwrap_or(self.on_disk_size);
             let size = cache.logical_size_key(&key, backing_size);
             let available = size.saturating_sub(offset);
-            let len = usize::try_from(available.min(self.max_len as u64)).map_err(|_| VfsError::Io)?;
+            let len =
+                usize::try_from(available.min(self.max_len as u64)).map_err(|_| VfsError::Io)?;
             let mut staged = try_zeroed(len)?;
             let n = if len == 0 {
                 0
@@ -807,7 +871,9 @@ impl VfsPreparedRead for PagedPreparedRead {
             (staged, n)
         };
         staged.truncate(n);
-        let reservation = self.reservation.take().ok_or(VfsError::Io)?;
+        let reservation = self.reservation
+                              .take()
+                              .ok_or(VfsError::Io)?;
         Ok(Box::new(StagedReadLease::new(reservation, staged)))
     }
 }
