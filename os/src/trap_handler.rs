@@ -358,6 +358,22 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 task::schedule_reschedule();
             }
         }
+        TrapCause::Interrupt(Interrupt::SupervisiorExternel) => {
+            let cpu_raw = platform::arch::cpu::current_cpu_id().raw();
+            match driver::machine().handle_external_interrupt(cpu_raw) {
+                Ok(true) => trace!("[trap] external interrupt handled cpu={}",
+                                   cpu_raw),
+                Ok(false) => trace!("[trap] external interrupt no pending source cpu={}",
+                                    cpu_raw),
+                Err(err) => {
+                    // 使能外部中断的 profile 必须先能 claim/complete 其中断控制器；
+                    // 到达此分支却拿不到控制器属于启动契约缺陷。
+                    panic!("external interrupt controller unavailable on cpu {}: {:?}",
+                           cpu_raw,
+                           err);
+                }
+            }
+        }
         TrapCause::Interrupt(Interrupt::SupervisiorTimer) => {
             if let Err(err) = platform::timer::set_timer_after_ms(TIMER_REARM_MS) {
                 panic!("failed to re-arm timer in trap: {:?}",

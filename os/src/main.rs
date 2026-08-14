@@ -142,6 +142,12 @@ fn init_services_after_boot() -> bool {
             fs::init_after_boot();
             #[cfg(feature = "self_test")]
             run_self_tests();
+            let cpu_raw = platform::arch::cpu::current_cpu_id().raw();
+            if let Err(err) = driver::machine().init_current_cpu(cpu_raw) {
+                panic!("[boot] init_current_cpu failed cpu={}: {:?}",
+                       cpu_raw,
+                       err);
+            }
             true
         }
     }
@@ -285,6 +291,11 @@ mod qemu_riscv64_opensbi {
         warn!("[smp] AP entered Rust cpu={}",
               cpu_id.raw());
         platform::arch::cpu::init_current_cpu(cpu_id).expect("AP init current CPU");
+        if let Err(err) = driver::machine().init_current_cpu(cpu_id.raw()) {
+            panic!("[smp] AP init_current_cpu failed cpu={}: {:?}",
+                   cpu_id.raw(),
+                   err);
+        }
         platform::arch::init();
         let _ = platform::smp::init_ipi();
         platform::arch::paging::activate_address_space_token_and_flush(mm::kernel_mm::kernel_satp());
@@ -415,6 +426,11 @@ mod qemu_loongarch64_virt {
 
     fn ap_main(cpu_id : task::CpuId) -> ! {
         platform::arch::cpu::init_current_cpu(cpu_id).expect("AP init current CPU");
+        if let Err(err) = driver::machine().init_current_cpu(cpu_id.raw()) {
+            panic!("[smp] AP init_current_cpu failed cpu={}: {:?}",
+                   cpu_id.raw(),
+                   err);
+        }
         platform::arch::init();
         let _ = platform::smp::init_ipi();
         platform::interrupt::enable_timer_interrupt().expect("AP enable timer interrupt");

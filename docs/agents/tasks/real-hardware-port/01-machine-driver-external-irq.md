@@ -59,4 +59,24 @@ git diff --check
 
 ## 任务简报
 
-（完成后追加，格式见目录 README。）
+- 完成日期：2026-08-15
+- commit：本任务实现提交（见 `git log --oneline -1`，分支 `feat/real-hardware-porting`）
+- 实际改动：
+  - `driver-api/api-v0/src/lib.rs`：`MachineDriver` 新增 `init_current_cpu(cpu_raw)`
+    （默认 `Ok(())`）与 `handle_external_interrupt(cpu_raw) -> DriverResult<bool>`
+    （默认 `Unsupported`）。
+  - `src/trap_handler.rs`：新增 `SupervisiorExternel` 分支，经
+    `driver::machine().handle_external_interrupt(cpu_raw)` 派发；`Err` 按启动契约
+    缺陷 panic。
+  - `src/main.rs`：BSP（`init_services_after_boot`）与 RV/LA 两个 `ap_main` 在打开
+    全局中断前调用 `driver::machine().init_current_cpu(cpu_raw)`。
+  - 两 QEMU machine.rs：显式实现 `handle_external_interrupt` 返回 `Unsupported`
+    （QEMU virt 未使能 SEIE / 未配置 EXTIOI；PLIC 派发后置任务 06、LIOINTC 后置
+    任务 11）。
+- 验收结果：
+  - `cargo check`：driver-api + RV/LA driver-impl（各自 target）通过。
+  - `make rv_check`、`make la_check`：通过（仅既有 warnings）。
+  - `git diff --check`：clean。
+- 未验证/风险：
+  - QEMU 启动冒烟未跑：本任务不使能外部中断（SEIE 保持关闭），运行时行为不变；
+    新增 trap 分支为休眠路径，待板级 profile 使能外部中断后由任务 06/11 验证真机派发。

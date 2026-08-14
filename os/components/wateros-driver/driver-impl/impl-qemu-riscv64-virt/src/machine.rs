@@ -1,6 +1,6 @@
 //! 当前 profile 的 [`MachineDriver`] 契约实现。
 
-use api_v0::{DriverResult, MachineDriver};
+use api_v0::{DriverError, DriverResult, MachineDriver};
 
 use crate::{enumerate, init_after_boot, test};
 
@@ -21,6 +21,13 @@ impl MachineDriver for Machine {
 
     fn realtime_ns(&self) -> DriverResult<Option<u64>> {
         enumerate::goldfish_rtc_realtime_ns().map(Some)
+    }
+
+    fn handle_external_interrupt(&self, _cpu_raw : usize) -> DriverResult<bool> {
+        // QEMU `virt` 当前不使能 S 态外部中断（`sie.SEIE` 未打开，PLIC 也未纳入
+        // 恒等映射），本 profile 不路由外部中断；板级 PLIC 派发由 JH7110 驱动
+        // profile（任务 06）实现。
+        Err(DriverError::Unsupported)
     }
 
     fn test(&self) {
