@@ -15,6 +15,9 @@ const CRMD_IE: usize = 1 << 2;
 const ECFG_TIMER_INTERRUPT_ENABLE: usize = 1 << 11;
 /// `ECFG.IS.IPI`：LoongArch IPI 中断使能位。
 const ECFG_IPI_INTERRUPT_ENABLE: usize = 1 << 12;
+/// QEMU virt 把 EIOINTC 接到 CPU 硬件中断输入 3；硬件中断输入占用 ESTAT/ECFG
+/// bit 2..9，因此输入 3 对应 bit 5。
+const ECFG_EXTERNAL_INTERRUPT_ENABLE: usize = 1 << 5;
 /// LoongArch IOCSR IPI pending/clear 寄存器。
 const IOCSR_IPI_STATUS: usize = 0x1000;
 const IOCSR_IPI_CLEAR: usize = 0x100C;
@@ -129,4 +132,16 @@ pub fn enable_soft_interrupt() {
 /// 关闭当前 CPU 的 IPI 中断使能位；调用者仍需在适当时机清除 pending。
 pub fn disable_soft_interrupt() {
     write_csr::<CSR_ECFG>(read_csr::<CSR_ECFG>() & !ECFG_IPI_INTERRUPT_ENABLE);
+}
+
+/// 打开当前 CPU 的外部设备中断使能位（EIOINTC 输入 3）。
+#[inline]
+pub fn enable_external_interrupt() {
+    write_csr::<CSR_ECFG>(read_csr::<CSR_ECFG>() | ECFG_EXTERNAL_INTERRUPT_ENABLE);
+}
+
+/// 关闭当前 CPU 的外部设备中断使能位。
+#[inline]
+pub fn disable_external_interrupt() {
+    write_csr::<CSR_ECFG>(read_csr::<CSR_ECFG>() & !ECFG_EXTERNAL_INTERRUPT_ENABLE);
 }

@@ -16,6 +16,8 @@ pub mod console;
 pub mod dtb;
 /// QEMU LoongArch64 平台物理内存布局解析。
 pub mod memory;
+/// LoongArch QEMU virt EIOINTC → PCH-PIC 外部中断路径。
+pub mod external_irq;
 pub mod reset;
 pub mod smp;
 pub mod time;

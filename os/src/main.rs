@@ -422,6 +422,7 @@ mod qemu_loongarch64_virt {
         platform::arch::cpu::init_current_cpu(cpu_id).expect("AP init current CPU");
         platform::arch::init();
         let _ = platform::smp::init_ipi();
+        platform::external_irq::init_current_cpu().expect("AP init EIOINTC external IRQ");
         platform::interrupt::enable_timer_interrupt().expect("AP enable timer interrupt");
         platform::arch::interrupt::enable_soft_interrupt();
         platform::timer::set_timer_after_ms(100).expect("AP set initial timer");
@@ -476,6 +477,9 @@ mod qemu_loongarch64_virt {
         AP_BOOT_READY.store(true, Ordering::Release);
         let requested_aps = start_secondary_cpus(cpu_id);
         wait_for_secondary_online(requested_aps);
+
+        // EIOINTC/PCH-PIC 外部中断初始化：须在全局中断打开前完成。
+        platform::external_irq::init_current_cpu().expect("BSP init EIOINTC external IRQ");
 
         if init_services_after_boot() {
             bringup_user_and_optional_services();

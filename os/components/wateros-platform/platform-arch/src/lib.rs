@@ -217,6 +217,20 @@ pub mod interrupt {
     pub fn disable_external_interrupt() {
         impl_riscv64::interrupt::disable_external_interrupt();
     }
+
+    /// 开启监管态外部中断（LoongArch `ECFG` bit5，EIOINTC 输入 3）。
+    #[cfg(feature = "impl-loongarch64")]
+    #[inline]
+    pub fn enable_external_interrupt() {
+        impl_loongarch64::interrupt::enable_external_interrupt();
+    }
+
+    /// 关闭监管态外部中断。
+    #[cfg(feature = "impl-loongarch64")]
+    #[inline]
+    pub fn disable_external_interrupt() {
+        impl_loongarch64::interrupt::disable_external_interrupt();
+    }
 }
 
 /// 地址空间激活与必要的地址翻译缓存刷新原语；页表内容在 MM 组件。

@@ -1,40 +1,58 @@
-//! 平台外部设备中断门面（QEMU RISC-V virt PLIC）。
+//! 平台外部设备中断门面：按当前 board profile 选择实现。
 //!
-//! 本模块把 `platform-impl` 的 PLIC 原语接到通用 IRQ 分发（`irq::domain` /
-//! `irq::action`），并暴露给 trap 路径与启动路径使用。
+//! - RISC-V（QEMU virt）：PLIC S-mode（`platform-impl/.../plic.rs`）。
+//! - LoongArch（QEMU virt）：EIOINTC → PCH-PIC（`platform-impl/.../external_irq.rs`）。
+//!
+//! 本模块把平台实现接到通用 IRQ 分发（`irq::domain` / `irq::action`），并暴露给
+//! trap 路径与启动路径使用。
 
 use irq::action::IrqReturn;
 use irq::types::HwIrq;
 
-pub use crate::active_impl::plic::ExternalIrqError;
+#[cfg(feature = "impl-qemu-riscv64-opensbi")]
+mod active {
+    pub use crate::active_impl::plic::{
+        claim, complete, init_current_cpu, set_enabled, ExternalIrqError,
+    };
+}
 
-/// 初始化当前 CPU 的 PLIC S-mode 上下文并打开 `sie.SEIE`。
+#[cfg(feature = "impl-qemu-loongarch64-virt")]
+mod active {
+    pub use crate::active_impl::external_irq::{
+        claim, complete, init_current_cpu, set_enabled, ExternalIrqError,
+    };
+}
+
+#[cfg(any(feature = "impl-qemu-riscv64-opensbi",
+              feature = "impl-qemu-loongarch64-virt"))]
+pub use active::ExternalIrqError;
+
+/// 初始化当前 CPU 外部中断上下文并打开架构外部中断使能。
 ///
-/// 必须在 Sv39 内核页表（含 PLIC 恒等映射）就绪、全局中断仍关闭时调用，
-/// 由 BSP/AP 启动路径负责。
+/// 必须在平台 MMIO 就绪、全局中断仍关闭时调用，由 BSP/AP 启动路径负责。
 pub fn init_current_cpu() -> Result<(), ExternalIrqError> {
     let cpu = crate::arch::cpu::current_cpu_id().raw();
-    crate::active_impl::plic::init_current_cpu(cpu)?;
+    active::init_current_cpu(cpu)?;
     crate::arch::interrupt::enable_external_interrupt();
     Ok(())
 }
 
-/// 使能/关断某条中断线在当前 CPU 的 PLIC 上下文投递。
+/// 使能/关断某条中断线在当前 CPU 的投递。
 pub fn set_enabled(irq : u32, enabled : bool) -> Result<(), ExternalIrqError> {
     let cpu = crate::arch::cpu::current_cpu_id().raw();
-    crate::active_impl::plic::set_enabled(irq, cpu, enabled)
+    active::set_enabled(irq, cpu, enabled)
 }
 
-/// claim 当前 CPU PLIC 上下文中的一个 pending IRQ。
+/// claim 当前 CPU 一个 pending IRQ。
 pub fn claim() -> Option<u32> {
     let cpu = crate::arch::cpu::current_cpu_id().raw();
-    crate::active_impl::plic::claim(cpu)
+    active::claim(cpu)
 }
 
-/// complete（EOI）当前 CPU PLIC 上下文中的 IRQ。
+/// complete（EOI）当前 CPU 的 IRQ。
 pub fn complete(irq : u32) {
     let cpu = crate::arch::cpu::current_cpu_id().raw();
-    crate::active_impl::plic::complete(cpu, irq);
+    active::complete(cpu, irq);
 }
 
 /// 分发当前 CPU 全部 pending 外部中断：claim → 查找/调用 action → complete。

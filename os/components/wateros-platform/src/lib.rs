@@ -153,10 +153,12 @@ pub mod interrupt {
     pub use arch::interrupt::*;
 }
 
-/// 平台外部设备中断门面：当前由 QEMU RISC-V virt PLIC 提供实现。
+/// 平台外部设备中断门面：按 board profile 选择实现（RISC-V PLIC / LoongArch
+/// EIOINTC→PCH-PIC）。
 ///
 /// trap 路径（`os/src/trap_handler.rs` 的 `SupervisiorExternel` 分支）调用
 /// [`external_irq::dispatch_external`]；BSP/AP 进入可调度状态前调用
-/// [`external_irq::init_current_cpu`]。LoongArch EIOINTC 在 T03 接入。
-#[cfg(feature = "impl-qemu-riscv64-opensbi")]
+/// [`external_irq::init_current_cpu`]。
+#[cfg(any(feature = "impl-qemu-riscv64-opensbi",
+          feature = "impl-qemu-loongarch64-virt"))]
 pub mod external_irq;
