@@ -10,5 +10,6 @@ pub use table_format;
 
 #[cfg(feature = "self_test")]
 pub fn self_test() {
+    table_format::self_test();
     assert!(!core::any::type_name::<usize>().is_empty());
 }

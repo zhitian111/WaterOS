@@ -7,4 +7,4 @@
 table_format = { package = "wateros-table-format", path = "table-format" }
 
 [features]
-self_test = []
+self_test = ["table_format/self_test"]

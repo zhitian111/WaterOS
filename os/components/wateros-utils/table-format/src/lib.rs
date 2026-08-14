@@ -1,4 +1,5 @@
 #![no_std]
+
 #![forbid(unsafe_code)]
 //! Allocation-free text table formatting over [`core::fmt`].
 //!
@@ -26,6 +27,14 @@ pub enum Overflow {
     Error,
     /// Clip the value and append this marker.
     Truncate(&'static str),
+}
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    let column = Column::new(4, Alignment::Left).padding(1, 2);
+    assert_eq!(column.width(), 4);
+    assert_eq!(Alignment::Right, Alignment::Right);
+    assert_eq!(Overflow::Error, Overflow::Error);
 }
 
 /// A fixed-width column.

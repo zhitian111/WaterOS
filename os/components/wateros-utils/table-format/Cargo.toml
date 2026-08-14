@@ -11,3 +11,6 @@ categories = ["no-std", "text-processing"]
 
 [dependencies]
 unicode-width = { version = "0.1.14", default-features = false }
+
+[features]
+self_test = []
