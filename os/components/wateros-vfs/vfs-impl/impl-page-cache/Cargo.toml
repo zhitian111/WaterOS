@@ -10,4 +10,5 @@
 
 [features]
     diagnostics = [  ]
+    self_test = []
     default = [  ]

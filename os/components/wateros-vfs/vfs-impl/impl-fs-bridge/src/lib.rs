@@ -1158,5 +1158,5 @@ pub fn test() {
 #[cfg(feature = "self_test")]
 pub fn self_test() {
     test();
+    impl_page_cache::self_test();
 }
-
