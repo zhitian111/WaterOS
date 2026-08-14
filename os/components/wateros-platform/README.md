@@ -28,8 +28,8 @@
 - `active_impl` 二选一：`impl-qemu-riscv64-opensbi` 或 `impl-qemu-loongarch64-virt`；任一构建只启用一个 arch impl 与一个 platform impl。
 - RISC-V QEMU profile 使用 OpenSBI 提供 HSM、IPI、timer 与 reset；LoongArch QEMU profile 的
   mailbox/IPI 运输在 platform profile，本地 IOCSR pending 清除及中断使能在 arch interrupt。
-- `init_when_boot(dtb_pa)` 保存平台持有的 DTB 物理指针；`physical_ram_end_exclusive()` 解析
-  物理 RAM 上界供恒等映射与帧分配器使用。
+- `init_when_boot(dtb_pa)` 保存平台持有的 DTB 物理指针；`memory::kernel_layout()` 给出
+  RAM/MMIO 布局契约（`physical_ram_end_exclusive()` 由它派生），供恒等映射与帧分配器使用。
 - `timer` 用 arch tick 与平台 Hz 换算时刻，再经平台后端编程下一次定时器中断；错误变体区分
   `Arch` / `Platform` / `DeadlineTimer` 三层来源。
 - `CpuMask`、online mask、IPI reason 和调度决策不属于具体 profile；由聚合层或 `wateros-task`
@@ -43,7 +43,7 @@
 boot 早期
   -> platform::init_when_boot(dtb_pa)     保存 DTB 物理指针
   -> arch::init()                          安装 trap 向量（开全局中断之前）
-  -> physical_ram_end_exclusive()          解析 RAM 上界（恒等映射 / 帧分配）
+  -> memory::kernel_layout()                解析 RAM/MMIO 布局（恒等映射 / 帧分配）
 ```
 
 SMP 与 IPI：
@@ -122,7 +122,8 @@ pending 清除在 `interrupt.rs`）：
 - `boot.rs`：解释 OpenSBI 启动参数（`a0`/`a1` 分别承载 hart id 与 DTB 物理地址）。
 - `console.rs`：OpenSBI console（early console）后端。
 - `dtb.rs`：平台持有的引导 DTB 物理指针（`store` / `dtb_pa`）。
-- `memory.rs`：QEMU RISC-V 物理内存布局解析（`physical_ram_end_exclusive`）。
+- `memory.rs`：QEMU RISC-V 物理内存布局（`kernel_memory_layout` 契约 +
+  `physical_ram_end_exclusive` 派生）。
 - `reset.rs`：OpenSBI system reset 后端。
 - `smp.rs`：SBI HSM（`hart_start`/`hart_get_status`）与 IPI/remote fence 运输
   （`QemuRiscv64OpenSbiSmp`）。
@@ -138,8 +139,9 @@ pending 清除在 `interrupt.rs`）：
 
 ### 聚合门面 / src/
 
-- `lib.rs`：`active_impl` 选择；`init_when_boot` / `dtb_pa` / `physical_ram_end_exclusive`；
-  `timer`/`console`/`reset` 组合入口；`arch` 再导出与 `arch::init()`。
+- `lib.rs`：`active_impl` 选择；`init_when_boot` / `dtb_pa` / `memory::kernel_layout`
+  （及派生的 `physical_ram_end_exclusive`）；`timer`/`console`/`reset` 组合入口；
+  `arch` 再导出与 `arch::init()`。
 - `boot.rs`：启动参数与引导上下文。
 - `time.rs`：平台时间频率注入（`set_frequency_hz`）与回退。
 - `smp.rs`：跨架构通用的待处理 IPI reason（`PENDING_IPI`）与 `send_ipi`/`clear_ipi`/

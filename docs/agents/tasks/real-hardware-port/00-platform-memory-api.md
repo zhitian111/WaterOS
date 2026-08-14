@@ -59,4 +59,24 @@ git diff --check
 
 ## 任务简报
 
-（完成后追加，格式见目录 README。）
+- 完成日期：2026-08-15
+- commit：本任务实现提交（见 `git log --oneline -1`，分支 `feat/real-hardware-porting`）
+- 实际改动：
+  - 新增 `platform-api/api-v0/src/memory.rs`：`PhysicalRange` / `MemoryLayoutError` /
+    `KernelMemoryLayout::validate` 契约（含 3 个 host 单测）。
+  - `wateros-platform/src/lib.rs`：新增 `memory::kernel_layout()` 门面，
+    `physical_ram_end_exclusive()` 改为由布局派生（消除 QEMU 分支硬切逻辑）。
+  - 两个 QEMU 平台实现：`kernel_memory_layout()` 提供 RAM/MMIO/probe 布局，
+    `physical_ram_end_exclusive()` 派生自布局；RAM 上界探测逻辑逐字保留
+    （含 LA 的 QEMU 8.x `normalize_qemu8_region` 修正与 0xc000_0000 回退）。
+  - 同步 `components/wateros-platform/README.md`。
+- 验收结果：
+  - `cargo test -p wateros-platform-api-v0`：3 passed。
+  - 平台工作区 `cargo check`：RV（`riscv64gc-unknown-none-elf`）与 LA
+    （`loongarch64-unknown-none`）下 impl 与聚合门面均通过。
+  - `make configure`、`make rv_check`、`make la_check`：通过（仅既有 warnings）。
+  - `git diff --check`：clean。
+- 未验证/风险：
+  - QEMU 启动冒烟（`make run ARCH=rv|la PROFILE=pre`）未跑：本任务是纯重构，
+    RAM 上界探测函数逐字保留，运行时返回值与迁移前一致；板级 DTB 异常形状的
+    `validate()` 失败路径（应 expect panic）未在真机/QEMU 上演练。

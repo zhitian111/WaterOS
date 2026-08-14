@@ -59,21 +59,40 @@ pub fn dtb_pa() -> usize {
     }
 }
 
-/// 物理 RAM 上界（不包含），用于恒等映射与帧分配器；QEMU 实现从平台持有的
-/// DTB 解析，其它配置返回回退常量。
+/// 物理 RAM 上界（不包含），用于恒等映射与帧分配器；由 [`memory::kernel_layout`]
+/// 当前平台的布局派生，保持单一事实来源。
 pub fn physical_ram_end_exclusive() -> usize {
-    #[cfg(feature = "impl-qemu-riscv64-opensbi")]
-    {
-        impl_qemu_riscv64_opensbi::memory::physical_ram_end_exclusive()
-    }
-    #[cfg(feature = "impl-qemu-loongarch64-virt")]
-    {
-        impl_qemu_loongarch64_virt::memory::physical_ram_end_exclusive()
-    }
-    #[cfg(not(any(feature = "impl-qemu-riscv64-opensbi",
-                  feature = "impl-qemu-loongarch64-virt")))]
-    {
-        config::mm::QEMU_VIRT_PHYS_RAM_END
+    memory::kernel_layout().ram.end
+}
+
+/// 平台物理内存布局：由当前 `platform-impl` 提供 RAM/MMIO 区间与探测虚拟页。
+///
+/// QEMU profile 从引导 DTB 推导 RAM 上界并给出固定 MMIO 区间；物理板（任务 05/09）
+/// 在各自的 `memory.rs` 中实现同一契约。
+pub mod memory {
+    pub use api_v0::memory::{KernelMemoryLayout, MemoryLayoutError, PhysicalRange};
+
+    /// 当前平台的 RAM/MMIO 布局（已通过 [`KernelMemoryLayout::validate`] 校验）。
+    pub fn kernel_layout() -> KernelMemoryLayout {
+        #[cfg(feature = "impl-qemu-riscv64-opensbi")]
+        {
+            return impl_qemu_riscv64_opensbi::memory::kernel_memory_layout();
+        }
+        #[cfg(feature = "impl-qemu-loongarch64-virt")]
+        {
+            return impl_qemu_loongarch64_virt::memory::kernel_memory_layout();
+        }
+        #[cfg(not(any(feature = "impl-qemu-riscv64-opensbi",
+                      feature = "impl-qemu-loongarch64-virt")))]
+        {
+            const NO_MMIO : [PhysicalRange; 0] = [];
+            KernelMemoryLayout {
+                ram : PhysicalRange::new(config::mm::QEMU_VIRT_PHYS_RAM_BASE,
+                                         config::mm::QEMU_VIRT_PHYS_RAM_END),
+                mmio : &NO_MMIO,
+                probe_virtual_page : None,
+            }
+        }
     }
 }
 
