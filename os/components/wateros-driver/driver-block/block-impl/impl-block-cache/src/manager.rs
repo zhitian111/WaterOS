@@ -18,24 +18,27 @@ pub struct BlockCacheManager;
 impl BlockCacheManager {
     /// 默认 [`BlockCacheConfig`]，容量来自 `base-config`。
     pub fn default_config() -> BlockCacheConfig {
-        BlockCacheConfig {
-            capacity_blocks: BLOCK_CACHE_CAPACITY_BLOCKS,
-        }
+        BlockCacheConfig { capacity_blocks : BLOCK_CACHE_CAPACITY_BLOCKS }
     }
 
     /// 用写穿 LRU 包装 `inner` 并返回可注册的共享句柄。
-    pub fn wrap(inner: Box<dyn BlockDevice + Send>, config: BlockCacheConfig) -> SharedBlockDevice {
-        let cached: Box<dyn BlockDevice> = Box::new(CachingBlockDevice::new(inner, config));
+    pub fn wrap(inner : Box<dyn BlockDevice + Send>,
+                config : BlockCacheConfig)
+                -> SharedBlockDevice {
+        let cached : Box<dyn BlockDevice> = Box::new(CachingBlockDevice::new(inner, config));
         Arc::new(Mutex::new(cached))
     }
 
-    /// 写穿策略下无独立脏数据；保留接口供将来 write-back 或测试。
+    /// Flush every registered block device, including uncached devices.
     pub fn flush_all() -> api_v0::DriverResult<()> {
+        for index in 0..api_v0::block_device_count() {
+            let device = api_v0::block_device_at(index).ok_or(api_v0::DriverError::IoError)?;
+            device.lock()
+                  .flush()?;
+        }
         Ok(())
     }
 
     /// 已注册块设备数量（与全局表一致，含非缓存设备）。
-    pub fn registered_count() -> usize {
-        api_v0::block_device_count()
-    }
+    pub fn registered_count() -> usize { api_v0::block_device_count() }
 }

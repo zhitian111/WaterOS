@@ -21,19 +21,19 @@ use virtio_drivers::device::blk::VirtIOBlk;
 use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
 use virtio_drivers::{BufferDirection, Hal, PhysAddr, PAGE_SIZE};
 
-const _: () = assert!(PAGE_SIZE == mm_api::addr::PAGE_SIZE);
-const IOZONE_PROBE_MIN_WRITE_BYTES: usize = 4096;
+const _ : () = assert!(PAGE_SIZE == mm_api::addr::PAGE_SIZE);
+const IOZONE_PROBE_MIN_WRITE_BYTES : usize = 4096;
 
 /// 将内核帧分配器接到 `virtio-drivers` 的 [`Hal`]：恒等映射下返回的 `PhysAddr` 与可写虚拟指针相同。
 struct VirtioMmioHal;
 
 unsafe impl Hal for VirtioMmioHal {
     /// 按页数向帧池要连续物理页；失败时释放已拿页并返回空指针对，由上层映射为 [`DriverError`]。
-    fn dma_alloc(pages: usize, _direction: BufferDirection) -> (PhysAddr, NonNull<u8>) {
+    fn dma_alloc(pages : usize, _direction : BufferDirection) -> (PhysAddr, NonNull<u8>) {
         if pages == 0 {
             return (0, NonNull::dangling());
         }
-        let mut ppns: Vec<PhysPageNum> = Vec::new();
+        let mut ppns : Vec<PhysPageNum> = Vec::new();
         for _ in 0..pages {
             match frame_alloc_result() {
                 Ok(p) => ppns.push(p),
@@ -41,7 +41,8 @@ unsafe impl Hal for VirtioMmioHal {
                     for q in ppns {
                         let _ = frame_dealloc_result(q);
                     }
-                    logging::error!("[virtio-blk-hal] dma_alloc: frame pool OOM (pages={})", pages);
+                    logging::error!("[virtio-blk-hal] dma_alloc: frame pool OOM (pages={})",
+                                    pages);
                     return (0, NonNull::dangling());
                 }
             }
@@ -52,9 +53,8 @@ unsafe impl Hal for VirtioMmioHal {
                 for q in ppns {
                     let _ = frame_dealloc_result(q);
                 }
-                logging::error!(
-                    "[virtio-blk-hal] dma_alloc: non-contiguous frames (expect stack PPNs)"
-                );
+                logging::error!("[virtio-blk-hal] dma_alloc: non-contiguous frames (expect stack \
+                                 PPNs)");
                 return (0, NonNull::dangling());
             }
         }
@@ -79,15 +79,13 @@ unsafe impl Hal for VirtioMmioHal {
         (paddr, nn)
     }
 
-    unsafe fn dma_dealloc(paddr: PhysAddr, vaddr: NonNull<u8>, pages: usize) -> i32 {
+    unsafe fn dma_dealloc(paddr : PhysAddr, vaddr : NonNull<u8>, pages : usize) -> i32 {
         if pages == 0 || paddr == 0 {
             return 0;
         }
-        debug_assert_eq!(
-            vaddr.as_ptr() as usize,
-            paddr as usize,
-            "identity DMA: vaddr must match paddr"
-        );
+        debug_assert_eq!(vaddr.as_ptr() as usize,
+                         paddr as usize,
+                         "identity DMA: vaddr must match paddr");
         let base_ppn = (paddr as usize) / PAGE_SIZE;
         for i in 0..pages {
             let _ = frame_dealloc_result(PhysPageNum(base_ppn + i));
@@ -95,48 +93,59 @@ unsafe impl Hal for VirtioMmioHal {
         0
     }
 
-    unsafe fn mmio_phys_to_virt(paddr: PhysAddr, _size: usize) -> NonNull<u8> {
+    unsafe fn mmio_phys_to_virt(paddr : PhysAddr, _size : usize) -> NonNull<u8> {
         NonNull::new(paddr as *mut u8).expect("mmio_phys_to_virt: null")
     }
 
-    unsafe fn share(buffer: NonNull<[u8]>, _direction: BufferDirection) -> PhysAddr {
+    unsafe fn share(buffer : NonNull<[u8]>, _direction : BufferDirection) -> PhysAddr {
         let ptr = buffer.as_ptr() as *mut u8 as usize;
         ptr as PhysAddr
     }
 
-    unsafe fn unshare(_paddr: PhysAddr, _buffer: NonNull<[u8]>, _direction: BufferDirection) {}
+    unsafe fn unshare(_paddr : PhysAddr, _buffer : NonNull<[u8]>, _direction : BufferDirection) {}
 }
 
 /// VirtIO-MMIO 上的块设备（`virtio-blk`）。
 pub struct VirtioBlkDevice {
     /// `virtio-drivers` 侧已握手的传输与队列状态。
-    inner: VirtIOBlk<VirtioMmioHal, MmioTransport<'static>>,
+    inner : VirtIOBlk<VirtioMmioHal, MmioTransport<'static>>,
 }
 
 impl VirtioBlkDevice {
     /// 在给定 MMIO 窗口内探测并初始化 `virtio-blk`；头指针或传输握手失败时映射为 [`DriverError`]。
     ///
     /// **须在** `init_frame_allocator`（或等价全局帧池初始化）**之后**调用。
-    pub fn from_mmio(mmio: MmioRegion) -> DriverResult<Self> {
+    pub fn from_mmio(mmio : MmioRegion) -> DriverResult<Self> {
         let header = NonNull::new(mmio.base as *mut VirtIOHeader).ok_or(DriverError::InvalidDtb)?;
         let transport =
             unsafe { MmioTransport::new(header, mmio.size) }.map_err(|_| DriverError::Unsupported)?;
-        let inner = VirtIOBlk::<VirtioMmioHal, MmioTransport>::new(transport)
-            .map_err(|_| DriverError::Unsupported)?;
+        let inner =
+            VirtIOBlk::<VirtioMmioHal, MmioTransport>::new(transport).map_err(|_| {
+                                                                         DriverError::Unsupported
+                                                                     })?;
         Ok(Self { inner })
     }
 }
 
 impl BlockDevice for VirtioBlkDevice {
+    fn total_blocks(&self) -> Option<u64> {
+        Some(self.inner
+                 .capacity())
+    }
+
     /// 以 LBA 为单位读入 `buf`；长度须为块大小的整数倍，否则由 VirtIO 层返回错误。
-    fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
+    fn read_blocks(&mut self, start_block : Lba, buf : &mut [u8]) -> DriverResult<()> {
+        self.check_request_range(start_block, buf.len())?;
+        let start = usize::try_from(start_block.0).map_err(|_| DriverError::InvalidParam)?;
         self.inner
-            .read_blocks(start_block.0 as usize, buf)
+            .read_blocks(start, buf)
             .map_err(|_| DriverError::IoError)
     }
 
     /// 将 `buf` 写回磁盘；语义与 [`read_blocks`] 对称。
-    fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> DriverResult<()> {
+    fn write_blocks(&mut self, start_block : Lba, buf : &[u8]) -> DriverResult<()> {
+        self.check_request_range(start_block, buf.len())?;
+        let start = usize::try_from(start_block.0).map_err(|_| DriverError::InvalidParam)?;
         let probe = buf.len() >= IOZONE_PROBE_MIN_WRITE_BYTES;
         if probe {
             logging::trace!("[virtio-blk-write] begin lba={} bytes={}",
@@ -144,7 +153,7 @@ impl BlockDevice for VirtioBlkDevice {
                             buf.len());
         }
         let result = self.inner
-                         .write_blocks(start_block.0 as usize, buf)
+                         .write_blocks(start, buf)
                          .map_err(|_| DriverError::IoError);
         if probe {
             match &result {
@@ -162,5 +171,11 @@ impl BlockDevice for VirtioBlkDevice {
             }
         }
         result
+    }
+
+    fn flush(&mut self) -> DriverResult<()> {
+        self.inner
+            .flush()
+            .map_err(|_| DriverError::IoError)
     }
 }
