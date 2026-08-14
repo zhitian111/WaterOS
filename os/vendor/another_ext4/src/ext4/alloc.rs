@@ -142,12 +142,18 @@ impl Ext4 {
 
     /// Free an allocated inode and all data blocks allocated for it
     pub(super) fn free_inode(&self, inode: &mut InodeRef) -> Result<()> {
-        // Free the data blocks allocated for the inode
-        let pblocks = self.extent_all_data_blocks(inode);
-        self.dealloc_blocks(inode, &pblocks)?;
-        // Free extent tree
-        let pblocks = self.extent_all_tree_blocks(inode);
-        self.dealloc_blocks(inode, &pblocks)?;
+        // A fast symlink stores its target bytes directly in i_block and clears
+        // EXTENTS. Interpreting those bytes as an extent header can turn link
+        // text into bogus block numbers while unlinking the inode.
+        let is_fast_symlink = inode.inode.is_softlink() && !inode.inode.uses_extents();
+        if !is_fast_symlink {
+            // Free the data blocks allocated for the inode.
+            let pblocks = self.extent_all_data_blocks(inode);
+            self.dealloc_blocks(inode, &pblocks)?;
+            // Free extent tree blocks.
+            let pblocks = self.extent_all_tree_blocks(inode);
+            self.dealloc_blocks(inode, &pblocks)?;
+        }
         // Free xattr block
         let xattr_block = inode.inode.xattr_block();
         if xattr_block != 0 {

@@ -8,4 +8,5 @@ Initial version is forked from [ext4_rs](https://github.com/yuoo655/ext4_rs).
 The WaterOS-maintained fork includes read/write integration fixes required by the
 default kernel backend, including creation and reading of ext4 symbolic links.
 Targets up to 60 bytes use the inode's inline `i_block` area; longer targets are
-stored in ordinary extents and are never truncated.
+stored in ordinary extents and are never truncated. Inode reclamation distinguishes
+inline symlink payload from extent metadata, so fast symlinks can be unlinked safely.

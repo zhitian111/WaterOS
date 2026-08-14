@@ -330,7 +330,7 @@ impl Ext4 {
 
         // fast symlink: content stored inline in inode.i_block
         let inline = inode_ref.inode.inline_block();
-        if size <= inline.len() && inode_ref.inode.fs_block_count() == 0 {
+        if size <= inline.len() && !inode_ref.inode.uses_extents() {
             let n = core::cmp::min(buf.len(), size - offset);
             buf[..n].copy_from_slice(&inline[offset..offset + n]);
             return Ok(n);

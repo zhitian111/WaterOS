@@ -177,6 +177,8 @@ A（底层创建） + C（文件系统回归）
   较长目标通过 extent 数据块持久化。两种表示均写回 inode checksum，且不会截断目标。
 - `AnotherExt4Fs::symlink` 完成存在性和父目录检查，成功后刷新后端、检查块设备错误状态，
   并发布 lookup cache。
+- inode 回收会识别未设置 extents flag 的 fast symlink，不再把 `i_block` 内的目标
+  字节误当 extent header 遍历，因而覆盖安装时可以正常删除旧链接。
 - 通用 `VfsError::Unsupported` 改为映射到 `EOPNOTSUPP`；`pread`/`pwrite`、`flock`、
   `fcntl` 等已有 syscall 专用映射保持不变。
 - RISC-V 镜像副本中已验证 `ln -s`、`readlink`、`test -L`、跟随读取、dangling link、

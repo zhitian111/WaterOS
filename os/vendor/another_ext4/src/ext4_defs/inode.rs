@@ -241,6 +241,11 @@ impl Inode {
         self.file_type() == FileType::SymLink
     }
 
+    /// Whether `i_block` contains an extent tree rather than inline payload.
+    pub(crate) fn uses_extents(&self) -> bool {
+        self.flags & Self::FLAG_EXTENTS != 0
+    }
+
     /// Return the inline i_block area (60 bytes).
     ///
     /// - For ext4, this area can store either extent root or fast symlink link content.
