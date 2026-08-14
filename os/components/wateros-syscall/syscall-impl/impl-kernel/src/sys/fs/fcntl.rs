@@ -138,7 +138,10 @@ fn fcntl_setfl(fd : usize, arg : usize) -> Result<usize, ErrNo> {
         return Ok(0);
     }
     vfs::fd::with_current_io(fd, |handle| {
-        handle.set_open_status_flags((arg as u32) & F_SETFL_MASK)
+        // F_SETFL only changes its mutable subset.  Open-time flags such as
+        // O_DSYNC/O_SYNC remain part of the shared open-file description.
+        let preserved = handle.open_status_flags() & !F_SETFL_MASK;
+        handle.set_open_status_flags(preserved | ((arg as u32) & F_SETFL_MASK))
     }).map_err(vfs_error_to_errno)?;
     Ok(0)
 }

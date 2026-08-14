@@ -547,6 +547,10 @@ impl VfsIoHandle for PagedFileHandle {
         self.meta.size = self.current_size();
         if n != 0 {
             self.mark_content_changed();
+            const O_SYNC : u32 = 0o4_010_000;
+            if self.description.status_flags() & O_SYNC != 0 {
+                self.sync_dirty()?;
+            }
         }
         Ok(n)
     }
@@ -610,6 +614,10 @@ impl VfsIoHandle for PagedFileHandle {
         self.meta.size = self.current_size();
         if n != 0 {
             self.mark_content_changed();
+            const O_SYNC : u32 = 0o4_010_000;
+            if self.description.status_flags() & O_SYNC != 0 {
+                self.sync_dirty()?;
+            }
         }
         Ok(n)
     }
@@ -792,8 +800,10 @@ impl VfsIoHandle for PagedFileHandle {
         const O_APPEND : u32 = 0o2000;
         // 本变量代码由AI完成
         const O_NONBLOCK : u32 = 0o4000;
+        // asm-generic O_SYNC includes O_DSYNC, covering both sync modes.
+        const O_SYNC : u32 = 0o4_010_000;
         self.description
-            .set_status_flags(flags & (O_APPEND | O_NONBLOCK));
+            .set_status_flags(flags & (O_APPEND | O_NONBLOCK | O_SYNC));
         Ok(())
     }
 

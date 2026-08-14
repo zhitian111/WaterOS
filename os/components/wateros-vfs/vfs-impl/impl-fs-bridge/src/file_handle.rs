@@ -201,6 +201,10 @@ impl VfsIoHandle for BufferedFileHandle {
         drop(data);
         reservation.commit(buf.len(), buf.len())?;
         self.dirty = true;
+        const O_SYNC : u32 = 0o4_010_000;
+        if self.description.status_flags() & O_SYNC != 0 {
+            self.sync_dirty()?;
+        }
         Ok(buf.len())
     }
 
@@ -261,7 +265,12 @@ impl VfsIoHandle for BufferedFileHandle {
         }
         data[off..end].copy_from_slice(buf);
         self.meta.size = data.len() as u64;
+        drop(data);
         self.dirty = true;
+        const O_SYNC : u32 = 0o4_010_000;
+        if self.description.status_flags() & O_SYNC != 0 {
+            self.sync_dirty()?;
+        }
         Ok(buf.len())
     }
 
@@ -333,8 +342,11 @@ impl VfsIoHandle for BufferedFileHandle {
     fn set_open_status_flags(&mut self, flags : u32) -> VfsResult<()> {
         const O_APPEND : u32 = 0o2000;
         const O_NONBLOCK : u32 = 0o4000;
+        // asm-generic O_SYNC includes the O_DSYNC bit, so this mask preserves
+        // either open-time synchronous-write mode.
+        const O_SYNC : u32 = 0o4_010_000;
         self.description
-            .set_status_flags(flags & (O_APPEND | O_NONBLOCK));
+            .set_status_flags(flags & (O_APPEND | O_NONBLOCK | O_SYNC));
         Ok(())
     }
 

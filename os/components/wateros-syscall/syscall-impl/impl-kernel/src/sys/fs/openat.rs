@@ -36,16 +36,16 @@ const O_APPEND: u32 = 0o2000;
 const O_NONBLOCK: u32 = 0o4000;
 const O_LARGEFILE: u32 = 0o100_000;
 const O_DIRECTORY: u32 = 0o200_000;
+const O_DSYNC: u32 = 0o10_000;
+const O_SYNC: u32 = 0o4_010_000;
 const SUPPORTED_OPEN_FLAGS: u32 = O_ACCMODE | O_CREAT | O_EXCL | O_NOCTTY | O_TRUNC |
                                   O_APPEND | O_NONBLOCK | O_LARGEFILE | O_DIRECTORY |
-                                  O_NOFOLLOW | O_CLOEXEC | O_PATH;
-const O_DSYNC: u32 = 0o10_000;
+                                  O_NOFOLLOW | O_CLOEXEC | O_PATH | O_DSYNC | O_SYNC;
 const O_ASYNC: u32 = 0o20_000;
 const O_DIRECT: u32 = 0o40_000;
 const O_NOATIME: u32 = 0o1_000_000;
-const O_SYNC: u32 = 0o4_010_000;
 const O_TMPFILE: u32 = 0o20_200_000;
-const KNOWN_UNSUPPORTED_OPEN_FLAGS: u32 = O_DSYNC | O_ASYNC | O_DIRECT | O_NOATIME | O_SYNC;
+const KNOWN_UNSUPPORTED_OPEN_FLAGS: u32 = O_ASYNC | O_DIRECT | O_NOATIME;
 
 // 本方法代码由AI完成
 pub(crate) fn sys_openat(args : SyscallArgs) -> UserRet {
@@ -174,11 +174,10 @@ fn open_resolved_path_unchecked(resolved : &str, flags : u32, mode : u32) -> Use
                     return UserRet::from_error(vfs_error_to_errno(e));
                 }
             }
-            if flags & O_NONBLOCK != 0 {
+            let open_status_flags = flags & (O_APPEND | O_NONBLOCK | O_SYNC);
+            if open_status_flags != 0 {
                 if let Err(e) = vfs::fd::with_current_io(fd, |h| {
-                    let mut sf = h.open_status_flags();
-                    sf |= O_NONBLOCK;
-                    h.set_open_status_flags(sf)
+                    h.set_open_status_flags(h.open_status_flags() | open_status_flags)
                 }) {
                     let _ = vfs::fd::close_fd(fd);
                     return UserRet::from_error(vfs_error_to_errno(e));
@@ -243,10 +242,10 @@ fn open_tmpfile(directory : &str, flags : u32, mode : u32) -> UserRet {
             return UserRet::from_error(vfs_error_to_errno(error));
         }
     }
-    if flags & O_NONBLOCK != 0 {
+    let open_status_flags = flags & (O_APPEND | O_NONBLOCK | O_SYNC);
+    if open_status_flags != 0 {
         if let Err(error) = vfs::fd::with_current_io(fd, |handle| {
-            let status = handle.open_status_flags() | O_NONBLOCK;
-            handle.set_open_status_flags(status)
+            handle.set_open_status_flags(handle.open_status_flags() | open_status_flags)
         }) {
             let _ = vfs::fd::close_fd(fd);
             return UserRet::from_error(vfs_error_to_errno(error));
@@ -288,7 +287,8 @@ fn final_symlink_mode(flags: u32) -> FinalSymlink {
 
 #[cfg(test)]
 mod tests {
-    use super::{final_symlink_mode, O_NOFOLLOW};
+    use super::{final_symlink_mode, validate_open_flags, O_ASYNC, O_DIRECT, O_DSYNC,
+                O_NOATIME, O_NOFOLLOW, O_SYNC, O_WRONLY};
     use vfs::api::FinalSymlink;
 
     #[test]
@@ -301,6 +301,19 @@ mod tests {
     fn nofollow_uses_asm_generic_flag_value() {
         assert_eq!(O_NOFOLLOW, 0o400_000);
         assert_eq!(final_symlink_mode(O_NOFOLLOW), FinalSymlink::NoFollow);
+    }
+
+    #[test]
+    fn synchronous_regular_file_open_flags_are_supported() {
+        assert!(validate_open_flags(O_WRONLY | O_DSYNC).is_ok());
+        assert!(validate_open_flags(O_WRONLY | O_SYNC).is_ok());
+    }
+
+    #[test]
+    fn unsupported_status_flags_remain_rejected() {
+        assert!(validate_open_flags(O_WRONLY | O_ASYNC).is_err());
+        assert!(validate_open_flags(O_WRONLY | O_DIRECT).is_err());
+        assert!(validate_open_flags(O_WRONLY | O_NOATIME).is_err());
     }
 }
 
