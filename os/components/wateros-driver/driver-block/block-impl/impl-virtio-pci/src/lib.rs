@@ -10,32 +10,18 @@ use alloc::vec::Vec;
 use core::ptr;
 use core::ptr::NonNull;
 
-use api_v0::{BlockDevice, DriverError, DriverResult, Lba, BLOCK_SIZE};
+use api_v0::{BlockDevice, DriverError, DriverResult, Lba};
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
 use mm_api::addr::PhysPageNum;
-use virtio_drivers::device::blk::{VirtIOBlk, SECTOR_SIZE};
+use virtio_drivers::device::blk::VirtIOBlk;
 use virtio_drivers::transport::pci::bus::{
     BarInfo, Cam, Command, ConfigurationAccess, DeviceFunction, MemoryBarType, MmioCam, PciRoot,
 };
 use virtio_drivers::transport::pci::{self, PciTransport};
 use virtio_drivers::transport::DeviceType as VirtioDeviceType;
-use virtio_drivers::{BufferDirection, Error as VirtioError, Hal, PhysAddr, PAGE_SIZE};
+use virtio_drivers::{BufferDirection, Hal, PhysAddr, PAGE_SIZE};
 
 const _: () = assert!(PAGE_SIZE == mm_api::addr::PAGE_SIZE);
-const _: () = assert!(BLOCK_SIZE == SECTOR_SIZE);
-
-fn map_virtio_error(error: VirtioError) -> DriverError {
-    match error {
-        VirtioError::InvalidParam => DriverError::InvalidParam,
-        VirtioError::QueueFull | VirtioError::NotReady => DriverError::NotReady,
-        VirtioError::DmaError => DriverError::NoMemory,
-        VirtioError::Unsupported |
-        VirtioError::ConfigSpaceTooSmall |
-        VirtioError::ConfigSpaceMissing => DriverError::Unsupported,
-        VirtioError::WrongToken | VirtioError::AlreadyUsed => DriverError::Protocol,
-        VirtioError::IoError | VirtioError::SocketDeviceError(_) => DriverError::IoError,
-    }
-}
 
 /// PCI 探测成功时返回的可读位置信息（bus/device/function 与 ID）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,24 +187,8 @@ impl VirtioPciBlkDevice {
         let transport = PciTransport::new::<VirtioPciHal, C>(root, device_function)
             .map_err(|_| DriverError::Unsupported)?;
         let inner = VirtIOBlk::<VirtioPciHal, PciTransport>::new(transport)
-            .map_err(map_virtio_error)?;
+            .map_err(|_| DriverError::Unsupported)?;
         Ok(Self { inner })
-    }
-
-    fn validate_io(&self, start_block: Lba, byte_len: usize) -> DriverResult<usize> {
-        if byte_len == 0 {
-            return Ok(0);
-        }
-        if byte_len % BLOCK_SIZE != 0 {
-            return Err(DriverError::InvalidParam);
-        }
-        let start = usize::try_from(start_block.0).map_err(|_| DriverError::OutOfRange)?;
-        let sectors = u64::try_from(byte_len / BLOCK_SIZE).map_err(|_| DriverError::OutOfRange)?;
-        let end = start_block.0.checked_add(sectors).ok_or(DriverError::OutOfRange)?;
-        if end > self.inner.capacity() {
-            return Err(DriverError::OutOfRange);
-        }
-        Ok(start)
     }
 
     /// Scan PCI bus 0 in a memory-mapped PCI CAM/ECAM window and return the first VirtIO block
@@ -352,35 +322,15 @@ fn assign_memory_bars<C: ConfigurationAccess>(
 }
 
 impl BlockDevice for VirtioPciBlkDevice {
-    fn total_blocks(&self) -> Option<u64> { Some(self.inner.capacity()) }
-
     fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
-        let start = self.validate_io(start_block, buf.len())?;
-        if buf.is_empty() {
-            return Ok(());
-        }
-        self.inner.read_blocks(start, buf).map_err(|error| {
-            logging::error!("[virtio-pci-blk] read failed lba={} sectors={} capacity={} source={:?}",
-                            start_block.0,
-                            buf.len() / BLOCK_SIZE,
-                            self.inner.capacity(),
-                            error);
-            map_virtio_error(error)
-        })
+        self.inner
+            .read_blocks(start_block.0 as usize, buf)
+            .map_err(|_| DriverError::IoError)
     }
 
     fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> DriverResult<()> {
-        let start = self.validate_io(start_block, buf.len())?;
-        if buf.is_empty() {
-            return Ok(());
-        }
-        self.inner.write_blocks(start, buf).map_err(|error| {
-            logging::error!("[virtio-pci-blk] write failed lba={} sectors={} capacity={} source={:?}",
-                            start_block.0,
-                            buf.len() / BLOCK_SIZE,
-                            self.inner.capacity(),
-                            error);
-            map_virtio_error(error)
-        })
+        self.inner
+            .write_blocks(start_block.0 as usize, buf)
+            .map_err(|_| DriverError::IoError)
     }
 }

@@ -23,12 +23,7 @@ fn map_driver_err(e: DriverError) -> VfsError {
         DriverError::Unsupported => VfsError::Unsupported,
         DriverError::InvalidParam => VfsError::InvalidPath,
         DriverError::NotFound => VfsError::NotFound,
-        DriverError::NotReady => VfsError::WouldBlock,
-        DriverError::NoMemory => VfsError::NoMemory,
-        DriverError::InvalidDtb |
-        DriverError::OutOfRange |
-        DriverError::Protocol |
-        DriverError::IoError => VfsError::Io,
+        DriverError::InvalidDtb | DriverError::IoError => VfsError::Io,
     }
 }
 

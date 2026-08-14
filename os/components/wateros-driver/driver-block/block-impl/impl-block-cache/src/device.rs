@@ -82,19 +82,6 @@ impl CachingBlockDevice {
         Ok(())
     }
 
-    fn validate_io_range(&self, start_block: Lba, byte_len: usize) -> DriverResult<usize> {
-        if self.block_size == 0 || byte_len % self.block_size != 0 {
-            return Err(DriverError::InvalidParam);
-        }
-        let block_count = byte_len / self.block_size;
-        let count = u64::try_from(block_count).map_err(|_| DriverError::OutOfRange)?;
-        let end = start_block.0.checked_add(count).ok_or(DriverError::OutOfRange)?;
-        if self.inner.total_blocks().is_some_and(|total| end > total) {
-            return Err(DriverError::OutOfRange);
-        }
-        Ok(block_count)
-    }
-
     pub(crate) fn touch_lru(&mut self, idx: usize) {
         if self.lru_tail == Some(idx) {
             return;
@@ -147,12 +134,12 @@ impl CachingBlockDevice {
     pub(crate) fn evict_lru_slot(&mut self) -> DriverResult<usize> {
         let Some(idx) = self.lru_head else {
             log::warn!("[block-cache] evict_lru_slot: lru empty");
-            return Err(DriverError::Protocol);
+            return Err(DriverError::IoError);
         };
         self.detach_lru(idx);
         let Some(lba) = self.slots[idx].lba.take() else {
             log::warn!("[block-cache] evict_lru_slot: slot {idx} unoccupied");
-            return Err(DriverError::Protocol);
+            return Err(DriverError::IoError);
         };
         self.map.remove(lba);
         self.recent.insert(lba);
@@ -289,15 +276,15 @@ impl BlockDevice for CachingBlockDevice {
     }
 
     fn read_blocks(&mut self, start_block: Lba, buf: &mut [u8]) -> DriverResult<()> {
-        let nblocks = self.validate_io_range(start_block, buf.len())?;
-        if nblocks == 0 {
-            return Ok(());
-        }
         let bs = self.block_size;
+        if bs == 0 || buf.len() % bs != 0 {
+            return Err(DriverError::InvalidParam);
+        }
         if self.capacity == 0 {
             return self.inner.read_blocks(start_block, buf);
         }
 
+        let nblocks = buf.len() / bs;
         #[cfg(feature = "diagnostics")]
         {
             self.diagnostics.read_blocks += nblocks as u64;
@@ -359,15 +346,15 @@ impl BlockDevice for CachingBlockDevice {
     }
 
     fn write_blocks(&mut self, start_block: Lba, buf: &[u8]) -> DriverResult<()> {
-        let nblocks = self.validate_io_range(start_block, buf.len())?;
-        if nblocks == 0 {
-            return Ok(());
-        }
         let bs = self.block_size;
+        if bs == 0 || buf.len() % bs != 0 {
+            return Err(DriverError::InvalidParam);
+        }
         self.inner.write_blocks(start_block, buf)?;
         if self.capacity == 0 {
             return Ok(());
         }
+        let nblocks = buf.len() / bs;
         #[cfg(feature = "diagnostics")]
         {
             self.diagnostics.write_blocks += nblocks as u64;

@@ -71,10 +71,7 @@ pub struct DeviceInfo {
     pub irq: Option<IrqLine>,
 }
 
-/// 驱动子系统与 DTB 解析共用的错误分类。
-///
-/// 传输适配器必须保留可恢复状态、调用参数错误和设备故障之间的区别，不能把所有后端
-/// 错误折叠成 [`DriverError::IoError`]。上层可据此决定重试、拒绝请求或毒化设备实例。
+/// 驱动子系统与 DTB 解析共用的错误分类（不区分 errno 细节）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriverError {
     /// DTB 魔数或布局无效。
@@ -85,15 +82,7 @@ pub enum DriverError {
     NotFound,
     /// 硬件或传输层拒绝当前操作（含 feature 未启用路径）。
     Unsupported,
-    /// 设备或传输队列暂未就绪；调用方可在状态变化后重试。
-    NotReady,
-    /// DMA 或驱动内部缓冲所需内存不足。
-    NoMemory,
-    /// 请求覆盖设备容量之外的逻辑块。
-    OutOfRange,
-    /// 队列 token、所有权或其它驱动/设备协议状态不一致。
-    Protocol,
-    /// 设备明确报告 I/O 失败。
+    /// 设备 I/O 失败（底层错误已折叠）。
     IoError,
 }
 

@@ -51,9 +51,8 @@ dummy），并在内核引导期完成 DTB/PCI 扫描、设备注册与 devfs �
 - display 与 input 由 `gui`（内核 GUI）或 `user-graphics`（用户态 fbdev/evdev）feature 显式
   启用，两者互斥；默认比赛构建不启用，不会探测 GPU/输入设备。
 - 网络与块设备依赖 QEMU 挂载对应 virtio 设备；缺失时 `init_after_boot` 会输出警告日志。
-- `driver-api` 的 `DriverError` 是跨子系统的错误分类，不直接等同于 Linux errno；transport
-  必须区分暂未就绪、内存不足、范围越界、协议状态错误和设备 I/O 失败，避免上层误判重试或
-  文件系统损坏策略。块设备硬件自检复用已经注册的设备实例，不会为同一 VirtIO 队列重复初始化。
+- `driver-api` 的 `DriverError` 是跨子系统的错误分类（`InvalidDtb`/`Unsupported`/`IoError`
+  等），不区分 errno 细节；驱动自检不访问真实硬件。
 
 ## 调用链路
 
@@ -99,8 +98,8 @@ VFS / 用户图形
   作为绑定决策与诊断的输入。
 - 声明可绑定设备：`SupportedDeviceEntry` 让每个子系统静态列出自己可尝试处理的 `compatible`，
   供扫描阶段精确匹配。
-- 统一错误分类：`DriverError` / `DriverResult<T>` 不区分 Linux errno，但保留 `NotReady`、
-  `NoMemory`、`OutOfRange`、`Protocol` 与 `IoError` 等对恢复策略有影响的语义。
+- 统一错误分类：`DriverError` / `DriverResult<T>` 不区分 Linux errno，只按 `InvalidDtb` /
+  `Unsupported` / `IoError` 等归类。
 - 定义机器级契约：`MachineDriver`（`init_after_boot` / `realtime_ns` / `test`）由每个
   `driver-impl` profile 实现，上层经 `machine()` 拿到单例，不感知具体平台。
 

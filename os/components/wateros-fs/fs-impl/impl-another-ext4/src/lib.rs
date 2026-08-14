@@ -21,7 +21,8 @@ use api_v0::{
     FsAccessMode, FsCapability, FsDirEntry, FsError, FsImpl, FsKind, FsMetadata, FsNodeId,
     FsNodeType, FsResult, LocalFs, LocalRwFs, ReadOnlyFs, ReadWriteFs, SharedFs, SharedRwFs,
 };
-#[cfg(feature = "lookup-diagnostics")]
+use core::sync::atomic::AtomicBool;
+#[cfg(any(feature = "lookup-diagnostics", test))]
 use core::sync::atomic::Ordering;
 #[cfg(feature = "lookup-diagnostics")]
 use core::sync::atomic::AtomicU64;
@@ -39,7 +40,7 @@ mod dentry_cache;
 mod block_io;
 #[path = "path_lookup.rs"]
 mod path_lookup;
-use block_io::{check_backend_error, map_error, map_type, BackendErrorState, BlockAdapter};
+use block_io::{check_backend_error, map_error, map_type, BlockAdapter};
 pub(crate) use path_lookup::{lookup, metadata, metadata_open, parent_name, write_with_ordered_size};
 pub(crate) use dentry_cache::NegativeDentryCache;
 #[cfg(test)]
@@ -51,7 +52,6 @@ pub fn self_test() {
     assert_eq!(BLOCK_SIZE, 4096);
     assert_eq!(EXT4_SUPER_MAGIC, 0xEF53);
     assert!(LOOKUP_CACHE_CAPACITY > 0);
-    block_io::self_test();
     log::info!("[fs/another-ext4] self_test complete");
 }
 
