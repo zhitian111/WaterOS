@@ -104,7 +104,8 @@ devfs / procfs：
 ### fs-impl / 具体文件系统
 
 - `impl-another-ext4`：默认 ext4 RW 后端，适配 vendored `another_ext4`（固定 4096 块、
-  同步块设备 trait）；superblock magic `0xEF53`；带 lookup cache 与 negative cache。
+  同步块设备 trait）；superblock magic `0xEF53`；带 lookup cache 与 negative cache；支持目标
+  不超过 60 字节的 ext4 fast symlink 创建与读取，较长目标明确返回不支持。
 - `impl-ext4-rs` / `impl-ext4`：可选 ext4 后端（回退 feature，互斥）。
 - `impl-ramfs`：物理页 payload 后端 ramfs；tmpfs 由 VFS 策略层基于它创建挂载实例。
 - `impl-devfs`：devfs 的 fs impl 适配。

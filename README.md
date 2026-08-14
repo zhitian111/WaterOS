@@ -513,7 +513,8 @@ WaterOS 的核心架构、`wateros-*` 组件和用户空间构建系统由团队
 生态中的基础库完成设备访问、网络协议、数据结构和底层解析。较关键的内核依赖包括
 `virtio-drivers`、`smoltcp`、`fdt`、`riscv`、`sbi-rt`、`spin` 与 `rlsf`。
 
-`os/vendor/` 保存项目直接维护的文件系统依赖：`another_ext4` 作为当前 ext4 后端，
+`os/vendor/` 保存项目直接维护的文件系统依赖：`another_ext4` 作为当前 ext4 后端，并维护
+包括 60 字节以内 ext4 fast symlink 创建/读取在内的 WaterOS 集成补丁；
 `ext4_rs` 与 `ext4plus` 通过 `[patch.crates-io]` 指向本地版本。对这些代码的修改保留在
 vendor 目录中，并继续遵守各上游项目的许可证。
 

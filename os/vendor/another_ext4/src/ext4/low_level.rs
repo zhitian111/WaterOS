@@ -156,6 +156,29 @@ impl Ext4 {
         Ok(child.id)
     }
 
+    /// Create a fast symbolic link whose target is stored in the inode's
+    /// 60-byte inline `i_block` area.
+    ///
+    /// Longer targets are rejected explicitly; this implementation never
+    /// truncates a link target or allocates data blocks for it.
+    pub fn symlink(&self, parent: InodeId, name: &str, target: &str) -> Result<InodeId> {
+        if target.as_bytes().len() > 60 {
+            return_error!(ErrCode::ENOTSUP, "Symlink target is longer than 60 bytes");
+        }
+
+        let mut parent = self.read_inode(parent);
+        if !parent.inode.is_dir() {
+            return_error!(ErrCode::ENOTDIR, "Inode {} is not a directory", parent.id);
+        }
+        self.dir_ensure_entry_absent(&parent, name)?;
+
+        let mut child = self.create_inode(InodeMode::SOFTLINK | InodeMode::ALL_RWX)?;
+        child.inode.set_fast_symlink_target(target.as_bytes());
+        self.write_inode_with_csum(&mut child);
+        self.link_inode(&mut parent, &mut child, name)?;
+        Ok(child.id)
+    }
+
     /// Read data from a file. This function will read exactly `buf.len()`
     /// bytes unless the end of the file is reached.
     ///

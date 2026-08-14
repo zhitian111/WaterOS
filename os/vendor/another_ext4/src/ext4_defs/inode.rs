@@ -253,6 +253,20 @@ impl Inode {
         &mut self.block
     }
 
+    /// Initialize the inline payload and accounting fields of a fast symlink.
+    ///
+    /// The caller must set the inode type to [`InodeMode::SOFTLINK`] and ensure
+    /// that `target` fits in the 60-byte `i_block` area.
+    pub(crate) fn set_fast_symlink_target(&mut self, target: &[u8]) {
+        debug_assert!(self.is_softlink());
+        debug_assert!(target.len() <= self.block.len());
+        self.clear_flags(Self::FLAG_EXTENTS);
+        self.block.fill(0);
+        self.block[..target.len()].copy_from_slice(target);
+        self.set_size(target.len() as u64);
+        self.set_block_count(0);
+    }
+
     pub fn perm(&self) -> InodeMode {
         self.mode().perm()
     }

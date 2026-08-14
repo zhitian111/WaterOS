@@ -378,6 +378,26 @@ impl ReadWriteFs for AnotherExt4Fs {
         self.cache_insert(new_path, child);
         Ok(())
     }
-}
 
+    fn symlink(&mut self, link_path : &str, target : &str) -> FsResult<()> {
+        let fs = self.get_mut()?;
+        match lookup(fs, link_path) {
+            Ok(_) => return Err(FsError::Exists),
+            Err(FsError::NotFound) => {}
+            Err(error) => return Err(error),
+        }
+
+        let (parent_path, name) = parent_name(link_path)?;
+        let parent = lookup(fs, parent_path)?;
+        if metadata(fs, parent)?.node_type != FsNodeType::Directory {
+            return Err(FsError::NotAFile);
+        }
+
+        let inode = fs.symlink(parent, name, target).map_err(map_error)?;
+        fs.flush_all();
+        self.check_backend()?;
+        self.cache_insert(link_path, inode);
+        Ok(())
+    }
+}
 
