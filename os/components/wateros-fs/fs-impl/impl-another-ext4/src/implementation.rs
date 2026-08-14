@@ -28,10 +28,17 @@ use spin::Mutex;
 const EXT4_SUPER_MAGIC : u16 = 0xEF53;
 const SUPERBLOCK_MAGIC_OFFSET : u64 = 1024 + 0x38;
 const LOOKUP_CACHE_CAPACITY : usize = 4096;
-const NEGATIVE_CACHE_CAPACITY : usize = 4096;
-const NEGATIVE_CACHE_WAYS : usize = 4;
-const NEGATIVE_CACHE_BUCKETS : usize = NEGATIVE_CACHE_CAPACITY / NEGATIVE_CACHE_WAYS;
 const OPEN_INODE_DIR : &str = "/.wateros-open-inodes";
+
+#[path = "dentry_cache.rs"]
+mod dentry_cache;
+#[path = "block_io.rs"]
+mod block_io;
+#[path = "path_lookup.rs"]
+mod path_lookup;
+use block_io::{check_backend_error, map_error, map_type, BlockAdapter};
+pub(crate) use path_lookup::{lookup, metadata, parent_name, write_with_ordered_size};
+pub(crate) use dentry_cache::{negative_path_hash, NegativeDentryCache};
 
 #[cfg(feature = "self_test")]
 pub fn self_test() {
@@ -40,240 +47,6 @@ pub fn self_test() {
     assert_eq!(EXT4_SUPER_MAGIC, 0xEF53);
     assert!(LOOKUP_CACHE_CAPACITY > 0);
     log::info!("[fs/another-ext4] self_test complete");
-}
-
-fn map_error(error : Ext4Error) -> FsError {
-    match error.code() {
-        ErrCode::ENOENT => FsError::NotFound,
-        ErrCode::EEXIST => FsError::Exists,
-        ErrCode::ENOTEMPTY => FsError::NotEmpty,
-        ErrCode::ENOTDIR | ErrCode::EISDIR => FsError::NotAFile,
-        ErrCode::EINVAL => FsError::InvalidPath,
-        ErrCode::ENOSPC => FsError::NoSpace,
-        ErrCode::EROFS | ErrCode::ENOTSUP => FsError::Unsupported,
-        ErrCode::EIO => FsError::Io,
-        _ => FsError::Io,
-    }
-}
-
-fn map_type(file_type : FileType) -> FsNodeType {
-    match file_type {
-        FileType::RegularFile => FsNodeType::File,
-        FileType::Directory => FsNodeType::Directory,
-        FileType::SymLink => FsNodeType::Symlink,
-        _ => FsNodeType::Special,
-    }
-}
-
-/// Adapts WaterOS's 512-byte-LBA block device to another_ext4's 4096-byte blocks.
-struct BlockAdapter {
-    device : SharedBlockDevice,
-    io_error : Arc<AtomicBool>,
-}
-
-impl BlockDevice for BlockAdapter {
-    fn read_block(&self, block_id : u64) -> Block {
-        let mut data = Box::new([0u8; BLOCK_SIZE]);
-        let mut guard = self.device.lock();
-        let block_size = guard.block_size() as u64;
-        if block_size == 0 || BLOCK_SIZE as u64 % block_size != 0 {
-            self.io_error.store(true, Ordering::Release);
-            log::error!(
-                "[fs::another-ext4] unsupported device block size {block_size}, block={block_id}"
-            );
-            return Block::new(block_id, data);
-        }
-        guard.read_blocks(Lba(block_id * (BLOCK_SIZE as u64 / block_size)),
-                          &mut data[..])
-             .unwrap_or_else(|error| {
-                 self.io_error.store(true, Ordering::Release);
-                 log::error!("[fs::another-ext4] failed to read block {block_id}: {error:?}");
-             });
-        Block::new(block_id, data)
-    }
-
-    fn write_block(&self, block : &Block) {
-        let mut guard = self.device.lock();
-        let block_size = guard.block_size();
-        if block_size == 0 || BLOCK_SIZE % block_size != 0 {
-            self.io_error.store(true, Ordering::Release);
-            log::error!(
-                "[fs::another-ext4] unsupported device block size {block_size}, block={}", block.id
-            );
-            return;
-        }
-        let lba_count = BLOCK_SIZE / block_size;
-        guard.write_blocks(Lba(block.id * lba_count as u64), &block.data[..])
-             .unwrap_or_else(|error| {
-                 self.io_error.store(true, Ordering::Release);
-                 log::error!("[fs::another-ext4] failed to write block {}: {error:?}", block.id);
-             });
-    }
-}
-
-fn probe(device : &SharedBlockDevice) -> FsResult<bool> {
-    let mut bytes = [0u8; 2];
-    device.lock()
-          .read_bytes(SUPERBLOCK_MAGIC_OFFSET, &mut bytes)
-          .map_err(|_| FsError::Driver)?;
-    Ok(u16::from_le_bytes(bytes) == EXT4_SUPER_MAGIC)
-}
-
-fn lookup(fs : &Ext4, path : &str) -> FsResult<u32> {
-    if path == "/" || path.is_empty() {
-        return Ok(EXT4_ROOT_INO);
-    }
-    if !path.starts_with('/') ||
-       path.split('/')
-           .any(|part| part == "." || part == "..")
-    {
-        return Err(FsError::InvalidPath);
-    }
-    fs.generic_lookup(EXT4_ROOT_INO, path)
-      .map_err(map_error)
-}
-
-fn metadata(fs : &Ext4, inode : u32) -> FsResult<FsMetadata> {
-    let attr = fs.getattr(inode)
-                 .map_err(map_error)?;
-    let mode = InodeMode::from_type_and_perm(attr.ftype, attr.perm).bits();
-    Ok(FsMetadata { node_type : map_type(attr.ftype),
-                    size : attr.size,
-                    mode,
-                    inode : attr.ino as u64,
-                    nlink : attr.links as u32,
-                    uid : attr.uid,
-                    gid : attr.gid })
-}
-
-fn write_with_ordered_size(fs : &Ext4,
-                           inode : u32,
-                           offset : u64,
-                           data : &[u8])
-                           -> FsResult<usize> {
-    let data_len = u64::try_from(data.len()).map_err(|_| FsError::NoSpace)?;
-    let end = offset.checked_add(data_len).ok_or(FsError::NoSpace)?;
-    let offset = usize::try_from(offset).map_err(|_| FsError::NoSpace)?;
-
-    // another_ext4 normally allocates extents before updating i_size.  Commit an
-    // extending size first so a reset can leave a sparse file, never extents past EOF.
-    if end > fs.getattr(inode).map_err(map_error)?.size {
-        fs.setattr(inode, None, None, None, Some(end), None, None, None, None)
-          .map_err(map_error)?;
-        fs.flush_all();
-    }
-    fs.write(inode, offset, data).map_err(map_error)?;
-    fs.flush_all();
-    Ok(data.len())
-}
-
-fn parent_name(path : &str) -> FsResult<(&str, &str)> {
-    let path = path.trim_end_matches('/');
-    let (parent, name) = path.rsplit_once('/').ok_or(FsError::InvalidPath)?;
-    if name.is_empty() || name.len() > 255 || name == "." || name == ".." {
-        return Err(FsError::InvalidPath);
-    }
-    Ok((if parent.is_empty() { "/" } else { parent }, name))
-}
-
-const FNV1A_OFFSET : u64 = 0xcbf2_9ce4_8422_2325;
-const FNV1A_PRIME : u64 = 0x0000_0100_0000_01b3;
-
-fn negative_path_hash(path : &str) -> u64 {
-    path.as_bytes()
-        .iter()
-        .fold(FNV1A_OFFSET, |hash, byte| {
-            (hash ^ u64::from(*byte)).wrapping_mul(FNV1A_PRIME)
-        })
-}
-
-struct NegativeDentry {
-    hash : u64,
-    path : String,
-}
-
-struct NegativeDentryCache {
-    slots : Vec<Option<NegativeDentry>>,
-    next_victim : Vec<u8>,
-}
-
-impl NegativeDentryCache {
-    fn new() -> Self {
-        let mut slots = Vec::with_capacity(NEGATIVE_CACHE_CAPACITY);
-        slots.resize_with(NEGATIVE_CACHE_CAPACITY, || None);
-        Self { slots,
-               next_victim : vec![0; NEGATIVE_CACHE_BUCKETS] }
-    }
-
-    fn bucket(hash : u64) -> usize { hash as usize % NEGATIVE_CACHE_BUCKETS }
-
-    fn contains(&self, path : &str) -> bool {
-        let hash = negative_path_hash(path);
-        let first = Self::bucket(hash) * NEGATIVE_CACHE_WAYS;
-        self.slots[first..first + NEGATIVE_CACHE_WAYS]
-            .iter()
-            .flatten()
-            .any(|entry| entry.hash == hash && entry.path == path)
-    }
-
-    fn insert(&mut self, path : &str) {
-        let hash = negative_path_hash(path);
-        let bucket = Self::bucket(hash);
-        let first = bucket * NEGATIVE_CACHE_WAYS;
-        let ways = &mut self.slots[first..first + NEGATIVE_CACHE_WAYS];
-        if ways.iter()
-               .flatten()
-               .any(|entry| entry.hash == hash && entry.path == path)
-        {
-            return;
-        }
-        let way = ways.iter()
-                      .position(Option::is_none)
-                      .unwrap_or_else(|| {
-                          let way = usize::from(self.next_victim[bucket]);
-                          self.next_victim[bucket] =
-                              ((way + 1) % NEGATIVE_CACHE_WAYS) as u8;
-                          way
-                      });
-        ways[way] = Some(NegativeDentry { hash,
-                                          path : String::from(path) });
-    }
-
-    fn remove_exact(&mut self, path : &str) -> usize {
-        let hash = negative_path_hash(path);
-        let first = Self::bucket(hash) * NEGATIVE_CACHE_WAYS;
-        for slot in self.slots[first..first + NEGATIVE_CACHE_WAYS].iter_mut() {
-            if slot.as_ref()
-                   .is_some_and(|entry| entry.hash == hash && entry.path == path)
-            {
-                *slot = None;
-                return 1;
-            }
-        }
-        0
-    }
-
-    fn remove_subtree(&mut self, path : &str) -> usize {
-        let prefix = if path.ends_with('/') {
-            String::from(path)
-        } else {
-            let mut prefix = String::from(path);
-            prefix.push('/');
-            prefix
-        };
-        let mut removed = 0usize;
-        for slot in self.slots.iter_mut() {
-            let matches = slot.as_ref()
-                              .is_some_and(|entry| {
-                                  entry.path == path || entry.path.starts_with(prefix.as_str())
-                              });
-            if matches {
-                *slot = None;
-                removed += 1;
-            }
-        }
-        removed
-    }
 }
 
 #[cfg(feature = "lookup-diagnostics")]
@@ -676,13 +449,6 @@ impl ReadOnlyFs for AnotherExt4Fs {
     }
 }
 
-fn check_backend_error(io_error_state : &Option<Arc<AtomicBool>>) -> FsResult<()> {
-    if io_error_state.as_ref().is_some_and(|state| state.load(Ordering::Acquire)) {
-        return Err(FsError::Io);
-    }
-    Ok(())
-}
-
 impl ReadWriteFs for AnotherExt4Fs {
     fn mount_rw(&mut self, device : SharedBlockDevice) -> FsResult<()> {
         self.mount(device)?;
@@ -962,7 +728,7 @@ impl FsImpl for AnotherExt4Impl {
     fn name(&self) -> &'static str { "another-ext4" }
     fn supported(&self) -> &'static [FsCapability] { SUPPORTED }
     fn probe(&self, device : &SharedBlockDevice) -> FsResult<Option<FsKind>> {
-        Ok(probe(device)?.then_some(FsKind::Ext4))
+        Ok(block_io::probe(device, SUPERBLOCK_MAGIC_OFFSET, EXT4_SUPER_MAGIC)?.then_some(FsKind::Ext4))
     }
     fn mount_ro(&self, device : SharedBlockDevice) -> FsResult<SharedFs> {
         let mut fs = AnotherExt4Fs::new();

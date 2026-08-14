@@ -7,14 +7,14 @@ extern crate alloc;
 
 use alloc::string::{String, ToString};
 use api_v0::RootFsManager;
-use core::sync::atomic::{AtomicU64, Ordering};
 use alloc::sync::Arc;
 use fs_api_v0::FsImpl;
 use spin::Mutex;
+#[path = "state.rs"]
+mod state;
+pub use state::{bump_mount_generation, mount_generation};
 
 // 本变量代码由AI完成
-static MOUNT_GENERATION: AtomicU64 = AtomicU64::new(0);
-
 /// 零大小 [`RootFsManager`] 句柄；读写 `static ROOT_FS` 等状态。
 // 本结构代码由AI完成
 pub struct KernelRootFsManager;
@@ -65,7 +65,7 @@ impl api_v0::RootFsManager for KernelRootFsManager {
         let root = imp.mount_ro(device)?;
         self.set_root_fs(root);
         *ROOT_DEV_PATH.lock() = Some(path.to_string());
-        MOUNT_GENERATION.fetch_add(1, Ordering::Release);
+        bump_mount_generation();
         Ok(())
     }
 
@@ -117,7 +117,7 @@ pub fn mount_root_rw_from_block_path(path: &str) -> fs_api_v0::FsResult<()> {
     *ROOT_FS.lock() = Some(root_ro);
     *ROOT_RW_FS.lock() = Some(root);
     *ROOT_DEV_PATH.lock() = Some(path.to_string());
-    MOUNT_GENERATION.fetch_add(1, Ordering::Release);
+    bump_mount_generation();
     Ok(())
 }
 
@@ -141,14 +141,6 @@ pub fn current_root_device_path() -> Option<String> {
 }
 
 /// 根卷挂载代次：每次成功挂载后递增，供 VFS 页缓存失效。
-pub fn mount_generation() -> u64 {
-    MOUNT_GENERATION.load(Ordering::Acquire)
-}
-
-/// 辅助卷挂载或卸载后递增代次（供 VFS 页缓存失效）。
-pub fn bump_mount_generation() {
-    MOUNT_GENERATION.fetch_add(1, Ordering::Release);
-}
 
 /// 从块设备路径挂载 **独立** RO 卷（不替换 [`root_fs`]）。
 // 本方法代码由AI完成

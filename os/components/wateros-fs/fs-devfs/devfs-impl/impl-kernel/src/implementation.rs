@@ -16,18 +16,21 @@ use fs_api_v0::{
     FsAccessMode, FsCapability, FsError, FsImpl, FsKind, FsResult, SharedFs,
 };
 use spin::Mutex;
+#[path = "aliases.rs"]
+mod aliases;
+use aliases::{linux_vd_disk_path, push_block_alias, push_char_alias};
 
 #[derive(Default)]
 // 本结构代码由AI完成
-struct DevFsImpl {
+pub(crate) struct DevFsImpl {
     // 当前 refresh 后的节点快照（块/字符/占位）。
-    nodes: Vec<DevNode>,
+    pub(crate) nodes: Vec<DevNode>,
     // 路径 → 块设备句柄；refresh 会清空后按驱动枚举重建。
-    block_bindings: Vec<(String, SharedBlockDevice)>,
+    pub(crate) block_bindings: Vec<(String, SharedBlockDevice)>,
     // 路径 → 字符设备句柄。
-    character_bindings: Vec<(String, SharedCharacterDevice)>,
+    pub(crate) character_bindings: Vec<(String, SharedCharacterDevice)>,
     // DTB 解析出的、尚无驱动实现的占位路径；在 refresh 末尾合并进 nodes。
-    dt_unsupported_paths: Vec<String>,
+    pub(crate) dt_unsupported_paths: Vec<String>,
 }
 
 /// 零大小 [`DevFsManager`] 句柄；实际状态在静态 `DEVFS` 中。
@@ -44,37 +47,6 @@ static DEVFS: Mutex<DevFsImpl> = Mutex::new(DevFsImpl {
 
 // Linux 风格磁盘名：索引 0 → `/dev/vda`，超过 26 个盘符时截断到 `z`。
 // 本方法代码由AI完成
-fn linux_vd_disk_path(idx: usize) -> String {
-    let letter = (b'a' + (idx as u8).min(25)) as char;
-    format!("/dev/vd{}", letter)
-}
-
-// 同一路径不重复登记；新路径追加到 nodes 与 block_bindings。
-// 本方法代码由AI完成
-fn push_block_alias(inner: &mut DevFsImpl, path: String, dev: SharedBlockDevice) {
-    if inner.block_bindings.iter().any(|(p, _)| p == &path) {
-        return;
-    }
-    inner.nodes.push(api_v0::DevNode {
-        path: path.clone(),
-        node_type: api_v0::DevNodeType::Block,
-    });
-    inner.block_bindings.push((path, dev));
-}
-
-// 字符设备别名登记；逻辑同 push_block_alias。
-// 本方法代码由AI完成
-fn push_char_alias(inner: &mut DevFsImpl, path: String, dev: SharedCharacterDevice) {
-    if inner.character_bindings.iter().any(|(p, _)| p == &path) {
-        return;
-    }
-    inner.nodes.push(api_v0::DevNode {
-        path: path.clone(),
-        node_type: api_v0::DevNodeType::Character,
-    });
-    inner.character_bindings.push((path, dev));
-}
-
 impl DevFsManager for KernelDevFsManager {
 // 本方法代码由AI完成
     fn refresh(&mut self) {
