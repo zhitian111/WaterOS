@@ -1,5 +1,3 @@
-#![no_std]
-
 //! WaterOS adapter for the vendored `another_ext4` implementation.
 //!
 //! The upstream crate works with fixed 4096-byte filesystem blocks and a

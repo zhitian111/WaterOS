@@ -974,6 +974,7 @@ dependencies = [
 name = "wateros-fs-devfs"
 version = "0.1.0"
 dependencies = [
+ "log",
  "wateros-fs-devfs-api-v0",
  "wateros-fs-devfs-impl-kernel",
 ]
@@ -1088,6 +1089,7 @@ dependencies = [
 name = "wateros-fs-rootfs"
 version = "0.1.0"
 dependencies = [
+ "log",
  "wateros-fs-rootfs-api-v0",
  "wateros-fs-rootfs-impl-kernel",
 ]

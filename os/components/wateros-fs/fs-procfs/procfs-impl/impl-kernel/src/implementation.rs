@@ -1,4 +1,3 @@
-#![no_std]
 //! 本模块代码由AI完成
 
 //! 内核 procfs：从 task/cred/mm 与 VFS 回调生成 `/proc` 内容。

@@ -1,5 +1,3 @@
-#![no_std]
-
 //! Physical-page-backed ramfs implementation.
 //!
 //! This crate owns the in-memory directory tree and file data. VFS policies such

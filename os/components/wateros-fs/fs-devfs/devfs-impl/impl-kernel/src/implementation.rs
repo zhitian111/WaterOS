@@ -1,4 +1,3 @@
-#![no_std]
 //! 本模块代码由AI完成
 
 //! 内核 devfs 实现：枚举块/字符设备、维护路径绑定，并可选合并 DTB 占位节点。
@@ -295,6 +294,14 @@ pub struct KernelDevFsImpl;
 /// 全局 devfs impl 实例，供聚合层 `registered_fs_impls()` 引用。
 // 本变量代码由AI完成
 pub static IMPL: KernelDevFsImpl = KernelDevFsImpl;
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    logging::info!("[fs/devfs/impl-kernel] self_test begin");
+    assert_eq!(linux_vd_disk_path(0), "/dev/vda");
+    assert_eq!(linux_vd_disk_path(25), "/dev/vdz");
+    logging::info!("[fs/devfs/impl-kernel] self_test complete");
+}
 
 // 本变量代码由AI完成
 const SUPPORTED: &[FsCapability] =

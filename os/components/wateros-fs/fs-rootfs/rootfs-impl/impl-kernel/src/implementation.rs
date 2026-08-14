@@ -1,4 +1,3 @@
-#![no_std]
 //! 本模块代码由AI完成
 
 //! 内核 rootfs 实现：静态槽位保存当前根 [`SharedFs`]、根块路径与聚合层注入的 [`FsImpl`]。
@@ -30,6 +29,15 @@ static ROOT_DEV_PATH: Mutex<Option<String>> = Mutex::new(None);
 /// 由聚合层在启动期注入的「当前根 FS impl」。聚合层根据 `probe` 选定后调用 [`set_active_fs_impl`]。
 // 本变量代码由AI完成
 static ACTIVE_FS_IMPL: Mutex<Option<&'static dyn FsImpl>> = Mutex::new(None);
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    logging::info!("[fs/rootfs/impl-kernel] self_test begin");
+    let before = mount_generation();
+    assert!(mount_generation() >= before);
+    assert_eq!(core::mem::size_of::<KernelRootFsManager>(), 0);
+    logging::info!("[fs/rootfs/impl-kernel] self_test complete");
+}
 
 impl api_v0::RootFsManager for KernelRootFsManager {
 // 本方法代码由AI完成

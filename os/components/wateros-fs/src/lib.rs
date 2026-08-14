@@ -215,6 +215,8 @@ pub fn test() {
 pub fn self_test() {
     logging::info!("[fs] self_test begin");
     api_v0::test();
+    devfs::self_test();
+    rootfs::self_test();
     impl_devfs::self_test();
     #[cfg(feature = "impl-ramfs")]
     impl_ramfs::self_test();

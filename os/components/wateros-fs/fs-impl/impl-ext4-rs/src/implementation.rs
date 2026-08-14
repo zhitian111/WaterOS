@@ -1,4 +1,3 @@
-#![no_std]
 //! 本模块代码由AI完成
 
 //! 基于 `ext4_rs` crate 的 ext4 实现。
