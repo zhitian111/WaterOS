@@ -25,6 +25,14 @@
 5. 性能比较只比较同一 guest 配置和同一脚本；不允许篡改时钟、跳过 workload 或
    改变镜像内测试内容。
 
+性能测试开始前必须执行：
+
+```bash
+pgrep -af 'qemu-system-(riscv64|loongarch64)' || true
+```
+
+如果存在其他 QEMU 进程，先等待其自然退出，再进行性能测试。
+
 ## 运行命令
 
 同 README 和 task 00，日志命名：

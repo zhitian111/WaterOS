@@ -32,6 +32,14 @@
 5. 将每轮日志、镜像 SHA、`elapsed_s` 记录到
    `docs/agents/tasks/kernel-heap-slab/history/00-brief.md`。
 
+性能测试前必须先确认无其他 QEMU 进程占用：
+
+```bash
+pgrep -af 'qemu-system-(riscv64|loongarch64)' || true
+```
+
+若存在进程，则等待其退出后再开始性能测试。
+
 ## 涉及文件/目录
 
 - `os/kernel-rv-final`、`os/kernel-la-final`：构建产物，不提交。

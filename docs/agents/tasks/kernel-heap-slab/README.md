@@ -52,11 +52,20 @@ cba87f43ae569bcf2b8e4614f75cec1bf51bedb2804626fe466fcce3861df6f1  ~/Downloads/sd
 
 性能指标：镜像内 `BUILDSTORM_RESULT ... elapsed_s=<秒>`。
 
+- **性能测试互斥规则**：性能测试开始前必须检查系统中是否已有 QEMU 进程；若有，
+  必须等待所有 `qemu-system-riscv64` / `qemu-system-loongarch64` 退出后再开始。
+  功能测试不受此限制。
 - 基线：task 00 在 `59f50c44` 上分别对 LA、RV 跑 3 轮新鲜镜像，记录 `elapsed_s`
   并取中位数。
 - 最终：task 08 在最终分支提交上以同样脚本和命令跑 3 轮新鲜镜像，取中位数。
 - 最终要求：LA 和 RV 的最终 `elapsed_s` 中位数都小于 baseline 对应中位数；过程中
   中间任务允许性能回退，但不能留下功能 bug。
+
+性能测试前执行：
+
+```bash
+pgrep -af 'qemu-system-(riscv64|loongarch64)' && { echo 'wait for existing QEMU'; sleep 5; }
+```
 
 ## 镜像准备通用命令
 
