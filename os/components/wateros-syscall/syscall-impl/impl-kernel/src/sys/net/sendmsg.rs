@@ -46,6 +46,13 @@ struct SockAddrIn {
     sin_zero : [u8; 8],
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+struct UserTimespec {
+    sec : isize,
+    nsec : isize,
+}
+
 const IOV_MAX : usize = 256;
 const MMSG_MAX : usize = 1024;
 const MSG_DONTWAIT : usize = 0x40;
@@ -53,6 +60,7 @@ const MSG_TRUNC : usize = 0x20;
 const MSG_PEEK : usize = 0x02;
 const MSG_OOB : usize = 0x01;
 const MSG_ERRQUEUE : usize = 0x2000;
+const MSG_WAITFORONE : usize = 0x10000;
 const SOCKET_RECVMSG_WAIT_TICKS : usize = 4096;
 
 // 本方法代码由AI完成
@@ -123,6 +131,128 @@ pub(crate) fn sys_sendmmsg(args : SyscallArgs) -> UserRet {
         }
     }
     UserRet::from_success(sent)
+}
+
+/// 批量接收消息。带 timeout 时用非阻塞 `recvmsg` 加 scheduler sleep 驱动，
+/// 从而不会让单次内部接收越过调用者给出的期限。
+pub(crate) fn sys_recvmmsg(args : SyscallArgs) -> UserRet {
+    let fd = args.arg(0);
+    let msgvec_ptr = args.arg(1);
+    let vlen = args.arg(2);
+    let flags = args.arg(3);
+    let timeout_ptr = args.arg(4);
+
+    if vlen == 0 || vlen > MMSG_MAX {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if msgvec_ptr == 0 {
+        return UserRet::from_error(ErrNo::EFAULT);
+    }
+    let deadline = match recvmmsg_deadline(timeout_ptr) {
+        Ok(deadline) => deadline,
+        Err(error) => return UserRet::from_error(error),
+    };
+    let entry_size = core::mem::size_of::<MsgHdr>() + core::mem::size_of::<usize>();
+    let msg_len_offset = core::mem::size_of::<MsgHdr>();
+    let base_flags = flags & !MSG_WAITFORONE;
+    let mut received = 0usize;
+
+    while received < vlen {
+        let entry_ptr = match received.checked_mul(entry_size)
+                                      .and_then(|offset| msgvec_ptr.checked_add(offset))
+        {
+            Some(ptr) => ptr,
+            None => return partial_or_error(received, ErrNo::EFAULT),
+        };
+        let force_nonblocking = deadline.is_some() ||
+                                (received > 0 && flags & MSG_WAITFORONE != 0);
+        let recv_flags = base_flags |
+                         if force_nonblocking { MSG_DONTWAIT } else { 0 };
+        match recvmsg_one_via_syscall(fd, entry_ptr, recv_flags) {
+            Ok(message_len) => {
+                let Some(msg_len_ptr) = entry_ptr.checked_add(msg_len_offset) else {
+                    return partial_or_error(received, ErrNo::EFAULT);
+                };
+                if copy_to_user_struct(msg_len_ptr, &(message_len as u32)).is_err() {
+                    return partial_or_error(received, ErrNo::EFAULT);
+                }
+                received += 1;
+            }
+            Err(ErrNo::EAGAIN) if received > 0 && flags & MSG_WAITFORONE != 0 => break,
+            Err(ErrNo::EAGAIN) if deadline.is_some() => {
+                if recvmmsg_deadline_expired(deadline) {
+                    break;
+                }
+                if task::sleep_for_ticks(1) == task::TaskWaitResult::Interrupted {
+                    return partial_or_error(received, ErrNo::EINTR);
+                }
+            }
+            Err(ErrNo::EAGAIN) if received > 0 => break,
+            Err(error) => return partial_or_error(received, error),
+        }
+        if recvmmsg_deadline_expired(deadline) {
+            break;
+        }
+    }
+
+    if let Err(error) = write_recvmmsg_remaining(timeout_ptr, deadline) {
+        return partial_or_error(received, error);
+    }
+    UserRet::from_success(received)
+}
+
+fn recvmsg_one_via_syscall(fd : usize,
+                           msg_ptr : usize,
+                           flags : usize)
+                           -> Result<usize, ErrNo> {
+    let ret = sys_recvmsg(SyscallArgs::from_regs([fd, msg_ptr, flags, 0, 0, 0]));
+    if ret.0 >= 0 {
+        Ok(ret.0 as usize)
+    } else {
+        Err(ErrNo::from_raw(-ret.0).unwrap_or(ErrNo::EIO))
+    }
+}
+
+fn partial_or_error(completed : usize, error : ErrNo) -> UserRet {
+    if completed > 0 {
+        UserRet::from_success(completed)
+    } else {
+        UserRet::from_error(error)
+    }
+}
+
+fn recvmmsg_deadline(timeout_ptr : usize) -> Result<Option<u128>, ErrNo> {
+    if timeout_ptr == 0 {
+        return Ok(None);
+    }
+    let timeout = copy_from_user_struct::<UserTimespec>(timeout_ptr)?;
+    if timeout.sec < 0 || timeout.nsec < 0 || timeout.nsec >= 1_000_000_000 {
+        return Err(ErrNo::EINVAL);
+    }
+    let duration = (timeout.sec as u128).saturating_mul(1_000_000_000)
+                                             .saturating_add(timeout.nsec as u128);
+    let now = platform::wall_clock::monotonic_ns().map_err(|_| ErrNo::EIO)?;
+    Ok(Some(now.saturating_add(duration)))
+}
+
+fn recvmmsg_deadline_expired(deadline : Option<u128>) -> bool {
+    deadline.is_some_and(|deadline| {
+        platform::wall_clock::monotonic_ns().map_or(true, |now| now >= deadline)
+    })
+}
+
+fn write_recvmmsg_remaining(timeout_ptr : usize,
+                            deadline : Option<u128>)
+                            -> Result<(), ErrNo> {
+    if timeout_ptr == 0 {
+        return Ok(());
+    }
+    let Some(deadline) = deadline else { return Ok(()); };
+    let now = platform::wall_clock::monotonic_ns().map_err(|_| ErrNo::EIO)?;
+    let remaining = deadline.saturating_sub(now);
+    copy_to_user_struct(timeout_ptr,
+                        &UserTimespec { sec : (remaining / 1_000_000_000) as isize,
+                                        nsec : (remaining % 1_000_000_000) as isize })
 }
 
 fn sendmsg_one(fd : usize, msg_ptr : usize, flags : usize) -> Result<usize, ErrNo> {

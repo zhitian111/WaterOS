@@ -19,6 +19,9 @@
 | `vmsplice` | 75 | 校验 iovec 后复制用户数据进 pipe；支持部分成功和非阻塞上限，暂不赠送用户物理页 |
 | `copy_file_range` | 285 | 普通文件间复制；支持独立输入/输出 offset、同 inode 重叠检查、短写和部分成功语义 |
 | `ioprio_set/get` | 30 / 31 | TCB 保存线程级编码，支持 process/pgrp/user 目标、权限检查及 fork/clone 继承 |
+| `timerfd_create/settime/gettime` | 85–87 | 支持 realtime/monotonic、绝对/相对超时、周期累计、非阻塞、poll、dup/fork 共享状态与 CLOEXEC |
+| `signalfd4` | 74 | 支持创建/更新 mask、批量读取、非阻塞、poll、dup/fork 共享；用户复制失败时按原 thread/process pending 归属回滚 |
+| `recvmmsg` | 243 | 支持批量 UDP/TCP 消息接收、每条 `msg_len`、超时、`MSG_WAITFORONE` 和部分成功语义 |
 
 同时修正了已有实现中的错误语义：
 
@@ -30,10 +33,12 @@
 - 修正文档中的旧编号：`syncfs=267`、`setns=268`、`finit_module=273`。
 - `sendfile` 改用 VFS read lease；输出短写或后续错误时返回已完成字节，未交付
   数据不会被错误地从输入流消费。
+- `signalfd` 读取使用 pending 事务：先按原作用域预留信号，完成整条 128 字节
+  `signalfd_siginfo` 用户复制后才提交；`EFAULT`、分配失败或 lease 丢弃均恢复 pending。
 
 ## 2. 已登记但尚未分发的 syscall
 
-以下 18 个编号会稳定落入分发表的 `ENOSYS` 兜底。它们不是简单加一个函数就能
+以下 16 个编号会稳定落入分发表的 `ENOSYS` 兜底。它们不是简单加一个函数就能
 正确实现；必须先有对应内核状态和生命周期管理。
 
 ### 2.1 根目录与命名空间
@@ -98,6 +103,10 @@ WaterOS 当前采用静态链接组件架构，因此这组暂列低优先级。
   `ENOSYS`，需要按 LTP 用例逐项补齐。
 - `statfs/sysinfo/getrusage/times` 中部分统计仍是近似值，应避免把占位统计当成
   精确内核计数。
+- `timerfd` 尚不支持 `TFD_TIMER_CANCEL_ON_SET`。当前 VFS 错误接口没有
+  `ECANCELED`，因此显式返回 `EINVAL`，没有伪装为成功。
+- `signalfd_siginfo` 当前可靠填写 `signo/pid/uid`；普通信号仍遵循位集合并语义，
+  不累计同号普通信号。实时信号排队及完整 `siginfo` 来源字段仍需单独建设。
 
 `rt_sigreturn(139)` 虽然在普通分发表中显示为 `ENOSYS`，但已经由
 `os/src/trap_handler.rs` 在进入普通分发前调用 `restore_signal_frame` 接管；这不是
@@ -108,8 +117,8 @@ WaterOS 当前采用静态链接组件架构，因此这组暂列低优先级。
 当前 BusyBox 主路径未必需要，但 Debian、apt、编译工具和较新的 libc 会逐步触发：
 
 - 文件搬运：`splice`、`tee`、`vmsplice`、`copy_file_range` 已完成。
-- fd/事件：`timerfd_*`、`signalfd4`、`inotify_*`、`memfd_create`。
-- 网络：`recvmmsg`。
+- fd/事件：`timerfd_*`、`signalfd4` 已完成；下一步是 `inotify_*`、`memfd_create`。
+- 网络：`recvmmsg` 已完成，当前复用现有 IPv4 TCP/UDP `recvmsg` 后端。
 - 进程：`pidfd_open`、`pidfd_send_signal`、`pidfd_getfd`。
 - 路径安全：`openat2`。
 
@@ -133,7 +142,7 @@ wos-syscall-smoke
 ```
 
 同一测试程序也已用 `ARCH=la PACKAGE=operator` 构建并在 LoongArch QEMU 中执行，
-两种架构输出相同的五组 `PASS`。
+两种架构均已在 QEMU 中输出相同的八组 `PASS`。
 
 `wos-syscall-smoke` 直接发出 asm-generic syscall 号，校验：
 
@@ -142,6 +151,10 @@ wos-syscall-smoke
 - `splice` 的 file→pipe→file 数据和 offset，以及“两端都不是 pipe”的 `EINVAL`。
 - `tee` 复制后输入未消费，`vmsplice` 多 iovec 内容顺序正确。
 - `ioprio` 的 set/get 和 fork 继承。
+- `timerfd` 的非阻塞读、gettime、poll、周期超时累计以及 dup 共享状态。
+- `recvmmsg` 的真实 loopback UDP 批量数据、每条长度和无数据超时。
+- `signalfd4` 的 mask、poll、批量读取、来源字段、mask 更新，以及故意触发
+  `EFAULT` 后 pending 不丢失。
 
 纯 Rust 边界断言同时接入 `syscall/self_test`，可随内核 self-test 构建在目标架构
 执行。直接在 x86_64 宿主运行
@@ -153,10 +166,12 @@ host-test crate，不能把该失败误判为 syscall 实现错误。
 
 结合往届线下题和当前用户空间，后续按以下顺序推进：
 
-1. **P0 fd 与事件链路**：`timerfd_*`、`signalfd4`、`inotify_*`。
+1. **P0 fd 与事件链路**：继续实现 `inotify_*`，随后补 `memfd_create`；已完成的
+   `timerfd_*`、`signalfd4` 进入回归集合。
 2. **P0 进程/路径兼容**：真实 `chroot`（per-process root + `*at`/symlink/dirfd
    全链路约束）、`openat2`；不得添加只存字符串的成功桩。
-3. **P1 现代运行时**：`memfd_create`、`recvmmsg`、常见 futex requeue/bitset 组合。
+3. **P1 现代运行时**：常见 futex requeue/bitset 组合、pidfd；`recvmmsg` 已完成，
+   后续根据真实程序补齐更复杂 socket 类型和 ancillary data。
 4. **P1 可观测性**：真实 `sysinfo/statfs/getrusage/times` 计数、`/proc` 配套字段。
 5. **P2 专用设施**：SysV msg/sem、namespace、swap、内核模块；只有题目或真实程序
    命中时再做，保持未实现时明确 `ENOSYS`。

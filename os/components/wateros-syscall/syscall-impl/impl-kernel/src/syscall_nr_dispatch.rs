@@ -59,6 +59,9 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::DUP3 => sys::sys_dup3(syscall_args).0,
         n if n == api_v0::PIPE2 => sys::sys_pipe2(syscall_args).0,
         n if n == api_v0::EVENTFD2 => sys::sys_eventfd2(syscall_args).0,
+        n if n == api_v0::TIMERFD_CREATE => sys::sys_timerfd_create(syscall_args).0,
+        n if n == api_v0::TIMERFD_SETTIME => sys::sys_timerfd_settime(syscall_args).0,
+        n if n == api_v0::TIMERFD_GETTIME => sys::sys_timerfd_gettime(syscall_args).0,
         n if n == api_v0::IOCTL => sys::sys_ioctl(syscall_args).0,
         n if n == api_v0::FCNTL => sys::sys_fcntl(syscall_args).0,
         n if n == api_v0::FLOCK => sys::sys_flock(syscall_args).0,
@@ -184,10 +187,12 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::SENDMSG => sys::sys_sendmsg(syscall_args).0,
         n if n == api_v0::RECVMSG => sys::sys_recvmsg(syscall_args).0,
         n if n == api_v0::SENDMMSG => sys::sys_sendmmsg(syscall_args).0,
+        n if n == api_v0::RECVMMSG => sys::sys_recvmmsg(syscall_args).0,
         n if n == api_v0::SETSOCKOPT => sys::sys_setsockopt(syscall_args).0,
         n if n == api_v0::GETSOCKOPT => sys::sys_getsockopt(syscall_args).0,
         n if n == api_v0::SHUTDOWN => sys::sys_shutdown(syscall_args).0,
         n if n == api_v0::PPOLL => sys::sys_ppoll(syscall_args).0,
+        n if n == api_v0::SIGNALFD4 => sys::sys_signalfd4(syscall_args).0,
         n if n == api_v0::PSELECT6 => sys::sys_pselect6(syscall_args).0,
         n if n == api_v0::POLL => sys::sys_poll(syscall_args).0,
         n if n == api_v0::SELECT => sys::sys_select(syscall_args).0,
@@ -242,5 +247,6 @@ pub fn is_restartable_syscall_nr(syscall_nr : usize) -> bool {
     syscall_nr == api_v0::RECVFROM ||
     syscall_nr == api_v0::SENDMSG ||
     syscall_nr == api_v0::RECVMSG ||
-    syscall_nr == api_v0::SENDMMSG
+    syscall_nr == api_v0::SENDMMSG ||
+    syscall_nr == api_v0::RECVMMSG
 }

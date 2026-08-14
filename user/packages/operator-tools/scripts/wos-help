@@ -2,7 +2,7 @@
 cat <<'EOF'
 WaterOS operator commands:
   wos-info       show kernel, mount and memory information
-  wos-syscall-smoke  verify copy_file_range/splice/ioprio in the running kernel
+  wos-syscall-smoke  verify transfer, ioprio, timerfd, recvmmsg and signalfd syscalls
   ps             list processes
   ip addr        show network addresses
   dmesg          show the kernel log when supported

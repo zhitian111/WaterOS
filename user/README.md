@@ -186,7 +186,9 @@ wos-syscall-smoke
 ```
 
 它会直接验证当前内核的 `sendfile`、`copy_file_range`、`splice`、`tee`、
-`vmsplice` 和 `ioprio`，不依赖宿主架构或模拟返回值。
+`vmsplice`、`ioprio`、`timerfd`、`recvmmsg` 和 `signalfd4`，不依赖宿主架构或
+模拟返回值。RV 与 LA 使用同一份目标机源码，测试真实 VFS、pipe、socket、timer、
+signal 和用户内存复制链路。
 
 ## Nano-X 与 Doom
 

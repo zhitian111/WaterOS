@@ -9,6 +9,7 @@ mod kill_target;
 pub(crate) mod robust;
 pub(crate) mod shm;
 pub(crate) mod signal;
+pub(crate) mod signalfd;
 
 pub(crate) use eventfd::sys_eventfd2;
 pub(crate) use futex::sys_futex;
@@ -25,6 +26,7 @@ pub(crate) use signal::{
     restore_signal_frame, sys_kill, sys_rt_sigaction, sys_rt_sigpending, sys_rt_sigprocmask,
     sys_rt_sigsuspend, sys_rt_sigtimedwait, sys_sigaltstack, sys_tgkill, sys_tkill, timer_tick,
 };
+pub(crate) use signalfd::sys_signalfd4;
 
 fn futex_error_to_errno(error : FutexError) -> ErrNo {
     match error {
@@ -35,4 +37,9 @@ fn futex_error_to_errno(error : FutexError) -> ErrNo {
         FutexError::TimedOut => ErrNo::ETIMEDOUT,
         FutexError::Interrupted => ErrNo::EINTR,
     }
+}
+
+#[cfg(feature = "self_test")]
+pub(crate) fn self_test() {
+    signalfd::self_test();
 }

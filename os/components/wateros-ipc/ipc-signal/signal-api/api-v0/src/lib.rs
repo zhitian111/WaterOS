@@ -218,6 +218,22 @@ pub struct PendingSignal {
     pub previous_mask : SignalSet,
 }
 
+/// 从 pending 集合中暂时取出的信号及其原始归属。
+///
+/// `signalfd` 的用户拷贝可能失败；保留 scope 后才能把未提交的记录准确放回线程或
+/// 进程 pending 集合，而不会改变后续由哪个线程消费该信号。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TakenPendingSignal {
+    pub signal : usize,
+    pub scope : PendingSignalScope,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingSignalScope {
+    Thread,
+    Process,
+}
+
 /// `FLOW:` 目标线程在返回用户态前取出的信号效果。
 ///
 /// 信号生成阶段只负责写入 pending；disposition 必须到目标线程的安全点才判断，

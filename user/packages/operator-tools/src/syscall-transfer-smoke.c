@@ -1,14 +1,20 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <stdint.h>
+#include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/syscall.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #ifndef __NR_ioprio_set
@@ -28,10 +34,29 @@
 #ifndef __NR_copy_file_range
 #define __NR_copy_file_range 285
 #endif
+#ifndef __NR_timerfd_create
+#define __NR_timerfd_create 85
+#define __NR_timerfd_settime 86
+#define __NR_timerfd_gettime 87
+#endif
+#ifndef __NR_recvmmsg
+#define __NR_recvmmsg 243
+#endif
+#ifndef __NR_signalfd4
+#define __NR_signalfd4 74
+#endif
 
 #define IOPRIO_WHO_PROCESS 1
 #define IOPRIO_CLASS_BE 2
 #define IOPRIO_PRIO_VALUE(class_, data_) (((class_) << 13) | (data_))
+#define TFD_TIMER_ABSTIME 1
+#define TFD_NONBLOCK 04000
+#define TFD_CLOEXEC 02000000
+#define SFD_NONBLOCK 04000
+#define SFD_CLOEXEC 02000000
+#ifndef MSG_WAITFORONE
+#define MSG_WAITFORONE 0x10000
+#endif
 
 static void fail(const char *step) {
     fprintf(stderr, "[FAIL] %s: errno=%d (%s)\n", step, errno, strerror(errno));
@@ -51,6 +76,18 @@ static void read_exact_at(int fd, char *buffer, size_t length, off_t offset) {
         fail("pread verification");
     require((size_t)count == length, "short verification read");
 }
+
+struct wos_signalfd_siginfo {
+    uint32_t signo;
+    int32_t error;
+    int32_t code;
+    uint32_t pid;
+    uint32_t uid;
+    uint8_t rest[108];
+};
+
+_Static_assert(sizeof(struct wos_signalfd_siginfo) == 128,
+               "signalfd_siginfo ABI size");
 
 int main(void) {
     static const char source_data[] = "0123456789abcdef";
@@ -162,6 +199,174 @@ int main(void) {
         fail("waitpid ioprio inheritance");
     require(WIFEXITED(status) && WEXITSTATUS(status) == 0, "ioprio fork inheritance");
 
+    int timerfd = syscall(__NR_timerfd_create, CLOCK_MONOTONIC,
+                          TFD_NONBLOCK | TFD_CLOEXEC);
+    if (timerfd < 0)
+        fail("timerfd_create");
+    require((fcntl(timerfd, F_GETFD) & FD_CLOEXEC) != 0,
+            "timerfd cloexec");
+    uint64_t expirations = 0;
+    errno = 0;
+    require(read(timerfd, &expirations, sizeof(expirations)) == -1 && errno == EAGAIN,
+            "unarmed timerfd is not readable");
+
+    struct itimerspec invalid_timer = {
+        .it_value = {.tv_sec = 0, .tv_nsec = 1000000000L},
+    };
+    errno = 0;
+    require(syscall(__NR_timerfd_settime, timerfd, 0, &invalid_timer, NULL) == -1 &&
+            errno == EINVAL, "timerfd rejects invalid timespec");
+
+    struct itimerspec timer = {
+        .it_interval = {.tv_sec = 0, .tv_nsec = 0},
+        .it_value = {.tv_sec = 0, .tv_nsec = 30000000L},
+    };
+    struct itimerspec old_timer = {{0}};
+    require(syscall(__NR_timerfd_settime, timerfd, 0, &timer, &old_timer) == 0,
+            "arm one-shot timerfd");
+    require(old_timer.it_value.tv_sec == 0 && old_timer.it_value.tv_nsec == 0,
+            "new timerfd old value is disarmed");
+    struct itimerspec current_timer = {{0}};
+    require(syscall(__NR_timerfd_gettime, timerfd, &current_timer) == 0,
+            "timerfd_gettime");
+    require(current_timer.it_value.tv_sec == 0 && current_timer.it_value.tv_nsec > 0 &&
+            current_timer.it_value.tv_nsec <= 30000000L,
+            "timerfd remaining time");
+    struct pollfd timer_poll = {.fd = timerfd, .events = POLLIN};
+    require(poll(&timer_poll, 1, 500) == 1 && (timer_poll.revents & POLLIN) != 0,
+            "poll timerfd expiration");
+    require(read(timerfd, &expirations, sizeof(expirations)) == sizeof(expirations) &&
+            expirations == 1, "read one-shot timerfd");
+
+    timer.it_interval.tv_nsec = 10000000L;
+    timer.it_value.tv_nsec = 10000000L;
+    require(syscall(__NR_timerfd_settime, timerfd, 0, &timer, NULL) == 0,
+            "arm periodic timerfd");
+    struct timespec pause = {.tv_sec = 0, .tv_nsec = 55000000L};
+    if (nanosleep(&pause, NULL) < 0)
+        fail("timerfd accumulation sleep");
+    require(read(timerfd, &expirations, sizeof(expirations)) == sizeof(expirations) &&
+            expirations >= 3, "timerfd accumulates overruns");
+
+    int duplicated_timerfd = dup(timerfd);
+    if (duplicated_timerfd < 0)
+        fail("dup timerfd");
+    timer.it_interval.tv_nsec = 0;
+    timer.it_value.tv_nsec = 20000000L;
+    require(syscall(__NR_timerfd_settime, duplicated_timerfd, 0, &timer, NULL) == 0,
+            "arm duplicated timerfd");
+    timer_poll.fd = timerfd;
+    timer_poll.revents = 0;
+    require(poll(&timer_poll, 1, 500) == 1, "shared timerfd poll");
+    require(read(timerfd, &expirations, sizeof(expirations)) == sizeof(expirations),
+            "shared timerfd read");
+    errno = 0;
+    require(read(duplicated_timerfd, &expirations, sizeof(expirations)) == -1 && errno == EAGAIN,
+            "timerfd dup shares counter");
+
+    int receive_socket = socket(AF_INET, SOCK_DGRAM, 0);
+    int send_socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (receive_socket < 0 || send_socket < 0)
+        fail("recvmmsg sockets");
+    struct sockaddr_in receive_address = {
+        .sin_family = AF_INET,
+        .sin_port = 0,
+        .sin_addr.s_addr = htonl(INADDR_LOOPBACK),
+    };
+    if (bind(receive_socket, (struct sockaddr *)&receive_address,
+             sizeof(receive_address)) < 0)
+        fail("recvmmsg bind");
+    socklen_t receive_address_len = sizeof(receive_address);
+    if (getsockname(receive_socket, (struct sockaddr *)&receive_address,
+                    &receive_address_len) < 0)
+        fail("recvmmsg getsockname");
+    if (sendto(send_socket, "one", 3, 0, (struct sockaddr *)&receive_address,
+               sizeof(receive_address)) != 3 ||
+        sendto(send_socket, "two", 3, 0, (struct sockaddr *)&receive_address,
+               sizeof(receive_address)) != 3)
+        fail("seed recvmmsg datagrams");
+
+    char receive_buffers[2][8] = {{0}};
+    struct iovec receive_iov[2] = {
+        {.iov_base = receive_buffers[0], .iov_len = sizeof(receive_buffers[0])},
+        {.iov_base = receive_buffers[1], .iov_len = sizeof(receive_buffers[1])},
+    };
+    struct mmsghdr messages[2];
+    memset(messages, 0, sizeof(messages));
+    messages[0].msg_hdr.msg_iov = &receive_iov[0];
+    messages[0].msg_hdr.msg_iovlen = 1;
+    messages[1].msg_hdr.msg_iov = &receive_iov[1];
+    messages[1].msg_hdr.msg_iovlen = 1;
+    struct timespec receive_timeout = {.tv_sec = 1, .tv_nsec = 0};
+    long received_messages = syscall(__NR_recvmmsg, receive_socket, messages, 2, 0,
+                                     &receive_timeout);
+    if (received_messages < 0)
+        fail("recvmmsg datagrams");
+    require(received_messages == 2 && messages[0].msg_len == 3 &&
+            messages[1].msg_len == 3 && memcmp(receive_buffers[0], "one", 3) == 0 &&
+            memcmp(receive_buffers[1], "two", 3) == 0,
+            "recvmmsg data and lengths");
+
+    receive_timeout.tv_sec = 0;
+    receive_timeout.tv_nsec = 30000000L;
+    memset(messages, 0, sizeof(messages));
+    messages[0].msg_hdr.msg_iov = &receive_iov[0];
+    messages[0].msg_hdr.msg_iovlen = 1;
+    require(syscall(__NR_recvmmsg, receive_socket, messages, 1, 0,
+                    &receive_timeout) == 0,
+            "recvmmsg timeout with no data");
+
+    sigset_t signal_mask;
+    sigemptyset(&signal_mask);
+    sigaddset(&signal_mask, SIGUSR1);
+    sigaddset(&signal_mask, SIGUSR2);
+    if (sigprocmask(SIG_BLOCK, &signal_mask, NULL) < 0)
+        fail("block signalfd signals");
+    uint64_t signal_mask_bits = 0;
+    memcpy(&signal_mask_bits, &signal_mask, sizeof(signal_mask_bits));
+    int signal_fd = syscall(__NR_signalfd4, -1, &signal_mask_bits,
+                            sizeof(signal_mask_bits), SFD_NONBLOCK | SFD_CLOEXEC);
+    if (signal_fd < 0)
+        fail("signalfd4 create");
+    require((fcntl(signal_fd, F_GETFD) & FD_CLOEXEC) != 0,
+            "signalfd cloexec");
+    struct wos_signalfd_siginfo signal_info[2];
+    errno = 0;
+    require(read(signal_fd, signal_info, sizeof(signal_info[0])) == -1 && errno == EAGAIN,
+            "empty signalfd is nonblocking");
+    if (kill(getpid(), SIGUSR1) < 0 || kill(getpid(), SIGUSR2) < 0)
+        fail("queue signalfd signals");
+    struct pollfd signal_poll = {.fd = signal_fd, .events = POLLIN};
+    require(poll(&signal_poll, 1, 100) == 1 && (signal_poll.revents & POLLIN) != 0,
+            "poll signalfd pending");
+    volatile uintptr_t invalid_user_address = 1;
+    errno = 0;
+    require(syscall(__NR_read, signal_fd, (void *)invalid_user_address,
+                    sizeof(signal_info[0])) == -1 && errno == EFAULT,
+            "signalfd user fault");
+    memset(signal_info, 0, sizeof(signal_info));
+    require(read(signal_fd, signal_info, sizeof(signal_info)) == sizeof(signal_info),
+            "signalfd batch read after rollback");
+    require(signal_info[0].signo == SIGUSR1 && signal_info[1].signo == SIGUSR2 &&
+            signal_info[0].pid == (uint32_t)getpid(),
+            "signalfd records and source");
+
+    sigemptyset(&signal_mask);
+    sigaddset(&signal_mask, SIGUSR2);
+    signal_mask_bits = 0;
+    memcpy(&signal_mask_bits, &signal_mask, sizeof(signal_mask_bits));
+    require(syscall(__NR_signalfd4, signal_fd, &signal_mask_bits,
+                    sizeof(signal_mask_bits), 0) == signal_fd,
+            "signalfd mask update");
+    if (kill(getpid(), SIGUSR2) < 0)
+        fail("queue updated signalfd signal");
+    require(read(signal_fd, signal_info, sizeof(signal_info[0])) == sizeof(signal_info[0]) &&
+            signal_info[0].signo == SIGUSR2,
+            "updated signalfd mask is active");
+    sigaddset(&signal_mask, SIGUSR1);
+    if (sigprocmask(SIG_UNBLOCK, &signal_mask, NULL) < 0)
+        fail("unblock signalfd signals");
+
     close(pipefd[0]);
     close(pipefd[1]);
     close(source);
@@ -172,6 +377,11 @@ int main(void) {
     close(tee_output[1]);
     close(vm_pipe[0]);
     close(vm_pipe[1]);
+    close(duplicated_timerfd);
+    close(timerfd);
+    close(receive_socket);
+    close(send_socket);
+    close(signal_fd);
     unlink(source_path);
     unlink(output_path);
     puts("[PASS] copy_file_range: content, offsets, flags");
@@ -179,5 +389,8 @@ int main(void) {
     puts("[PASS] splice: file->pipe->file, positions, validation");
     puts("[PASS] tee/vmsplice: duplicate without consume and iovec input");
     puts("[PASS] ioprio: set/get and fork inheritance");
+    puts("[PASS] timerfd: nonblock, gettime, poll, periodic accumulation, dup sharing");
+    puts("[PASS] recvmmsg: UDP batch data, lengths and timeout");
+    puts("[PASS] signalfd: mask, poll, batch read, EFAULT rollback, source and update");
     return 0;
 }
