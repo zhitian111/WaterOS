@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from typing import Iterable
@@ -58,7 +59,8 @@ def _run(command: list[str], *, env: dict[str, str] | None = None,
     return completed
 
 
-def _run_debugfs_batch(image: Path, commands: Iterable[str]) -> None:
+def _run_debugfs_batch(image: Path, commands: Iterable[str], *,
+                       fake_time: str = SOURCE_DATE_EPOCH) -> None:
     command_list = list(commands)
     if not command_list:
         return
@@ -68,8 +70,8 @@ def _run_debugfs_batch(image: Path, commands: Iterable[str]) -> None:
         batch_path = Path(batch.name)
     try:
         env = os.environ.copy()
-        env["SOURCE_DATE_EPOCH"] = SOURCE_DATE_EPOCH
-        env["E2FSPROGS_FAKE_TIME"] = SOURCE_DATE_EPOCH
+        env["SOURCE_DATE_EPOCH"] = fake_time
+        env["E2FSPROGS_FAKE_TIME"] = fake_time
         completed = _run(["debugfs", "-w", "-f", str(batch_path), str(image)],
                          env=env, capture=True)
         diagnostics = (completed.stdout or "") + (completed.stderr or "")
@@ -98,12 +100,19 @@ def _normalize_image_metadata(image: Path, staging: Path,
     # fixed.  dir_index is disabled for WaterOS compatibility, but the
     # superblock field must still be normalized for byte-reproducible images.
     commands: list[str] = [f"set_super_value hash_seed {_fixed_uuid(arch)}"]
+    # Recent e2fsprogs stores these timestamps as split 64-bit values.  Setting
+    # the aggregate field leaves stale high bits from mke2fs on some hosts,
+    # producing a timestamp far in the future.  Set both halves explicitly.
+    # Keep source files reproducible, but make filesystem lifecycle timestamps
+    # describe when this particular image was created.
+    build_timestamp = str(int(time.time()))
     for field in ("mtime", "wtime", "lastcheck", "mkfs_time"):
-        commands.append(f"set_super_value {field} {SOURCE_DATE_EPOCH}")
+        commands.append(f"set_super_value {field}_lo {build_timestamp}")
+        commands.append(f"set_super_value {field}_hi 0")
     for logical in ["/", *("/" + entry.relative_to(staging).as_posix()
                            for entry in _iter_entries(staging))]:
         commands.extend(_inode_metadata_commands(logical))
-    _run_debugfs_batch(image, commands)
+    _run_debugfs_batch(image, commands, fake_time=build_timestamp)
 
 
 def _sha256(path: Path) -> str:
