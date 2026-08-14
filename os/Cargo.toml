@@ -152,8 +152,7 @@
         "syscall/impl-kernel",
         #"dashboard-debug",
     ]
-    # VisionFive 2 / JH7110（RISC-V64 板级 profile；任务 05 前为可编译占位，
-    # 驱动层暂回退 impl-dummy，任务 06 接入真实板级驱动）。
+    # VisionFive 2 / JH7110（RISC-V64 板级 profile；任务 05 平台、任务 06 驱动）。
     jh7110-visionfive2 = [
         "dep:cred",
         "dep:driver",
@@ -163,6 +162,7 @@
         "dep:network",
         "heap-tlsf",
         "driver/impl-block-cache",
+        "driver/impl-jh7110-visionfive2",
         "ipc/all",
         "impl-sv39",
         "mm/vfs-root-read",
