@@ -26,7 +26,7 @@
 |------|-----------------------------------------------|------|
 | 聚合层 | `src/lib.rs` | 导出 `api`、`block`、`character`、`network`；提供 `init_when_boot`、`init_after_boot`、`test`；通过 feature 选择 `active_impl`。 |
 | 设备抽象 API | `driver-api/api-v0/` | `DeviceInfo`、`DeviceType`、`MmioRegion`、`DriverError` 等与具体总线无关的公共类型。 |
-| 块设备子系统 | `driver-block/` | `BlockDevice` trait、`register_block_device`、全局块设备表（`SharedBlockDevice`）；**VirtIO-MMIO 块实现**位于 `driver-block/block-impl/impl-virtio-mmio/`，由 feature **`impl-virtio-mmio`** 启用并由 `wateros-driver` 的 **`impl-qemu-riscv64-opensbi`** 自动打开。可选 **写穿 LRU 块缓存** `driver-block/block-impl/impl-block-cache/`（**`CachingBlockDevice`**），由 **`wateros-driver`** 的 **`impl-block-cache`** 与根 crate **`qemu-riscv64-opensbi`** 下的 **`driver/impl-block-cache`** 打开；注册 virtio-blk 时用其包装底层设备，对上接口不变。 |
+| 块设备子系统 | `driver-block/` | `BlockDevice` trait、`register_block_device`、全局块设备表（`SharedBlockDevice`）；所有整块请求均先检查块大小、缓冲区对齐、LBA 加法溢出和已知容量，且实现必须提供 `flush()`。**VirtIO-MMIO 块实现**位于 `driver-block/block-impl/impl-virtio-mmio/`，由 feature **`impl-virtio-mmio`** 启用并由 `wateros-driver` 的 **`impl-qemu-riscv64-opensbi`** 自动打开。可选 **写穿 LRU 块缓存** `driver-block/block-impl/impl-block-cache/`（**`CachingBlockDevice`**）会在命中前校验范围，并将 `flush()` 传到底层设备。 |
 | 字符 / 网络子系统 | `driver-character/`、`driver-network/` | 提供内核字符设备与网络设备抽象，并由当前平台实现接线。 |
 | 平台实现 | `driver-impl/impl-qemu-riscv64-opensbi/` | QEMU RISC-V + OpenSBI：DTB 扫描、virtio-mmio 探测、调用 **`driver-block`** 中的 **`VirtioBlkDevice`** 完成实例化；若启用 **`block-cache`** feature，则以 **`CachingBlockDevice`** 包装后再 **`register_block_device`**；否则直接注册裸设备。末尾触发 devfs 同步。 |
 

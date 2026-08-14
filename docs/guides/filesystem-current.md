@@ -112,9 +112,9 @@ flowchart TD
 
 ### `impl-another-ext4`（当前默认实现）
 
-- 使用上游 `another_ext4` 的 `Ext4::load`、目录操作、区间读写和属性接口；适配器把 4096-byte 文件系统块拆分到 WaterOS 块设备的 512-byte LBA。
+- 使用上游 `another_ext4` 的 `Ext4::load`、目录操作、区间读写和属性接口；适配器把 4096-byte 文件系统块拆分到 WaterOS LBA，并检查转换溢出和已知设备容量。底层错误会记录并映射为 `FsError::Io`；`sync` 在刷新 ext4 状态后继续调用块设备 `flush()`。
 - 保持与 `FsImpl` 相同的 probe、挂载和错误映射契约，因此上层不需要感知具体 ext4 实现。
-- 当前 vendor 版本的块缓存 feature 未启用；写入后的 `flush_all` 由后端接口调用，但持久化验证仍需在 QEMU 镜像上完成。
+- 当前 vendor 版本的块缓存 feature 未启用；普通文件和符号链接 unlink 会先创建 `/.wateros-open-inodes` 中的隐藏硬链接，随后删除用户目录项。最后 close 或 `sync` 会删除该隐藏链接；删除失败保留为运行期 deferred reclaim，`sync` 返回 I/O 错误并重试。该机制不提供掉电事务原子性。
 
 ## 与 `wateros-vfs` 的边界
 

@@ -514,7 +514,7 @@ WaterOS 的核心架构、`wateros-*` 组件和用户空间构建系统由团队
 `virtio-drivers`、`smoltcp`、`fdt`、`riscv`、`sbi-rt`、`spin` 与 `rlsf`。
 
 `os/vendor/` 保存项目直接维护的文件系统依赖：`another_ext4` 作为当前 ext4 后端，并维护
-包括 ext4 fast/extent 符号链接创建与读取在内的 WaterOS 集成补丁；
+包括 ext4 fast/extent 符号链接创建与读取、WaterOS 块设备适配的容量/溢出检查，以及运行期 unlink 延迟回收在内的 WaterOS 集成补丁；
 `ext4_rs` 与 `ext4plus` 通过 `[patch.crates-io]` 指向本地版本。对这些代码的修改保留在
 vendor 目录中，并继续遵守各上游项目的许可证。
 
