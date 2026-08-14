@@ -13,6 +13,9 @@ pub use driver_api::{DriverError, DriverResult};
 /// 逻辑块字节长度；当前 WaterOS bring-up 固定为 512（与 virtio-blk 常见配置一致）。
 pub const BLOCK_SIZE : usize = 512;
 
+/// MBR/GPT 分区表解析与分区视图块设备。
+pub mod partition;
+
 /// 逻辑块地址（LBA），从 0 起算。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Lba(pub u64);

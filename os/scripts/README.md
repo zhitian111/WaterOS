@@ -19,6 +19,7 @@ scripts/
 ├── maintenance/       # 清理、统计、导出和仓库维护
 ├── pc-hot/            # 基于 QEMU TCG plugin 的 PC 与等待热点分析
 ├── run/               # 统一 QEMU 启动器、兼容入口与并行运行
+├── root_image/        # 物理板根镜像构建与校验（MBR/GPT、loopback 无特权）
 ├── setup/             # Rust、链接工具链和官方测试环境初始化
 ├── source/            # Shell 与 Python 脚本共用模块
 ├── syscall-profile/   # 系统调用频次和开销画像
@@ -69,6 +70,7 @@ Makefile 调用的底层脚本传递运行环境。常用直接入口如下：
 | `syscall-profile/syscall-profile-{rv,la}.sh` | `build` 或 `run` | 输出文件、plugin `key=value` 选项和完整 QEMU 命令 |
 | `testing/operator_smoke.py` | `--arch {rv,la}` | profile、SMP、模式、Guest 脚本、超时和日志路径 |
 | `testing/ltp_prune_sdcard_before.sh` | 无 | 镜像、起始用例、libc、dry-run 和重置源镜像 |
+| `root_image/root_image.py` | `build` 或 `verify` | `--output`、`--manifest`、`--size-mib`、`--partition-table {mbr,gpt}`、`--source-root` |
 
 表格只用于入口导航，脚本的 `--help` 是参数名称、默认值和副作用的权威说明。新增或修改
 参数时必须同时更新帮助文本；供 Makefile 调用的兼容包装脚本可以将帮助直接转发给实际

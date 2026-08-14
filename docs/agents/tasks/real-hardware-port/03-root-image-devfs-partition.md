@@ -53,4 +53,31 @@ git diff --check
 
 ## 任务简报
 
-（完成后追加，格式见目录 README。）
+- 完成日期：2026-08-15
+- commit：本任务实现提交（见 `git log --oneline -1`，分支 `feat/real-hardware-porting`）
+- 实际改动：
+  - 新增 `os/scripts/root_image/root_image.py`（自旧分支迁移，525 行）：loopback
+    无特权构建 MBR/GPT 整盘镜像（`sfdisk` + `mkfs.ext4 -E offset=`），`verify`
+    子命令做分区/`e2fsck -fn`/`dumpe2fs`/`debugfs` 校验。
+  - 新增 `driver-block/block-api/api-v0/src/partition.rs`（自旧分支迁移并适配）：
+    `scan_mbr` / `scan_gpt` / `PartitionBlockDevice`；适配 main 的 `BlockDevice`
+    trait（补 `flush` 到分区视图与测试 MemoryDisk）。host 单测 4 个通过
+    （主分区扫描、分区读写翻译与越界拒绝、坏表拒绝、GPT 条目与损坏回退）。
+  - `block-api/lib.rs` 注册 `pub mod partition;`。
+  - `os/scripts/README.md` 同步 root_image 入口。
+- 计划调整（基于当前 main 证据）：
+  - devfs 的 `/dev/vdaN` 分区路径与块设备注册表 `BlockDeviceRole`（Disk/Partition）
+    **顺延**：旧分支该能力绑定了一次 fs-api 大重构（handles/traits/types 合并），
+    直接搬会与 main 的 VFS 冲突。本任务落地「分区解析 + 分区视图设备」这一可测试
+    核心；分区设备的注册与 devfs 路径在任务 08/10（SD/SATA 挂载）落地时按 main
+    架构接合。main 的 devfs 未被改动，无回归面。
+- 验收结果：
+  - `cargo test -p wateros-driver-block-api-v0`：4 passed（host）。
+  - `root_image.py build/verify`：MBR 与 GPT 各构建 32 MiB 镜像并 verify 通过
+    （内部含 `e2fsck -fn`）；`fdisk -l` 确认分区表。
+  - `make rv_check`、`make la_check`：通过（仅既有 warnings）。
+  - `git diff --check`：clean。
+- 未验证/风险：
+  - 分区视图设备的真实控制器读写（SD/SATA）未验证，待任务 08/10。
+  - root_image.py 依赖宿主 `sfdisk`/`mkfs.ext4`/`e2fsck`/`debugfs`/`dumpe2fs`，
+    已在当前环境确认可用。
