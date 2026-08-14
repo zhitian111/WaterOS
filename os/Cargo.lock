@@ -8,7 +8,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.11.1",
  "log",
- "spin",
+ "spin 0.10.0",
 ]
 
 [[package]]
@@ -38,6 +38,12 @@ name = "base64"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
+
+[[package]]
+name = "bit_field"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e4b40c7323adcfc0a41c4b88143ed58346ff65a288fc144329c5c45e05d70c6"
 
 [[package]]
 name = "bitflags"
@@ -206,7 +212,7 @@ dependencies = [
  "bitflags 2.11.1",
  "crc",
  "maybe-async",
- "spin",
+ "spin 0.10.0",
 ]
 
 [[package]]
@@ -279,6 +285,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "isomorphic_drivers"
+version = "0.1.0"
+dependencies = [
+ "bit_field",
+ "bitflags 1.3.2",
+ "spin 0.9.9",
+ "volatile",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -330,6 +346,14 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
+name = "pci"
+version = "0.0.1"
+dependencies = [
+ "bit_field",
+ "bitflags 1.3.2",
+]
 
 [[package]]
 name = "pin-project-lite"
@@ -473,6 +497,15 @@ dependencies = [
 
 [[package]]
 name = "spin"
+version = "0.9.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
+dependencies = [
+ "lock_api",
+]
+
+[[package]]
+name = "spin"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
@@ -576,6 +609,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "volatile"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8e76fae08f03f96e166d2dfda232190638c10e0383841252416f9cfe2ae60e6"
+
+[[package]]
 name = "wateros"
 version = "0.1.0"
 dependencies = [
@@ -605,7 +644,7 @@ dependencies = [
 name = "wateros-base"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-base-config",
 ]
 
@@ -640,7 +679,7 @@ dependencies = [
 name = "wateros-debug"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-base-config",
 ]
 
@@ -656,6 +695,7 @@ dependencies = [
  "wateros-driver-display",
  "wateros-driver-impl-dummy",
  "wateros-driver-impl-jh7110-visionfive2",
+ "wateros-driver-impl-loongson2k1000la",
  "wateros-driver-impl-qemu-loongarch64-virt",
  "wateros-driver-impl-qemu-riscv64-virt",
  "wateros-driver-input",
@@ -685,9 +725,22 @@ dependencies = [
 name = "wateros-driver-block-api-v0"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-driver-api-v0",
  "wateros-runtime-logging",
+]
+
+[[package]]
+name = "wateros-driver-block-impl-ahci"
+version = "0.1.0"
+dependencies = [
+ "isomorphic_drivers",
+ "log",
+ "pci",
+ "spin 0.10.0",
+ "wateros-driver-block-api-v0",
+ "wateros-mm-api-v0",
+ "wateros-mm-frame-alloctor",
 ]
 
 [[package]]
@@ -695,7 +748,7 @@ name = "wateros-driver-block-impl-block-cache"
 version = "0.1.0"
 dependencies = [
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-base-config",
  "wateros-driver-block-api-v0",
 ]
@@ -704,7 +757,7 @@ dependencies = [
 name = "wateros-driver-block-impl-dw-mmc"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-driver-api-v0",
  "wateros-driver-block-api-v0",
 ]
@@ -713,7 +766,7 @@ dependencies = [
 name = "wateros-driver-block-impl-virtio-mmio"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "virtio-drivers",
  "wateros-driver-api-v0",
  "wateros-driver-block-api-v0",
@@ -749,7 +802,7 @@ dependencies = [
 name = "wateros-driver-character-api-v0"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-driver-api-v0",
 ]
 
@@ -757,7 +810,7 @@ dependencies = [
 name = "wateros-driver-character-impl-null-stub"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-driver-api-v0",
  "wateros-driver-character-api-v0",
 ]
@@ -766,7 +819,7 @@ dependencies = [
 name = "wateros-driver-character-impl-rtc-stub"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-driver-api-v0",
  "wateros-driver-character-api-v0",
 ]
@@ -775,7 +828,7 @@ dependencies = [
 name = "wateros-driver-character-impl-uart-16550"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-driver-character-api-v0",
 ]
 
@@ -793,7 +846,7 @@ dependencies = [
 name = "wateros-driver-display-api-v0"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-driver-api-v0",
 ]
 
@@ -827,7 +880,7 @@ version = "0.1.0"
 dependencies = [
  "fdt",
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-driver-api-v0",
 ]
 
@@ -845,7 +898,7 @@ version = "0.1.0"
 dependencies = [
  "fdt",
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-driver-api-v0",
  "wateros-driver-block-api-v0",
  "wateros-driver-block-impl-dw-mmc",
@@ -855,11 +908,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wateros-driver-impl-loongson2k1000la"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "wateros-driver-api-v0",
+ "wateros-driver-block-impl-ahci",
+]
+
+[[package]]
 name = "wateros-driver-impl-qemu-loongarch64-virt"
 version = "0.1.0"
 dependencies = [
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-base-config",
  "wateros-driver-api-v0",
  "wateros-driver-block",
@@ -878,7 +940,7 @@ name = "wateros-driver-impl-qemu-riscv64-virt"
 version = "0.1.0"
 dependencies = [
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-base-config",
  "wateros-driver-api-v0",
  "wateros-driver-block",
@@ -906,7 +968,7 @@ dependencies = [
 name = "wateros-driver-input-api-v0"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-driver-api-v0",
 ]
 
@@ -948,7 +1010,7 @@ dependencies = [
 name = "wateros-driver-network-api-v0"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-driver-api-v0",
  "wateros-runtime-logging",
 ]
@@ -957,7 +1019,7 @@ dependencies = [
 name = "wateros-driver-network-impl-virtio-mmio"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "virtio-drivers",
  "wateros-driver-api-v0",
  "wateros-driver-network-api-v0",
@@ -982,7 +1044,7 @@ dependencies = [
 name = "wateros-fs"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-fs-api-v0",
  "wateros-fs-devfs",
  "wateros-fs-impl-another-ext4",
@@ -999,7 +1061,7 @@ dependencies = [
 name = "wateros-fs-api-v0"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-driver-block-api-v0",
  "wateros-runtime-logging",
 ]
@@ -1026,7 +1088,7 @@ dependencies = [
 name = "wateros-fs-devfs-impl-kernel"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-driver-block-api-v0",
  "wateros-driver-character-api-v0",
  "wateros-fs-api-v0",
@@ -1040,7 +1102,7 @@ version = "0.1.0"
 dependencies = [
  "another_ext4",
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-driver-block-api-v0",
  "wateros-fs-api-v0",
 ]
@@ -1049,7 +1111,7 @@ dependencies = [
 name = "wateros-fs-impl-devfs"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-driver-block-api-v0",
  "wateros-fs-api-v0",
  "wateros-runtime-logging",
@@ -1060,7 +1122,7 @@ name = "wateros-fs-impl-ext4"
 version = "0.1.0"
 dependencies = [
  "ext4plus",
- "spin",
+ "spin 0.10.0",
  "wateros-base-config",
  "wateros-driver-block-api-v0",
  "wateros-fs-api-v0",
@@ -1073,7 +1135,7 @@ version = "0.1.0"
 dependencies = [
  "ext4_rs",
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-driver-block-api-v0",
  "wateros-fs-api-v0",
 ]
@@ -1083,7 +1145,7 @@ name = "wateros-fs-impl-ramfs"
 version = "0.1.0"
 dependencies = [
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-driver-block-api-v0",
  "wateros-fs-api-v0",
  "wateros-mm-frame-alloctor",
@@ -1109,7 +1171,7 @@ dependencies = [
 name = "wateros-fs-procfs-impl-kernel"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-cred",
  "wateros-driver-block-api-v0",
  "wateros-fs-api-v0",
@@ -1140,7 +1202,7 @@ dependencies = [
 name = "wateros-fs-rootfs-impl-kernel"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-fs-api-v0",
  "wateros-fs-devfs",
  "wateros-fs-rootfs-api-v0",
@@ -1164,7 +1226,7 @@ version = "0.1.0"
 name = "wateros-gui-impl-software"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-driver-display",
  "wateros-driver-input",
  "wateros-gui-api-v0",
@@ -1197,7 +1259,7 @@ version = "0.1.0"
 dependencies = [
  "ipc-waitqueue",
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-debug",
  "wateros-ipc-futex-api-v0",
  "wateros-platform-arch",
@@ -1217,7 +1279,7 @@ version = "0.1.0"
 dependencies = [
  "ipc-waitqueue",
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-base",
  "wateros-ipc-pipe-api-v0",
 ]
@@ -1234,7 +1296,7 @@ name = "wateros-ipc-shm-impl-frame"
 version = "0.1.0"
 dependencies = [
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-ipc-shm-api-v0",
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor",
@@ -1249,7 +1311,7 @@ name = "wateros-ipc-signal-impl-core"
 version = "0.1.0"
 dependencies = [
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-ipc-signal-api-v0",
 ]
 
@@ -1288,7 +1350,7 @@ dependencies = [
 name = "wateros-klog-impl-kernel"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
  "wateros-base-config",
  "wateros-debug",
  "wateros-klog-api-v0",
@@ -1314,7 +1376,7 @@ name = "wateros-mm-api-v0"
 version = "0.1.0"
 dependencies = [
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-base",
  "wateros-mm-frame-alloctor-api-v0",
 ]
@@ -1350,7 +1412,7 @@ name = "wateros-mm-impl-common"
 version = "0.1.0"
 dependencies = [
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor",
  "wateros-runtime",
@@ -1362,7 +1424,7 @@ name = "wateros-mm-impl-loongarch64"
 version = "0.1.0"
 dependencies = [
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-base",
  "wateros-base-config",
  "wateros-debug",
@@ -1382,7 +1444,7 @@ version = "0.1.0"
 dependencies = [
  "fdt",
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-base",
  "wateros-base-config",
  "wateros-debug",
@@ -1401,7 +1463,7 @@ name = "wateros-network"
 version = "0.1.0"
 dependencies = [
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-network-api-v0",
  "wateros-network-impl-smoltcp",
  "wateros-vfs-api-v0",
@@ -1576,7 +1638,7 @@ dependencies = [
  "linked_list_allocator",
  "log",
  "rlsf",
- "spin",
+ "spin 0.10.0",
  "wateros-base",
  "wateros-base-config",
  "wateros-platform-arch",
@@ -1620,7 +1682,7 @@ name = "wateros-syscall-impl-kernel"
 version = "0.1.0"
 dependencies = [
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-base-config",
  "wateros-cred",
  "wateros-ipc",
@@ -1731,7 +1793,7 @@ name = "wateros-tty-impl-console"
 version = "0.1.0"
 dependencies = [
  "ipc-waitqueue",
- "spin",
+ "spin 0.10.0",
  "wateros-tty-api-v0",
 ]
 
@@ -1762,7 +1824,7 @@ dependencies = [
 name = "wateros-vfs-api-v0"
 version = "0.1.0"
 dependencies = [
- "spin",
+ "spin 0.10.0",
 ]
 
 [[package]]
@@ -1770,7 +1832,7 @@ name = "wateros-vfs-impl-fd-session"
 version = "0.1.0"
 dependencies = [
  "ipc-waitqueue",
- "spin",
+ "spin 0.10.0",
  "wateros-base",
  "wateros-base-config",
  "wateros-driver-api-v0",
@@ -1790,7 +1852,7 @@ name = "wateros-vfs-impl-fs-bridge"
 version = "0.1.0"
 dependencies = [
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-base",
  "wateros-base-config",
  "wateros-driver-block-api-v0",
@@ -1806,7 +1868,7 @@ name = "wateros-vfs-impl-page-cache"
 version = "0.1.0"
 dependencies = [
  "log",
- "spin",
+ "spin 0.10.0",
  "wateros-base-config",
 ]
 

@@ -188,6 +188,7 @@
         "dep:network",
         "heap-tlsf",
         "driver/impl-block-cache",
+        "driver/impl-loongson2k1000la",
         "ipc/all",
         "mm/impl-loongarch64",
         "mm/vfs-root-read",

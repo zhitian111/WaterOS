@@ -3,6 +3,7 @@
         "./driver-api/api-v0/",
         "./driver-block/",
         "./driver-block/block-api/api-v0/",
+        "./driver-block/block-impl/impl-ahci/",
         "./driver-block/block-impl/impl-dw-mmc/",
         "./driver-block/block-impl/impl-block-cache/",
         "./driver-block/block-impl/impl-virtio-mmio/",
@@ -23,6 +24,7 @@
         "./driver-impl/impl-common/",
         "./driver-impl/impl-dummy/",
         "./driver-impl/impl-jh7110-visionfive2/",
+        "./driver-impl/impl-loongson2k1000la/",
         "./driver-impl/impl-qemu-loongarch64-virt/",
         "./driver-impl/impl-qemu-riscv64-virt/",
         "./driver-network/",
@@ -42,6 +44,7 @@
     api-v0 = { path = "./driver-api/api-v0/", package = "wateros-driver-api-v0", default-features = true }
     impl-dummy = { path = "./driver-impl/impl-dummy/", package = "wateros-driver-impl-dummy", default-features = true }
     impl-jh7110-visionfive2 = { path = "./driver-impl/impl-jh7110-visionfive2/", package = "wateros-driver-impl-jh7110-visionfive2", default-features = true, optional = true }
+    impl-loongson2k1000la = { path = "./driver-impl/impl-loongson2k1000la/", package = "wateros-driver-impl-loongson2k1000la", default-features = true, optional = true }
     impl-qemu-riscv64-virt = { path = "./driver-impl/impl-qemu-riscv64-virt/", package = "wateros-driver-impl-qemu-riscv64-virt", default-features = true, optional = true }
     impl-qemu-loongarch64-virt = { path = "./driver-impl/impl-qemu-loongarch64-virt/", package = "wateros-driver-impl-qemu-loongarch64-virt", default-features = true, optional = true }
     block = { path = "./driver-block/", package = "wateros-driver-block", default-features = true }
@@ -56,13 +59,14 @@
     log = { version = "0.4.29" }
 
 [features]
-    self_test = [ "impl-qemu-loongarch64-virt?/self_test", "impl-qemu-riscv64-virt?/self_test", "impl-jh7110-visionfive2?/self_test", "block/self_test", "network/self_test" ]
+    self_test = [ "impl-qemu-loongarch64-virt?/self_test", "impl-qemu-riscv64-virt?/self_test", "impl-jh7110-visionfive2?/self_test", "impl-loongson2k1000la?/self_test", "block/self_test", "network/self_test" ]
     api-v0 = [
         "block/api-v0",
         "character/api-v0",
         "display/api-v0",
         "input/api-v0",
         "impl-jh7110-visionfive2?/api-v0",
+        "impl-loongson2k1000la?/api-v0",
         "impl-qemu-loongarch64-virt?/api-v0",
         "impl-qemu-riscv64-virt?/api-v0",
         "network/api-v0",
@@ -89,6 +93,9 @@
     ]
     impl-jh7110-visionfive2 = [
         "dep:impl-jh7110-visionfive2",
+    ]
+    impl-loongson2k1000la = [
+        "dep:impl-loongson2k1000la",
     ]
     impl-qemu-riscv64-virt = [
         "dep:impl-qemu-riscv64-virt",

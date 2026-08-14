@@ -55,6 +55,10 @@ pub fn machine() -> &'static dyn MachineDriver {
     {
         return impl_jh7110_visionfive2::machine();
     }
+    #[cfg(feature = "impl-loongson2k1000la")]
+    {
+        return impl_loongson2k1000la::machine();
+    }
     impl_dummy::machine()
 }
 

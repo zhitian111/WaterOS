@@ -1,0 +1,18 @@
+[package]
+    name = "wateros-driver-block-impl-ahci"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    block = { path = "../../block-api/api-v0", package = "wateros-driver-block-api-v0", default-features = true }
+    frame_alloctor = { path = "../../../../wateros-mm/mm-frame-alloctor", package = "wateros-mm-frame-alloctor", default-features = true, optional = true }
+    mm-api = { path = "../../../../wateros-mm/mm-api/api-v0", package = "wateros-mm-api-v0", default-features = true, optional = true }
+    isomorphic_drivers = { path = "../../../../../vendor/isomorphic_drivers" }
+    pci = { path = "../../../../../vendor/pci" }
+    spin = "0.10.0"
+    log = "0.4.29"
+
+[features]
+    api-v0 = [  ]
+    default = [ "api-v0" ]
+    dma = [ "dep:frame_alloctor", "dep:mm-api" ]

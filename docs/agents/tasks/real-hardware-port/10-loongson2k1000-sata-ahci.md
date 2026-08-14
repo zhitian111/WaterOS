@@ -58,4 +58,36 @@ git diff --check
 
 ## 任务简报
 
-（完成后追加，格式见目录 README。）
+- 完成日期：2026-08-15
+- commit：本任务实现提交（见 `git log --oneline -1`，分支 `feat/real-hardware-porting`）
+- 实际改动：
+  - vendor 两个宽松许可 crate：
+    - `os/vendor/isomorphic_drivers/`：上游 rcore-os/isomorphic_drivers（未在
+      crates.io 发布），`block::ahci::AHCI` polled PIO；上游无 LICENSE 文件，按
+      rCore 生态惯例以 MIT 登记（`LICENSE-MIT` + `WATEROS.md`，标注需复核）。
+    - `os/vendor/pci/`：robigalia/pci（MIT/Apache-2.0）的 LoongArch 扩展 fork
+      （`CSpaceAccessMethod::MemoryMapped` + `scan_bus(base)`），来自参考仓库
+      `dependency/pci`（该目录自身 MIT/Apache，非 GPL）；`WATEROS.md` 记录来源。
+  - 新增 `driver-block/block-impl/impl-ahci`：
+    - 纯函数 + host 单测：`is_sata_mass_storage_class`（class 0x01/subclass 0x06）、
+      `sector_count_for`（512B 换算）、`dma_pages_for`（页对齐/溢出）；
+    - `FrameProvider`（栈式帧分配器连续 DMA 页，恒等 va==pa）、`SataBlock`
+      （`BlockDevice` 只读/写、`total_blocks=None`）、`find_ahci_bar`（PCIe ECAM
+      扫描）、`init()`（注册块设备）；DMA/Provider 部分 gate 到 `dma` feature，
+      保证纯函数单测可 host 运行。
+  - 新增 `driver-impl/impl-loongson2k1000la`（挂接 AHCI 探测 + 注册），接线
+    `wateros-driver` feature / `machine()` 分支与顶层 `loongson2k1000la` feature。
+  - 基址修正：任务文档写的 PCI 配置基址 `0xfe00_0000` 少写两个零，按参考实现与
+    BSP 事实改为 `0xfe_0000_0000`。
+  - 根 README「开源项目与第三方依赖 / 开源许可证」新增两个 vendor 条目。
+- 验收结果：
+  - `cargo test -p wateros-driver-block-impl-ahci`：3 passed（host）。
+  - `cargo check --no-default-features --features loongson2k1000la,pre
+    --target loongarch64-unknown-none`：通过（含 vendor crate 编译）。
+  - `make la_check`、`make rv_check`：无回归；`git diff --check`：clean。
+- 未验证/风险：
+  - 真机 SATA 未验证（枚举 AHCI + 读扇区，需 2K1000 板）；PCI 扫描读真实 MMIO，
+    不做 host 单测。
+  - AHCI 容量未暴露（`total_blocks=None`）：vendored AHCI 未保存 identify 容量
+    字段，后续需要时给 vendor 补一个容量访问器。
+  - `isomorphic_drivers` 的许可证按惯例登记为 MIT，正式发布前需复核上游授权。

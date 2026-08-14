@@ -511,12 +511,18 @@ make la_symbol_at ADDR=0x9000000000200000
 
 WaterOS 的核心架构、`wateros-*` 组件和用户空间构建系统由团队维护，同时使用 Rust
 生态中的基础库完成设备访问、网络协议、数据结构和底层解析。较关键的内核依赖包括
-`virtio-drivers`、`smoltcp`、`fdt`、`riscv`、`sbi-rt`、`spin` 与 `rlsf`。
+`virtio-drivers`、`isomorphic_drivers`（AHCI/SATA）、`pci`、`smoltcp`、`fdt`、
+`riscv`、`sbi-rt`、`spin` 与 `rlsf`。
 
 `os/vendor/` 保存项目直接维护的文件系统依赖：`another_ext4` 作为当前 ext4 后端，并维护
 包括 ext4 fast/extent 符号链接创建与读取、WaterOS 块设备适配的容量/溢出检查，以及运行期 unlink 延迟回收在内的 WaterOS 集成补丁；
 `ext4_rs` 与 `ext4plus` 通过 `[patch.crates-io]` 指向本地版本。对这些代码的修改保留在
 vendor 目录中，并继续遵守各上游项目的许可证。
+
+为 Loongson 2K1000 的 SATA/AHCI 接入，`os/vendor/` 新增两个宽松许可驱动副本：
+`isomorphic_drivers`（rCore 生态，AHCI polled PIO，未在 crates.io 发布，按 MIT 登记，
+见 `os/vendor/isomorphic_drivers/WATEROS.md`）与 `pci`（robigalia/pci 的 LoongArch
+MemoryMapped 扩展 fork，MIT/Apache-2.0，见 `os/vendor/pci/WATEROS.md`）。
 
 `user/vendor/` 保存用户空间构建所需的固定版本源码。目前包括以 GPL-2.0 许可发布的
 BusyBox 1.33.1，以及以 MPL-1.1 许可发布的 Microwindows/Nano-X。构建器始终在
@@ -559,6 +565,8 @@ BusyBox 1.33.1，以及以 MPL-1.1 许可发布的 Microwindows/Nano-X。构建�
 | `ext4_rs` | 1.3.3 | MIT |
 | `ext4plus` | 0.1.0-rc.2 | MIT OR Apache-2.0 |
 | `fdt` | 0.1.5 | MPL-2.0 |
+| `isomorphic_drivers` | 0.1.0 | MIT（见 vendor WATEROS.md） |
+| `pci` | 0.0.1 | MIT/Apache-2.0（vendor fork） |
 | `hash32` | 0.3.1 | MIT OR Apache-2.0 |
 | `heapless` | 0.8.0 | MIT OR Apache-2.0 |
 | `libc` | 0.2.186 | MIT OR Apache-2.0 |
