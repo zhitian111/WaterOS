@@ -68,3 +68,11 @@ pub fn test() {
     api_v0::test();
     log::trace!("[driver-block] test end");
 }
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[driver/block] self_test begin");
+    test();
+    assert!(supported_devices().iter().all(|device| !device.compatible.is_empty()));
+    log::info!("[driver/block] self_test complete");
+}

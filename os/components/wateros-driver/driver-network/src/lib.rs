@@ -51,3 +51,11 @@ pub fn test() {
     api_v0::test();
     log::trace!("[driver-network] test end");
 }
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[driver/network] self_test begin");
+    test();
+    assert!(supported_devices().iter().all(|device| !device.compatible.is_empty()));
+    log::info!("[driver/network] self_test complete");
+}

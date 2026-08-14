@@ -97,6 +97,8 @@ pub fn test() {
 #[cfg(feature = "self_test")]
 pub fn self_test() {
     log::info!("[driver] self_test begin");
+    block::self_test();
+    network::self_test();
     api_v0::test();
     block::test();
     character::api_v0::test();

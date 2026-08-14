@@ -11,6 +11,7 @@
     log = { version = "0.4.29" }
 
 [features]
+    self_test = []
     api-v0 = [ "impl-virtio-mmio?/api-v0", "impl-virtio-pci?/api-v0" ]
     default = [ "api-v0", "impl-virtio-mmio" ]
     impl-virtio-mmio = [ "dep:impl-virtio-mmio" ]
