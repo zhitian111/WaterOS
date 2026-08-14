@@ -22,6 +22,10 @@ use crate::user_copy::copy_user_path_cstr;
 const EXEC_ARG_MAX : usize = 2 * 1024 * 1024;
 /// Leave room in the fixed 2 MiB initial user stack for argc and auxv.
 const EXEC_STACK_OVERHEAD : usize = 16 * 1024;
+/// Linux auxv tags needed by the nested-QEMU capability diagnostic.
+const AT_NULL : usize = 0;
+const AT_HWCAP : usize = 16;
+const AUXV_DIAGNOSTIC_MAX_PAIRS : usize = 64;
 
 // ── 公开入口 ─────────────────────────────────────────────────────
 
@@ -74,6 +78,14 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
             return Err(errno);
         }
     };
+
+    if is_qemu_system_executable(executable_path.as_str()) {
+        log_qemu_host_capability(&new_elf,
+                                 executable_path.as_str(),
+                                 new_sp,
+                                 final_argv_refs.len(),
+                                 envp_refs.len());
+    }
 
     let current_signal_task = match crate::sys::ipc::signal::ensure_current_signal_state() {
         Ok(state) => state.task_id,
@@ -159,6 +171,102 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     }
 
     Ok(())
+}
+
+fn is_qemu_system_executable(path : &str) -> bool {
+    path.rsplit('/')
+        .find(|part| !part.is_empty())
+        .is_some_and(|name| name.starts_with("qemu-system-"))
+}
+
+/// Read back the auxv bytes from the newly prepared address space.  This checks
+/// what the QEMU process will actually receive instead of merely logging the
+/// constant used while constructing the stack.
+fn log_qemu_host_capability(elf : &mm::api::kernel_bringup::LoadedElf,
+                            path : &str,
+                            sp : usize,
+                            argc : usize,
+                            envc : usize) {
+    let word = core::mem::size_of::<usize>();
+    let words_before_auxv = 1usize.checked_add(argc)
+                                  .and_then(|words| words.checked_add(1))
+                                  .and_then(|words| words.checked_add(envc))
+                                  .and_then(|words| words.checked_add(1));
+    let Some(auxv_addr) = words_before_auxv.and_then(|words| words.checked_mul(word))
+                                               .and_then(|bytes| sp.checked_add(bytes))
+    else {
+        log::error!("[execve][qemu-host-cap] arch={} path={} aspace={:#x} sp={:#x} auxv_addr=overflow",
+                    current_arch_name(), path, elf.user_aspace_ptr, sp);
+        return;
+    };
+
+    let ops = ActiveUserMemoryOps::new(elf.user_aspace_ptr);
+    match read_auxv_hwcap(&ops, auxv_addr) {
+        Ok(Some(hwcap)) => {
+            log::error!("[execve][qemu-host-cap] arch={} path={} aspace={:#x} sp={:#x} auxv={:#x} at_hwcap={:#x} bit2={}",
+                        current_arch_name(),
+                        path,
+                        elf.user_aspace_ptr,
+                        sp,
+                        auxv_addr,
+                        hwcap,
+                        hwcap & (1 << 2) != 0);
+        }
+        Ok(None) => {
+            log::error!("[execve][qemu-host-cap] arch={} path={} aspace={:#x} sp={:#x} auxv={:#x} at_hwcap=missing",
+                        current_arch_name(), path, elf.user_aspace_ptr, sp, auxv_addr);
+        }
+        Err(()) => {
+            log::error!("[execve][qemu-host-cap] arch={} path={} aspace={:#x} sp={:#x} auxv={:#x} at_hwcap=unreadable",
+                        current_arch_name(), path, elf.user_aspace_ptr, sp, auxv_addr);
+        }
+    }
+}
+
+fn read_auxv_hwcap<Ops : UserMemoryOps>(ops : &Ops,
+                                        auxv_addr : usize)
+                                        -> Result<Option<usize>, ()> {
+    let word = core::mem::size_of::<usize>();
+    let pair_size = word.checked_mul(2).ok_or(())?;
+    for pair_index in 0..AUXV_DIAGNOSTIC_MAX_PAIRS {
+        let pair_addr = pair_index.checked_mul(pair_size)
+                                  .and_then(|offset| auxv_addr.checked_add(offset))
+                                  .ok_or(())?;
+        let mut pair = [0u8; core::mem::size_of::<usize>() * 2];
+        let copied = ops.copy_from_user(&mut pair, mm::api::addr::VirtAddr(pair_addr))
+                        .map_err(|_| ())?;
+        if copied != pair.len() {
+            return Err(());
+        }
+        let mut tag_bytes = [0u8; core::mem::size_of::<usize>()];
+        let mut value_bytes = [0u8; core::mem::size_of::<usize>()];
+        tag_bytes.copy_from_slice(&pair[..word]);
+        value_bytes.copy_from_slice(&pair[word..]);
+        let tag = usize::from_le_bytes(tag_bytes);
+        let value = usize::from_le_bytes(value_bytes);
+        if tag == AT_NULL {
+            return Ok(None);
+        }
+        if tag == AT_HWCAP {
+            return Ok(Some(value));
+        }
+    }
+    Err(())
+}
+
+const fn current_arch_name() -> &'static str {
+    #[cfg(target_arch = "riscv64")]
+    {
+        "riscv64"
+    }
+    #[cfg(target_arch = "loongarch64")]
+    {
+        "loongarch64"
+    }
+    #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
+    {
+        "unknown"
+    }
 }
 
 fn initial_entry_args(sp : usize, argc : usize) -> (usize, usize, usize) {
