@@ -1,131 +1,17 @@
-//! WaterOS adapter for the vendored `another_ext4` implementation.
-//!
-//! The upstream crate works with fixed 4096-byte filesystem blocks and a
-//! synchronous block-device trait.  This module keeps that detail behind the
-//! stable WaterOS filesystem API.
-
-extern crate alloc;
-
-use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
-use alloc::string::String;
-use alloc::sync::Arc;
-use alloc::vec;
-use alloc::vec::Vec;
-use another_ext4::{Ext4, FileType, InodeMode, EXT4_ROOT_INO};
-#[cfg(feature = "self_test")]
-use another_ext4::BLOCK_SIZE;
-use api_v0::{
-    FsAccessMode, FsCapability, FsDirEntry, FsError, FsImpl, FsKind, FsMetadata, FsNodeId,
-    FsNodeType, FsResult, LocalFs, LocalRwFs, ReadOnlyFs, ReadWriteFs, SharedFs, SharedRwFs,
-};
-use core::sync::atomic::AtomicBool;
-#[cfg(any(feature = "lookup-diagnostics", test))]
-use core::sync::atomic::Ordering;
-#[cfg(feature = "lookup-diagnostics")]
-use core::sync::atomic::AtomicU64;
-use driver_block_api_v0::SharedBlockDevice;
-use spin::Mutex;
-
-const EXT4_SUPER_MAGIC : u16 = 0xEF53;
-const SUPERBLOCK_MAGIC_OFFSET : u64 = 1024 + 0x38;
-const LOOKUP_CACHE_CAPACITY : usize = 4096;
-const OPEN_INODE_DIR : &str = "/.wateros-open-inodes";
-
-#[path = "dentry_cache.rs"]
-mod dentry_cache;
-#[path = "block_io.rs"]
-mod block_io;
-#[path = "path_lookup.rs"]
-mod path_lookup;
-use block_io::{check_backend_error, map_error, map_type, BlockAdapter};
-pub(crate) use path_lookup::{lookup, metadata, parent_name, write_with_ordered_size};
-pub(crate) use dentry_cache::NegativeDentryCache;
-#[cfg(test)]
-pub(crate) use dentry_cache::negative_path_hash;
-
-#[cfg(feature = "self_test")]
-pub fn self_test() {
-    log::info!("[fs/another-ext4] self_test begin");
-    assert_eq!(BLOCK_SIZE, 4096);
-    assert_eq!(EXT4_SUPER_MAGIC, 0xEF53);
-    assert!(LOOKUP_CACHE_CAPACITY > 0);
-    log::info!("[fs/another-ext4] self_test complete");
-}
-
-#[cfg(feature = "lookup-diagnostics")]
-struct LookupDiagnostics {
-    total : AtomicU64,
-    positive_hit : AtomicU64,
-    lookup_success : AtomicU64,
-    not_found : AtomicU64,
-    negative_hit : AtomicU64,
-    positive_clear : AtomicU64,
-    negative_invalidate : AtomicU64,
-}
-
-#[cfg(feature = "lookup-diagnostics")]
-impl LookupDiagnostics {
-    const fn new() -> Self {
-        Self { total : AtomicU64::new(0),
-               positive_hit : AtomicU64::new(0),
-               lookup_success : AtomicU64::new(0),
-               not_found : AtomicU64::new(0),
-               negative_hit : AtomicU64::new(0),
-               positive_clear : AtomicU64::new(0),
-               negative_invalidate : AtomicU64::new(0) }
-    }
-
-    fn event(&self, counter : &AtomicU64) {
-        counter.fetch_add(1, Ordering::Relaxed);
-        let total = self.total.fetch_add(1, Ordering::Relaxed) + 1;
-        if total % (1 << 18) == 0 {
-            log::info!("BUILDSTORM_FS_META_COUNTERS total={} positive_hit={} lookup_success={} not_found={} negative_hit={} positive_clear={} negative_invalidate={}",
-                       total,
-                       self.positive_hit.load(Ordering::Relaxed),
-                       self.lookup_success.load(Ordering::Relaxed),
-                       self.not_found.load(Ordering::Relaxed),
-                       self.negative_hit.load(Ordering::Relaxed),
-                       self.positive_clear.load(Ordering::Relaxed),
-                       self.negative_invalidate.load(Ordering::Relaxed));
-        }
-    }
-}
-
-#[cfg(feature = "lookup-diagnostics")]
-static LOOKUP_DIAGNOSTICS : LookupDiagnostics = LookupDiagnostics::new();
-
-macro_rules! lookup_diag_event {
-    ($counter:ident) => {
-        #[cfg(feature = "lookup-diagnostics")]
-        LOOKUP_DIAGNOSTICS.event(&LOOKUP_DIAGNOSTICS.$counter)
-    };
-}
-
-fn lookup_diag_positive_clear() {
-    #[cfg(feature = "lookup-diagnostics")]
-    LOOKUP_DIAGNOSTICS.positive_clear.fetch_add(1, Ordering::Relaxed);
-}
-
-fn lookup_diag_negative_invalidate(removed : usize) {
-    #[cfg(feature = "lookup-diagnostics")]
-    LOOKUP_DIAGNOSTICS.negative_invalidate.fetch_add(removed as u64, Ordering::Relaxed);
-    #[cfg(not(feature = "lookup-diagnostics"))]
-    let _ = removed;
-}
+use super::*;
 
 pub struct AnotherExt4Fs {
-    fs : Option<Ext4>,
-    io_error_state : Option<Arc<AtomicBool>>,
-    lookup_cache : Mutex<BTreeMap<String, u32>>,
-    negative_cache : Mutex<Option<Box<NegativeDentryCache>>>,
-    open_nodes : BTreeMap<u32, usize>,
-    orphan_nodes : BTreeMap<u32, String>,
-    orphan_dir : Option<u32>,
+    pub(crate) fs : Option<Ext4>,
+    pub(crate) io_error_state : Option<Arc<AtomicBool>>,
+    pub(crate) lookup_cache : Mutex<BTreeMap<String, u32>>,
+    pub(crate) negative_cache : Mutex<Option<Box<NegativeDentryCache>>>,
+    pub(crate) open_nodes : BTreeMap<u32, usize>,
+    pub(crate) orphan_nodes : BTreeMap<u32, String>,
+    pub(crate) orphan_dir : Option<u32>,
 }
 
 impl AnotherExt4Fs {
-    const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self { fs : None,
                io_error_state : None,
                lookup_cache : Mutex::new(BTreeMap::new()),
@@ -134,23 +20,23 @@ impl AnotherExt4Fs {
                orphan_nodes : BTreeMap::new(),
                orphan_dir : None }
     }
-    fn get(&self) -> FsResult<&Ext4> {
+    pub(crate) fn get(&self) -> FsResult<&Ext4> {
         self.check_backend()?;
         self.fs
             .as_ref()
             .ok_or(FsError::NotMounted)
     }
 
-    fn get_mut(&mut self) -> FsResult<&mut Ext4> {
+    pub(crate) fn get_mut(&mut self) -> FsResult<&mut Ext4> {
         self.check_backend()?;
         self.fs.as_mut().ok_or(FsError::NotMounted)
     }
 
-    fn check_backend(&self) -> FsResult<()> {
+    pub(crate) fn check_backend(&self) -> FsResult<()> {
         check_backend_error(&self.io_error_state)
     }
 
-    fn lookup(&self, path : &str) -> FsResult<u32> {
+    pub(crate) fn lookup(&self, path : &str) -> FsResult<u32> {
         if let Some(inode) = self.lookup_cache.lock().get(path).copied() {
             lookup_diag_event!(positive_hit);
             return Ok(inode);
@@ -181,7 +67,7 @@ impl AnotherExt4Fs {
         }
     }
 
-    fn cache_insert(&self, path : &str, inode : u32) {
+    pub(crate) fn cache_insert(&self, path : &str, inode : u32) {
         let mut cache = self.lookup_cache.lock();
         if cache.len() >= LOOKUP_CACHE_CAPACITY && !cache.contains_key(path) {
             cache.clear();
@@ -192,7 +78,7 @@ impl AnotherExt4Fs {
         self.negative_cache_remove_exact(path);
     }
 
-    fn negative_cache_remove_exact(&self, path : &str) {
+    pub(crate) fn negative_cache_remove_exact(&self, path : &str) {
         let removed = self.negative_cache
                           .lock()
                           .as_mut()
@@ -201,7 +87,7 @@ impl AnotherExt4Fs {
         lookup_diag_negative_invalidate(removed);
     }
 
-    fn negative_cache_remove_subtree(&self, path : &str) {
+    pub(crate) fn negative_cache_remove_subtree(&self, path : &str) {
         let removed = self.negative_cache
                           .lock()
                           .as_mut()
@@ -210,7 +96,7 @@ impl AnotherExt4Fs {
         lookup_diag_negative_invalidate(removed);
     }
 
-    fn cache_remove_subtree(&self, path : &str) {
+    pub(crate) fn cache_remove_subtree(&self, path : &str) {
         let prefix = if path.ends_with('/') {
             String::from(path)
         } else {
@@ -223,7 +109,7 @@ impl AnotherExt4Fs {
             .retain(|cached, _| cached != path && !cached.starts_with(prefix.as_str()));
     }
 
-    fn cache_rename_subtree(&self, old_path : &str, new_path : &str) {
+    pub(crate) fn cache_rename_subtree(&self, old_path : &str, new_path : &str) {
         let old_prefix = if old_path.ends_with('/') {
             String::from(old_path)
         } else {
@@ -261,7 +147,7 @@ impl AnotherExt4Fs {
         self.negative_cache_remove_subtree(new_path);
     }
 
-    fn open_inode(&self, node : FsNodeId) -> FsResult<u32> {
+    pub(crate) fn open_inode(&self, node : FsNodeId) -> FsResult<u32> {
         let inode = u32::try_from(node.raw()).map_err(|_| FsError::InvalidPath)?;
         self.open_nodes
             .contains_key(&inode)
@@ -269,7 +155,7 @@ impl AnotherExt4Fs {
             .ok_or(FsError::NotFound)
     }
 
-    fn cleanup_stale_orphans(&mut self) -> FsResult<()> {
+    pub(crate) fn cleanup_stale_orphans(&mut self) -> FsResult<()> {
         let fs = self.get_mut()?;
         let dir = match lookup(fs, OPEN_INODE_DIR) {
             Ok(dir) => dir,
@@ -299,7 +185,7 @@ impl AnotherExt4Fs {
         Ok(())
     }
 
-    fn ensure_orphan_dir(&mut self) -> FsResult<u32> {
+    pub(crate) fn ensure_orphan_dir(&mut self) -> FsResult<u32> {
         if let Some(dir) = self.orphan_dir {
             return Ok(dir);
         }
@@ -325,7 +211,7 @@ impl AnotherExt4Fs {
         Ok(dir)
     }
 
-    fn preserve_inode_if_open(&mut self, inode : u32) -> FsResult<()> {
+    pub(crate) fn preserve_inode_if_open(&mut self, inode : u32) -> FsResult<()> {
         if !self.open_nodes.contains_key(&inode) || self.orphan_nodes.contains_key(&inode) {
             return Ok(());
         }
@@ -342,33 +228,6 @@ impl AnotherExt4Fs {
     }
 }
 
-#[path = "operations.rs"]
-mod operations;
-
-pub struct AnotherExt4Impl;
-pub static IMPL : AnotherExt4Impl = AnotherExt4Impl;
-
-const SUPPORTED : &[FsCapability] = &[FsCapability::new(FsKind::Ext4, FsAccessMode::ReadOnly),
-                                      FsCapability::new(FsKind::Ext4, FsAccessMode::ReadWrite)];
-
-impl FsImpl for AnotherExt4Impl {
-    fn name(&self) -> &'static str { "another-ext4" }
-    fn supported(&self) -> &'static [FsCapability] { SUPPORTED }
-    fn probe(&self, device : &SharedBlockDevice) -> FsResult<Option<FsKind>> {
-        Ok(block_io::probe(device, SUPERBLOCK_MAGIC_OFFSET, EXT4_SUPER_MAGIC)?.then_some(FsKind::Ext4))
-    }
-    fn mount_ro(&self, device : SharedBlockDevice) -> FsResult<SharedFs> {
-        let mut fs = AnotherExt4Fs::new();
-        ReadOnlyFs::mount(&mut fs, device)?;
-        Ok(Arc::new(Mutex::new(LocalFs::new(Box::new(fs)))))
-    }
-    fn mount_rw(&self, device : SharedBlockDevice) -> FsResult<SharedRwFs> {
-        let mut fs = AnotherExt4Fs::new();
-        ReadWriteFs::mount_rw(&mut fs, device)?;
-        Ok(Arc::new(Mutex::new(LocalRwFs::new(Box::new(fs)))))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{AnotherExt4Fs, AtomicBool, FsError, FsNodeId, Ordering, ReadWriteFs,
@@ -377,7 +236,7 @@ mod tests {
     use alloc::sync::Arc;
 
     #[test]
-    fn backend_error_latch_reports_io_after_failure() {
+    pub(crate) fn backend_error_latch_reports_io_after_failure() {
         let state = Some(Arc::new(AtomicBool::new(false)));
         assert_eq!(check_backend_error(&state), Ok(()));
         state.as_ref().unwrap().store(true, Ordering::Release);
@@ -385,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn lookup_cache_rename_moves_only_source_subtree() {
+    pub(crate) fn lookup_cache_rename_moves_only_source_subtree() {
         let fs = AnotherExt4Fs::new();
         fs.cache_insert("/src", 10);
         fs.cache_insert("/src/child", 11);
@@ -417,7 +276,7 @@ mod tests {
     }
 
     #[test]
-    fn stable_node_refcount_closes_exactly_once() {
+    pub(crate) fn stable_node_refcount_closes_exactly_once() {
         let mut fs = AnotherExt4Fs::new();
         fs.open_nodes.insert(42, 2);
         let node = FsNodeId::new(42);
@@ -430,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn lookup_cache_remove_invalidates_descendants_only() {
+    pub(crate) fn lookup_cache_remove_invalidates_descendants_only() {
         let fs = AnotherExt4Fs::new();
         fs.cache_insert("/tmp/work", 20);
         fs.cache_insert("/tmp/work/output", 21);
@@ -445,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn negative_cache_requires_full_path_match_and_removes_exact_entry() {
+    pub(crate) fn negative_cache_requires_full_path_match_and_removes_exact_entry() {
         let mut cache = super::NegativeDentryCache::new();
         let original = "/missing/a";
         let bucket = super::NegativeDentryCache::bucket(super::negative_path_hash(original));
@@ -467,7 +326,7 @@ mod tests {
     }
 
     #[test]
-    fn negative_cache_subtree_invalidation_preserves_prefix_sibling() {
+    pub(crate) fn negative_cache_subtree_invalidation_preserves_prefix_sibling() {
         let mut cache = super::NegativeDentryCache::new();
         cache.insert("/tmp/work");
         cache.insert("/tmp/work/output");
@@ -480,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn positive_cache_publication_invalidates_matching_negative_entry() {
+    pub(crate) fn positive_cache_publication_invalidates_matching_negative_entry() {
         let fs = AnotherExt4Fs::new();
         fs.negative_cache
           .lock()
