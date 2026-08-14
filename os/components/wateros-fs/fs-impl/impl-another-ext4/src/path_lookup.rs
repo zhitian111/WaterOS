@@ -2,9 +2,8 @@
 
 extern crate alloc;
 
-use alloc::string::String;
-use another_ext4::{Ext4, InodeMode, BLOCK_SIZE, EXT4_ROOT_INO};
-use api_v0::{FsError, FsMetadata, FsNodeType, FsResult};
+use another_ext4::{Ext4, InodeMode, EXT4_ROOT_INO};
+use api_v0::{FsError, FsMetadata, FsResult};
 use super::block_io::{map_error, map_type};
 
 pub(crate) fn lookup(fs: &Ext4, path: &str) -> FsResult<u32> {
@@ -46,9 +45,3 @@ pub(crate) fn parent_name(path: &str) -> FsResult<(&str, &str)> {
     }
     Ok((if parent.is_empty() { "/" } else { parent }, name))
 }
-
-pub(crate) fn cache_prefix(path: &str) -> String {
-    if path.ends_with('/') { String::from(path) } else { alloc::format!("{path}/") }
-}
-
-pub(crate) const fn block_size() -> usize { BLOCK_SIZE }
