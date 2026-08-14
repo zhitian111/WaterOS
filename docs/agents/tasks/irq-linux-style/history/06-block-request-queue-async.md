@@ -57,3 +57,25 @@
   在长时间大量读后的失效；完成后按计划进入 T07（ext4/block-cache/VFS 锁拆分 +
   任务睡眠）。
 - 回归 smoke（同步路径 cagent）待后台用户 QEMU 结束后补跑。
+
+## T06b 追加：stall-debug 定位（2026-08-15）
+
+用 `stall-debug` feature + IRQ 开关打开跑了复现，关键证据：
+
+- 停滞时 `[stall-debug] no syscall progress for 1500 ticks`；卡住的是 cagent 子
+  任务（id=14/15，User/Running）的 read() syscall，`ticks=0`（等待窗口屏蔽了
+  timer，任务无法被抢占/计 tick），父任务阻塞在 ChildExit 等待它们；
+- 其它 CPU 计时器正常（3425..5326），bh 任务正常阻塞在 waitqueue；
+- 结论：不是锁结构死锁，而是**设备侧不再完成请求**（used ring 为空 → 等待者
+  自旋永不完成）；结合此前 `isr=1 / pending=0` 的观测，方向指向 virtio
+  `event_idx` 的 avail/used 通知在长时间大量提交后失效（`should_notify` 判定或
+  `used_event` 阈值）。
+
+下一轮修复候选（按优先级）：
+
+1. IRQ 路径禁用 `VIRTIO_F_RING_EVENT_IDX`（走 avail flags 通知 + `set_dev_notify`
+   控制），验证长跑不再丢通知；
+2. 若保留 event_idx：每次提交强制 `transport.notify`（跳过 `should_notify`
+   抑制）作为自愈；
+3. 在等待自旋里加「设备 ISR/used ring 长时间无进展」的探针日志，确认丢通知
+   的确切位置。
