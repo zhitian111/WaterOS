@@ -295,7 +295,7 @@ impl GlobalFilePageCache {
                            key : &FileCacheKey,
                            page_idx : u64,
                            file_size : u64,
-                           source : InstallSource,
+                           _source : InstallSource,
                            map_err : fn(Io::Error) -> E)
                            -> Result<(), E>
         where Io : PageCacheIo

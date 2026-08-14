@@ -244,11 +244,11 @@ impl GlobalCacheState {
 // 本方法代码由AI完成
     pub(crate) fn detach_slot_for_reuse(&mut self,
                              idx : usize,
-                             was_dirty : bool)
+                             _was_dirty : bool)
                              -> Option<((FileCacheKey, u64), Vec<u8>, u64)> {
         #[cfg(feature = "diagnostics")]
         if self.frames[idx].key.is_some() {
-            if was_dirty {
+            if _was_dirty {
                 self.diagnostics.dirty_evictions += 1;
             } else {
                 self.diagnostics.clean_evictions += 1;
@@ -393,5 +393,4 @@ impl GlobalCacheState {
         assert_eq!(self.index.len(), seen.iter().filter(|seen| **seen).count());
     }
 }
-
 
