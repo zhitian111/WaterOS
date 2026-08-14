@@ -26,4 +26,14 @@ fn main() {
     #[cfg(feature = "qemu-loongarch64-virt")]
     println!("cargo::rustc-link-arg=-T./components/wateros-platform/platform-impl/\
               impl-qemu-loongarch64-virt/src/linker/link.ld");
+
+    #[cfg(feature = "loongson2k1000la")]
+    println!("cargo::rerun-if-changed=./components/wateros-platform/platform-impl/\
+              impl-loongson2k1000la/src/linker/link.ld");
+    #[cfg(feature = "loongson2k1000la")]
+    println!("cargo::rerun-if-changed=./components/wateros-platform/platform-impl/\
+              impl-loongson2k1000la/src/asm/_start.S");
+    #[cfg(feature = "loongson2k1000la")]
+    println!("cargo::rustc-link-arg=-T./components/wateros-platform/platform-impl/\
+              impl-loongson2k1000la/src/linker/link.ld");
 }

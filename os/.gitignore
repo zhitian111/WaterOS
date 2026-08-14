@@ -12,6 +12,9 @@
 /kernel-rv-ltp-glibc
 /kernel-rv-final
 /kernel-rv-final-smp-test
+/kernel-la2k
+/kernel-la2k.bin
+/kernel-la2k.ui
 /kernel-rv-final-stats
 /kernel-rv-pre
 /kernel-la-final

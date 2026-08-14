@@ -1,4 +1,4 @@
-//! 引导期 DTB 物理指针占位（任务 09 从 EFI/固件 configuration table 保存）。
+//! 引导期 DTB 物理指针（板级 boot 状态；PMON 通常为 0）。
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 

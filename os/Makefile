@@ -16,7 +16,7 @@ BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 .PHONY: rv_pre_run-gdb rv_final_run-gdb rv_final_run_log-gdb rv_final_debug_run-gdb
 .PHONY: rv_qemu_run rv_qemu_run_snapshot
 .PHONY: rv_qemu_run_with_log
-.PHONY: la_check la2k_check jh7110_check la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
+.PHONY: la_check la2k_check jh7110_check kernel-la2k la2k_uimage la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
 .PHONY: kernel-la kernel-la-best kernel-la-pre kernel-la-final la_pre_run la_final_run la_final_run_log
 .PHONY: la_pre_run-gdb la_final_run-gdb la_final_run_log-gdb
 .PHONY: la_qemu_run la_qemu_run_snapshot
@@ -487,6 +487,27 @@ la2k_check:
 	@$(operator_env) $(cargo_env) cargo check --no-default-features \
 		--features loongson2k1000la,pre --target loongarch64-unknown-none
 	$(call INFO, "对 loongson2k1000la 平台的 cargo check 完成！")
+
+# Loongson 2K1000LA（PMON/uImage）构建与 uImage 生成
+kernel-la2k:
+	$(call INFO, "开始构建 loongson2k1000la 内核...")
+	@$(operator_env) $(cargo_env) cargo build $(CARGO_PROFILE_ARG) --no-default-features \
+		--features loongson2k1000la,pre --target loongarch64-unknown-none
+	@cp ./target/loongarch64-unknown-none/release/wateros ./kernel-la2k
+	$(call INFO, "loongson2k1000la 内核构建完成！")
+
+la2k_uimage: kernel-la2k
+	@loongarch64-linux-gnu-objcopy -O binary --strip-all ./kernel-la2k ./kernel-la2k.bin
+	@if mkimage -A loongarch -O linux -T kernel -C none \
+		-a 0x90000000 -e 0x90000000 \
+		-n "WaterOS 2K1000LA" -d ./kernel-la2k.bin ./kernel-la2k.ui 2>/dev/null; then \
+		echo "[Makefile] [INFO] uImage（mkimage）生成完成：kernel-la2k.ui"; \
+	else \
+		python3 ./scripts/root_image/mk_uimage.py \
+			--input ./kernel-la2k.bin --output ./kernel-la2k.ui \
+			--load 0x90000000 --entry 0x90000000 \
+			--name "WaterOS 2K1000LA"; \
+	fi
 
 # rv_link_app_asm:
 # 	$(call INFO, "开始生成批处理系统的 asm 文件...")

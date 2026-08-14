@@ -502,3 +502,70 @@ mod qemu_loongarch64_virt {
         task::run_first_task()
     }
 }
+
+#[cfg(feature = "loongson2k1000la")]
+mod loongson2k1000la {
+    use crate::{bringup_user_and_optional_services, init_after_boot, init_services_after_boot,
+                init_when_boot};
+    use core::sync::atomic::{AtomicBool, Ordering};
+    use runtime::logging::*;
+
+    static BSP_CLAIMED : AtomicBool = AtomicBool::new(false);
+
+    fn mask_boot_interrupts() {
+        platform::interrupt::disable_global_interrupt().expect("disable global interrupt");
+        platform::interrupt::disable_timer_interrupt().expect("disable timer interrupt");
+        platform::arch::interrupt::disable_soft_interrupt();
+    }
+
+    /// Loongson 2K1000LA 内核入口（PMON + uImage）。
+    ///
+    /// `a0` = 逻辑 CPU id；`a1/a2/a3` 为 PMON 透传（非 UEFI argc/argv/envp），忽略。
+    #[unsafe(no_mangle)]
+    pub fn wateros_kernel_main(cpu_raw : usize, _argc : usize, _argv : usize, _envp : usize) -> ! {
+        let cpu_id = task::CpuId::from_raw(cpu_raw);
+        mask_boot_interrupts();
+        if BSP_CLAIMED.swap(true, Ordering::AcqRel) {
+            panic!("[boot] 2K1000 SMP AP entry not supported yet");
+        }
+
+        runtime::init_console();
+        runtime::showlogo();
+        klog::init();
+        runtime::logging::init();
+        runtime::heap_allocator::init();
+        platform::arch::cpu::init_current_cpu(cpu_id).expect("BSP init current CPU");
+        platform::arch::init();
+        let _ = platform::smp::init_ipi();
+        let dtb_pa = platform::active_impl::boot::device_tree_phys_addr();
+        init_when_boot(dtb_pa);
+        let configured =
+            platform::active_impl::smp::init_configured_cpu_mask(dtb_pa).expect("initialize \
+                                                                                 LoongArch CPU \
+                                                                                 topology");
+        info!("[boot] 2K1000 configured CPU mask={:#x}",
+              configured.bits());
+        let memory_end = platform::physical_ram_end_exclusive();
+        init_after_boot(dtb_pa, memory_end, cpu_id);
+        task::set_cpu_online(cpu_id);
+        platform::arch::paging::init_paging_disable_mmu();
+
+        // PM 控制器：DTB 优先，PMON 无 DTB 时回退板级固定基址（0x1FE2_7000）。
+        let pm_base = platform::active_impl::reset::discover_pm_base(dtb_pa);
+        info!("[boot] 2K1000 PM controller base={:?}",
+              pm_base);
+
+        if init_services_after_boot() {
+            bringup_user_and_optional_services();
+        }
+        #[cfg(feature = "stall-debug")]
+        crate::stall_debug::start();
+        #[cfg(feature = "dashboard-debug")]
+        crate::dashboard::start();
+        platform::interrupt::enable_timer_interrupt().unwrap();
+        platform::arch::interrupt::enable_soft_interrupt();
+        platform::timer::set_timer_after_ms(100).unwrap();
+        platform::interrupt::enable_global_interrupt().unwrap();
+        task::run_first_task()
+    }
+}

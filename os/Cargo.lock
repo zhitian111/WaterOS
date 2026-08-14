@@ -1500,9 +1500,9 @@ dependencies = [
 name = "wateros-platform-impl-loongson2k1000la"
 version = "0.1.0"
 dependencies = [
+ "fdt",
  "log",
  "wateros-base",
- "wateros-base-config",
  "wateros-platform-api-v0",
 ]
 

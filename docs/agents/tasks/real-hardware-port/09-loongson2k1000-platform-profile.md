@@ -70,4 +70,43 @@ git diff --check
 
 ## 任务简报
 
-（完成后追加，格式见目录 README。）
+- 完成日期：2026-08-15
+- commit：本任务实现提交（见 `git log --oneline -1`，分支 `feat/real-hardware-porting`）
+- 实际改动：
+  - `impl-loongson2k1000la` 从占位换成真实实现（全部 MIT，参考 NPUcore 硬件事实
+    与旧分支 BSP 代码，未逐字搬运 GPL 文件）：
+    - `boot.rs`：PMON/uImage 语义（旧分支的 UEFI ABI 已弃用）；`BootArgs` 为空，
+      `device_tree_phys_addr()` 返回显式保存的 DTB（PMON 通常无 DTB → 0）。
+    - `memory.rs`：DTB 包含内核链接地址的最大连续 RAM + 保守回退
+      `0x9000_0000..0xA000_0000`（256 MiB，同参考实现）；MMIO
+      `[0x1000_0000..0x3000_0000, 0x4000_0000..0x8000_0000]`。
+    - `console.rs`：NS16550A 字节 MMIO @ `0x1FE2_0000`（窗口访问待真机验证）。
+    - `time.rs`：CPUCFG 4/5 动态推导频率（`base*mul/div`），失败回退 100 MHz。
+    - `timer.rs`：TCFG/TICLR 倒计时（rdtime.d 差值转换）。
+    - `reset.rs`：PM 控制器 DTB 发现 + PMON 无 DTB 时回退 `0x1FE2_7000`；
+      PM1_STS 0x0c / PM1_CNT 0x14 / RST_CNT 0x30。
+    - `smp.rs`：BSP-only（补 `flush_icache_remote` 以满足 main 的 `PlatformSmp`）。
+    - `asm/_start.S`（arch boot ABI：a0=CPUNUM）、`linker/link.ld`
+      （`KERNEL_ENTRY_ADDRESS=0x90000000`）。
+  - `src/main.rs` 新增 `loongson2k1000la` 板级模块（BSP-only bring-up、PM 发现、
+    SMP 后置），使内核可链接。
+  - `build.rs` 增加 `loongson2k1000la` 链接脚本分支。
+  - `os/Makefile`：新增 `kernel-la2k` / `la2k_uimage` 目标；uImage 优先 mkimage，
+    本机 mkimage（2026.07）缺 loongarch 架构，回退新增的
+    `scripts/root_image/mk_uimage.py`（legacy 头格式与 mkimage 一致）。
+  - 安装 `uboot-tools`（Arch）；`os/.gitignore` 忽略 `kernel-la2k*` 产物。
+- 验收结果：
+  - `cargo check --no-default-features --features loongson2k1000la,pre
+    --target loongarch64-unknown-none`：通过。
+  - `cargo test -p wateros-platform-impl-loongson2k1000la`：7 passed（host）。
+  - `cargo build`（同 feature）：**链接成功**；`readelf -h`：LoongArch EXEC，
+    entry `0x90000000`，`.text @ 0x90000000`。
+  - `make kernel-la2k` / `make la2k_uimage`：uImage 生成成功并自校验
+    （magic `0x27051956`、load/entry `0x90000000`、arch=24、payload CRC 匹配）。
+  - `make la_check`、`make rv_check`：无回归；`git diff --check`：clean。
+- 未验证/风险：
+  - 真机未验证（PMON 实际加载、DRAM、UART 时序、时钟、PM 序列）；`_start.S`
+    的 DMW/加载地址窗口（uImage 头用 32 位物理 `0x90000000`，64 位窗口视图
+    `0x9000000090000000` 由 PMON 侧解释）保留 TODO。
+  - uImage 由 Python 兜底生成（本机 mkimage 不支持 loongarch）；若后续获得支持
+    loongarch 的 mkimage，目标会优先使用它。
