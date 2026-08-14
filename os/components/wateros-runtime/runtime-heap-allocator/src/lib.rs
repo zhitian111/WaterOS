@@ -11,6 +11,7 @@ extern crate alloc;
 
 mod heap_backend;
 mod interrupt_guard;
+mod slab;
 mod stress;
 
 use core::alloc::{GlobalAlloc, Layout};
