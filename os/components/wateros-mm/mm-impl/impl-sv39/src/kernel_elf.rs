@@ -18,7 +18,9 @@ use api_v0::addr::{VirtAddr, VirtPageNum, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
 use api_v0::kernel_bringup::{LoadElfError, LoadedElf, RootVolumeReadError};
-use api_v0::mmap::{DemandPageLoader, PageFaultAccess};
+use api_v0::mmap::DemandPageLoader;
+#[cfg(feature = "elf-lazy-map")]
+use api_v0::mmap::PageFaultAccess;
 use api_v0::perm::PagePerm;
 use frame_alloctor::frame_alloc_result;
 #[cfg(not(feature = "vfs-root-read"))]

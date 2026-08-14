@@ -12,17 +12,17 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
-use another_ext4::{
-    Block, BlockDevice, ErrCode, Ext4, Ext4Error, FileType, InodeMode, BLOCK_SIZE, EXT4_ROOT_INO,
-};
+use another_ext4::{Ext4, FileType, InodeMode, BLOCK_SIZE, EXT4_ROOT_INO};
 use api_v0::{
     FsAccessMode, FsCapability, FsDirEntry, FsError, FsImpl, FsKind, FsMetadata, FsNodeId,
     FsNodeType, FsResult, LocalFs, LocalRwFs, ReadOnlyFs, ReadWriteFs, SharedFs, SharedRwFs,
 };
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+#[cfg(any(feature = "lookup-diagnostics", test))]
+use core::sync::atomic::Ordering;
 #[cfg(feature = "lookup-diagnostics")]
 use core::sync::atomic::AtomicU64;
-use driver_block_api_v0::{Lba, SharedBlockDevice};
+use driver_block_api_v0::SharedBlockDevice;
 use spin::Mutex;
 
 const EXT4_SUPER_MAGIC : u16 = 0xEF53;
@@ -38,7 +38,9 @@ mod block_io;
 mod path_lookup;
 use block_io::{check_backend_error, map_error, map_type, BlockAdapter};
 pub(crate) use path_lookup::{lookup, metadata, parent_name, write_with_ordered_size};
-pub(crate) use dentry_cache::{negative_path_hash, NegativeDentryCache};
+pub(crate) use dentry_cache::NegativeDentryCache;
+#[cfg(test)]
+pub(crate) use dentry_cache::negative_path_hash;
 
 #[cfg(feature = "self_test")]
 pub fn self_test() {
@@ -488,4 +490,3 @@ mod tests {
         assert!(!fs.negative_cache.lock().as_ref().unwrap().contains("/created"));
     }
 }
-

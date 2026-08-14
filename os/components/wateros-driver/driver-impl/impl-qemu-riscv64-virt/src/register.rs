@@ -3,9 +3,9 @@
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 
 use api_v0::{DeviceInfo, DeviceType, MmioRegion};
-use block::{
-    block_subsystem_claims_device, register_block_device, BlockDevice, VirtioBlkDevice,
-};
+use block::{block_subsystem_claims_device, register_block_device, VirtioBlkDevice};
+#[cfg(not(feature = "block-cache"))]
+use block::BlockDevice;
 #[cfg(feature = "block-cache")]
 use block::BlockCacheManager;
 use network::{
