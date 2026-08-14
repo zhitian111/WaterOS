@@ -21,7 +21,9 @@ mod index;
 #[path = "device.rs"]
 mod device;
 pub use device::CachingBlockDevice;
-pub(crate) use index::{LbaIndex, RecentIndex, LBA_INDEX_WAYS};
+pub(crate) use index::{LbaIndex, RecentIndex};
+#[cfg(test)]
+pub(crate) use index::LBA_INDEX_WAYS;
 
 /// 缓存容量与策略参数（v1 仅容量）。
 #[derive(Debug, Clone, Copy)]
