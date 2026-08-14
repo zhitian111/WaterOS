@@ -1,0 +1,63 @@
+#!/bin/sh
+set -eu
+
+JAVA=/usr/lib/jvm/java-21-openjdk/bin/java
+SERVER_JAR=/opt/minecraft/server.jar
+DATA_DIR=${MINECRAFT_DATA_DIR:-/var/lib/minecraft}
+EULA_FILE=$DATA_DIR/eula.txt
+DEFAULT_JAVA_ARGS="-XX:+UseSerialGC -XX:ActiveProcessorCount=2 -XX:-UseCompressedOops -XX:-UseCompressedClassPointers -Xms128m -Xmx768m"
+case "$(uname -m)" in
+    riscv64|riscv*)
+        # Complex C2 output still crashes on WaterOS RV. C1 is stable after
+        # synchronous SIGILL/SIGSEGV siginfo was made Linux-compatible.
+        DEFAULT_JAVA_ARGS="-XX:TieredStopAtLevel=1 $DEFAULT_JAVA_ARGS"
+        ;;
+esac
+JAVA_ARGS=${MINECRAFT_JAVA_ARGS:-$DEFAULT_JAVA_ARGS}
+
+usage() {
+    echo "usage: minecraft-server [--accept-eula|--check|server arguments...]" >&2
+}
+
+case "${1:-}" in
+    --accept-eula)
+        if [ "$#" -ne 1 ]; then
+            usage
+            exit 2
+        fi
+        mkdir -p "$DATA_DIR"
+        {
+            echo '# Accepted explicitly through minecraft-server --accept-eula'
+            echo 'eula=true'
+        } >"$EULA_FILE"
+        echo "Minecraft EULA accepted for $DATA_DIR"
+        exit 0
+        ;;
+    --check)
+        test -x "$JAVA"
+        test -r "$SERVER_JAR"
+        if ! grep -qx 'eula=true' "$EULA_FILE" 2>/dev/null; then
+            echo "Minecraft EULA has not been accepted in $EULA_FILE" >&2
+            exit 3
+        fi
+        echo WATEROS_MINECRAFT_PREREQUISITES_OK
+        exit 0
+        ;;
+    --help|-h)
+        usage
+        exit 0
+        ;;
+esac
+
+if ! grep -qx 'eula=true' "$EULA_FILE" 2>/dev/null; then
+    echo "Minecraft server requires explicit EULA acceptance." >&2
+    echo "Review https://aka.ms/MinecraftEULA and run:" >&2
+    echo "  minecraft-server --accept-eula" >&2
+    exit 3
+fi
+
+mkdir -p "$DATA_DIR"
+cd "$DATA_DIR"
+# JAVA_ARGS is intentionally word-split so operators can override individual VM flags.
+# shellcheck disable=SC2086
+exec "$JAVA" $JAVA_ARGS -jar "$SERVER_JAR" "$@" nogui

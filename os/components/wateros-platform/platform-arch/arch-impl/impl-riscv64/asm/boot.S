@@ -7,6 +7,12 @@
     .equ MAX_CPUS, {max_cpus}
 
 __wateros_arch_boot:
+    # WaterOS 用户态使用 lp64d。内核 trap 路径会在进入 Rust 前保存完整
+    # FPU 状态，因此所有 hart 从启动起都必须允许 S/U 态执行 F/D 指令。
+    csrr t0, sstatus
+    li t1, 3 << 13
+    or t0, t0, t1
+    csrw sstatus, t0
     mv tp, a0
     slli t0, a0, STACK_PER_CPU_SHIFT
     la t1, __wateros_arch_boot_stacks

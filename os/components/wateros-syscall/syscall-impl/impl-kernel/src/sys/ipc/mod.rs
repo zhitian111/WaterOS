@@ -24,7 +24,8 @@ pub(crate) use signal::{
     abort_clone_thread_signal, abort_fork_signal, apply_signal_dispatch, deliver_pending_signal,
     drop_thread_state, ensure_current_signal_state, ensure_process_signal_state,
     notify_parent_sigchld, on_clone_thread, on_exec, on_fork,
-    on_thread_exit, raise_current_thread, send_kernel_signal_to_process_group,
+    on_thread_exit, raise_current_fault_signal, raise_current_thread,
+    send_kernel_signal_to_process_group,
     restore_signal_frame, sys_kill, sys_rt_sigaction, sys_rt_sigpending, sys_rt_sigprocmask,
     sys_rt_sigsuspend, sys_rt_sigtimedwait, sys_sigaltstack, sys_tgkill, sys_tkill, timer_tick,
 };

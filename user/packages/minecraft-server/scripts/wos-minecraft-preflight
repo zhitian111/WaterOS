@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+
+JAVA=/usr/lib/jvm/java-21-openjdk/bin/java
+SERVER_JAR=/opt/minecraft/server.jar
+WORK=/tmp/wateros-minecraft-preflight
+LOG=$WORK/server.log
+VM_ARGS="-XX:+UseSerialGC -XX:ActiveProcessorCount=2 -XX:-UseCompressedOops -XX:-UseCompressedClassPointers -Xms64m -Xmx256m"
+case "$(uname -m)" in
+    riscv64|riscv*) VM_ARGS="-XX:TieredStopAtLevel=1 $VM_ARGS" ;;
+esac
+
+rm -rf "$WORK"
+mkdir -p "$WORK"
+cd "$WORK"
+
+set +e
+"$JAVA" $VM_ARGS -jar "$SERVER_JAR" nogui >"$LOG" 2>&1
+status=$?
+set -e
+cat "$LOG"
+
+if [ "$status" -ne 0 ]; then
+    echo "Minecraft preflight returned status $status" >&2
+    exit 1
+fi
+grep -F 'Starting net.minecraft.server.Main' "$LOG" >/dev/null
+grep -F 'You need to agree to the EULA' "$LOG" >/dev/null
+grep -qx 'eula=false' "$WORK/eula.txt"
+test -s "$WORK/versions/1.21.11/server-1.21.11.jar"
+test -d "$WORK/libraries"
+echo WATEROS_MINECRAFT_PREFLIGHT_OK

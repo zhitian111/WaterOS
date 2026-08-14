@@ -301,8 +301,11 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                        cx.user_sp(),
                        cx.return_address_space_token(),
                        task::current_task_user_aspace_ptr());
-                let raised = syscall::raise_current_signal(11);
-                debug!("[trap][probe] raise_current_signal(SIGSEGV) -> {}",
+                // Synchronous page faults carry a positive si_code and
+                // si_addr on Linux. HotSpot uses both to distinguish a CPU
+                // fault from kill(2)-style asynchronous delivery.
+                let raised = syscall::raise_current_fault_signal(11, 1, cx.fault_addr());
+                debug!("[trap][probe] raise_current_fault_signal(SIGSEGV) -> {}",
                        raised);
                 if !raised {
                     kill_current_user_task("user memory fault", trap_cause, cx);
@@ -385,9 +388,14 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
         }
         _ => {
             if cx.returns_to_user() {
-                let signal = match trap_cause {
-                    TrapCause::Exception(Exception::IllegalInstruction) => 4,
-                    _ => 11,
+                let (signal, code, address) = match trap_cause {
+                    // ILL_ILLOPC and the faulting instruction address.
+                    TrapCause::Exception(Exception::IllegalInstruction) => {
+                        (4, 1, cx.user_pc())
+                    }
+                    // SEGV_MAPERR is the conservative classification for the
+                    // remaining synchronous user exceptions.
+                    _ => (11, 1, cx.fault_addr()),
                 };
                 warn!("[trap] unhandled user exception cause={:?} raw={:#x} pc={:#x} \
                        fault_addr={:#x} signal={}",
@@ -396,7 +404,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                       cx.user_pc(),
                       cx.fault_addr(),
                       signal);
-                if !syscall::raise_current_signal(signal) {
+                if !syscall::raise_current_fault_signal(signal, code, address) {
                     kill_current_user_task("user exception", trap_cause, cx);
                 }
                 return_to_user_signal_delivery(authoritative, trap_cause, cx, None);

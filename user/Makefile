@@ -26,6 +26,8 @@ else ifeq ($(PACKAGE),graphics)
 PACKAGE_LIST := microwindows
 else ifeq ($(PACKAGE),jvm)
 PACKAGE_LIST := openjdk21
+else ifeq ($(PACKAGE),minecraft)
+PACKAGE_LIST := minecraft-server
 else
 PACKAGE_LIST := $(PACKAGE)
 endif
@@ -52,6 +54,7 @@ help:
 	@echo "  make image  ARCH=rv PACKAGE=graphics  # Nano-X + Doom"
 	@echo "  make image  ARCH=rv SKIP_PACKAGE=mgba # all，但跳过 mGBA 及其依赖者"
 	@echo "  make image  ARCH=rv PACKAGE=jvm IMAGE_SIZE_MB=512  # OpenJDK 21 (RV/LA)"
+	@echo "  make image  ARCH=rv PACKAGE=minecraft IMAGE_SIZE_MB=1024 # Minecraft + JDK"
 	@echo "  make image  ARCH=rv PACKAGE=base-layout,busybox,operator-tools"
 	@echo "  make overlay ARCH=rv PACKAGE=operator BASE_IMAGE=../os/sdcard-rv.img"
 	@echo "  make inspect ARCH=rv"
@@ -69,6 +72,7 @@ help:
 	@echo "  operator  = base-layout,busybox,operator-tools"
 	@echo "  graphics  = microwindows (dependencies add the base packages)"
 	@echo "  jvm       = OpenJDK 21 headless (RV/LA; dependencies add the base packages)"
+	@echo "  minecraft = Minecraft Java server + OpenJDK 21 (explicit EULA acceptance)"
 	@echo "  other     = a comma-separated custom package list"
 	@echo "  SKIP_PACKAGE = comma-separated exclusions; dependent packages are skipped too"
 	@echo "Toolchain overrides: RV_CROSS_COMPILE=... LA_CROSS_COMPILE=..."

@@ -156,7 +156,7 @@ def load_package(name: str) -> Package:
 
 
 def available_package_names(architecture: str) -> tuple[str, ...]:
-    """返回当前架构支持的全部顶层 package，供默认的 `all` 选择使用。"""
+    """返回当前架构默认启用的顶层 package，供 `all` 选择使用。"""
     result: list[str] = []
     for metadata in sorted(PACKAGE_ROOT.glob("*/package.toml")):
         name = metadata.parent.name
@@ -165,7 +165,10 @@ def available_package_names(architecture: str) -> tuple[str, ...]:
         raw = load_toml(metadata).get("package", {})
         if raw.get("name") != name:
             raise UserlandError(f"package directory {name!r} has mismatched package.name")
-        if architecture in raw.get("architectures", ()):
+        # 大体积、专有许可或需要显式确认的 package 可以保持可解析，
+        # 但不应被默认的 `all` 静默拉入镜像。
+        if (raw.get("default", True)
+                and architecture in raw.get("architectures", ())):
             result.append(name)
     if not result:
         raise UserlandError(f"no packages support architecture {architecture}")

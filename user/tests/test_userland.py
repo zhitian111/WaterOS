@@ -55,6 +55,8 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn("microwindows", la)
         self.assertIn("openjdk21", rv)
         self.assertIn("openjdk21", la)
+        self.assertNotIn("minecraft-server", rv)
+        self.assertNotIn("minecraft-server", la)
         self.assertEqual(userland.parse_package_names("busybox, operator-tools", "rv"),
                          ("busybox", "operator-tools"))
 
@@ -110,6 +112,55 @@ class ConfigurationTests(unittest.TestCase):
         self.assertTrue((package / "tests/JitProbe.class.b64").is_file())
         self.assertTrue((package / "tests/ApplicationProbe.jar.b64").is_file())
         self.assertTrue((package / "assets/cacerts").is_file())
+
+    def test_minecraft_server_is_explicit_and_uses_openjdk_on_both_arches(self) -> None:
+        expected = ["base-layout", "busybox", "openjdk21", "minecraft-server"]
+        self.assertEqual(
+            [package.name for package in
+             userland.resolve_packages(("minecraft-server",), "rv")],
+            expected,
+        )
+        self.assertEqual(
+            [package.name for package in
+             userland.resolve_packages(("minecraft-server",), "la")],
+            expected,
+        )
+
+        package = userland.PACKAGE_ROOT / "minecraft-server"
+        build = (package / "build.py").read_text(encoding="utf-8")
+        self.assertIn("64bb6d763bed0a9f1d632ec347938594144943ed", build)
+        self.assertIn("MINECRAFT_EULA_DOWNLOAD_ACCEPTED", build)
+        self.assertIn('root / "usr/bin" / command', build)
+        self.assertIn('f"/opt/wateros/bin/{command}"', build)
+        self.assertTrue((package / "scripts/minecraft-server").is_file())
+        smoke = (package / "scripts/wos-minecraft-smoke").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("WATEROS_MINECRAFT_SERVER_OK", smoke)
+        self.assertIn("sync-chunk-writes=true", smoke)
+        launcher = (package / "scripts/minecraft-server").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('case "$(uname -m)"', launcher)
+        self.assertIn("riscv64|riscv*", launcher)
+        self.assertIn("TieredStopAtLevel=1", launcher)
+        self.assertNotIn("-Xint", launcher)
+        preflight = (package / "scripts/wos-minecraft-preflight").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("WATEROS_MINECRAFT_PREFLIGHT_OK", preflight)
+        self.assertIn("eula=false", preflight)
+        self.assertIn("TieredStopAtLevel=1", preflight)
+        diagnostic = (package / "scripts/wos-minecraft-jit-diagnostic").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("-XX:ErrorFile=", diagnostic)
+        self.assertNotIn("-Xint", diagnostic)
+        vm_info = (package / "scripts/wos-minecraft-vm-info").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("SelfDestructTimer", vm_info)
+        self.assertIn("WATEROS_MINECRAFT_VM_INFO_OK", vm_info)
 
     def test_nanox_doom_payload_and_launcher_are_present(self) -> None:
         wad = (userland.USER_ROOT / "vendor/microwindows/src/contrib/doom/"

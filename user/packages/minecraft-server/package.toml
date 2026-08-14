@@ -1,0 +1,11 @@
+[package]
+name = "minecraft-server"
+version = "1.21.11"
+source = ""
+architectures = ["rv", "la"]
+dependencies = ["openjdk21"]
+build = "build.py"
+install_prefix = "/opt/minecraft"
+allow_overwrite = []
+inputs = []
+default = false

@@ -82,7 +82,7 @@ build/images/wateros-rv.ext4.sha256
 | `OUTPUT`        | `build/images/wateros-<arch>.ext4` | 自定义输出路径                    |
 | `BASE_IMAGE`    | 无                                 | `overlay` 使用的基础镜像          |
 
-`PACKAGE` 提供五个预设：
+`PACKAGE` 提供六个预设：
 
 | 选项 | 实际内容 | 适用场景 |
 | --- | --- | --- |
@@ -91,6 +91,7 @@ build/images/wateros-rv.ext4.sha256
 | `operator` | minimal + `operator-tools` | shell 与现场诊断工具 |
 | `graphics` | `microwindows` 及其依赖 | 双架构 Nano-X、演示程序与 Doom |
 | `jvm` | `openjdk21` 及其依赖 | 双架构 OpenJDK 21 headless 运行时 |
+| `minecraft` | `minecraft-server` 及其依赖 | Minecraft Java 服务端与 OpenJDK 21 |
 
 例如：
 
@@ -108,6 +109,11 @@ make image ARCH=rv PACKAGE=graphics
 make image ARCH=rv PACKAGE=jvm IMAGE_SIZE_MB=512 \
   OUTPUT=build/images/wateros-rv-openjdk21.ext4
 
+# Minecraft 是显式选择项；首次下载前必须先阅读并接受官方 EULA
+MINECRAFT_EULA_DOWNLOAD_ACCEPTED=true \
+  make image ARCH=rv PACKAGE=minecraft IMAGE_SIZE_MB=1024 \
+  OUTPUT=build/images/wateros-rv-minecraft.ext4
+
 # 用户自定义组合，名称用逗号分隔
 make image ARCH=rv PACKAGE=base-layout,busybox,operator-tools
 ```
@@ -123,7 +129,8 @@ make image ARCH=rv PACKAGE=graphics \
   OUTPUT=build/images/wateros-rv-graphics.ext4
 ```
 
-`PACKAGE=all` 会扫描 `packages/*/package.toml`，只选择声明支持当前 `ARCH` 的 package。
+`PACKAGE=all` 会扫描 `packages/*/package.toml`，只选择声明支持当前 `ARCH` 且默认启用的
+package。包含专有许可和显式 EULA 确认的 `minecraft-server` 不会被 `all` 自动选择。
 当前 `microwindows` 与 `openjdk21` 均支持 RV 和 LA，因此两个架构的默认完整镜像都包含
 Nano-X、演示程序、Doom、`doom1.wad` 和 OpenJDK 21。JVM 运行时较大，制作 `all` 镜像时
 建议设置 `IMAGE_SIZE_MB=512`。
@@ -447,8 +454,9 @@ packages/<name>/
 6. 合并 package 输出，同一路径冲突默认报错；
 7. 写入 `/var/lib/wateros/packages.json` 和宿主侧 manifest。
 
-新增用户程序时只需增加 package。只要它在 `package.toml` 中声明支持目标架构，默认的
-`PACKAGE=all` 就会自动发现，无需修改镜像生成器或新增组合配置文件。
+新增用户程序时只需增加 package。只要它在 `package.toml` 中声明支持目标架构且未设置
+`default = false`，默认的 `PACKAGE=all` 就会自动发现，无需修改镜像生成器或新增组合
+配置文件。大体积或需要显式许可确认的 package 可设为非默认，并通过名称或预设选择。
 
 当前 package：
 
@@ -461,6 +469,7 @@ packages/<name>/
 | `mgba` | mGBA 模拟器及示例 ROM | RV |
 | `waterfm` | Nano-X 文件管理器 | RV |
 | `openjdk21` | OpenJDK 21 headless、zlib 与 JVM 冒烟探针 | RV、LA |
+| `minecraft-server` | Minecraft Java 1.21.11 服务端与启动验收脚本 | RV、LA（显式选择） |
 
 `base-layout` 只创建 `/dev`、`/proc`、`/tmp` 等挂载点。运行时实际内容仍由 WaterOS 的
 devfs、procfs 和 tmpfs 提供。内核 operator supervisor 直接启动 `/bin/sh`，当前不会
@@ -558,6 +567,63 @@ make image ARCH=rv PACKAGE=waterfm JOBS=4
 
 `PACKAGE=waterfm` 会自动包含 `mgba`、Nano-X 和它们的基础依赖。显式设置
 `RV_CROSS_COMPILE` 时仍完全由该环境变量接管。
+
+## Minecraft Java 服务端
+
+`minecraft-server` 固定使用 Mojang 官方 Minecraft Java 1.21.11 server.jar，并校验官方
+对象 SHA-1。1.21.11 是兼容 Java 21 的最后一个正式版本；Minecraft 26.1 起改用 Java 25，
+不能用于验收当前 OpenJDK 21。该 package 依赖 `openjdk21`，不会进入默认 `PACKAGE=all`。
+官方说明下载服务端软件即
+表示同意 Minecraft EULA 与隐私政策，因此首次联网构建必须显式确认：
+
+```bash
+cd user
+MINECRAFT_EULA_DOWNLOAD_ACCEPTED=true \
+  make image ARCH=rv PACKAGE=minecraft IMAGE_SIZE_MB=1024 \
+  OUTPUT=build/images/wateros-rv-minecraft.ext4
+```
+
+下载文件缓存于 `user/build/downloads/minecraft-server/`，此后不设置该变量也能离线重建。
+构建确认不等于运行时确认；镜像不会预置 `eula=true`。进入 WaterOS 后先阅读官方 EULA，
+可以先运行不接受 EULA、也不创建世界的 Java 21 预检；之后再显式启用严格验收：
+
+```sh
+wos-minecraft-preflight
+minecraft-server --accept-eula
+minecraft-server --check
+wos-minecraft-vm-info
+wos-minecraft-smoke
+```
+
+这些验收命令同时提供 `/usr/bin` 入口和 `/opt/wateros/bin` 的自动运行路径。旧镜像若尚未
+包含 `/usr/bin` 链接，可直接运行 `/opt/wateros/bin/wos-minecraft-smoke`。
+
+预检只验证 bundler 解包、Java 21 class 装载以及服务端生成 `eula=false` 后正常退出，成功
+输出 `WATEROS_MINECRAFT_PREFLIGHT_OK`。严格验收脚本在 `/tmp` 创建低视距、和平、离线、
+flat 测试世界，等待服务端输出 `Done`，通过
+控制台执行 `stop`，并检查正常退出、`level.dat` 与 region 目录。它同时覆盖真实 JAR
+加载、较大堆、GC、后台线程、环回 TCP 监听、文件锁、同步写入、世界保存和
+关服路径；成功时输出 `WATEROS_MINECRAFT_SERVER_OK`。正式数据默认位于
+`/var/lib/minecraft`，可通过 `MINECRAFT_DATA_DIR` 和 `MINECRAFT_JAVA_ARGS` 覆盖。
+`wos-minecraft-vm-info` 会列出可能注入 JVM 参数的环境变量，并确认 HotSpot 的
+`SelfDestructTimer` 初始值为 0；它用于区分启动参数和运行期破坏导致的 JVM 主动退出。
+
+完整服务端初测曾在并发解包阶段打印 `VM self-destructed`。诊断确认 HotSpot 的该选项启动
+值为默认的 0，实际缺口是 RISC-V trap 帧没有保存浮点上下文：时钟抢占和线程切换会让
+不同 Java 线程串用 `f0`–`f31`/`fcsr`。现在 RISC-V 每次 trap 都在进入 Rust 前保存 32 个
+浮点寄存器与 `fcsr`，返回原任务前恢复；信号帧也从该稳定快照读写浮点状态。修复后，
+4 核严格 JVM 验收和 Minecraft 的解包、建服、环回监听、世界生成、保存与正常关服均已
+通过，服务端输出 `WATEROS_MINECRAFT_SERVER_OK`。
+
+RISC-V 上 Minecraft 当前默认增加 `-XX:TieredStopAtLevel=1`。真实预检先发现 WaterOS
+把同步 `SIGILL`/`SIGSEGV` 错误报告成 `SI_USER` 且遗漏 `si_addr`，导致 HotSpot 的陷阱
+处理器误判；按 Linux ABI 修复后，C1 已能完成官方 JAR 预检。完整 C2 仍会在复杂的
+`ThreadLocal.getCarrierThreadLocal()` 编译路径崩溃，因此只对 RISC-V Minecraft 暂时关闭
+C2。LoongArch 保留正常分层 JIT，`wos-jvm-smoke jit-strict` 也继续独立验收基础 JIT。
+后续应缩减并修复该 RV C2 用例。
+开发者可在可写的临时镜像中运行 `wos-minecraft-jit-diagnostic`，它会启用完整分层 JIT，并把
+日志及 `hs_err_pid*.log` 保存在 `/var/lib/minecraft/jit-diagnostic/`，便于提取故障指令；
+不要把该命令当作正常启动入口。
 
 ## EXT4 生成规则
 

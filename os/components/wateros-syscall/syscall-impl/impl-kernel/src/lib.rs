@@ -59,6 +59,10 @@ pub fn restore_signal_frame(frame : *mut u8) -> bool { sys::restore_signal_frame
 
 pub fn raise_current_signal(signal : usize) -> bool { sys::raise_current_thread(signal).is_ok() }
 
+pub fn raise_current_fault_signal(signal : usize, code : i32, fault_addr : usize) -> bool {
+    sys::raise_current_fault_signal(signal, code, fault_addr).is_ok()
+}
+
 /// Send a signal produced by the controlling terminal to its foreground group.
 pub fn send_kernel_signal_to_process_group(pgid : usize, signal : usize) -> usize {
     sys::send_kernel_signal_to_process_group(task::ProcessId::from_raw(pgid), signal)

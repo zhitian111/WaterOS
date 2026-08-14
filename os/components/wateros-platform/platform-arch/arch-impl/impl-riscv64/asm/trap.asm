@@ -1,6 +1,7 @@
 # trap.asm — WaterOS RISC-V S-mode 异常/中断入口（方案A）。
 # 与 `../src/trap.rs` 中 `TrapContext`、`trap_entry_rust` 成对维护；布局变更须同步 Rust `#[repr(C)]`。
     .section .text.trampoline
+    .option arch, +d
     .globl __alltraps, __wateros_riscv_restore_user_from_frame, gdb_point
     .align 2
 
@@ -14,7 +15,9 @@
 # - scause   : 34 * 8
 # - stval    : 35 * 8
 # - return_address_space_token : 36 * 8
-# 总大小：37 * 8 = 296 字节
+# - f[0..31] : 37 * 8
+# - fcsr     : 69 * 8（低 32 位；尾部 4 字节为对齐填充）
+# 总大小：70 * 8 = 560 字节
 #
 # a0 = TrapContext*  (交给 trap_entry_rust)
 #
@@ -83,7 +86,7 @@ gdb_point_0:
     sd t1, 36*8(t0)
 
     ld sp, 37*8(t0)
-    addi sp, sp, -296
+    addi sp, sp, -560
     la t1, __wateros_riscv_kernel_satp
     ld t1, 0(t1)
     la t2, __wateros_riscv_asid_enabled
@@ -111,9 +114,9 @@ gdb_point_0:
 
 .Ltrap_from_kernel:
     csrr t0, sscratch
-    addi sp, sp, -296
+    addi sp, sp, -560
     sd t0, 5*8(sp)
-    addi t0, sp, 296
+    addi t0, sp, 560
     csrw sscratch, x0
     j .Lsave_context_kernel_x5_saved
 
@@ -164,7 +167,7 @@ gdb_point_0:
 
 .Ltrap_from_kernel_old:
     mv t0, sp
-    addi sp, sp, -296
+    addi sp, sp, -560
 
 .Lsave_context:
 
@@ -217,16 +220,90 @@ gdb_point_0:
 
 .Lcall_rust:
 
+    # 用户态可在任意 F/D 指令后被时钟抢占。必须在调用 Rust（以及可能的
+    # 调度切换）前把完整 FPU 状态放进当前任务内核栈上的 TrapContext。
+    fsd f0,  296(sp)
+    fsd f1,  304(sp)
+    fsd f2,  312(sp)
+    fsd f3,  320(sp)
+    fsd f4,  328(sp)
+    fsd f5,  336(sp)
+    fsd f6,  344(sp)
+    fsd f7,  352(sp)
+    fsd f8,  360(sp)
+    fsd f9,  368(sp)
+    fsd f10, 376(sp)
+    fsd f11, 384(sp)
+    fsd f12, 392(sp)
+    fsd f13, 400(sp)
+    fsd f14, 408(sp)
+    fsd f15, 416(sp)
+    fsd f16, 424(sp)
+    fsd f17, 432(sp)
+    fsd f18, 440(sp)
+    fsd f19, 448(sp)
+    fsd f20, 456(sp)
+    fsd f21, 464(sp)
+    fsd f22, 472(sp)
+    fsd f23, 480(sp)
+    fsd f24, 488(sp)
+    fsd f25, 496(sp)
+    fsd f26, 504(sp)
+    fsd f27, 512(sp)
+    fsd f28, 520(sp)
+    fsd f29, 528(sp)
+    fsd f30, 536(sp)
+    fsd f31, 544(sp)
+    csrr t0, fcsr
+    sw t0, 552(sp)
+
     # TrapContext 位于 CFA 下方：x1/ra 在 sp+8，原始 sp 在 sp+16。
     # 这使 GDB 能从 Rust trap handler 回到被中断的内核调用链。
-    .cfi_def_cfa sp, 296
-    .cfi_offset ra, -288
+    .cfi_def_cfa sp, 560
+    .cfi_offset ra, -552
 
     # a0 = cx_ptr
     mv a0, sp
     # 调用 Rust 入口，返回后从当前 sp 上的 TrapContext 恢复现场
     call trap_entry_rust
 gdb_point_1:
+
+    # Rust 内核不使用浮点寄存器。此处恢复的正是这个 TrapContext 所属
+    # 用户/内核任务在 trap 瞬间的状态；任务在调度器中睡眠多久都不会串线。
+    fld f0,  296(sp)
+    fld f1,  304(sp)
+    fld f2,  312(sp)
+    fld f3,  320(sp)
+    fld f4,  328(sp)
+    fld f5,  336(sp)
+    fld f6,  344(sp)
+    fld f7,  352(sp)
+    fld f8,  360(sp)
+    fld f9,  368(sp)
+    fld f10, 376(sp)
+    fld f11, 384(sp)
+    fld f12, 392(sp)
+    fld f13, 400(sp)
+    fld f14, 408(sp)
+    fld f15, 416(sp)
+    fld f16, 424(sp)
+    fld f17, 432(sp)
+    fld f18, 440(sp)
+    fld f19, 448(sp)
+    fld f20, 456(sp)
+    fld f21, 464(sp)
+    fld f22, 472(sp)
+    fld f23, 480(sp)
+    fld f24, 488(sp)
+    fld f25, 496(sp)
+    fld f26, 504(sp)
+    fld f27, 512(sp)
+    fld f28, 520(sp)
+    fld f29, 528(sp)
+    fld f30, 536(sp)
+    fld f31, 544(sp)
+    lw t0, 552(sp)
+    csrw fcsr, t0
 
     # 恢复控制寄存器
     ld t0, 32*8(sp)
@@ -237,7 +314,7 @@ gdb_point_1:
     bnez t6, .Ltrap_return_kernel
 
     mv a0, sp
-    addi a1, sp, 296
+    addi a1, sp, 560
     j __wateros_riscv_restore_user_from_frame
 
 .Ltrap_return_kernel:
@@ -292,6 +369,43 @@ gdb_point_1:
 # 该跳板映射在用户地址空间内：切 satp 前把帧复制到跳板数据页；切换后只从跳板
 # 代码/数据取指，不再访问内核栈内存。
 __wateros_riscv_restore_user_from_frame:
+    # 首次进入用户态以及 exec/fork 恢复也必须装载 TrapContext 中的 FPU 状态。
+    # 这里仍在内核页表下，之后切换 satp 的 trampoline 不再访问浮点状态。
+    fld f0,  296(a0)
+    fld f1,  304(a0)
+    fld f2,  312(a0)
+    fld f3,  320(a0)
+    fld f4,  328(a0)
+    fld f5,  336(a0)
+    fld f6,  344(a0)
+    fld f7,  352(a0)
+    fld f8,  360(a0)
+    fld f9,  368(a0)
+    fld f10, 376(a0)
+    fld f11, 384(a0)
+    fld f12, 392(a0)
+    fld f13, 400(a0)
+    fld f14, 408(a0)
+    fld f15, 416(a0)
+    fld f16, 424(a0)
+    fld f17, 432(a0)
+    fld f18, 440(a0)
+    fld f19, 448(a0)
+    fld f20, 456(a0)
+    fld f21, 464(a0)
+    fld f22, 472(a0)
+    fld f23, 480(a0)
+    fld f24, 488(a0)
+    fld f25, 496(a0)
+    fld f26, 504(a0)
+    fld f27, 512(a0)
+    fld f28, 520(a0)
+    fld f29, 528(a0)
+    fld f30, 536(a0)
+    fld f31, 544(a0)
+    lw t1, 552(a0)
+    csrw fcsr, t1
+
     # 内核 tp 是可信 CPU id；选择本 CPU 独占的 320 字节 return frame。
     # 320 = 256 + 64，避免 trampoline 依赖乘法扩展。
     slli t4, tp, 8
@@ -375,5 +489,6 @@ __wateros_riscv_asid_enabled:
 __wateros_riscv_return_frames:
 __wateros_riscv_return_frame:
     # 每 CPU 40 槽：0-36 用户 GPR/CSR，37=kernel_stack_top，38=kernel_cpu_id。
+    # FPU 状态在切换用户 satp 前直接从内核 TrapContext 恢复，不必复制到这里。
     # 8 * 320 = 2560 字节，完整位于同一个 trampoline 数据页。
     .zero 320 * 8

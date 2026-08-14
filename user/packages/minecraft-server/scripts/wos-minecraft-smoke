@@ -1,0 +1,86 @@
+#!/bin/sh
+set -eu
+
+BASE_DATA=${MINECRAFT_DATA_DIR:-/var/lib/minecraft}
+if ! grep -qx 'eula=true' "$BASE_DATA/eula.txt" 2>/dev/null; then
+    echo "Run 'minecraft-server --accept-eula' before this test." >&2
+    exit 3
+fi
+
+WORK=/tmp/wateros-minecraft-smoke
+LOG=$WORK/server.log
+FIFO=$WORK/console
+PID=
+
+cleanup() {
+    exec 3>&- 2>/dev/null || true
+    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+        kill "$PID" 2>/dev/null || true
+        wait "$PID" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT INT TERM
+
+rm -rf "$WORK"
+mkdir -p "$WORK"
+cp "$BASE_DATA/eula.txt" "$WORK/eula.txt"
+cat >"$WORK/server.properties" <<'EOF'
+allow-flight=false
+difficulty=peaceful
+enable-command-block=false
+enable-query=false
+enable-rcon=false
+enforce-secure-profile=false
+force-gamemode=true
+gamemode=creative
+generate-structures=false
+level-name=world
+level-seed=wateros-jvm-acceptance
+level-type=minecraft:flat
+max-players=1
+motd=WaterOS JVM acceptance
+online-mode=false
+server-ip=127.0.0.1
+server-port=25566
+simulation-distance=2
+sync-chunk-writes=true
+view-distance=2
+EOF
+mkfifo "$FIFO"
+
+MINECRAFT_DATA_DIR=$WORK minecraft-server <"$FIFO" >"$LOG" 2>&1 &
+PID=$!
+exec 3>"$FIFO"
+
+remaining=900
+while ! grep -F 'Done (' "$LOG" >/dev/null 2>&1; do
+    if ! kill -0 "$PID" 2>/dev/null; then
+        cat "$LOG"
+        wait "$PID" || true
+        echo "Minecraft server exited before completing startup." >&2
+        exit 1
+    fi
+    if [ "$remaining" -le 0 ]; then
+        cat "$LOG"
+        echo "Minecraft server startup timed out after 900 seconds." >&2
+        exit 1
+    fi
+    remaining=$((remaining - 1))
+    sleep 1
+done
+
+echo stop >&3
+exec 3>&-
+if ! wait "$PID"; then
+    cat "$LOG"
+    echo "Minecraft server returned a failure status during shutdown." >&2
+    exit 1
+fi
+PID=
+
+cat "$LOG"
+grep -F 'Done (' "$LOG" >/dev/null
+grep -F 'Stopping server' "$LOG" >/dev/null
+test -s "$WORK/world/level.dat"
+test -d "$WORK/world/region"
+echo WATEROS_MINECRAFT_SERVER_OK

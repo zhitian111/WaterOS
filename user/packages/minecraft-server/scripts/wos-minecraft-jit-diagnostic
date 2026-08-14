@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+JAVA=/usr/lib/jvm/java-21-openjdk/bin/java
+SERVER_JAR=/opt/minecraft/server.jar
+WORK=/var/lib/minecraft/jit-diagnostic
+LOG=$WORK/server.log
+VM_ARGS="-XX:+UseSerialGC -XX:ActiveProcessorCount=2 -XX:-UseCompressedOops -XX:-UseCompressedClassPointers -XX:ErrorFile=$WORK/hs_err_pid%p.log -Xms64m -Xmx256m"
+
+rm -rf "$WORK"
+mkdir -p "$WORK"
+cd "$WORK"
+
+set +e
+"$JAVA" $VM_ARGS -jar "$SERVER_JAR" nogui >"$LOG" 2>&1
+status=$?
+set -e
+cat "$LOG"
+echo "WATEROS_MINECRAFT_JIT_DIAGNOSTIC_STATUS=$status"
+exit "$status"

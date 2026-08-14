@@ -35,10 +35,12 @@ static LAST_ACCOUNTING_NS : [AtomicU64; wateros_base_config::task::MAX_CPUS] =
 pub(super) struct PendingSignalSource {
     pub(super) pid : usize,
     pub(super) uid : u32,
+    code : i32,
+    fault_addr : usize,
 }
 
-/// 用户 `kill` / `tgkill` 投递时记录的 siginfo 来源；普通信号 pending 只保存位图，
-/// 这里补充 `sigwaitinfo` / `sigtimedwait` 需要的 `si_pid` / `si_uid`。
+/// 补充 pending 位图不保存的 siginfo 来源：用户信号的 pid/uid，以及同步 CPU
+/// 异常的正 `si_code`/`si_addr`。
 static PENDING_SIGNAL_SOURCES : Mutex<BTreeMap<(usize, usize), PendingSignalSource>> =
     Mutex::new(BTreeMap::new());
 
@@ -79,6 +81,24 @@ struct UserSigInfo {
     code : i32,
     pad : i32,
     payload : [u8; 112],
+}
+
+fn user_siginfo(signo : usize, source : PendingSignalSource) -> UserSigInfo {
+    let mut payload = [0u8; 112];
+    if source.code > 0 {
+        // Linux siginfo_t places si_addr at the beginning of _sifields._sigfault.
+        payload[..core::mem::size_of::<usize>()]
+            .copy_from_slice(&source.fault_addr.to_ne_bytes());
+    } else {
+        // SI_USER/SI_TKILL use the _kill layout: pid followed by uid.
+        payload[0..4].copy_from_slice(&(source.pid as u32).to_ne_bytes());
+        payload[4..8].copy_from_slice(&source.uid.to_ne_bytes());
+    }
+    UserSigInfo { signo : signo as i32,
+                  errno : 0,
+                  code : source.code,
+                  pad : 0,
+                  payload }
 }
 
 #[repr(C)]
@@ -437,6 +457,27 @@ pub(crate) fn raise_current_thread(signal : usize) -> Result<(), ErrNo> {
     send_thread(snapshot.task_id, signal)
 }
 
+/// Queue a synchronous kernel fault with Linux-compatible `siginfo_t` fields.
+///
+/// Positive `si_code` plus `si_addr` are required by runtimes such as HotSpot;
+/// reporting a CPU exception as `SI_USER` makes their chained fault handler
+/// misclassify it as an asynchronously sent signal.
+pub(crate) fn raise_current_fault_signal(signal : usize,
+                                         code : i32,
+                                         fault_addr : usize)
+                                         -> Result<(), ErrNo> {
+    if code <= 0 {
+        return Err(ErrNo::EINVAL);
+    }
+    let snapshot = ensure_current_signal_state()?;
+    record_pending_signal_source(snapshot.pid.raw(),
+                                 signal,
+                                 PendingSignalSource { code,
+                                                       fault_addr,
+                                                       ..PendingSignalSource::default() });
+    send_thread(snapshot.task_id, signal)
+}
+
 pub(crate) fn notify_parent_sigchld(pid : ProcessId) {
     let Some(process) = task::process_snapshot(pid) else {
         return;
@@ -610,11 +651,8 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
                             .map(|sp| sp & !0xF)
                             .ok_or(ErrNo::EFAULT)?;
     let frame_on_alternate = already_on_alternate || switch_to_alternate;
-    let user_frame = build_user_signal_frame(UserSigInfo { signo : pending.signal as i32,
-                                                           errno : 0,
-                                                           code : 0,
-                                                           pad : 0,
-                                                           payload : [0; 112] },
+    let source = take_pending_signal_source(snapshot.pid.raw(), pending.signal);
+    let user_frame = build_user_signal_frame(user_siginfo(pending.signal, source),
                                                    signal_stack_for_user(alternate_stack,
                                                                          already_on_alternate),
                                                    pending.previous_mask
@@ -924,15 +962,7 @@ pub(crate) fn sys_rt_sigtimedwait(args : SyscallArgs) -> UserRet {
     let _ = wait_queue.try_release_empty();
     if info != 0 {
         let source = take_pending_signal_source(process_pid, sig);
-        let mut payload = [0u8; 112];
-        payload[0..4].copy_from_slice(&(source.pid as u32).to_ne_bytes());
-        payload[4..8].copy_from_slice(&source.uid
-                                             .to_ne_bytes());
-        let siginfo = UserSigInfo { signo : sig as i32,
-                                    errno : 0,
-                                    code : 0,
-                                    pad : 0,
-                                    payload };
+        let siginfo = user_siginfo(sig, source);
         if let Err(e) = copy_to_user_struct(info, &siginfo) {
             return UserRet::from_error(e);
         }
@@ -1011,7 +1041,8 @@ pub(crate) fn sys_tkill(args : SyscallArgs) -> UserRet {
         record_pending_signal_source(snapshot.pid.raw(),
                                      signal,
                                      PendingSignalSource { pid : caller.pid.raw(),
-                                                           uid });
+                                                           uid,
+                                                           ..PendingSignalSource::default() });
     }
     match send_thread(task_id, signal) {
         Ok(()) => UserRet::from_success(0),
@@ -1052,7 +1083,8 @@ pub(crate) fn sys_tgkill(args : SyscallArgs) -> UserRet {
         record_pending_signal_source(snapshot.pid.raw(),
                                      signal,
                                      PendingSignalSource { pid : caller.pid.raw(),
-                                                           uid });
+                                                           uid,
+                                                           ..PendingSignalSource::default() });
     }
     match send_thread(task_id, signal) {
         Ok(()) => UserRet::from_success(0),
@@ -1146,7 +1178,8 @@ pub(crate) fn send_signal_to_process(process : ProcessId, sig : usize) -> Result
         record_pending_signal_source(process.raw(),
                                      sig,
                                      PendingSignalSource { pid : caller.pid.raw(),
-                                                           uid });
+                                                           uid,
+                                                           ..PendingSignalSource::default() });
     }
     let dispatch = ipc::signal::send_process(process.raw(), sig).map_err(|_| ErrNo::EINVAL)?;
     apply_signal_dispatch(dispatch, sig);
@@ -1286,5 +1319,34 @@ pub(crate) fn sys_kill(args : SyscallArgs) -> UserRet {
         UserRet::from_success(0)
     } else {
         UserRet::from_error(last_err)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn synchronous_fault_siginfo_uses_positive_code_and_address() {
+        let address = 0x1234_5678usize;
+        let info = user_siginfo(4,
+                                PendingSignalSource { code : 1,
+                                                      fault_addr : address,
+                                                      ..PendingSignalSource::default() });
+        assert_eq!(info.signo, 4);
+        assert_eq!(info.code, 1);
+        assert_eq!(&info.payload[..core::mem::size_of::<usize>()],
+                   &address.to_ne_bytes());
+    }
+
+    #[test]
+    fn user_signal_siginfo_keeps_pid_and_uid_layout() {
+        let info = user_siginfo(15,
+                                PendingSignalSource { pid : 42,
+                                                      uid : 7,
+                                                      ..PendingSignalSource::default() });
+        assert_eq!(info.code, 0);
+        assert_eq!(&info.payload[0..4], &42u32.to_ne_bytes());
+        assert_eq!(&info.payload[4..8], &7u32.to_ne_bytes());
     }
 }

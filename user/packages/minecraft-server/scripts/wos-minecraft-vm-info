@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+
+JAVA=/usr/lib/jvm/java-21-openjdk/bin/java
+VM_ARGS="-XX:+UseSerialGC -XX:ActiveProcessorCount=2 -XX:-UseCompressedOops -XX:-UseCompressedClassPointers -Xms16m -Xmx128m"
+case "$(uname -m)" in
+    riscv64|riscv*) VM_ARGS="-XX:TieredStopAtLevel=1 $VM_ARGS" ;;
+esac
+
+echo "WATEROS_MINECRAFT_VM_ENV_BEGIN"
+env | grep -E '^(JAVA_TOOL_OPTIONS|JDK_JAVA_OPTIONS|_JAVA_OPTIONS|MINECRAFT_JAVA_ARGS)=' || true
+echo "WATEROS_MINECRAFT_VM_ENV_END"
+
+# PrintFlagsFinal is intentionally filtered: SelfDestructTimer is the HotSpot
+# product flag responsible for the literal "VM self-destructed" message.
+FLAG=$(
+    "$JAVA" $VM_ARGS -XX:+PrintFlagsFinal -version 2>&1 |
+        grep 'SelfDestructTimer'
+)
+echo "$FLAG"
+echo "$FLAG" | grep -E 'SelfDestructTimer[[:space:]]*=[[:space:]]*0([.]0+)?([[:space:]]|$)' >/dev/null
+echo WATEROS_MINECRAFT_VM_INFO_OK
