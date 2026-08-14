@@ -1059,6 +1059,7 @@ dependencies = [
 name = "wateros-fs-procfs"
 version = "0.1.0"
 dependencies = [
+ "log",
  "wateros-fs-procfs-api-v0",
  "wateros-fs-procfs-impl-kernel",
 ]
@@ -1314,6 +1315,7 @@ dependencies = [
 name = "wateros-mm-impl-common"
 version = "0.1.0"
 dependencies = [
+ "log",
  "spin",
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor",
