@@ -1,5 +1,6 @@
 #![no_std]
 
-mod implementation;
+#[path = "core.rs"]
+mod core;
 
-pub use implementation::*;
+pub use core::*;

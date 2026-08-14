@@ -1,5 +1,6 @@
 #![no_std]
 
-mod implementation;
+#[path = "tree.rs"]
+mod tree;
 
-pub use implementation::*;
+pub use tree::*;
