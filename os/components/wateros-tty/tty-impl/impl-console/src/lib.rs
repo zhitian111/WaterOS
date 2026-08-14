@@ -13,6 +13,15 @@ use api_v0::*;
 use spin::Mutex;
 use waitqueue::{TaskWaitResult, WaitQueue};
 
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    let state = TtyState::new();
+    assert_eq!(state.mode, ConsoleTtyMode::Closed);
+    assert_eq!(state.termios, TtyTermios::DEFAULT);
+    assert!(state.readable.is_empty());
+    assert!(state.editing.is_empty());
+}
+
 /// 一次独占的 TTY 读取预约。
 ///
 /// 字节已经暂时从全局输入队列移出，必须交给 [`finish_read`] 提交或回滚。

@@ -12,3 +12,10 @@ pub mod api {
 pub use api_v0::*;
 #[cfg(feature = "impl-kernel")]
 pub use impl_kernel as active_impl;
+
+#[cfg(feature = "self_test")]
+pub fn self_test() {
+    log::info!("[fs/procfs] self_test begin");
+    active_impl::self_test();
+    log::info!("[fs/procfs] self_test complete");
+}
