@@ -96,27 +96,43 @@ impl BlockCache {
     pub fn read_block(&self, block_id: PBlockId) -> Block {
         debug!("Reading block {}", block_id);
         let set_id = block_id as usize % CACHE_SIZE;
-        let mut cache = self.cache.lock();
-        let slot_id = cache[set_id].access(block_id) as usize;
-        let slot = &mut cache[set_id].slots[slot_id];
-        // Check block id
-        if slot.valid && slot.block.id == block_id {
-            // Cache hit
-            return slot.block.clone();
-        } else {
+        // 阶段 1：锁内命中检查；未命中时先写回被逐出的脏块（持锁，写回短且必须
+        // 保序），然后释放锁。
+        {
+            let mut cache = self.cache.lock();
+            let slot_id = cache[set_id].access(block_id) as usize;
+            let slot = &mut cache[set_id].slots[slot_id];
+            // Check block id
+            if slot.valid && slot.block.id == block_id {
+                // Cache hit
+                return slot.block.clone();
+            }
             // Cache miss
             if slot.valid && slot.dirty {
                 // Write back Dirty block
                 self.block_dev.write_block(&slot.block);
                 slot.dirty = false;
             }
-            // Read block from disk
-            debug!("Loading block {} from disk", block_id);
-            let block = self.block_dev.read_block(block_id);
-            slot.block = block.clone();
-            slot.valid = true;
+        }
+        // 阶段 2：锁外读 backend（允许块 I/O 等待/睡眠，不持缓存锁；T07/T06
+        // 异步路径依赖此点）。
+        debug!("Loading block {} from disk", block_id);
+        let block = self.block_dev.read_block(block_id);
+        // 阶段 3：重取锁，回查后装填（其它线程可能已安装同一块）。
+        let mut cache = self.cache.lock();
+        let slot_id = cache[set_id].access(block_id) as usize;
+        let slot = &mut cache[set_id].slots[slot_id];
+        if slot.valid && slot.block.id == block_id {
+            // 其它线程已装入：保留现有条目，返回本次读到的数据。
             return block;
         }
+        if slot.valid && slot.dirty {
+            self.block_dev.write_block(&slot.block);
+            slot.dirty = false;
+        }
+        slot.block = block.clone();
+        slot.valid = true;
+        block
     }
 
     /// Write a block. (Write-Allocate)
@@ -175,6 +191,8 @@ impl BlockCache {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
     use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -219,5 +237,28 @@ mod tests {
         let writes = device.writes.lock();
         assert_eq!(writes.len(), 1);
         assert_eq!(writes[0].data()[0], 99);
+    }
+
+    #[test]
+    fn concurrent_miss_reads_are_consistent() {
+        let device = Arc::new(MemoryDevice {
+            reads: AtomicUsize::new(0),
+            writes: Mutex::new(Vec::new()),
+        });
+        let cache = Arc::new(BlockCache::new(device.clone()));
+        let other = cache.clone();
+        let follow = cache.clone();
+        let t1 = std::thread::spawn(move || cache.read_block(7));
+        let t2 = std::thread::spawn(move || other.read_block(7));
+        let r1 = t1.join().expect("t1");
+        let r2 = t2.join().expect("t2");
+        assert_eq!(r1.data()[0], 7);
+        assert_eq!(r2.data()[0], 7);
+        // 并发 miss 后回查装填：后续读取命中缓存，backend 读次数不再增长。
+        let reads_after = device.reads.load(Ordering::Relaxed);
+        let cached = follow.read_block(7);
+        assert_eq!(cached.data()[0], 7);
+        assert_eq!(device.reads.load(Ordering::Relaxed), reads_after,
+                   "follow-up read must hit cache after concurrent install");
     }
 }
