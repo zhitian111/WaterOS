@@ -1,0 +1,532 @@
+use super::*;
+
+impl ReadOnlyFs for Ext4RsFs {
+// 本方法代码由AI完成
+    fn mount(&mut self, device : SharedBlockDevice) -> FsResult<()> {
+        let dev : Arc<dyn Ext4RsBlockDevice> = Arc::new(BlockDevAdapter { device });
+        self.fs = Some(Ext4::open(dev));
+        Ok(())
+    }
+
+    fn is_mounted(&self) -> bool { self.fs.is_some() }
+
+// 本方法代码由AI完成
+    fn exists(&self, path : &str) -> FsResult<bool> {
+        match lookup_inode(self.fs()?, path) {
+            Ok(_) => Ok(true),
+            Err(FsError::NotFound) => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+
+// 本方法代码由AI完成
+    fn metadata(&self, path : &str) -> FsResult<FsMetadata> {
+        let inode = lookup_inode(self.fs()?, path)?;
+        metadata_for_inode(self.fs()?, inode)
+    }
+
+// 本方法代码由AI完成
+    fn read(&self, path : &str) -> FsResult<Vec<u8>> {
+        let inode = lookup_inode_follow(self.fs()?, path)?;
+        let meta = metadata_for_inode(self.fs()?, inode)?;
+        if meta.node_type != FsNodeType::File {
+            return Err(FsError::NotAFile);
+        }
+        let mut out = vec![0u8; usize::try_from(meta.size).map_err(|_| FsError::Io)?];
+        let n = if out.is_empty() {
+            0
+        } else {
+            self.fs()?
+                .read_at(inode, 0, &mut out)
+                .map_err(map_ext4_rs)?
+        };
+        if n != out.len() {
+            return Err(FsError::Io);
+        }
+        Ok(out)
+    }
+
+// 本方法代码由AI完成
+    fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> FsResult<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let fs = self.fs()?;
+        let inode = lookup_inode_follow(fs, path)?;
+        let meta = metadata_for_inode(fs, inode)?;
+        if meta.node_type != FsNodeType::File {
+            return Err(FsError::NotAFile);
+        }
+        if offset >= meta.size {
+            return Ok(0);
+        }
+        let to_read = buf.len()
+                         .min(usize::try_from(meta.size - offset).map_err(|_| FsError::Io)?);
+        fs.read_at(inode,
+                   usize::try_from(offset).map_err(|_| FsError::Io)?,
+                   &mut buf[..to_read])
+          .map_err(map_ext4_rs)
+    }
+
+// 本方法代码由AI完成
+    fn read_prefix(&self, path : &str, len : usize) -> FsResult<Vec<u8>> {
+        let mut buf = vec![0u8; len];
+        let n = ReadOnlyFs::read_range(self, path, 0, &mut buf)?;
+        buf.truncate(n);
+        Ok(buf)
+    }
+
+// 本方法代码由AI完成
+    fn read_dir(&self, path : &str) -> FsResult<Vec<FsDirEntry>> {
+        let fs = self.fs()?;
+        let inode = lookup_inode(fs, path)?;
+        let attr = fs.fuse_getattr(inode as u64)
+                     .map_err(map_ext4_rs)?;
+        if attr.kind != InodeFileType::S_IFDIR {
+            return Err(FsError::NotAFile);
+        }
+        let mut out = Vec::new();
+        for entry in fs.ext4_dir_get_entries(inode)
+                        .map_err(map_ext4_rs)?
+        {
+            if entry.unused() {
+                continue;
+            }
+            let name = entry.get_name();
+            if name == "." || name == ".." {
+                continue;
+            }
+            let child = fs.fuse_getattr(entry.inode as u64)
+                          .map_err(map_ext4_rs)?;
+            out.push(FsDirEntry { name,
+                                  node_type : map_node_type(child.kind) });
+        }
+        Ok(out)
+    }
+
+// 本方法代码由AI完成
+    fn read_symlink(&self, path : &str) -> FsResult<Vec<u8>> {
+        let fs = self.fs()?;
+        let inode = lookup_inode(fs, path)?;
+        read_symlink_inode(fs, inode)
+    }
+
+// 本方法代码由AI完成
+    fn boot_dump_all_paths(&self) {
+        if self.fs.is_some() {
+            walk_ext4_rs_tree(self, "/");
+        }
+    }
+}
+
+impl ReadWriteFs for Ext4RsFs {
+    fn mount_rw(&mut self, device : SharedBlockDevice) -> FsResult<()> { self.mount(device) }
+
+    fn is_mounted(&self) -> bool { self.fs.is_some() }
+
+// 本方法代码由AI完成
+    fn write_regular_file_at_root(&mut self, name : &str, data : &[u8]) -> FsResult<()> {
+        if name.is_empty() || name.contains('/') {
+            return Err(FsError::InvalidPath);
+        }
+        let mut path = String::from("/");
+        path.push_str(name);
+        self.write_regular_file(path.as_str(), data)
+    }
+
+// 本方法代码由AI完成
+    fn write_regular_file(&mut self, path : &str, data : &[u8]) -> FsResult<()> {
+        let fs = self.fs_mut()?;
+        let inode = match lookup_inode(fs, path) {
+            Ok(inode) => {
+                let meta = metadata_for_inode(fs, inode)?;
+                if meta.node_type != FsNodeType::File {
+                    return Err(FsError::NotAFile);
+                }
+                if meta.size > 0 {
+                    let mut inode_ref = fs.get_inode_ref(inode);
+                    fs.truncate_inode(&mut inode_ref, 0)
+                      .map_err(map_ext4_rs)?;
+                }
+                inode
+            }
+            Err(FsError::NotFound) => create_regular(fs, path, S_IFREG | 0o644)?,
+            Err(err) => return Err(err),
+        };
+        if !data.is_empty() {
+            write_all(fs, inode, 0, data)?;
+        }
+        Ok(())
+    }
+
+// 本方法代码由AI完成
+    fn unlink(&mut self, path : &str) -> FsResult<()> {
+        let fs = self.fs_mut()?;
+        let (parent_path, name) = split_parent_and_name(path)?;
+        let parent = lookup_inode_follow(fs, parent_path)?;
+        ensure_dir_inode(fs, parent)?;
+        let attr = fs.fuse_lookup(parent as u64, name)
+                     .map_err(map_ext4_rs)?;
+        if attr.kind == InodeFileType::S_IFDIR {
+            return Err(FsError::NotAFile);
+        }
+        if attr.kind != InodeFileType::S_IFREG
+            && attr.kind != InodeFileType::S_IFLNK
+            && attr.kind != InodeFileType::S_IFSOCK
+        {
+            return Err(FsError::Unsupported);
+        }
+
+        let mut parent_ref = fs.get_inode_ref(parent);
+        let child = u32::try_from(attr.ino).map_err(|_| FsError::Io)?;
+        let mut child_ref = fs.get_inode_ref(child);
+        fs.dir_remove_entry(&mut parent_ref, name)
+          .map_err(map_ext4_rs)?;
+
+        let links = child_ref.inode
+                             .links_count();
+        if links <= 1 {
+            if child_ref.inode
+                        .size() >
+               0
+            {
+                fs.truncate_inode(&mut child_ref, 0)
+                  .map_err(map_ext4_rs)?;
+            }
+            fs.ialloc_free_inode(child_ref.inode_num, false);
+        } else {
+            child_ref.inode
+                     .set_links_count(links - 1);
+            fs.write_back_inode(&mut child_ref);
+        }
+        fs.write_back_inode(&mut parent_ref);
+        Ok(())
+    }
+
+// 本方法代码由AI完成
+    fn rmdir(&mut self, path : &str) -> FsResult<()> {
+        if !ReadOnlyFs::read_dir(self, path)?.is_empty() {
+            return Err(FsError::Exists);
+        }
+        let fs = self.fs_mut()?;
+        let (parent_path, name) = split_parent_and_name(path)?;
+        let parent = lookup_inode_follow(fs, parent_path)?;
+        fs.fuse_rmdir(parent as u64, name)
+          .map_err(map_ext4_rs)?;
+        Ok(())
+    }
+
+// 本方法代码由AI完成
+    fn write_range(&mut self, path : &str, offset : u64, data : &[u8]) -> FsResult<usize> {
+        if data.is_empty() {
+            return Ok(0);
+        }
+        let fs = self.fs_mut()?;
+        let inode = lookup_inode(fs, path)?;
+        let meta = metadata_for_inode(fs, inode)?;
+        if meta.node_type != FsNodeType::File {
+            return Err(FsError::NotAFile);
+        }
+        // 底层 ext4_rs 的块分配是纯追加式（新块逻辑号恒为 ceil(size/bs)），无法在
+        // offset > 当前文件大小处直接写出空洞。页缓存的逐页驱逐 / 分段 flush 可能
+        // 在低页尚未落盘时先写回高页，从而对 ext4 发起越过 EOF 的写；若不先补洞，
+        // 数据会落到错误的逻辑块，回读命中空洞返回 0。这里显式把 [size, offset)
+        // 补成真实零块，保证写入落到正确逻辑块。
+        if offset > meta.size {
+            zero_extend_file(fs, inode, meta.size, offset)?;
+        }
+        write_all(fs, inode, offset, data)?;
+        Ok(data.len())
+    }
+
+// 本方法代码由AI完成
+    fn truncate(&mut self, path : &str, len : u64) -> FsResult<()> {
+        let fs = self.fs_mut()?;
+        let inode = lookup_inode(fs, path)?;
+        let meta = metadata_for_inode(fs, inode)?;
+        if meta.node_type != FsNodeType::File {
+            return Err(FsError::NotAFile);
+        }
+        if len > meta.size {
+            // fallocate(2) / truncate(2) 扩文件只需稀疏扩展逻辑长度，与 Linux
+            // 及 ext4plus 一致；勿逐块写零（LTP mount_device 会预分配 300MB）。
+            let mut inode_ref = fs.get_inode_ref(inode);
+            inode_ref.inode
+                     .set_size(len);
+            fs.write_back_inode(&mut inode_ref);
+        } else if len < meta.size {
+            let mut inode_ref = fs.get_inode_ref(inode);
+            fs.truncate_inode(&mut inode_ref, len)
+              .map_err(map_ext4_rs)?;
+        }
+        Ok(())
+    }
+
+// 本方法代码由AI完成
+    fn mkdir(&mut self, path : &str, mode : u32) -> FsResult<()> {
+        let fs = self.fs_mut()?;
+        let mode = S_IFDIR | (mode as u16 & 0o7777);
+        create_directory(fs, path, mode)
+    }
+
+// 本方法代码由AI完成
+    fn chmod(&mut self, path : &str, mode : u32) -> FsResult<()> {
+        let fs = self.fs_mut()?;
+        let inode = lookup_inode(fs, path)?;
+        let meta = metadata_for_inode(fs, inode)?;
+        let mut inode_ref = fs.get_inode_ref(inode);
+        inode_ref.inode
+                 .set_mode((meta.mode & !0o7777) | (mode as u16 & 0o7777));
+        fs.write_back_inode(&mut inode_ref);
+        Ok(())
+    }
+
+// 本方法代码由AI完成
+    fn chown(&mut self, path : &str, uid : Option<u32>, gid : Option<u32>) -> FsResult<()> {
+        if uid.is_none() && gid.is_none() {
+            return ReadOnlyFs::metadata(self, path).map(|_| ());
+        }
+        let fs = self.fs_mut()?;
+        let inode = lookup_inode(fs, path)?;
+        let mut inode_ref = fs.get_inode_ref(inode);
+        if let Some(uid) = uid {
+            inode_ref.inode
+                     .set_uid(uid as u16);
+        }
+        if let Some(gid) = gid {
+            inode_ref.inode
+                     .set_gid(gid as u16);
+        }
+        fs.write_back_inode(&mut inode_ref);
+        Ok(())
+    }
+
+// 本方法代码由AI完成
+    fn hardlink(&mut self, existing_path : &str, new_path : &str) -> FsResult<()> {
+        let fs = self.fs_mut()?;
+        let existing = lookup_inode(fs, existing_path)?;
+        let meta = metadata_for_inode(fs, existing)?;
+        if meta.node_type == FsNodeType::Directory {
+            return Err(FsError::NotAFile);
+        }
+        if meta.node_type != FsNodeType::File {
+            return Err(FsError::Unsupported);
+        }
+
+        let (parent_path, name) = split_parent_and_name(new_path)?;
+        let parent = lookup_inode_follow(fs, parent_path)?;
+        ensure_dir_inode(fs, parent)?;
+        match fs.fuse_lookup(parent as u64, name) {
+            Ok(_) => return Err(FsError::Exists),
+            Err(err) if map_ext4_rs(err) == FsError::NotFound => {}
+            Err(err) => return Err(map_ext4_rs(err)),
+        }
+
+        let mut parent_ref = fs.get_inode_ref(parent);
+        let mut child_ref = fs.get_inode_ref(existing);
+        fs.link(&mut parent_ref, &mut child_ref, name)
+          .map_err(map_ext4_rs)?;
+        fs.write_back_inode(&mut child_ref);
+        fs.write_back_inode(&mut parent_ref);
+        Ok(())
+    }
+
+// 本方法代码由AI完成
+    fn rename(&mut self, old_path : &str, new_path : &str) -> FsResult<()> {
+        let (old_parent_path, old_name) = split_parent_and_name(old_path)?;
+        let (new_parent_path, new_name) = split_parent_and_name(new_path)?;
+        if old_parent_path != new_parent_path {
+            return Err(FsError::Unsupported);
+        }
+
+        let old_meta = ReadOnlyFs::metadata(self, old_path)?;
+        let new_meta = match ReadOnlyFs::metadata(self, new_path) {
+            Ok(meta) => Some(meta),
+            Err(FsError::NotFound) => None,
+            Err(err) => return Err(err),
+        };
+        if let Some(meta) = new_meta {
+            if meta.inode == old_meta.inode {
+                return Ok(());
+            }
+            match (old_meta.node_type, meta.node_type) {
+                (FsNodeType::Directory, FsNodeType::Directory) => {
+                    if !ReadOnlyFs::read_dir(self, new_path)?.is_empty() {
+                        return Err(FsError::Exists);
+                    }
+                }
+                (FsNodeType::Directory, _) => return Err(FsError::Unsupported),
+                (_, FsNodeType::Directory) => return Err(FsError::NotAFile),
+                _ => {}
+            }
+        }
+
+        let fs = self.fs_mut()?;
+        let parent = lookup_inode_follow(fs, old_parent_path)?;
+        ensure_dir_inode(fs, parent)?;
+        let old_attr = fs.fuse_lookup(parent as u64, old_name)
+                         .map_err(map_ext4_rs)?;
+        match fs.fuse_lookup(parent as u64, new_name) {
+            Ok(attr) => {
+                if attr.ino == old_attr.ino {
+                    return Ok(());
+                }
+                if attr.kind == InodeFileType::S_IFDIR {
+                    fs.fuse_rmdir(parent as u64, new_name)
+                      .map_err(map_ext4_rs)?;
+                } else {
+                    fs.fuse_unlink(parent as u64, new_name)
+                      .map_err(map_ext4_rs)?;
+                }
+            }
+            Err(err) if map_ext4_rs(err) == FsError::NotFound => {}
+            Err(err) => return Err(map_ext4_rs(err)),
+        }
+
+        let child = u32::try_from(old_attr.ino).map_err(|_| FsError::Io)?;
+        let mut parent_ref = fs.get_inode_ref(parent);
+        let mut child_ref = fs.get_inode_ref(child);
+        if child_ref.inode.is_dir() {
+            fs.dir_add_entry(&mut parent_ref, &child_ref, new_name)
+              .map_err(map_ext4_rs)?;
+            fs.dir_remove_entry(&mut parent_ref, old_name)
+              .map_err(map_ext4_rs)?;
+        } else {
+            fs.link(&mut parent_ref, &mut child_ref, new_name)
+              .map_err(map_ext4_rs)?;
+            fs.dir_remove_entry(&mut parent_ref, old_name)
+              .map_err(map_ext4_rs)?;
+            fs.write_back_inode(&mut child_ref);
+        }
+        fs.write_back_inode(&mut parent_ref);
+        Ok(())
+    }
+
+// 本方法代码由AI完成
+    fn symlink(&mut self, link_path : &str, target : &str) -> FsResult<()> {
+        let fs = self.fs_mut()?;
+        let (parent_path, name) = split_parent_and_name(link_path)?;
+        let parent = lookup_inode_follow(fs, parent_path)?;
+        ensure_dir_inode(fs, parent)?;
+        fs.fuse_symlink(parent as u64, name, target)
+          .map_err(map_ext4_rs)?;
+        let attr = fs.fuse_lookup(parent as u64, name)
+                     .map_err(map_ext4_rs)?;
+        let inode = u32::try_from(attr.ino).map_err(|_| FsError::Io)?;
+        if !target.is_empty() {
+            write_all(fs, inode, 0, target.as_bytes())?;
+        }
+        Ok(())
+    }
+
+// 本方法代码由AI完成
+    fn mknod(&mut self, path : &str, mode : u32, rdev : u32) -> FsResult<()> {
+        let fs = self.fs_mut()?;
+        let (parent_path, name) = split_parent_and_name(path)?;
+        let parent = lookup_inode_follow(fs, parent_path)?;
+        ensure_dir_inode(fs, parent)?;
+        match fs.fuse_lookup(parent as u64, name) {
+            Ok(_) => return Err(FsError::Exists),
+            Err(err) if map_ext4_rs(err) == FsError::NotFound => {}
+            Err(err) => return Err(map_ext4_rs(err)),
+        }
+        fs.fuse_mknod(parent as u64, name, mode, 0, rdev)
+          .map_err(map_ext4_rs)?;
+        Ok(())
+    }
+
+    fn exists(&self, path : &str) -> FsResult<bool> { ReadOnlyFs::exists(self, path) }
+
+    fn metadata(&self, path : &str) -> FsResult<FsMetadata> { ReadOnlyFs::metadata(self, path) }
+
+    fn read(&self, path : &str) -> FsResult<Vec<u8>> { ReadOnlyFs::read(self, path) }
+
+    fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> FsResult<usize> {
+        ReadOnlyFs::read_range(self, path, offset, buf)
+    }
+
+    fn read_dir(&self, path : &str) -> FsResult<Vec<FsDirEntry>> {
+        ReadOnlyFs::read_dir(self, path)
+    }
+
+    fn read_symlink(&self, path : &str) -> FsResult<Vec<u8>> {
+        ReadOnlyFs::read_symlink(self, path)
+    }
+}
+
+// 从 offset 起分片写入，直至 data 全部落盘。
+// 本方法代码由AI完成
+fn write_all(fs : &Ext4, inode : u32, offset : u64, data : &[u8]) -> FsResult<()> {
+    let mut done = 0usize;
+    while done < data.len() {
+        let n = fs.write_at(inode,
+                            usize::try_from(offset + done as u64).map_err(|_| FsError::Io)?,
+                            &data[done..])
+                  .map_err(map_ext4_rs)?;
+        if n == 0 {
+            return Err(FsError::Io);
+        }
+        done = done.checked_add(n)
+                   .ok_or(FsError::Io)?;
+    }
+    Ok(())
+}
+
+// 将 [old_size, new_size) 区间用零块填满，供跨 EOF 写前补洞。
+// 本方法代码由AI完成
+fn zero_extend_file(fs : &Ext4, inode : u32, old_size : u64, new_size : u64) -> FsResult<()> {
+    let zeroes = [0u8; ext4_rs::BLOCK_SIZE];
+    let mut offset = old_size;
+    while offset < new_size {
+        let len =
+            usize::try_from((new_size - offset).min(zeroes.len() as u64)).map_err(|_| FsError::Io)?;
+        write_all(fs, inode, offset, &zeroes[..len])?;
+        offset = offset.checked_add(len as u64)
+                       .ok_or(FsError::Io)?;
+    }
+    Ok(())
+}
+
+/// ext4_rs 的 [`FsImpl`] 注册类型。
+// 本结构代码由AI完成
+pub struct Ext4RsImpl;
+
+/// 全局 ext4-rs impl 实例。
+// 本变量代码由AI完成
+pub static IMPL : Ext4RsImpl = Ext4RsImpl;
+
+// 本变量代码由AI完成
+const SUPPORTED : &[FsCapability] = &[FsCapability::new(FsKind::Ext4, FsAccessMode::ReadOnly),
+                                      FsCapability::new(FsKind::Ext4, FsAccessMode::ReadWrite)];
+
+impl FsImpl for Ext4RsImpl {
+    fn name(&self) -> &'static str { "ext4-rs" }
+
+    fn supported(&self) -> &'static [FsCapability] { SUPPORTED }
+
+// 本方法代码由AI完成
+    fn probe(&self, device : &SharedBlockDevice) -> FsResult<Option<FsKind>> {
+        if probe_ext4_magic(device)? {
+            Ok(Some(FsKind::Ext4))
+        } else {
+            Ok(None)
+        }
+    }
+
+// 本方法代码由AI完成
+    fn mount_ro(&self, device : SharedBlockDevice) -> FsResult<SharedFs> {
+        log::info!("[fs::ext4-rs] mount_ro begin");
+        let mut fs = Ext4RsFs::new();
+        ReadOnlyFs::mount(&mut fs, device)?;
+        Ok(Arc::new(Mutex::new(LocalFs::new(Box::new(fs)))))
+    }
+
+// 本方法代码由AI完成
+    fn mount_rw(&self, device : SharedBlockDevice) -> FsResult<SharedRwFs> {
+        log::info!("[fs::ext4-rs] mount_rw begin");
+        let mut fs = Ext4RsFs::new();
+        ReadWriteFs::mount_rw(&mut fs, device)?;
+        Ok(Arc::new(Mutex::new(LocalRwFs::new(Box::new(fs)))))
+    }
+}
+
