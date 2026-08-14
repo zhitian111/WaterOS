@@ -346,4 +346,37 @@ mod tests {
         assert_eq!(index.get(Lba(32)), Some(32));
         assert_eq!(index.get(Lba(36)), Some(36));
     }
+
+    #[test]
+    fn concurrent_miss_reads_install_consistently() {
+        let reads = Arc::new(Mutex::new(0));
+        let cache = Arc::new(CachingBlockDevice::new(
+            Box::new(CountingMem::new(4, reads.clone(), Arc::new(Mutex::new(0)))),
+            BlockCacheConfig { capacity_blocks : 8 },
+        ));
+        let bs = cache.block_size();
+        let other = cache.clone();
+        let follow = cache.clone();
+        let t1 = std::thread::spawn(move || {
+            let mut buf = vec![0u8; bs * 2];
+            cache.read_blocks(Lba(0), &mut buf).unwrap();
+            buf
+        });
+        let t2 = std::thread::spawn(move || {
+            let mut buf = vec![0u8; bs * 2];
+            other.read_blocks(Lba(0), &mut buf).unwrap();
+            buf
+        });
+        let r1 = t1.join().expect("thread1");
+        let r2 = t2.join().expect("thread2");
+        assert_eq!(r1, r2, "concurrent readers must observe identical data");
+        // 两线程并发 miss：backend 可能被读 1~2 次，但回查必须保证缓存一致且
+        // 后续读取命中缓存。
+        let before = *reads.lock().unwrap();
+        let mut buf = vec![0u8; bs * 2];
+        follow.read_blocks(Lba(0), &mut buf).unwrap();
+        assert_eq!(*reads.lock().unwrap(), before,
+                   "after concurrent install, a follow-up read must hit cache");
+        assert_eq!(buf, r1);
+    }
 }

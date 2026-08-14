@@ -337,87 +337,110 @@ impl BlockDevice for CachingBlockDevice {
 
     fn read_blocks(&self, start_block : Lba, buf : &mut [u8]) -> DriverResult<()> {
         self.check_request_range(start_block, buf.len())?;
-        let mut state = self.state.lock();
-        let bs = state.block_size;
-        if bs == 0 || buf.len() % bs != 0 {
-            return Err(DriverError::InvalidParam);
-        }
-        if state.capacity == 0 {
-            drop(state);
-            return self.inner
-                       .read_blocks(start_block, buf);
-        }
-
-        let nblocks = buf.len() / bs;
-        #[cfg(feature = "diagnostics")]
-        {
-            state.diagnostics
-                .read_blocks += nblocks as u64;
-        }
-        let base = start_block.0;
-        let mut i = 0usize;
-        while i < nblocks {
-            let mut hit_end = i;
-            let mut last_hit_idx = None;
-            while hit_end < nblocks {
-                let lk = Lba(base.checked_add(hit_end as u64)
-                                 .ok_or(DriverError::InvalidParam)?);
-                let Some(idx) = state.map.get(lk) else {
-                    break;
-                };
-                buf[hit_end * bs..(hit_end + 1) * bs].copy_from_slice(state.slot_data(idx));
-                #[cfg(feature = "diagnostics")]
-                {
-                    state.diagnostics
-                        .hit_blocks += 1;
-                }
-                last_hit_idx = Some(idx);
-                hit_end += 1;
+        let bs = {
+            let state = self.state.lock();
+            let bs = state.block_size;
+            if bs == 0 || buf.len() % bs != 0 {
+                return Err(DriverError::InvalidParam);
             }
-            if hit_end > i {
-                if let Some(idx) = last_hit_idx {
-                    state.touch_lru(idx);
-                }
-                i = hit_end;
-                continue;
+            if state.capacity == 0 {
+                drop(state);
+                return self.inner
+                           .read_blocks(start_block, buf);
             }
-            let mut j = i + 1;
-            #[cfg(feature = "diagnostics")]
-            state.note_miss();
-            while j < nblocks {
-                let lbaj = Lba(base.checked_add(j as u64)
-                                   .ok_or(DriverError::InvalidParam)?);
-                if state.map
-                       .get(lbaj)
-                       .is_some()
-                {
-                    break;
-                }
-                #[cfg(feature = "diagnostics")]
-                state.note_miss();
-                j += 1;
-            }
-            let run_bytes = (j - i) * bs;
             #[cfg(feature = "diagnostics")]
             {
                 state.diagnostics
-                    .backend_read_calls += 1;
-                state.diagnostics
-                    .backend_read_blocks += (j - i) as u64;
+                    .read_blocks += (buf.len() / bs) as u64;
             }
+            bs
+        };
+        let nblocks = buf.len() / bs;
+        let base = start_block.0;
+        let mut i = 0usize;
+        while i < nblocks {
+            // 阶段 1：锁内扫描命中/未命中区间。命中段直接从缓存服务；
+            // 未命中段返回 [start, end) 交阶段 2 在锁外读 backend。
+            let miss_run = {
+                let mut state = self.state.lock();
+                let mut hit_end = i;
+                let mut last_hit_idx = None;
+                while hit_end < nblocks {
+                    let lk = Lba(base.checked_add(hit_end as u64)
+                                     .ok_or(DriverError::InvalidParam)?);
+                    let Some(idx) = state.map.get(lk) else {
+                        break;
+                    };
+                    buf[hit_end * bs..(hit_end + 1) * bs].copy_from_slice(state.slot_data(idx));
+                    #[cfg(feature = "diagnostics")]
+                    {
+                        state.diagnostics
+                            .hit_blocks += 1;
+                    }
+                    last_hit_idx = Some(idx);
+                    hit_end += 1;
+                }
+                if hit_end > i {
+                    if let Some(idx) = last_hit_idx {
+                        state.touch_lru(idx);
+                    }
+                    (hit_end, hit_end)
+                } else {
+                    let mut j = i + 1;
+                    #[cfg(feature = "diagnostics")]
+                    state.note_miss();
+                    while j < nblocks {
+                        let lbaj = Lba(base.checked_add(j as u64)
+                                           .ok_or(DriverError::InvalidParam)?);
+                        if state.map
+                               .get(lbaj)
+                               .is_some()
+                        {
+                            break;
+                        }
+                        #[cfg(feature = "diagnostics")]
+                        state.note_miss();
+                        j += 1;
+                    }
+                    #[cfg(feature = "diagnostics")]
+                    {
+                        state.diagnostics
+                            .backend_read_calls += 1;
+                        state.diagnostics
+                            .backend_read_blocks += (j - i) as u64;
+                    }
+                    (i, j)
+                }
+            };
+            let (start, end) = miss_run;
+            if start == end {
+                i = end;
+                continue;
+            }
+            // 阶段 2：锁外读 backend；期间其它任务可命中缓存或提交新请求。
+            let run_bytes = (end - start) * bs;
             self.inner
-                .read_blocks(Lba(base.checked_add(i as u64)
+                .read_blocks(Lba(base.checked_add(start as u64)
                                      .ok_or(DriverError::InvalidParam)?),
-                             &mut buf[i * bs..i * bs + run_bytes])?;
-            for k in i..j {
-                let lk = Lba(base.checked_add(k as u64)
-                                 .ok_or(DriverError::InvalidParam)?);
-                state.admit_read_miss(lk, &buf[k * bs..(k + 1) * bs]);
+                             &mut buf[start * bs..start * bs + run_bytes])?;
+            // 阶段 3：重取锁，回查后装填（其它线程可能已安装更新数据）。
+            {
+                let mut state = self.state.lock();
+                for k in start..end {
+                    let lk = Lba(base.checked_add(k as u64)
+                                     .ok_or(DriverError::InvalidParam)?);
+                    if state.map
+                           .get(lk)
+                           .is_none()
+                    {
+                        state.admit_read_miss(lk, &buf[k * bs..(k + 1) * bs]);
+                    }
+                }
+                #[cfg(feature = "diagnostics")]
+                state.maybe_report_diagnostics();
             }
-            i = j;
+            i = end;
         }
-        #[cfg(feature = "diagnostics")]
-        state.maybe_report_diagnostics();
         Ok(())
     }
 
