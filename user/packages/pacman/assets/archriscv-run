@@ -1,0 +1,18 @@
+#!/bin/sh
+# Run an Arch Linux RISC-V executable inside the isolated root.
+set -eu
+
+root=${WATER_ARCHRISCV_ROOT:-/opt/archriscv}
+test "$#" -gt 0 || { echo "usage: archriscv-run /usr/bin/program [args...]" >&2; exit 2; }
+
+case "$1" in
+  /*) program="$1" ;;
+  *) echo "program path must be absolute inside the Arch root" >&2; exit 2 ;;
+esac
+test -d "$root" || { echo "Arch RISC-V root is not installed: $root" >&2; exit 1; }
+test -x "$root$program" || { echo "program is not installed: $root$program" >&2; exit 1; }
+
+# A glibc program can load modules through absolute paths (for example Lua's
+# /usr/lib/lua/5.1/lpeg.so).  The loader's --library-path does not rewrite
+# those paths, so the process must run with the isolated root as its root.
+exec chroot "$root" "$@"

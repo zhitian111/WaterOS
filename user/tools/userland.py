@@ -84,6 +84,7 @@ def _archlinux_rv_musl_prefix() -> str | None:
     tools = {
         "gcc": shutil.which("riscv64-linux-musl-gcc"),
         "ar": shutil.which("riscv64-linux-gnu-ar"),
+        "ranlib": shutil.which("riscv64-linux-gnu-ranlib"),
         "strip": shutil.which("riscv64-linux-gnu-strip"),
         "readelf": shutil.which("riscv64-linux-gnu-readelf"),
     }

@@ -1,0 +1,10 @@
+## WaterOS RISC-V package sources.
+##
+## The official Arch Linux mirrors operated by Aliyun and Tsinghua only carry
+## the official x86_64 repository.  They are retained below as documentation,
+## but must not be enabled for this riscv64 system.
+Server = https://archriscv.felixc.at/repo/$repo
+
+## x86_64 Arch Linux examples -- intentionally disabled on WaterOS/riscv64:
+## Server = https://mirrors.aliyun.com/archlinux/$repo/os/$arch
+## Server = https://mirrors.tuna.tsinghua.edu.cn/archlinux/$repo/os/$arch

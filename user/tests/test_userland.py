@@ -57,6 +57,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn("openjdk21", la)
         self.assertNotIn("minecraft-server", rv)
         self.assertNotIn("minecraft-server", la)
+        self.assertNotIn("pacman", rv)
         self.assertEqual(userland.parse_package_names("busybox, operator-tools", "rv"),
                          ("busybox", "operator-tools"))
 

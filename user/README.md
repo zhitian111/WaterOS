@@ -552,6 +552,46 @@ make -C os run ARCH=rv PROFILE=pre MODE=run \
   SDCARD=../user/build/images/wateros-rv-openjdk21.ext4 SMP=4
 ```
 
+## Pacman（RISC-V）
+
+`pacman` 是当前自有 musl 用户镜像中的可选包，不会随 `PACKAGE=all` 自动加入。构建时会从
+公开上游下载并校验 pacman、libarchive、zlib、xz、zstd 和 OpenSSL 的锁定源码版本；下载归档
+缓存于 `user/build/downloads/pacman/`，不属于 Git 提交内容。
+
+```bash
+make image ARCH=rv PACKAGE=pacman IMAGE_SIZE_MB=512 JOBS=4
+```
+
+镜像包含 `/usr/bin/pacman`、`/usr/lib/libalpm.so.15`、匹配的 musl 动态加载器、静态
+libcurl/HTTPS 依赖和 `/etc/pacman.conf`。GPGME 与包签名校验仍暂时关闭；本地安装与同步
+仓库均可使用：
+
+```sh
+pacman --version
+pacman -Q
+pacman -U /tmp/name-riscv64.pkg.tar.zst
+pacman -Sy
+pacman -S name
+```
+
+默认 `/etc/pacman.d/mirrorlist` 指向 Arch Linux RISC-V 仓库
+`https://archriscv.felixc.at/repo/$repo`。阿里云和清华的官方 Arch Linux 镜像地址同时作为
+注释示例保留，但它们不提供 `riscv64` 包，不能在 WaterOS 中启用。网络同步（`pacman -Sy`）
+已经通过 libcurl/HTTPS 启用；签名验证将在后续引入 GPGME 和 Arch Linux RISC-V keyring 后启用。
+
+Arch Linux RISC-V 仓库包使用 glibc，不能直接覆盖 WaterOS 的 musl/BusyBox 根目录。使用
+`archriscv-pacman` 会自动初始化隔离根的 pacman 数据库并安装到 `/opt/archriscv`：
+
+```sh
+archriscv-pacman -S neovim
+archriscv-run /usr/bin/nvim
+```
+
+后一命令通过 `chroot(2)` 在隔离根中执行程序；因此 glibc 动态库、Lua 等通过绝对路径
+`dlopen()` 的模块，以及包内脚本都会从 `/opt/archriscv` 解析，而不会混用 WaterOS 的 musl
+根目录。该命令要求内核已支持 `chroot(2)`。可通过 `WATER_ARCHRISCV_ROOT=/other/root` 覆盖
+隔离根路径。
+
 ## Arch Linux 的 RISC-V musl 工具链
 
 Arch 的 `riscv64-gnu-toolchain-musl-bin` 通常只以 `riscv64-linux-musl-` 前缀提供 GCC，

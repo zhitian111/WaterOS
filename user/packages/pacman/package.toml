@@ -1,0 +1,11 @@
+[package]
+name = "pacman"
+version = "7.0.0-wateros-1"
+source = ""
+architectures = ["rv"]
+default = false
+dependencies = ["base-layout", "busybox"]
+build = "build.py"
+install_prefix = "/usr"
+allow_overwrite = []
+inputs = ["packages/pacman/assets/pacman.conf", "packages/pacman/assets/mirrorlist", "packages/pacman/assets/archriscv-pacman", "packages/pacman/assets/archriscv-run"]
