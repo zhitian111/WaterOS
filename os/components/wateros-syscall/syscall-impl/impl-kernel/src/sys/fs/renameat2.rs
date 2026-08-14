@@ -98,13 +98,27 @@ fn rename_at_impl(
     if let Err(e) = check_existing_type_mismatch(old_resolved.as_str(), new_resolved.as_str()) {
         return UserRet::from_error(e);
     }
+    let old_is_dir = active_impl::backend().metadata(old_resolved.as_str())
+                                  .map(|meta| meta.node_type == VfsNodeType::Directory)
+                                  .unwrap_or(false);
 
     if flags & RENAME_EXCHANGE != 0 {
         if let Err(e) = check_rename_permission(old_resolved.as_str(), new_resolved.as_str(), true) {
             return UserRet::from_error(e);
         }
+        let new_is_dir = active_impl::backend().metadata(new_resolved.as_str())
+                                     .map(|meta| meta.node_type == VfsNodeType::Directory)
+                                     .unwrap_or(false);
         return match rename_exchange(old_resolved.as_str(), new_resolved.as_str()) {
-            Ok(()) => UserRet::from_success(0),
+            Ok(()) => {
+                super::inotify::notify_move(old_resolved.as_str(),
+                                            new_resolved.as_str(),
+                                            old_is_dir);
+                super::inotify::notify_move(new_resolved.as_str(),
+                                            old_resolved.as_str(),
+                                            new_is_dir);
+                UserRet::from_success(0)
+            }
             Err(e) => UserRet::from_error(e),
         };
     }
@@ -121,7 +135,12 @@ fn rename_at_impl(
     }
 
     match vfs::rename_absolute(old_resolved.as_str(), new_resolved.as_str()) {
-        Ok(()) => UserRet::from_success(0),
+        Ok(()) => {
+            super::inotify::notify_move(old_resolved.as_str(),
+                                        new_resolved.as_str(),
+                                        old_is_dir);
+            UserRet::from_success(0)
+        }
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
     }
 }

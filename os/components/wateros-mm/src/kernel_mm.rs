@@ -134,6 +134,150 @@ pub use api_v0::kernel_bringup::{
         }
     }
 
+    /// 验证整个用户区间已被 VMA 覆盖，并把尚未驻留的页按指定访问方式预取。
+    ///
+    /// WaterOS 当前没有 swap 或匿名页回收，因此 `mlock` 的“禁止换出”天然成立；
+    /// 真正还需要完成的是 Linux 要求的当前区间驻留语义。
+    pub fn prefault_user_range(aspace_ptr : usize,
+                               addr : usize,
+                               len : usize,
+                               write : bool)
+                               -> api_v0::error::MmResult<()> {
+        use api_v0::addr::{VirtAddr, VirtPageNum, PAGE_SIZE};
+        use api_v0::address_space::AddressSpaceOps;
+        use api_v0::error::MmError;
+        use api_v0::mmap::{MmapOps, PageFaultAccess};
+
+        let end = addr.checked_add(len).ok_or(MmError::InvalidAddress)?;
+        let start = addr & !(PAGE_SIZE - 1);
+        let end = end.checked_add(PAGE_SIZE - 1)
+                     .ok_or(MmError::InvalidAddress)? &
+                  !(PAGE_SIZE - 1);
+        let access = if write { PageFaultAccess::Write } else { PageFaultAccess::Read };
+        let mut alloc = crate::frame_alloctor::GlobalPhysFrameAllocator;
+
+        #[cfg(feature = "impl-sv39")]
+        {
+            return crate::user_aspace::with_user_aspace_mut_and_flush(aspace_ptr, |aspace| {
+                if !aspace.madvise_range_mapped(VirtAddr(start), end - start) {
+                    return Err(MmError::InvalidAddress);
+                }
+                let mut vpn = VirtAddr(start).floor_page();
+                let vpn_end = VirtAddr(end).floor_page();
+                while vpn.0 < vpn_end.0 {
+                    let page = vpn.start_addr();
+                    if aspace.translate_addr(page)?.is_none() &&
+                       !MmapOps::handle_page_fault(aspace, &mut alloc, page, access)?
+                    {
+                        return Err(MmError::InvalidAddress);
+                    }
+                    vpn = VirtPageNum(vpn.0 + 1);
+                }
+                Ok(())
+            });
+        }
+        #[cfg(all(not(feature = "impl-sv39"), feature = "impl-loongarch64"))]
+        {
+            return crate::user_aspace::with_user_aspace_mut_and_flush(aspace_ptr, |aspace| {
+                if !aspace.madvise_range_mapped(VirtAddr(start), end - start) {
+                    return Err(MmError::InvalidAddress);
+                }
+                let mut vpn = VirtAddr(start).floor_page();
+                let vpn_end = VirtAddr(end).floor_page();
+                while vpn.0 < vpn_end.0 {
+                    let page = vpn.start_addr();
+                    if aspace.translate_addr(page)?.is_none() &&
+                       !MmapOps::handle_page_fault(aspace, &mut alloc, page, access)?
+                    {
+                        return Err(MmError::InvalidAddress);
+                    }
+                    vpn = VirtPageNum(vpn.0 + 1);
+                }
+                Ok(())
+            });
+        }
+        #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
+        {
+            let _ = (aspace_ptr, start, end, write, access, &mut alloc);
+            Err(MmError::Unsupported)
+        }
+    }
+
+    /// 返回区间内各页的驻留位（Linux `mincore` 低位语义）。
+    pub fn mincore_user_range(aspace_ptr : usize,
+                              addr : usize,
+                              len : usize,
+                              residency : &mut [u8])
+                              -> api_v0::error::MmResult<()> {
+        use api_v0::addr::{VirtAddr, VirtPageNum, PAGE_SIZE};
+        use api_v0::address_space::AddressSpaceOps;
+        use api_v0::error::MmError;
+
+        let end = addr.checked_add(len).ok_or(MmError::InvalidAddress)?;
+        let page_count = len.checked_add(PAGE_SIZE - 1)
+                            .ok_or(MmError::InvalidAddress)? /
+                         PAGE_SIZE;
+        if addr & (PAGE_SIZE - 1) != 0 || residency.len() != page_count {
+            return Err(MmError::InvalidAddress);
+        }
+        #[cfg(feature = "impl-sv39")]
+        {
+            return crate::user_aspace::with_user_aspace_mut(aspace_ptr, |aspace| {
+                if !aspace.madvise_range_mapped(VirtAddr(addr), end - addr) {
+                    return Err(MmError::InvalidAddress);
+                }
+                let mut vpn = VirtAddr(addr).floor_page();
+                for byte in residency {
+                    *byte = u8::from(aspace.translate_addr(vpn.start_addr())?.is_some());
+                    vpn = VirtPageNum(vpn.0 + 1);
+                }
+                Ok(())
+            });
+        }
+        #[cfg(all(not(feature = "impl-sv39"), feature = "impl-loongarch64"))]
+        {
+            return crate::user_aspace::with_user_aspace_mut(aspace_ptr, |aspace| {
+                if !aspace.madvise_range_mapped(VirtAddr(addr), end - addr) {
+                    return Err(MmError::InvalidAddress);
+                }
+                let mut vpn = VirtAddr(addr).floor_page();
+                for byte in residency {
+                    *byte = u8::from(aspace.translate_addr(vpn.start_addr())?.is_some());
+                    vpn = VirtPageNum(vpn.0 + 1);
+                }
+                Ok(())
+            });
+        }
+        #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
+        {
+            let _ = (aspace_ptr, addr, end, residency);
+            Err(MmError::Unsupported)
+        }
+    }
+
+    /// 预取当前地址空间中的全部 lazy 用户 VMA，供 `mlockall(MCL_CURRENT)`。
+    pub fn prefault_all_current_user_ranges(aspace_ptr : usize)
+                                             -> api_v0::error::MmResult<()> {
+        let mut alloc = crate::frame_alloctor::GlobalPhysFrameAllocator;
+        #[cfg(feature = "impl-sv39")]
+        {
+            return crate::user_aspace::with_user_aspace_mut_and_flush(aspace_ptr, |aspace| {
+                aspace.prefault_all_current_user_ranges(&mut alloc)
+            });
+        }
+        #[cfg(all(not(feature = "impl-sv39"), feature = "impl-loongarch64"))]
+        {
+            return crate::user_aspace::with_user_aspace_mut_and_flush(aspace_ptr, |aspace| {
+                aspace.prefault_all_current_user_ranges(&mut alloc)
+            });
+        }
+        #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
+        {
+            let _ = (aspace_ptr, &mut alloc);
+            Err(api_v0::error::MmError::Unsupported)
+        }
+    }
+
     pub fn madvise_range_shared_or_file(aspace_ptr: usize,
                                         addr: usize,
                                         len: usize)

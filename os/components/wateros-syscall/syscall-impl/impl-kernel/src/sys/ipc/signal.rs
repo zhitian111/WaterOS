@@ -1104,7 +1104,7 @@ fn signal_identity(credentials : cred::ProcessCredentials,
                      session_id : session_id.raw() }
 }
 
-fn check_signal_permission(process : ProcessId, sig : usize) -> Result<(), ErrNo> {
+pub(crate) fn check_signal_permission(process : ProcessId, sig : usize) -> Result<(), ErrNo> {
     let caller_process = task::current_process_snapshot().ok_or(ErrNo::ESRCH)?;
     let target_process = task::process_snapshot(process).ok_or(ErrNo::ESRCH)?;
     let target_credentials =
@@ -1125,7 +1125,7 @@ fn check_signal_permission(process : ProcessId, sig : usize) -> Result<(), ErrNo
     }
 }
 
-fn send_signal_to_process(process : ProcessId, sig : usize) -> Result<(), ErrNo> {
+pub(crate) fn send_signal_to_process(process : ProcessId, sig : usize) -> Result<(), ErrNo> {
     if task::leader_task_for_process(process).is_none() {
         return Err(ErrNo::ESRCH);
     }

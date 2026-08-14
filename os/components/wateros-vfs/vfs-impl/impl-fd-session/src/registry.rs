@@ -695,6 +695,18 @@ impl PerTaskFdRegistry {
             .duplicate()
     }
 
+    /// 复制指定任务的 fd 为一个尚未安装进任何 fd 表的独立句柄。
+    ///
+    /// `pidfd_getfd` 使用该入口跨进程取得打开文件描述；调用方随后必须把返回
+    /// 句柄安装到自己的 fd 表。这里不长期持有 registry 或 fd 槽锁。
+    pub fn duplicate_io_for_task(&mut self,
+                                 task_id : task::TaskId,
+                                 fd : usize)
+                                 -> VfsResult<Box<dyn VfsIoHandle>> {
+        let handle = self.io_handle_for_task(task_id, fd)?;
+        handle.with_io(|io| io.duplicate())
+    }
+
     /// 按任务关闭 fd；关闭时调用句柄的 `close`。
     // 本方法代码由AI完成
     pub fn close_fd_for_task(&mut self, task_id : task::TaskId, fd : usize) -> VfsResult<()> {

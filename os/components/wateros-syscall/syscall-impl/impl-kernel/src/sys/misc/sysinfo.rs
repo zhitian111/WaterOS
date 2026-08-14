@@ -12,8 +12,6 @@ const GRND_NONBLOCK: usize = 0x0001;
 const GRND_RANDOM: usize = 0x0002;
 const GRND_INSECURE: usize = 0x0004;
 const GETRANDOM_ALLOWED_FLAGS: usize = GRND_NONBLOCK | GRND_RANDOM | GRND_INSECURE;
-const SYSINFO_TOTAL_RAM: usize = wateros_base_config::mm::QEMU_VIRT_PHYS_RAM_SIZE;
-const SYSINFO_FREE_RAM: usize = SYSINFO_TOTAL_RAM / 2;
 const UTS_VALUE_MAX: usize = UTS_LEN - 1;
 
 #[derive(Clone, Copy)]
@@ -158,18 +156,22 @@ pub(crate) fn sys_sysinfo(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
+    let memory = mm::frame_alloctor::frame_mem_stats();
+    let totalram = usize::try_from(memory.total_bytes()).unwrap_or(usize::MAX);
+    let freeram = usize::try_from(memory.free_bytes()).unwrap_or(usize::MAX);
+    let process_count = task::all_process_pids().len().min(u16::MAX as usize) as u16;
     let info = UserSysInfo {
         uptime: platform::timer::now_duration()
                     .map(|duration| duration.as_secs() as isize)
                     .unwrap_or(0),
         loads: [0; 3],
-        totalram: SYSINFO_TOTAL_RAM,
-        freeram: SYSINFO_FREE_RAM,
+        totalram,
+        freeram,
         sharedram: 0,
         bufferram: 0,
         totalswap: 0,
         freeswap: 0,
-        procs: 1,
+        procs: process_count,
         pad: 0,
         totalhigh: 0,
         freehigh: 0,

@@ -10,7 +10,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/syscall.h>
+#include <sys/mman.h>
+#include <sys/msg.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
@@ -45,6 +48,28 @@
 #ifndef __NR_signalfd4
 #define __NR_signalfd4 74
 #endif
+#ifndef __NR_memfd_create
+#define __NR_memfd_create 279
+#endif
+#ifndef __NR_inotify_init1
+#define __NR_inotify_init1 26
+#define __NR_inotify_add_watch 27
+#define __NR_inotify_rm_watch 28
+#endif
+#ifndef __NR_openat2
+#define __NR_openat2 437
+#endif
+#ifndef __NR_futex
+#define __NR_futex 98
+#endif
+#ifndef __NR_pidfd_send_signal
+#define __NR_pidfd_send_signal 424
+#define __NR_pidfd_open 434
+#define __NR_pidfd_getfd 438
+#endif
+#ifndef __NR_clone3
+#define __NR_clone3 435
+#endif
 
 #define IOPRIO_WHO_PROCESS 1
 #define IOPRIO_CLASS_BE 2
@@ -54,9 +79,89 @@
 #define TFD_CLOEXEC 02000000
 #define SFD_NONBLOCK 04000
 #define SFD_CLOEXEC 02000000
+#ifndef MFD_CLOEXEC
+#define MFD_CLOEXEC 0x0001U
+#define MFD_ALLOW_SEALING 0x0002U
+#endif
+#ifndef F_ADD_SEALS
+#define F_ADD_SEALS 1033
+#define F_GET_SEALS 1034
+#define F_SEAL_SEAL 0x0001
+#define F_SEAL_SHRINK 0x0002
+#define F_SEAL_GROW 0x0004
+#define F_SEAL_WRITE 0x0008
+#endif
 #ifndef MSG_WAITFORONE
 #define MSG_WAITFORONE 0x10000
 #endif
+#ifndef MADV_POPULATE_WRITE
+#define MADV_POPULATE_WRITE 23
+#endif
+
+#define IN_ACCESS       0x00000001U
+#define IN_MODIFY       0x00000002U
+#define IN_ATTRIB       0x00000004U
+#define IN_MOVED_FROM   0x00000040U
+#define IN_MOVED_TO     0x00000080U
+#define IN_CREATE       0x00000100U
+#define IN_DELETE       0x00000200U
+#define IN_DELETE_SELF  0x00000400U
+#define IN_IGNORED      0x00008000U
+#define IN_NONBLOCK     00004000
+#define IN_CLOEXEC      02000000
+
+struct wos_inotify_event {
+    int32_t wd;
+    uint32_t mask;
+    uint32_t cookie;
+    uint32_t len;
+    char name[];
+};
+
+struct wos_open_how {
+    uint64_t flags;
+    uint64_t mode;
+    uint64_t resolve;
+};
+
+#define RESOLVE_NO_SYMLINKS 0x04U
+#define RESOLVE_BENEATH     0x08U
+#define RESOLVE_CACHED      0x20U
+#define FUTEX_WAIT_BITSET   9
+#define FUTEX_WAKE_BITSET   10
+#define FUTEX_CMP_REQUEUE   4
+#define FUTEX_WAIT          0
+#define FUTEX_WAKE          1
+#define FUTEX_WAKE_OP       5
+#define FUTEX_OP_ADD        1
+#define FUTEX_OP_CMP_EQ     0
+#define FUTEX_OP_CMP_NE     1
+#define FUTEX_OP(op, oparg, cmp, cmparg) \
+    ((((op) & 0xfU) << 28) | (((cmp) & 0xfU) << 24) | \
+     (((oparg) & 0xfffU) << 12) | ((cmparg) & 0xfffU))
+#define CLONE_PIDFD         0x00001000ULL
+
+struct wos_clone_args {
+    uint64_t flags;
+    uint64_t pidfd;
+    uint64_t child_tid;
+    uint64_t parent_tid;
+    uint64_t exit_signal;
+    uint64_t stack;
+    uint64_t stack_size;
+    uint64_t tls;
+    uint64_t set_tid;
+    uint64_t set_tid_size;
+    uint64_t cgroup;
+};
+
+struct wos_msg_buf {
+    long mtype;
+    char mtext[64];
+};
+
+_Static_assert(sizeof(struct wos_inotify_event) == 16,
+               "inotify_event ABI size");
 
 static void fail(const char *step) {
     fprintf(stderr, "[FAIL] %s: errno=%d (%s)\n", step, errno, strerror(errno));
@@ -367,6 +472,566 @@ int main(void) {
     if (sigprocmask(SIG_UNBLOCK, &signal_mask, NULL) < 0)
         fail("unblock signalfd signals");
 
+    int memfd = syscall(__NR_memfd_create, "wateros-smoke",
+                        MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (memfd < 0)
+        fail("memfd_create");
+    require((fcntl(memfd, F_GETFD) & FD_CLOEXEC) != 0,
+            "memfd cloexec");
+    require(fcntl(memfd, F_GET_SEALS) == 0, "memfd initial seals");
+    require(ftruncate(memfd, 4096) == 0, "memfd grow");
+    require(pwrite(memfd, "memfd", 5, 0) == 5, "memfd pwrite");
+    char *memfd_map = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, memfd, 0);
+    require(memfd_map != MAP_FAILED && memcmp(memfd_map, "memfd", 5) == 0,
+            "memfd shared mmap");
+    memcpy(memfd_map, "MAP", 3);
+    require(msync(memfd_map, 4096, MS_SYNC) == 0, "memfd msync");
+    char memfd_verify[6] = {0};
+    require(pread(memfd, memfd_verify, 5, 0) == 5 &&
+            memcmp(memfd_verify, "MAPfd", 5) == 0,
+            "memfd shared writeback");
+    errno = 0;
+    require(fcntl(memfd, F_ADD_SEALS, F_SEAL_WRITE) == -1 && errno == EBUSY,
+            "memfd rejects write seal while writable mapped");
+    require(munmap(memfd_map, 4096) == 0, "memfd munmap");
+    require(fcntl(memfd, F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_GROW) == 0,
+            "memfd size seals");
+    errno = 0;
+    require(ftruncate(memfd, 2048) == -1 && errno == EPERM,
+            "memfd shrink seal");
+    errno = 0;
+    require(ftruncate(memfd, 8192) == -1 && errno == EPERM,
+            "memfd grow seal");
+    require(fcntl(memfd, F_ADD_SEALS, F_SEAL_WRITE) == 0,
+            "memfd write seal");
+    errno = 0;
+    require(pwrite(memfd, "x", 1, 0) == -1 && errno == EPERM,
+            "memfd sealed write");
+    require(fcntl(memfd, F_GET_SEALS) ==
+            (F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE),
+            "memfd seal query");
+
+    int fixed_seal_memfd = syscall(__NR_memfd_create, "wateros-fixed", 0);
+    if (fixed_seal_memfd < 0)
+        fail("memfd_create no sealing");
+    require(fcntl(fixed_seal_memfd, F_GET_SEALS) == F_SEAL_SEAL,
+            "memfd no-allow-sealing starts sealed");
+    errno = 0;
+    require(fcntl(fixed_seal_memfd, F_ADD_SEALS, F_SEAL_GROW) == -1 && errno == EPERM,
+            "memfd seal-seal blocks additions");
+
+    const char *notify_dir = "/tmp/wos-inotify";
+    const char *notify_old = "/tmp/wos-inotify/old";
+    const char *notify_new = "/tmp/wos-inotify/new";
+    unlink(notify_old);
+    unlink(notify_new);
+    rmdir(notify_dir);
+    require(mkdir(notify_dir, 0700) == 0, "inotify test mkdir");
+    int notify_fd = syscall(__NR_inotify_init1, IN_NONBLOCK | IN_CLOEXEC);
+    if (notify_fd < 0)
+        fail("inotify_init1");
+    require((fcntl(notify_fd, F_GETFD) & FD_CLOEXEC) != 0,
+            "inotify cloexec");
+    int dir_wd = syscall(__NR_inotify_add_watch, notify_fd, notify_dir,
+                         IN_CREATE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO | IN_DELETE);
+    if (dir_wd < 0)
+        fail("inotify_add_watch directory");
+    int notify_file = open(notify_old, O_CREAT | O_TRUNC | O_RDWR, 0600);
+    if (notify_file < 0 || write(notify_file, "event", 5) != 5)
+        fail("create inotify file");
+    int file_wd = syscall(__NR_inotify_add_watch, notify_fd, notify_old,
+                          IN_ATTRIB | IN_DELETE_SELF);
+    if (file_wd < 0)
+        fail("inotify_add_watch file");
+    require(chmod(notify_old, 0640) == 0, "inotify chmod");
+    require(rename(notify_old, notify_new) == 0, "inotify rename");
+    require(unlink(notify_new) == 0, "inotify unlink");
+
+    struct pollfd notify_poll = {.fd = notify_fd, .events = POLLIN};
+    require(poll(&notify_poll, 1, 100) == 1 && (notify_poll.revents & POLLIN) != 0,
+            "inotify poll");
+    unsigned char notify_events[2048];
+    ssize_t notify_bytes = read(notify_fd, notify_events, sizeof(notify_events));
+    if (notify_bytes < 0)
+        fail("inotify event read");
+    int saw_create = 0, saw_modify = 0, saw_from = 0, saw_to = 0, saw_delete = 0;
+    int saw_attrib = 0, saw_delete_self = 0, saw_ignored = 0;
+    uint32_t from_cookie = 0, to_cookie = 0;
+    for (size_t offset = 0; offset + sizeof(struct wos_inotify_event) <= (size_t)notify_bytes;) {
+        struct wos_inotify_event *event =
+            (struct wos_inotify_event *)(notify_events + offset);
+        size_t event_size = sizeof(*event) + event->len;
+        require(event_size >= sizeof(*event) && offset + event_size <= (size_t)notify_bytes,
+                "inotify event bounds");
+        if (event->wd == dir_wd && event->len != 0 && strcmp(event->name, "old") == 0) {
+            saw_create |= (event->mask & IN_CREATE) != 0;
+            saw_modify |= (event->mask & IN_MODIFY) != 0;
+            if (event->mask & IN_MOVED_FROM) {
+                saw_from = 1;
+                from_cookie = event->cookie;
+            }
+        }
+        if (event->wd == dir_wd && event->len != 0 && strcmp(event->name, "new") == 0) {
+            if (event->mask & IN_MOVED_TO) {
+                saw_to = 1;
+                to_cookie = event->cookie;
+            }
+            saw_delete |= (event->mask & IN_DELETE) != 0;
+        }
+        if (event->wd == file_wd) {
+            saw_attrib |= (event->mask & IN_ATTRIB) != 0;
+            saw_delete_self |= (event->mask & IN_DELETE_SELF) != 0;
+            saw_ignored |= (event->mask & IN_IGNORED) != 0;
+        }
+        offset += event_size;
+    }
+    require(saw_create && saw_modify && saw_from && saw_to && saw_delete,
+            "inotify directory event set");
+    require(from_cookie != 0 && from_cookie == to_cookie,
+            "inotify rename cookie");
+    require(saw_attrib && saw_delete_self && saw_ignored,
+            "inotify watched-file lifecycle");
+
+    notify_file = open(notify_old, O_CREAT | O_TRUNC | O_RDWR, 0600);
+    if (notify_file < 0)
+        fail("inotify rollback seed");
+    errno = 0;
+    require(syscall(__NR_read, notify_fd, (void *)invalid_user_address,
+                    sizeof(notify_events)) == -1 && errno == EFAULT,
+            "inotify user fault");
+    notify_bytes = read(notify_fd, notify_events, sizeof(notify_events));
+    require(notify_bytes >= (ssize_t)sizeof(struct wos_inotify_event),
+            "inotify EFAULT rollback");
+    require(syscall(__NR_inotify_rm_watch, notify_fd, dir_wd) == 0,
+            "inotify_rm_watch");
+
+    const char *openat2_dir = "/tmp/wos-openat2";
+    const char *openat2_file = "/tmp/wos-openat2/file";
+    const char *openat2_link = "/tmp/wos-openat2/link";
+    unlink(openat2_link);
+    unlink(openat2_file);
+    rmdir(openat2_dir);
+    require(mkdir(openat2_dir, 0700) == 0, "openat2 test mkdir");
+    int openat2_dirfd = open(openat2_dir, O_RDONLY | O_DIRECTORY);
+    if (openat2_dirfd < 0)
+        fail("openat2 directory fd");
+    struct wos_open_how how = {.flags = O_CREAT | O_RDWR | O_CLOEXEC, .mode = 0600};
+    int openat2_fd = syscall(__NR_openat2, openat2_dirfd, "file", &how, sizeof(how));
+    if (openat2_fd < 0)
+        fail("openat2 create");
+    require((fcntl(openat2_fd, F_GETFD) & FD_CLOEXEC) != 0 &&
+            write(openat2_fd, "openat2", 7) == 7,
+            "openat2 flags and I/O");
+    require(symlink("file", openat2_link) == 0, "openat2 symlink seed");
+    how.flags = O_RDONLY;
+    how.mode = 0;
+    how.resolve = RESOLVE_NO_SYMLINKS;
+    errno = 0;
+    require(syscall(__NR_openat2, openat2_dirfd, "link", &how, sizeof(how)) == -1 &&
+            errno == ELOOP, "openat2 no symlinks");
+    how.resolve = RESOLVE_BENEATH;
+    errno = 0;
+    require(syscall(__NR_openat2, openat2_dirfd, "../escape", &how, sizeof(how)) == -1 &&
+            errno == EXDEV, "openat2 beneath escape");
+    how.resolve = RESOLVE_CACHED;
+    errno = 0;
+    require(syscall(__NR_openat2, openat2_dirfd, "file", &how, sizeof(how)) == -1 &&
+            errno == EAGAIN, "openat2 cached fallback");
+    struct {
+        struct wos_open_how how;
+        uint64_t extension;
+    } extended_how = {.how = {.flags = O_RDONLY}};
+    int extended_fd = syscall(__NR_openat2, openat2_dirfd, "file", &extended_how,
+                              sizeof(extended_how));
+    if (extended_fd < 0)
+        fail("openat2 zero extension");
+    close(extended_fd);
+    extended_how.extension = 1;
+    errno = 0;
+    require(syscall(__NR_openat2, openat2_dirfd, "file", &extended_how,
+                    sizeof(extended_how)) == -1 && errno == E2BIG,
+            "openat2 rejects nonzero extension");
+
+    int futex_memfd = syscall(__NR_memfd_create, "futex-bitset", 0);
+    if (futex_memfd < 0 || ftruncate(futex_memfd, 4096) < 0)
+        fail("futex bitset backing");
+    uint32_t *futex_words = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+                                 MAP_SHARED, futex_memfd, 0);
+    require(futex_words != MAP_FAILED, "futex bitset shared map");
+    futex_words[0] = 0;
+    futex_words[1] = 0;
+    pid_t bit_child_one = fork();
+    if (bit_child_one < 0)
+        fail("fork futex waiter one");
+    if (bit_child_one == 0) {
+        __atomic_fetch_add(&futex_words[1], 1, __ATOMIC_SEQ_CST);
+        long result = syscall(__NR_futex, &futex_words[0], FUTEX_WAIT_BITSET,
+                              0, NULL, NULL, 0x1U);
+        _exit(result == 0 ? 0 : 1);
+    }
+    pid_t bit_child_two = fork();
+    if (bit_child_two < 0)
+        fail("fork futex waiter two");
+    if (bit_child_two == 0) {
+        __atomic_fetch_add(&futex_words[1], 1, __ATOMIC_SEQ_CST);
+        long result = syscall(__NR_futex, &futex_words[0], FUTEX_WAIT_BITSET,
+                              0, NULL, NULL, 0x2U);
+        _exit(result == 0 ? 0 : 1);
+    }
+    for (int attempt = 0; attempt < 100 &&
+                              __atomic_load_n(&futex_words[1], __ATOMIC_SEQ_CST) != 2;
+         ++attempt) {
+        struct timespec short_pause = {.tv_sec = 0, .tv_nsec = 1000000L};
+        nanosleep(&short_pause, NULL);
+    }
+    require(__atomic_load_n(&futex_words[1], __ATOMIC_SEQ_CST) == 2,
+            "futex waiters started");
+    struct timespec futex_settle = {.tv_sec = 0, .tv_nsec = 30000000L};
+    nanosleep(&futex_settle, NULL);
+    require(syscall(__NR_futex, &futex_words[0], FUTEX_WAKE_BITSET,
+                    1, NULL, NULL, 0x1U) == 1,
+            "futex bitset selective wake one");
+    require(waitpid(bit_child_one, &status, 0) == bit_child_one &&
+            WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "futex bitset first waiter result");
+    require(waitpid(bit_child_two, &status, WNOHANG) == 0,
+            "futex bitset leaves nonmatching waiter asleep");
+    require(syscall(__NR_futex, &futex_words[0], FUTEX_WAKE_BITSET,
+                    1, NULL, NULL, 0x2U) == 1,
+            "futex bitset selective wake two");
+    require(waitpid(bit_child_two, &status, 0) == bit_child_two &&
+            WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "futex bitset second waiter result");
+
+    /* requeue 后 waiter 的 bitset 与生命周期登记必须跟随目标地址。 */
+    futex_words[0] = 0;
+    futex_words[1] = 0;
+    futex_words[2] = 0;
+    pid_t requeue_child = fork();
+    if (requeue_child < 0)
+        fail("fork futex requeue waiter");
+    if (requeue_child == 0) {
+        __atomic_store_n(&futex_words[2], 1, __ATOMIC_SEQ_CST);
+        long result = syscall(__NR_futex, &futex_words[0], FUTEX_WAIT_BITSET,
+                              0, NULL, NULL, 0x4U);
+        _exit(result == 0 ? 0 : 1);
+    }
+    for (int attempt = 0; attempt < 100 &&
+                              __atomic_load_n(&futex_words[2], __ATOMIC_SEQ_CST) != 1;
+         ++attempt) {
+        struct timespec short_pause = {.tv_sec = 0, .tv_nsec = 1000000L};
+        nanosleep(&short_pause, NULL);
+    }
+    require(__atomic_load_n(&futex_words[2], __ATOMIC_SEQ_CST) == 1,
+            "futex requeue waiter started");
+    nanosleep(&futex_settle, NULL);
+    require(syscall(__NR_futex, &futex_words[0], FUTEX_CMP_REQUEUE,
+                    0, 1, &futex_words[1], 0) == 1,
+            "futex cmp requeue one");
+    require(waitpid(requeue_child, &status, WNOHANG) == 0,
+            "futex requeue does not wake moved waiter");
+    require(syscall(__NR_futex, &futex_words[1], FUTEX_WAKE_BITSET,
+                    1, NULL, NULL, 0x4U) == 1,
+            "futex wake bitset after requeue");
+    require(waitpid(requeue_child, &status, 0) == requeue_child &&
+            WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "futex requeue waiter result");
+
+    /* WAKE_OP 必须先原子更新第二个 word，再按更新前的值决定是否唤醒。 */
+    futex_words[0] = 0;
+    futex_words[1] = 7;
+    futex_words[3] = 0;
+    pid_t wake_op_child = fork();
+    if (wake_op_child < 0)
+        fail("fork futex wake-op waiter");
+    if (wake_op_child == 0) {
+        __atomic_store_n(&futex_words[3], 1, __ATOMIC_SEQ_CST);
+        long result = syscall(__NR_futex, &futex_words[1], FUTEX_WAIT,
+                              7, NULL, NULL, 0);
+        _exit(result == 0 ? 0 : 1);
+    }
+    for (int attempt = 0; attempt < 100 &&
+                              __atomic_load_n(&futex_words[3], __ATOMIC_SEQ_CST) != 1;
+         ++attempt) {
+        struct timespec short_pause = {.tv_sec = 0, .tv_nsec = 1000000L};
+        nanosleep(&short_pause, NULL);
+    }
+    require(__atomic_load_n(&futex_words[3], __ATOMIC_SEQ_CST) == 1,
+            "futex wake-op waiter started");
+    nanosleep(&futex_settle, NULL);
+    unsigned wake_op = FUTEX_OP(FUTEX_OP_ADD, 2, FUTEX_OP_CMP_EQ, 7);
+    require(syscall(__NR_futex, &futex_words[0], FUTEX_WAKE_OP,
+                    0, 1, &futex_words[1], wake_op) == 1 &&
+            __atomic_load_n(&futex_words[1], __ATOMIC_SEQ_CST) == 9,
+            "futex wake-op atomic update and conditional wake");
+    require(waitpid(wake_op_child, &status, 0) == wake_op_child &&
+            WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "futex wake-op waiter result");
+
+    int clone_pidfd = -1;
+    struct wos_clone_args clone_args;
+    memset(&clone_args, 0, sizeof(clone_args));
+    clone_args.flags = CLONE_PIDFD;
+    clone_args.pidfd = (uintptr_t)&clone_pidfd;
+    clone_args.exit_signal = SIGCHLD;
+    pid_t clone_pidfd_child = syscall(__NR_clone3, &clone_args, sizeof(clone_args));
+    if (clone_pidfd_child < 0)
+        fail("clone3 CLONE_PIDFD");
+    if (clone_pidfd_child == 0)
+        _exit(23);
+    require(clone_pidfd >= 0 &&
+            (fcntl(clone_pidfd, F_GETFD) & FD_CLOEXEC) != 0,
+            "clone3 returned close-on-exec pidfd");
+    struct pollfd clone_pidfd_poll = {.fd = clone_pidfd, .events = POLLIN};
+    require(poll(&clone_pidfd_poll, 1, 5000) == 1 &&
+            (clone_pidfd_poll.revents & (POLLIN | POLLHUP)) != 0,
+            "clone pidfd poll exit readiness");
+    siginfo_t clone_pidfd_info;
+    memset(&clone_pidfd_info, 0, sizeof(clone_pidfd_info));
+    require(syscall(__NR_waitid, 3, clone_pidfd, &clone_pidfd_info,
+                    WEXITED, NULL) == 0 &&
+            clone_pidfd_info.si_pid == clone_pidfd_child &&
+            clone_pidfd_info.si_status == 23,
+            "clone pidfd waitid exit status");
+
+    /* WAKE_OP：条件不满足时仍原子更新第二个 word，但跳过第二队列唤醒。 */
+    futex_words[0] = 0;
+    futex_words[1] = 7;
+    futex_words[4] = 0;
+    pid_t wake_op_miss_child = fork();
+    if (wake_op_miss_child < 0)
+        fail("fork futex wake-op miss waiter");
+    if (wake_op_miss_child == 0) {
+        __atomic_store_n(&futex_words[4], 1, __ATOMIC_SEQ_CST);
+        long result = syscall(__NR_futex, &futex_words[1], FUTEX_WAIT,
+                              7, NULL, NULL, 0);
+        _exit(result == 0 ? 0 : 1);
+    }
+    for (int attempt = 0; attempt < 100 &&
+                              __atomic_load_n(&futex_words[4], __ATOMIC_SEQ_CST) != 1;
+         ++attempt) {
+        struct timespec short_pause = {.tv_sec = 0, .tv_nsec = 1000000L};
+        nanosleep(&short_pause, NULL);
+    }
+    require(__atomic_load_n(&futex_words[4], __ATOMIC_SEQ_CST) == 1,
+            "futex wake-op miss waiter started");
+    nanosleep(&futex_settle, NULL);
+    unsigned wake_op_miss = FUTEX_OP(FUTEX_OP_ADD, 2, FUTEX_OP_CMP_NE, 7);
+    require(syscall(__NR_futex, &futex_words[0], FUTEX_WAKE_OP,
+                    0, 1, &futex_words[1], wake_op_miss) == 0 &&
+            __atomic_load_n(&futex_words[1], __ATOMIC_SEQ_CST) == 9,
+            "futex wake-op updates word but skips second wake on miss");
+    require(waitpid(wake_op_miss_child, &status, WNOHANG) == 0,
+            "futex wake-op miss leaves waiter asleep");
+    require(syscall(__NR_futex, &futex_words[1], FUTEX_WAKE, 1, NULL, NULL, 0) == 1,
+            "futex wake-op miss waiter manual wake");
+    require(waitpid(wake_op_miss_child, &status, 0) == wake_op_miss_child &&
+            WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "futex wake-op miss waiter result");
+
+    errno = 0;
+    require(syscall(__NR_futex, &futex_words[0], FUTEX_WAKE_OP,
+                    0, 1, &futex_words[1], FUTEX_OP(5, 0, FUTEX_OP_CMP_EQ, 0)) == -1 &&
+            errno == ENOSYS,
+            "futex wake-op rejects unsupported operation");
+
+    /* clone3 CLONE_PIDFD：pidfd 指针为空时应在启动子进程前失败。 */
+    struct wos_clone_args zero_pidfd_args;
+    memset(&zero_pidfd_args, 0, sizeof(zero_pidfd_args));
+    zero_pidfd_args.flags = CLONE_PIDFD;
+    zero_pidfd_args.pidfd = 0;
+    zero_pidfd_args.exit_signal = SIGCHLD;
+    errno = 0;
+    require(syscall(__NR_clone3, &zero_pidfd_args, sizeof(zero_pidfd_args)) == -1 &&
+            errno == EFAULT,
+            "clone3 CLONE_PIDFD with null pidfd pointer");
+
+    /* ── SysV 消息队列：msgget / msgsnd / msgrcv / msgctl ─────────────── */
+    long msg_key = 0x57575331L;
+    int msgid = msgget((key_t)msg_key, IPC_CREAT | IPC_EXCL | 0600);
+    if (msgid < 0)
+        fail("msgget create");
+    require(msgget((key_t)msg_key, 0) == msgid,
+            "msgget key lookup returns same id");
+    errno = 0;
+    require(msgget((key_t)msg_key, IPC_CREAT | IPC_EXCL) == -1 && errno == EEXIST,
+            "msgget exclusive create conflicts");
+    errno = 0;
+    require(msgget((key_t)0x57575332L, 0) == -1 && errno == ENOENT,
+            "msgget missing key without create");
+
+    int msg_priv_id = msgget(IPC_PRIVATE, 0600);
+    if (msg_priv_id < 0)
+        fail("msgget private");
+    struct wos_msg_buf msg_send = {.mtype = 1};
+    memcpy(msg_send.mtext, "hello", 5);
+    require(msgsnd(msg_priv_id, &msg_send, 5, 0) == 0, "msgsnd basic");
+    struct wos_msg_buf msg_recv;
+    memset(&msg_recv, 0, sizeof(msg_recv));
+    long msg_received = msgrcv(msg_priv_id, &msg_recv, sizeof(msg_recv.mtext), 0, 0);
+    require(msg_received == 5 && msg_recv.mtype == 1 &&
+            memcmp(msg_recv.mtext, "hello", 5) == 0,
+            "msgrcv basic roundtrip");
+
+    /* msgtyp 选择：>0 只取同类型；<0 取 <= |msgtyp| 的最小类型；0 取队首。 */
+    msg_send.mtype = 2;
+    memcpy(msg_send.mtext, "two", 3);
+    require(msgsnd(msg_priv_id, &msg_send, 3, 0) == 0, "msgsnd type two");
+    msg_send.mtype = 1;
+    memcpy(msg_send.mtext, "one", 3);
+    require(msgsnd(msg_priv_id, &msg_send, 3, 0) == 0, "msgsnd type one");
+    memset(&msg_recv, 0, sizeof(msg_recv));
+    msg_received = msgrcv(msg_priv_id, &msg_recv, sizeof(msg_recv.mtext), 1, 0);
+    require(msg_received == 3 && msg_recv.mtype == 1 &&
+            memcmp(msg_recv.mtext, "one", 3) == 0,
+            "msgrcv positive type selects only matching");
+    msg_send.mtype = 3;
+    memcpy(msg_send.mtext, "thr", 3);
+    require(msgsnd(msg_priv_id, &msg_send, 3, 0) == 0, "msgsnd type three");
+    memset(&msg_recv, 0, sizeof(msg_recv));
+    msg_received = msgrcv(msg_priv_id, &msg_recv, sizeof(msg_recv.mtext), -2, 0);
+    require(msg_received == 3 && msg_recv.mtype == 2 &&
+            memcmp(msg_recv.mtext, "two", 3) == 0,
+            "msgrcv negative type picks smallest at or below bound");
+    memset(&msg_recv, 0, sizeof(msg_recv));
+    msg_received = msgrcv(msg_priv_id, &msg_recv, sizeof(msg_recv.mtext), 0, 0);
+    require(msg_received == 3 && msg_recv.mtype == 3 &&
+            memcmp(msg_recv.mtext, "thr", 3) == 0,
+            "msgrcv zero type consumes fifo head");
+
+    /* MSG_NOERROR 截断；无该标志且超长返回 E2BIG 且消息保留。 */
+    msg_send.mtype = 1;
+    memcpy(msg_send.mtext, "abcdefghijkl", 12);
+    require(msgsnd(msg_priv_id, &msg_send, 12, 0) == 0, "msgsnd long payload");
+    memset(&msg_recv, 0, sizeof(msg_recv));
+    msg_received = msgrcv(msg_priv_id, &msg_recv, 4, 0, MSG_NOERROR);
+    require(msg_received == 4 && memcmp(msg_recv.mtext, "abcd", 4) == 0,
+            "msgrcv MSG_NOERROR truncates");
+    require(msgsnd(msg_priv_id, &msg_send, 12, 0) == 0, "msgsnd long again");
+    errno = 0;
+    require(msgrcv(msg_priv_id, &msg_recv, 4, 0, 0) == -1 && errno == E2BIG,
+            "msgrcv oversized without MSG_NOERROR");
+    memset(&msg_recv, 0, sizeof(msg_recv));
+    msg_received = msgrcv(msg_priv_id, &msg_recv, sizeof(msg_recv.mtext), 0, 0);
+    require(msg_received == 12 && memcmp(msg_recv.mtext, "abcdefghijkl", 12) == 0,
+            "msgrcv oversized message retained for full read");
+
+    /* 空队列 IPC_NOWAIT 返回 ENOMSG；非法参数返回 EINVAL。 */
+    errno = 0;
+    require(msgrcv(msg_priv_id, &msg_recv, sizeof(msg_recv.mtext), 0, IPC_NOWAIT) == -1 &&
+            errno == ENOMSG,
+            "msgrcv nonblocking empty queue");
+    msg_send.mtype = 0;
+    errno = 0;
+    require(msgsnd(msg_priv_id, &msg_send, 1, 0) == -1 && errno == EINVAL,
+            "msgsnd rejects nonpositive type");
+    errno = 0;
+    require(msgrcv(msg_priv_id, &msg_recv, sizeof(msg_recv.mtext), 0,
+                   MSG_EXCEPT) == -1 && errno == EINVAL,
+            "msgrcv rejects MSG_EXCEPT with nonpositive type");
+
+    /* msgctl IPC_STAT 反映队列当前消息数与字节数。 */
+    int msg_stat_id = msgget(IPC_PRIVATE, 0600);
+    if (msg_stat_id < 0)
+        fail("msgget stat queue");
+    msg_send.mtype = 1;
+    memcpy(msg_send.mtext, "ab", 2);
+    require(msgsnd(msg_stat_id, &msg_send, 2, 0) == 0, "msgsnd stat one");
+    msg_send.mtype = 2;
+    memcpy(msg_send.mtext, "cd", 2);
+    require(msgsnd(msg_stat_id, &msg_send, 2, 0) == 0, "msgsnd stat two");
+    struct msqid_ds msg_stats;
+    require(msgctl(msg_stat_id, IPC_STAT, &msg_stats) == 0 &&
+            msg_stats.msg_qnum == 2 && msg_stats.msg_cbytes == 4,
+            "msgctl stat qnum and cbytes");
+    memset(&msg_recv, 0, sizeof(msg_recv));
+    require(msgrcv(msg_stat_id, &msg_recv, sizeof(msg_recv.mtext), 0, 0) == 2,
+            "msgrcv stat drain one");
+    require(msgctl(msg_stat_id, IPC_STAT, &msg_stats) == 0 &&
+            msg_stats.msg_qnum == 1 && msg_stats.msg_cbytes == 2,
+            "msgctl stat tracks after receive");
+
+    /* IPC_RMID 唤醒阻塞接收者并返回 EIDRM。 */
+    int msg_eidrm_id = msgget(IPC_PRIVATE, 0600);
+    if (msg_eidrm_id < 0)
+        fail("msgget eidrm queue");
+    pid_t msg_waiter = fork();
+    if (msg_waiter < 0)
+        fail("fork msg waiter");
+    if (msg_waiter == 0) {
+        struct wos_msg_buf child_buf;
+        memset(&child_buf, 0, sizeof(child_buf));
+        ssize_t child_received = msgrcv(msg_eidrm_id, &child_buf,
+                                        sizeof(child_buf.mtext), 0, 0);
+        _exit(child_received == -1 && errno == EIDRM ? 0 : 1);
+    }
+    struct timespec msg_grace = {.tv_sec = 0, .tv_nsec = 50000000L};
+    nanosleep(&msg_grace, NULL);
+    require(msgctl(msg_eidrm_id, IPC_RMID, NULL) == 0,
+            "msgctl remove while receiver waits");
+    require(waitpid(msg_waiter, &status, 0) == msg_waiter &&
+            WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "blocked msgrcv interrupted by IPC_RMID returns EIDRM");
+
+    require(msgctl(msgid, IPC_RMID, NULL) == 0, "msgctl remove key queue");
+    require(msgctl(msg_priv_id, IPC_RMID, NULL) == 0, "msgctl remove private queue");
+    require(msgctl(msg_stat_id, IPC_RMID, NULL) == 0, "msgctl remove stat queue");
+
+    int pidfd_pipe[2];
+    require(pipe(pidfd_pipe) == 0, "pidfd pipe");
+    pid_t pidfd_child = fork();
+    if (pidfd_child < 0)
+        fail("fork pidfd child");
+    if (pidfd_child == 0) {
+        close(pidfd_pipe[0]);
+        sleep(30);
+        _exit(0);
+    }
+    close(pidfd_pipe[1]);
+    int pidfd = syscall(__NR_pidfd_open, pidfd_child, 0);
+    if (pidfd < 0)
+        fail("pidfd_open");
+    require((fcntl(pidfd, F_GETFD) & FD_CLOEXEC) != 0,
+            "pidfd close-on-exec");
+    int copied_child_fd = syscall(__NR_pidfd_getfd, pidfd, pidfd_pipe[1], 0);
+    if (copied_child_fd < 0)
+        fail("pidfd_getfd");
+    require(write(copied_child_fd, "P", 1) == 1,
+            "pidfd_getfd duplicated write endpoint");
+    char pidfd_byte = 0;
+    require(read(pidfd_pipe[0], &pidfd_byte, 1) == 1 && pidfd_byte == 'P',
+            "pidfd_getfd shared open file description");
+    require(syscall(__NR_pidfd_send_signal, pidfd, SIGTERM, NULL, 0) == 0,
+            "pidfd_send_signal");
+    struct pollfd pidfd_poll = {.fd = pidfd, .events = POLLIN};
+    require(poll(&pidfd_poll, 1, 5000) == 1 &&
+            (pidfd_poll.revents & (POLLIN | POLLHUP)) != 0,
+            "pidfd poll exit readiness");
+    siginfo_t pidfd_info;
+    memset(&pidfd_info, 0, sizeof(pidfd_info));
+    require(syscall(__NR_waitid, 3, pidfd, &pidfd_info, WEXITED, NULL) == 0 &&
+            pidfd_info.si_pid == pidfd_child,
+            "waitid P_PIDFD");
+
+    unsigned char *lock_area = mmap(NULL, 8192, PROT_READ | PROT_WRITE,
+                                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(lock_area != MAP_FAILED, "mlock anonymous mapping");
+    unsigned char residency[2] = {0, 0};
+    require(mincore(lock_area, 8192, residency) == 0,
+            "mincore lazy mapping");
+    require(madvise(lock_area, 8192, MADV_POPULATE_WRITE) == 0,
+            "madvise populate write");
+    residency[0] = residency[1] = 0;
+    require(mincore(lock_area, 8192, residency) == 0 &&
+            (residency[0] & 1) != 0 && (residency[1] & 1) != 0,
+            "mincore populated residency");
+    require(mlock(lock_area + 1, 4096) == 0,
+            "mlock accepts unaligned address and prefaults");
+    require(munlock(lock_area + 1, 4096) == 0,
+            "munlock mapped range");
+    require(mlockall(MCL_CURRENT | MCL_FUTURE) == 0 && munlockall() == 0,
+            "mlockall current/future in non-swapping kernel");
+
     close(pipefd[0]);
     close(pipefd[1]);
     close(source);
@@ -382,6 +1047,24 @@ int main(void) {
     close(receive_socket);
     close(send_socket);
     close(signal_fd);
+    close(memfd);
+    close(fixed_seal_memfd);
+    close(notify_file);
+    close(notify_fd);
+    close(openat2_fd);
+    close(openat2_dirfd);
+    munmap(futex_words, 4096);
+    close(futex_memfd);
+    close(clone_pidfd);
+    close(copied_child_fd);
+    close(pidfd_pipe[0]);
+    close(pidfd);
+    munmap(lock_area, 8192);
+    unlink(notify_old);
+    rmdir(notify_dir);
+    unlink(openat2_link);
+    unlink(openat2_file);
+    rmdir(openat2_dir);
     unlink(source_path);
     unlink(output_path);
     puts("[PASS] copy_file_range: content, offsets, flags");
@@ -392,5 +1075,13 @@ int main(void) {
     puts("[PASS] timerfd: nonblock, gettime, poll, periodic accumulation, dup sharing");
     puts("[PASS] recvmmsg: UDP batch data, lengths and timeout");
     puts("[PASS] signalfd: mask, poll, batch read, EFAULT rollback, source and update");
+    puts("[PASS] memfd: shared mmap/writeback, CLOEXEC, size/write seals and seal locking");
+    puts("[PASS] inotify: create/modify/move/delete, cookies, poll and EFAULT rollback");
+    puts("[PASS] openat2: versioned open_how, CLOEXEC, symlink/beneath/cache constraints");
+    puts("[PASS] futex bitset/requeue/wake-op: selective, migrated and atomic conditional wake");
+    puts("[PASS] futex wake-op: conditional miss and unsupported opcode");
+    puts("[PASS] pidfd: clone3, open, getfd, signal, poll and waitid(P_PIDFD)");
+    puts("[PASS] SysV message queues: get/snd/rcv/ctl selection, truncation and EIDRM");
+    puts("[PASS] memory residency: mincore, MADV_POPULATE, mlock and MCL_CURRENT/FUTURE");
     return 0;
 }

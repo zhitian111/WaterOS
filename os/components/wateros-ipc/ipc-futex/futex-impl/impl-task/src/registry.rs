@@ -27,6 +27,12 @@ struct FutexQueue {
     active_users : usize,
 }
 
+struct WaitingTask {
+    key : FutexKey,
+    bitset : u32,
+    wake_sequence : Arc<AtomicU64>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FutexQueueDebug {
     pub wait_queue_id : usize,
@@ -56,7 +62,7 @@ pub(crate) struct FutexRegistry {
     /// 每个正在使用的 futex key 对应的 scheduler 等待队列。
     queues : BTreeMap<FutexKey, FutexQueue>,
     /// DATA: 一个 task 同时只能挂在一个 futex key 上；用于异常退出收尾。
-    waiting_tasks : BTreeMap<TaskId, FutexKey>,
+    waiting_tasks : BTreeMap<TaskId, WaitingTask>,
     /// DATA: task 到用户 robust 链表登记的侧表；不保存或解引用用户内存。
     robust : BTreeMap<TaskId, RobustListRegistration>,
     wait_attempts : u64,
@@ -144,18 +150,27 @@ impl FutexRegistry {
     ///
     /// INVARIANT: 若 task 已登记在其他 key，旧 key 的使用权必须立即归还，
     /// 从而维持一个 task 至多对应一个 futex wait 的关系。
-    pub fn register_waiting_task(&mut self, task_id : TaskId, key : FutexKey) {
+    pub fn register_waiting_task(&mut self,
+                                 task_id : TaskId,
+                                 key : FutexKey,
+                                 bitset : u32)
+                                 -> Arc<AtomicU64> {
+        let wake_sequence = Arc::new(AtomicU64::new(0));
         let previous = self.waiting_tasks
-                           .insert(task_id, key);
-        if let Some(previous_key) = previous {
-            self.release_queue(previous_key);
+                           .insert(task_id,
+                                   WaitingTask { key,
+                                                 bitset,
+                                                 wake_sequence : wake_sequence.clone() });
+        if let Some(previous) = previous {
+            self.release_queue(previous.key);
         }
+        wake_sequence
     }
 
     pub fn finish_waiting_task(&mut self, task_id : TaskId, key : FutexKey) {
         if self.waiting_tasks
-               .get(&task_id) ==
-           Some(&key)
+               .get(&task_id)
+               .is_some_and(|waiting| waiting.key == key)
         {
             self.waiting_tasks
                 .remove(&task_id);
@@ -164,10 +179,52 @@ impl FutexRegistry {
     }
 
     pub fn cancel_waiting_task(&mut self, task_id : TaskId) {
-        if let Some(key) = self.waiting_tasks
+        if let Some(waiting) = self.waiting_tasks
                                .remove(&task_id)
         {
-            self.release_queue(key);
+            self.release_queue(waiting.key);
+        }
+    }
+
+    /// 取出与一次 `FUTEX_WAKE_BITSET` 匹配的 waiter 快照。
+    pub fn matching_waiters(&self,
+                            key : FutexKey,
+                            bitset : u32,
+                            max_wake : u32)
+                            -> Vec<(TaskId, Arc<AtomicU64>)> {
+        self.waiting_tasks
+            .iter()
+            .filter(|(_, waiting)| waiting.key == key && waiting.bitset & bitset != 0)
+            .take(max_wake as usize)
+            .map(|(task_id, waiting)| (*task_id, waiting.wake_sequence.clone()))
+            .collect()
+    }
+
+    /// 将 scheduler 已实际迁移的 waiter 登记同步到目标 futex key。
+    ///
+    /// 每个登记本身持有源队列的一次 `active_users` 引用。迁移时必须把该引用
+    /// 一并转移，否则源队列永久不能回收，而目标队列可能在 waiter 尚未返回时
+    /// 被错误释放。
+    pub fn migrate_waiting_tasks(&mut self,
+                                 task_ids : &[TaskId],
+                                 from_key : FutexKey,
+                                 to_key : FutexKey) {
+        for task_id in task_ids {
+            let should_move = self.waiting_tasks
+                                  .get(task_id)
+                                  .is_some_and(|waiting| waiting.key == from_key);
+            if !should_move {
+                continue;
+            }
+            let Some(target_queue) = self.queues.get_mut(&to_key) else {
+                debug_assert!(false, "requeue target must remain acquired");
+                continue;
+            };
+            target_queue.active_users = target_queue.active_users.saturating_add(1);
+            if let Some(waiting) = self.waiting_tasks.get_mut(task_id) {
+                waiting.key = to_key;
+            }
+            self.release_queue(from_key);
         }
     }
 

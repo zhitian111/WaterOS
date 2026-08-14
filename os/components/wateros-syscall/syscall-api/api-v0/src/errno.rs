@@ -87,6 +87,10 @@ impl ErrNo {
     pub const ENAMETOOLONG: Self = Self(36);
     /// 符号链接层数过多。
     pub const ELOOP: Self = Self(40);
+    /// SysV 消息队列中没有符合选择条件的消息。
+    pub const ENOMSG: Self = Self(42);
+    /// SysV IPC 对象在等待期间被删除。
+    pub const EIDRM: Self = Self(43);
     /// 结果缓冲区过小（如 `getcwd`）。
     pub const ERANGE: Self = Self(34);
     /// 请求的属性不存在（`getxattr`/`removexattr`）。

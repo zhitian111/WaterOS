@@ -1,5 +1,6 @@
 // 等待队列操作与唤醒后的 CPU 归属。
 use super::*;
+use crate::WaitQueueRequeueResult;
 impl MultiClassScheduler {
     pub fn allocate_wait_queue(&mut self, name : &'static str) -> WaitQueueId {
         self.wait_queues
@@ -95,12 +96,12 @@ impl MultiClassScheduler {
         }
         count
     }
-    pub fn requeue_wait_queue(&mut self,
-                              from_wait_queue_id : WaitQueueId,
-                              to_wait_queue_id : WaitQueueId,
-                              wake_count : usize,
-                              requeue_count : usize)
-                              -> usize {
+    pub fn requeue_wait_queue_detailed(&mut self,
+                                       from_wait_queue_id : WaitQueueId,
+                                       to_wait_queue_id : WaitQueueId,
+                                       wake_count : usize,
+                                       requeue_count : usize)
+                                       -> WaitQueueRequeueResult {
         let (woken, moved, _) = self.wait_queues
                                     .requeue_wait_queue(from_wait_queue_id,
                                                         to_wait_queue_id,
@@ -108,7 +109,7 @@ impl MultiClassScheduler {
                                                         requeue_count);
         let from_target = TaskWaitTarget::WaitQueue(from_wait_queue_id);
         let to_target = TaskWaitTarget::WaitQueue(to_wait_queue_id);
-        let mut valid_changed = 0usize;
+        let mut result = WaitQueueRequeueResult::default();
         for task_id in woken {
             if self.registry
                    .state(task_id) !=
@@ -119,7 +120,7 @@ impl MultiClassScheduler {
             self.registry
                 .finish_wait(task_id, TaskWaitResult::Woken);
             self.activate_ready_task(task_id, ReadyPlacement::LastCpu);
-            valid_changed = valid_changed.saturating_add(1);
+            result.woken.push(task_id);
         }
         for (task_id, _) in moved {
             if self.registry
@@ -134,9 +135,22 @@ impl MultiClassScheduler {
             }
             self.registry
                 .mark_blocking(task_id, to_target);
-            valid_changed = valid_changed.saturating_add(1);
+            result.moved.push(task_id);
         }
-        valid_changed
+        result
+    }
+
+    pub fn requeue_wait_queue(&mut self,
+                              from_wait_queue_id : WaitQueueId,
+                              to_wait_queue_id : WaitQueueId,
+                              wake_count : usize,
+                              requeue_count : usize)
+                              -> usize {
+        self.requeue_wait_queue_detailed(from_wait_queue_id,
+                                         to_wait_queue_id,
+                                         wake_count,
+                                         requeue_count)
+            .changed()
     }
 
     pub fn requeue_wait_queue_while(&mut self,
@@ -153,5 +167,22 @@ impl MultiClassScheduler {
                                      to_wait_queue_id,
                                      wake_count,
                                      requeue_count))
+    }
+
+    pub fn requeue_wait_queue_detailed_while(
+        &mut self,
+        from_wait_queue_id : WaitQueueId,
+        to_wait_queue_id : WaitQueueId,
+        wake_count : usize,
+        requeue_count : usize,
+        condition : impl FnOnce() -> bool)
+        -> Option<WaitQueueRequeueResult> {
+        if !condition() {
+            return None;
+        }
+        Some(self.requeue_wait_queue_detailed(from_wait_queue_id,
+                                              to_wait_queue_id,
+                                              wake_count,
+                                              requeue_count))
     }
 }

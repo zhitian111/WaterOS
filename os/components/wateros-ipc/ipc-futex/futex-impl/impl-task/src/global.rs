@@ -59,6 +59,7 @@ fn with_registry<R>(f : impl FnOnce(&mut FutexRegistry) -> R) -> R {
 /// 字并把访问错误转换为其自己的错误路径。
 pub fn wait_while(task_id : TaskId,
                   key : FutexKey,
+                  bitset : u32,
                   timeout : Option<TaskTick>,
                   mut condition : impl FnMut() -> bool)
                   -> FutexWaitOutcome {
@@ -73,15 +74,17 @@ pub fn wait_while(task_id : TaskId,
         return FutexWaitOutcome::ConditionChanged;
     }
 
-    let (wait_queue, wake_sequence, observed_wake) = with_registry(|registry| {
+    let (wait_queue, wake_sequence, observed_wake, waiter_sequence, observed_waiter_wake) =
+        with_registry(|registry| {
         let (wait_queue, wake_sequence) = registry.acquire_queue(key);
-        registry.register_waiting_task(task_id, key);
+        let waiter_sequence = registry.register_waiting_task(task_id, key, bitset);
         registry.record_wait_attempt(key, wait_queue.id());
         // The registry lock linearizes waiter publication with wakers obtaining
         // this queue. Loading after unlock would let a concurrent wake become
         // the waiter's baseline and then be lost before scheduler enqueue.
         let observed_wake = wake_sequence.load(Ordering::Acquire);
-        (wait_queue, wake_sequence, observed_wake)
+        let observed_waiter_wake = waiter_sequence.load(Ordering::Acquire);
+        (wait_queue, wake_sequence, observed_wake, waiter_sequence, observed_waiter_wake)
     });
     if !condition() {
         with_registry(|registry| {
@@ -94,7 +97,8 @@ pub fn wait_while(task_id : TaskId,
     // LOCK: condition 已在 scheduler 锁外复查。进入调度临界区后只比较原子 wake
     // 序列：若 wake 发生在“复查—入队”窗口，序列变化会阻止当前任务睡眠；
     // 若 wake 稍后发生，唤醒者会等待 scheduler 锁并看到已入队任务。
-    let not_woken = || wake_sequence.load(Ordering::Acquire) == observed_wake;
+    let not_woken = || wake_sequence.load(Ordering::Acquire) == observed_wake &&
+                         waiter_sequence.load(Ordering::Acquire) == observed_waiter_wake;
     let outcome = match timeout {
         None => match wait_queue.wait_current_while(not_woken) {
             TaskWaitResult::Interrupted => FutexWaitOutcome::Interrupted,
@@ -169,6 +173,35 @@ pub fn wake(key : FutexKey, max_wake : u32) -> usize {
                         0,
                         [key.uaddr as u64, max_wake as u64, woken as u64]);
     woken
+}
+
+/// 仅唤醒等待 bitset 与 `wake_bitset` 有交集的 waiter。
+///
+/// 每个 waiter 使用独立序列覆盖“已登记但尚未进入 scheduler 队列”的窗口；
+/// 因而不能复用普通 wake 的整队列序列，否则不匹配的 waiter 也会被放行。
+pub fn wake_bitset(key : FutexKey, max_wake : u32, wake_bitset : u32) -> usize {
+    if max_wake == 0 || wake_bitset == 0 {
+        return 0;
+    }
+    let Some((wait_queue, waiters)) = with_registry(|registry| {
+        let (wait_queue, _) = registry.acquire_existing_queue(key)?;
+        let waiters = registry.matching_waiters(key, wake_bitset, max_wake);
+        Some((wait_queue, waiters))
+    }) else {
+        return 0;
+    };
+    let selected = waiters.len();
+    for (task_id, wake_sequence) in waiters {
+        wake_sequence.fetch_add(1, Ordering::Release);
+        // false 也可能表示 waiter 正位于“登记—scheduler 入队”窗口；独立
+        // sequence 已保证它不会继续睡眠，因此仍计入本次 wake 返回值。
+        let _ = wait_queue.wake_task(task_id);
+    }
+    with_registry(|registry| {
+        registry.record_wake(key, max_wake, selected);
+        registry.release_queue(key);
+    });
+    selected
 }
 
 /// 唤醒 `key` 队列上的全部等待者。
@@ -270,7 +303,7 @@ fn requeue_if(from_key : FutexKey,
     };
 
     let mut condition_result = None;
-    let changed = from_queue.requeue_to_while(to_queue,
+    let result = from_queue.requeue_to_detailed_while(to_queue,
                                     wake_count as usize,
                                     requeue_count as usize,
                                     || {
@@ -285,7 +318,11 @@ fn requeue_if(from_key : FutexKey,
                                         }
                                         matched
                                     });
+    let changed = result.as_ref().map(|result| result.changed());
     with_registry(|registry| {
+        if let Some(result) = result.as_ref() {
+            registry.migrate_waiting_tasks(&result.moved, from_key, to_key);
+        }
         registry.record_requeue(from_key,
                                 to_key,
                                 wake_count,

@@ -22,6 +22,12 @@
 | `timerfd_create/settime/gettime` | 85–87 | 支持 realtime/monotonic、绝对/相对超时、周期累计、非阻塞、poll、dup/fork 共享状态与 CLOEXEC |
 | `signalfd4` | 74 | 支持创建/更新 mask、批量读取、非阻塞、poll、dup/fork 共享；用户复制失败时按原 thread/process pending 归属回滚 |
 | `recvmmsg` | 243 | 支持批量 UDP/TCP 消息接收、每条 `msg_len`、超时、`MSG_WAITFORONE` 和部分成功语义 |
+| `memfd_create` | 279 | 内存文件、共享 mmap、truncate、CLOEXEC、seals 与可写映射冲突检查 |
+| `inotify_*` | 26–28 | watch 生命周期、文件/目录变更、rename cookie、poll 与 EFAULT 读取回滚 |
+| `openat2` | 437 | 版本化 open_how、CLOEXEC、NO_SYMLINKS/BENEATH；CACHED 明确回退 |
+| futex bitset/requeue | 98 | 非零 bitset 选择唤醒，requeue 同步 scheduler 队列与 futex waiter 归属 |
+| `pidfd_*` | 424/434/438 | open、signal、getfd、poll 与 `waitid(P_PIDFD)` |
+| `mincore` / `mlock` | 232/228 | 真实 PTE 驻留查询、区间验证与缺页预取；无 swap 模型下保持驻留 |
 
 同时修正了已有实现中的错误语义：
 
@@ -86,10 +92,10 @@ WaterOS 当前采用静态链接组件架构，因此这组暂列低优先级。
 
 ### P0：正确性或安全性
 
-- `getrandom` 当前是基于 tick、地址和 tid 的 xorshift 伪随机数，不具备密码学
+- `getrandom` 当前是基于 tick、地址和 tid 的伪随机数，不具备密码学
   安全性。需要平台熵源、全局 CSPRNG、初始化状态以及 `GRND_*` 的阻塞语义。
-- `sysinfo` 的 `freeram=totalram/2`、`procs=1`、load average 全零仍是占位值；应接
-  frame allocator、process registry 和 load accounting。
+- `sysinfo` 的 total/free RAM 与进程数已接 frame allocator 和 process registry；
+  load average、shared/buffer RAM 仍需要 scheduler 与页缓存统计。
 - `fallocate` 仅能用 `truncate` 实现 mode 0 的文件扩展，洞打孔、真正预分配和
   `KEEP_SIZE` 尚无后端。
 - `mount/umount2/reboot/sethostname` 目前使用 euid 0 代替 capability 检查；加入
@@ -99,8 +105,8 @@ WaterOS 当前采用静态链接组件架构，因此这组暂列低优先级。
 
 - `readahead` 与 `fadvise64` 当前只校验并接受提示，没有异步预读队列。
 - `rseq` 明确返回 `ENOSYS`；glibc 能回退，但线程运行时性能路径不完整。
-- futex 已覆盖常用 wait/wake 路径，但部分 PI、requeue/bitset 组合仍返回
-  `ENOSYS`，需要按 LTP 用例逐项补齐。
+- futex 已覆盖 wait/wake、任意非零 bitset、requeue/cmp_requeue 和 robust 路径；
+  PI 与 `FUTEX_WAKE_OP` 仍返回 `ENOSYS`，需要按 LTP 用例逐项补齐。
 - `statfs/sysinfo/getrusage/times` 中部分统计仍是近似值，应避免把占位统计当成
   精确内核计数。
 - `timerfd` 尚不支持 `TFD_TIMER_CANCEL_ON_SET`。当前 VFS 错误接口没有
@@ -112,15 +118,19 @@ WaterOS 当前采用静态链接组件架构，因此这组暂列低优先级。
 `os/src/trap_handler.rs` 在进入普通分发前调用 `restore_signal_frame` 接管；这不是
 缺失实现。若未来合并 trap 入口，必须保留该特殊顺序。
 
-## 4. 下一批现代 Linux 能力
+## 4. 现代 Linux 能力状态
 
 当前 BusyBox 主路径未必需要，但 Debian、apt、编译工具和较新的 libc 会逐步触发：
 
 - 文件搬运：`splice`、`tee`、`vmsplice`、`copy_file_range` 已完成。
-- fd/事件：`timerfd_*`、`signalfd4` 已完成；下一步是 `inotify_*`、`memfd_create`。
+- fd/事件：`timerfd_*`、`signalfd4`、`inotify_*`、`memfd_create` 已完成。
 - 网络：`recvmmsg` 已完成，当前复用现有 IPv4 TCP/UDP `recvmsg` 后端。
-- 进程：`pidfd_open`、`pidfd_send_signal`、`pidfd_getfd`。
-- 路径安全：`openat2`。
+- 进程：`pidfd_open`、`pidfd_send_signal`、`pidfd_getfd` 与 `waitid(P_PIDFD)` 已完成；
+  `CLONE_PIDFD` 仍需纳入 clone 的完整回滚事务。
+- 路径安全：`openat2` 已完成主要约束；`RESOLVE_IN_ROOT` 在 per-process root
+  resolver 完成前返回 `EOPNOTSUPP`，`RESOLVE_CACHED` 在无 dcache-only 路径时返回 `EAGAIN`。
+- 内存驻留：`mincore`、`MADV_POPULATE_*` 和区间 mlock 已有真实页表语义；
+  `MCL_CURRENT` 等待全 VMA 枚举和锁页计费。
 
 建议先通过真实用户程序或 LTP 日志收集 syscall nr，再按“有完整后端语义”的原则
 实现；不要为了让命令表面成功而增加空操作桩。
@@ -142,7 +152,8 @@ wos-syscall-smoke
 ```
 
 同一测试程序也已用 `ARCH=la PACKAGE=operator` 构建并在 LoongArch QEMU 中执行，
-两种架构均已在 QEMU 中输出相同的八组 `PASS`。
+RISC-V 已在 SMP=2 QEMU 中输出 14 组 `PASS`；LoongArch 当前批次已完成交叉
+编译检查，目标机镜像回归使用相同测试源。
 
 `wos-syscall-smoke` 直接发出 asm-generic syscall 号，校验：
 
@@ -155,6 +166,10 @@ wos-syscall-smoke
 - `recvmmsg` 的真实 loopback UDP 批量数据、每条长度和无数据超时。
 - `signalfd4` 的 mask、poll、批量读取、来源字段、mask 更新，以及故意触发
   `EFAULT` 后 pending 不丢失。
+- memfd seal/共享映射、inotify 事件与 rename cookie、openat2 约束。
+- futex bitset 定向唤醒以及 requeue 后从目标地址继续定向唤醒。
+- pidfd open/getfd/signal/poll/waitid 的完整进程监管链路。
+- mincore 驻留位、MADV_POPULATE、非页对齐 mlock 与 MCL_FUTURE。
 
 纯 Rust 边界断言同时接入 `syscall/self_test`，可随内核 self-test 构建在目标架构
 执行。直接在 x86_64 宿主运行
@@ -166,12 +181,12 @@ host-test crate，不能把该失败误判为 syscall 实现错误。
 
 结合往届线下题和当前用户空间，后续按以下顺序推进：
 
-1. **P0 fd 与事件链路**：继续实现 `inotify_*`，随后补 `memfd_create`；已完成的
-   `timerfd_*`、`signalfd4` 进入回归集合。
-2. **P0 进程/路径兼容**：真实 `chroot`（per-process root + `*at`/symlink/dirfd
-   全链路约束）、`openat2`；不得添加只存字符串的成功桩。
-3. **P1 现代运行时**：常见 futex requeue/bitset 组合、pidfd；`recvmmsg` 已完成，
-   后续根据真实程序补齐更复杂 socket 类型和 ancillary data。
+1. **P0 安全随机**：接 VirtIO RNG/开发板熵源与统一 CSPRNG，替换当前不可用于
+   TLS 密钥的伪随机实现。
+2. **P0 进程/路径兼容**：把 `CLONE_PIDFD` 纳入 clone 回滚事务；真实 `chroot`
+   需要 per-process root + `*at`/symlink/dirfd 全链路约束。
+3. **P1 现代运行时**：补 futex WAKE_OP/PI、queued realtime signal、复杂 socket
+   ancillary data；rseq 在具备迁移 hook 前继续明确 `ENOSYS`。
 4. **P1 可观测性**：真实 `sysinfo/statfs/getrusage/times` 计数、`/proc` 配套字段。
 5. **P2 专用设施**：SysV msg/sem、namespace、swap、内核模块；只有题目或真实程序
    命中时再做，保持未实现时明确 `ENOSYS`。

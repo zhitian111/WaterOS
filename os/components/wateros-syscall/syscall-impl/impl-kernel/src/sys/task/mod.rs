@@ -3,6 +3,7 @@ pub(crate) mod execve;
 pub(crate) mod ioprio;
 pub(crate) mod priority;
 pub(crate) mod personality;
+pub(crate) mod pidfd;
 pub(crate) mod process;
 pub(crate) mod rlimit;
 pub(crate) mod rseq;
@@ -17,6 +18,7 @@ pub(crate) use execve::sys_execve;
 pub(crate) use ioprio::{sys_ioprio_get, sys_ioprio_set};
 pub(crate) use priority::{sys_getpriority, sys_setpriority};
 pub(crate) use personality::sys_personality;
+pub(crate) use pidfd::{sys_pidfd_getfd, sys_pidfd_open, sys_pidfd_send_signal};
 pub(crate) use process::{
     sys_getpgid, sys_getpid, sys_getppid, sys_getsid, sys_gettid, sys_set_tid_address, sys_setpgid,
     sys_setsid,

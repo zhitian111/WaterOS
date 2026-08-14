@@ -85,7 +85,7 @@ trap / 异常返回路径
 - 文件系统类（`sys/fs`）：open/close/read/write/readv/pwrite、lseek、fstat/statfs/getdents64、
   fcntl/flock/dup/dup3、pipe2/eventfd2、mkdirat/renameat2/truncate/fallocate、sendfile、
   xattr/attr、ioctl 等。
-- 进程与线程类（`sys/task`，详见其 `readme.md`）：clone/vfork/execve、exit/exit_group/wait、
+- 进程与线程类（`sys/task`，详见其 `README.md`）：clone/vfork/execve、exit/exit_group/wait、
   sched/priority/rlimit、unshare/rseq、进程组与信号投递。
 - IPC 与信号类（`sys/ipc`）：futex（含 requeue/robust）、eventfd、SysV shm、signal、kill 等。
 - 网络与 socket 类（`sys/net` + `socket_fd.rs` / `socket_block.rs` / `unix_sock.rs`）：
@@ -98,3 +98,13 @@ trap / 异常返回路径
   bringup_stats。
 - 辅助模块：`fallible_buf.rs`（可失败缓冲写入）、`linux_stat.rs` / `stat_times.rs`（stat ABI
   与时间戳）、`mm_util.rs` / `vfs_util.rs`（mm/VFS 互操作）、`socket_fd.rs`（fd 适配）。
+
+## 当前完成度
+
+调用号表目前登记 236 个 asm-generic 入口，其中 220 个进入明确 handler。未分发的
+16 个集中在内核模块、swap、SysV message/semaphore 与尚无完整根目录/namespace
+模型的 chroot、pivot_root、setns；它们稳定返回 `ENOSYS`，不会伪装成功。
+
+本轮新增并通过目标机回归的现代能力包括 memfd、inotify、openat2、futex bitset/
+requeue、pidfd、mincore、MADV_POPULATE 和 mlock 区间预取。完整状态和测试方法见
+[`todo_syscall.md`](../../../docs/todo/kasss's_todo_list/todo_syscall.md)。

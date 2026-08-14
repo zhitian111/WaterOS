@@ -64,6 +64,7 @@ pub(crate) fn sys_mkdirat(args : SyscallArgs) -> UserRet {
             if let Err(e) = vfs::chmod_absolute(resolved.as_str(), create_mode) {
                 return UserRet::from_error(vfs_error_to_errno(e));
             }
+            super::inotify::notify_create(resolved.as_str(), true);
             UserRet::from_success(0)
         }
         Err(VfsError::NotAFile) => UserRet::from_error(ErrNo::ENOTDIR),
@@ -162,6 +163,7 @@ pub(crate) fn sys_mknodat(args : SyscallArgs) -> UserRet {
             if let Err(e) = vfs::chmod_absolute(resolved.as_str(), create_perm) {
                 return UserRet::from_error(vfs_error_to_errno(e));
             }
+            super::inotify::notify_create(resolved.as_str(), false);
             UserRet::from_success(0)
         }
         Err(VfsError::NotAFile) => UserRet::from_error(ErrNo::ENOTDIR),
@@ -256,7 +258,10 @@ pub(crate) fn sys_linkat(args : SyscallArgs) -> UserRet {
     match vfs::hardlink_absolute(old_resolved.as_str(),
                                  new_resolved.as_str())
     {
-        Ok(()) => UserRet::from_success(0),
+        Ok(()) => {
+            super::inotify::notify_create(new_resolved.as_str(), false);
+            UserRet::from_success(0)
+        }
         Err(VfsError::Exists) => UserRet::from_error(ErrNo::EEXIST),
         Err(VfsError::ReadOnlyFs) => UserRet::from_error(ErrNo::EROFS),
         Err(VfsError::Unsupported) => UserRet::from_error(ErrNo::EXDEV),
@@ -322,7 +327,10 @@ pub(crate) fn sys_symlinkat(args : SyscallArgs) -> UserRet {
     }
 
     match vfs::symlink_absolute(target.as_str(), resolved.as_str()) {
-        Ok(()) => UserRet::from_success(0),
+        Ok(()) => {
+            super::inotify::notify_create(resolved.as_str(), false);
+            UserRet::from_success(0)
+        }
         Err(VfsError::Exists) => UserRet::from_error(ErrNo::EEXIST),
         Err(VfsError::NotFound) => UserRet::from_error(ErrNo::ENOENT),
         Err(VfsError::NotAFile) => UserRet::from_error(ErrNo::ENOTDIR),
@@ -370,8 +378,14 @@ pub(crate) fn sys_unlinkat(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EBUSY);
     }
 
+    let is_dir = active_impl::backend().metadata(resolved.as_str())
+                            .map(|meta| meta.node_type == VfsNodeType::Directory)
+                            .unwrap_or(remove_dir);
     match vfs::unlink_absolute(resolved.as_str(), remove_dir) {
-        Ok(()) => UserRet::from_success(0),
+        Ok(()) => {
+            super::inotify::notify_delete(resolved.as_str(), is_dir);
+            UserRet::from_success(0)
+        }
         Err(VfsError::NotAFile) if remove_dir => UserRet::from_error(ErrNo::ENOTDIR),
         Err(VfsError::NotAFile) => UserRet::from_error(ErrNo::EISDIR),
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),

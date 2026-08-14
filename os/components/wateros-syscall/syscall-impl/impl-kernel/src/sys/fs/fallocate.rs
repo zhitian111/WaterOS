@@ -69,7 +69,10 @@ pub(crate) fn sys_fallocate(args: SyscallArgs) -> UserRet {
     };
 
     match result {
-        Ok(()) => UserRet::from_success(0),
+        Ok(()) => {
+            super::inotify::notify_fd_modify(fd);
+            UserRet::from_success(0)
+        }
         Err(VfsError::Unsupported) => UserRet::from_error(ErrNo::EOPNOTSUPP),
         Err(e) => UserRet::from_error(vfs_io_at_error_to_errno(e)),
     }

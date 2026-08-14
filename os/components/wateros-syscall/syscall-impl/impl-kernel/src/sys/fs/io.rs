@@ -441,6 +441,9 @@ fn write_fd(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
             Err(VfsError::Busy) => task::yield_now(),
             Ok(written) => {
                 dispatch_pty_control_events(fd);
+                if written != 0 {
+                    super::inotify::notify_fd_modify(fd);
+                }
                 return Ok(written);
             }
             Err(error) => return Err(vfs_error_to_errno(error)),
@@ -727,7 +730,12 @@ pub(crate) fn sys_pwrite64(args : SyscallArgs) -> UserRet {
     match vfs::fd::with_current_io(fd, |handle| {
               handle.write_at(write_offset, &kbuf)
           }) {
-        Ok(n) => UserRet::from_success(n),
+        Ok(n) => {
+            if n != 0 {
+                super::inotify::notify_fd_modify(fd);
+            }
+            UserRet::from_success(n)
+        }
         Err(err) => UserRet::from_error(vfs_io_at_error_to_errno(err)),
     }
 }
@@ -829,7 +837,12 @@ pub(crate) fn sys_pwritev(args : SyscallArgs) -> UserRet {
     match vfs::fd::with_current_io(fd, |handle| {
               handle.write_at(offset, &data)
           }) {
-        Ok(n) => UserRet::from_success(n),
+        Ok(n) => {
+            if n != 0 {
+                super::inotify::notify_fd_modify(fd);
+            }
+            UserRet::from_success(n)
+        }
         Err(err) => UserRet::from_error(vfs_io_at_error_to_errno(err)),
     }
 }

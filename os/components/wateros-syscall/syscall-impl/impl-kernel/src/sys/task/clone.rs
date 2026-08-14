@@ -44,6 +44,8 @@ struct CloneRequest {
     tls : usize,
     child_tid : usize,
     cgroup_dir : Option<String>,
+    /// `CLONE_PIDFD` 的父地址空间输出指针；任务 flags 中已移除复用位。
+    pidfd : Option<usize>,
 }
 
 struct CloneSetupGuard {
@@ -76,20 +78,34 @@ impl Drop for CloneSetupGuard {
 ///
 /// 根据 flags 决定走 **fork 路径**（复制地址空间）或 **clone_thread 路径**（共享地址空间，创建线程）。
 pub(crate) fn sys_clone(args : SyscallArgs) -> UserRet {
+    let raw_flags = args.arg(0);
+    let pidfd = (raw_flags & CLONE_PIDFD != 0).then_some(args.arg(2));
+    if pidfd.is_some() && raw_flags & CLONE_PARENT_SETTID_RAW != 0 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    if let Some(pidfd_ptr) = pidfd {
+        if pidfd_ptr == 0 || copy_to_user_struct(pidfd_ptr, &0i32).is_err() {
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
+    }
     #[cfg(target_arch = "loongarch64")]
-    let request = CloneRequest { clone_flags : task::CloneFlags::from_bits(args.arg(0)),
+    let request = CloneRequest { clone_flags : task::CloneFlags::from_bits(raw_flags &
+                                                                           !CLONE_PIDFD),
                                  child_stack : args.arg(1),
                                  parent_tid : args.arg(2),
                                  tls : args.arg(4),
                                  child_tid : args.arg(3),
-                                 cgroup_dir : None };
+                                 cgroup_dir : None,
+                                 pidfd };
     #[cfg(not(target_arch = "loongarch64"))]
-    let request = CloneRequest { clone_flags : task::CloneFlags::from_bits(args.arg(0)),
+    let request = CloneRequest { clone_flags : task::CloneFlags::from_bits(raw_flags &
+                                                                           !CLONE_PIDFD),
                                  child_stack : args.arg(1),
                                  parent_tid : args.arg(2),
                                  tls : args.arg(3),
                                  child_tid : args.arg(4),
-                                 cgroup_dir : None };
+                                 cgroup_dir : None,
+                                 pidfd };
     do_clone_request(request)
 }
 
@@ -108,26 +124,34 @@ pub(crate) fn sys_clone3(args : SyscallArgs) -> UserRet {
     if clone_args.exit_signal & !CLONE3_EXIT_SIGNAL_MASK != 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    if clone_args.flags & CLONE_PIDFD != 0 {
+    let pidfd = if clone_args.flags & CLONE_PIDFD != 0 {
+        if clone_args.pidfd == 0 {
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
         let probe = 0i32;
         if copy_to_user_struct(clone_args.pidfd, &probe).is_err() {
             return UserRet::from_error(ErrNo::EFAULT);
         }
-        return UserRet::from_error(ErrNo::ENOSYS);
-    }
+        Some(clone_args.pidfd)
+    } else {
+        if clone_args.pidfd != 0 {
+            return UserRet::from_error(ErrNo::EINVAL);
+        }
+        None
+    };
     if clone_args.set_tid != 0 || clone_args.set_tid_size != 0 {
         return UserRet::from_error(ErrNo::ENOSYS);
     }
     let (clone_flags, cgroup_dir) = if clone_args.flags & CLONE_INTO_CGROUP != 0 {
         match validate_clone_into_cgroup_fd(clone_args.cgroup) {
-            Ok(dir) => (clone_args.flags & !CLONE_INTO_CGROUP, Some(dir)),
+            Ok(dir) => (clone_args.flags & !CLONE_INTO_CGROUP & !CLONE_PIDFD, Some(dir)),
             Err(error) => return UserRet::from_error(error),
         }
     } else {
         if clone_args.cgroup != 0 {
             return UserRet::from_error(ErrNo::EINVAL);
         }
-        (clone_args.flags, None)
+        (clone_args.flags & !CLONE_PIDFD, None)
     };
 
     let child_stack = match clone3_child_stack(clone_args.stack, clone_args.stack_size) {
@@ -141,7 +165,8 @@ pub(crate) fn sys_clone3(args : SyscallArgs) -> UserRet {
                                     parent_tid : clone_args.parent_tid,
                                     tls : clone_args.tls,
                                     child_tid : clone_args.child_tid,
-                                    cgroup_dir })
+                                    cgroup_dir,
+                                    pidfd })
 }
 
 fn validate_clone_into_cgroup_fd(fd : usize) -> Result<String, ErrNo> {
@@ -167,7 +192,8 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
                        parent_tid,
                        tls,
                        child_tid,
-                       cgroup_dir, } = request;
+                       cgroup_dir,
+                       pidfd, } = request;
 
     if clone_flags.contains(task::CloneFlags::CLONE_THREAD) &&
        !clone_flags.contains(task::CloneFlags::CLONE_VM)
@@ -193,7 +219,7 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
     let is_thread = clone_flags.contains(task::CloneFlags::CLONE_VM) &&
                     clone_flags.contains(task::CloneFlags::CLONE_THREAD);
     if is_thread {
-        if cgroup_dir.is_some() {
+        if cgroup_dir.is_some() || pidfd.is_some() {
             return UserRet::from_error(ErrNo::EINVAL);
         }
         if let Some(process_task) = task::current_process_task_snapshot() {
@@ -338,6 +364,25 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
         }
     }
 
+    // 必须在子任务 fd 表继承完成后安装，避免非 CLONE_FILES 子进程意外继承
+    // 返回给父进程的 pidfd；同时仍在 start_fork_child 之前，失败可完整回滚。
+    if let Some(pidfd_ptr) = pidfd {
+        let pidfd_fd = match super::pidfd::allocate_pidfd(task::ProcessId::from_raw(child_pid),
+                                                          false) {
+            Ok(fd) => fd,
+            Err(error) => {
+                abort_initialized_fork(child_id, child_pid, new_aspace_ptr);
+                return UserRet::from_error(error);
+            }
+        };
+        let pidfd_value = pidfd_fd as i32;
+        if copy_to_user_struct(pidfd_ptr, &pidfd_value).is_err() {
+            let _ = vfs::fd::close_fd(pidfd_fd);
+            abort_initialized_fork(child_id, child_pid, new_aspace_ptr);
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
+    }
+
     let vfork_wait = is_vfork.then(|| super::vfork::register(child_id));
     task::start_fork_child(child_id);
     drop(setup_guard);
@@ -345,6 +390,14 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
         super::vfork::wait_for_completion(child_id, wait);
     }
     UserRet::from_success(child_pid)
+}
+
+/// 回滚已完成资源侧表继承、但尚未发布到 scheduler 的 fork 子进程。
+fn abort_initialized_fork(child_id : task::TaskId, child_pid : usize, aspace : usize) {
+    crate::sys::ipc::robust::drop_robust_state(child_id);
+    crate::sys::ipc::signal::abort_fork_signal(child_pid, child_id);
+    super::wait::drop_task_runtime_resources_with_aspace(child_id, aspace);
+    let _ = task::abort_fork_child(child_id);
 }
 
 fn write_cgroup_procs(cgroup_dir : &str, child_pid : usize) -> Result<(), ErrNo> {
