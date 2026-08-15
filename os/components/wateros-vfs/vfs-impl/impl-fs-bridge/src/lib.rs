@@ -240,7 +240,22 @@ fn special_dev_directory_metadata(abs : &str) -> VfsMetadata {
 /// 把虚拟设备的直接子项合并到实体 `/dev` 目录视图中。
 fn merge_special_dev_children(abs : &str, entries : &mut Vec<VfsDirEntry>) {
     let prefix = alloc::format!("{}/", abs.trim_end_matches('/'));
+    // 合并 devfs 节点（块/字符）、pty 特殊路径与内置特殊节点。
+    let mut paths = fs::devfs::active_impl::list_nodes()
+        .into_iter()
+        .map(|node| node.path)
+        .collect::<Vec<_>>();
     for path in impl_fd_session::special_device_paths() {
+        if !paths.iter().any(|existing| existing == &path) {
+            paths.push(path);
+        }
+    }
+    for path in ["/dev/zero", "/dev/urandom", "/dev/random"] {
+        if !paths.iter().any(|existing| existing == path) {
+            paths.push(String::from(path));
+        }
+    }
+    for path in paths {
         let Some(relative) = path.strip_prefix(prefix.as_str()) else { continue; };
         if relative.is_empty() { continue; }
         let (name, node_type) = match relative.split_once('/') {
