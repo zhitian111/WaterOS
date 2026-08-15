@@ -16,7 +16,7 @@ BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 .PHONY: rv_pre_run-gdb rv_final_run-gdb rv_final_run_log-gdb rv_final_debug_run-gdb
 .PHONY: rv_qemu_run rv_qemu_run_snapshot
 .PHONY: rv_qemu_run_with_log
-.PHONY: la_check la2k_check jh7110_check kernel-la2k la2k_uimage kernel-jh7110 jh7110_uimage jh7110_bootdir la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
+.PHONY: la_check la2k_check jh7110_check kernel-la2k la2k_uimage kernel-jh7110 jh7110_uimage jh7110_bootdir dd_img_vf2 dd_img_2k1000 la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
 .PHONY: kernel-la kernel-la-best kernel-la-pre kernel-la-final la_pre_run la_final_run la_final_run_log
 .PHONY: la_pre_run-gdb la_final_run-gdb la_final_run_log-gdb
 .PHONY: la_qemu_run la_qemu_run_snapshot
@@ -177,6 +177,8 @@ help:
 	@echo "  make debug ARCH=rv PROFILE=pre       自动启动并 watch"
 	@echo "  make debug-server ARCH=rv PROFILE=pre  手动挡：终端一启动 QEMU"
 	@echo "  make gdb                             手动挡：终端二连接"
+	@echo "  make dd_img_vf2 DEVICE=/dev/sdX     烧录 VisionFive 2 整盘镜像（先 cd user && make disk）"
+	@echo "  make dd_img_2k1000 DEVICE=/dev/sdX  烧录 Loongson 2K1000 整盘镜像（先 make disk ARCH=la）"
 	@echo "  make snapshot / make watch           附加当前活动会话"
 	@echo "  make doctor                          检查 GDB/QEMU/符号工具"
 	@echo "  make show-config                     显示当前最终生效配置"
@@ -543,6 +545,18 @@ jh7110_bootdir: jh7110_uimage
 		echo "[Makefile] [WARN] mkimage 不可用，boot.scr 未生成（可手动 bootm）"; \
 	fi
 	$(call INFO, "启动素材目录：./build/jh7110-boot/（如需板级 DTB，放入 jh7110-starfive-visionfive-2-v1.3b.dtb）")
+
+# 整盘镜像烧录（先由 user/ 的 make disk 生成镜像，再执行本目标）。
+VF2_DD_IMAGE ?= ../user/build/images/wateros-rv.img
+LA2K_DD_IMAGE ?= ../user/build/images/wateros-la.img
+
+dd_img_vf2:
+	@test -n "$(DEVICE)" || { $(call ERROR_CMD,请先指定目标块设备 variable=DEVICE example=/dev/sdX image=$(VF2_DD_IMAGE),2); exit 2; }
+	@bash ./scripts/real-hardware/dd_image.sh "$(VF2_DD_IMAGE)" "$(DEVICE)"
+
+dd_img_2k1000:
+	@test -n "$(DEVICE)" || { $(call ERROR_CMD,请先指定目标块设备 variable=DEVICE example=/dev/sdX image=$(LA2K_DD_IMAGE),2); exit 2; }
+	@bash ./scripts/real-hardware/dd_image.sh "$(LA2K_DD_IMAGE)" "$(DEVICE)"
 
 # rv_link_app_asm:
 # 	$(call INFO, "开始生成批处理系统的 asm 文件...")
