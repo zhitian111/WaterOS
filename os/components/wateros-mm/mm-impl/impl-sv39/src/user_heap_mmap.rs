@@ -23,7 +23,7 @@ use impl_common::{
     map_zeroed_range_with_alloc, mmap_map_end, mremap_range, MREMAP_FIXED, MREMAP_MAYMOVE,
 };
 
-use crate::pagetable::{DeviceVma, LazyFileVma, Sv39AddressSpace};
+use crate::pagetable::{DeviceVma, LazyFileVma, Sv39AddressSpace, VmaBacking};
 
 #[inline]
 fn fence_user_ptes() { platform::arch::paging::flush_address_space_translations(); }
@@ -272,7 +272,7 @@ impl Sv39AddressSpace {
                                         perm,
                                         0,
                                         0,
-                                        Box::new(impl_common::ZeroAnonLoader))?;
+                                        VmaBacking::Anonymous)?;
         }
         if req.addr_hint
               .is_none()
@@ -493,7 +493,12 @@ impl MmapOps for Sv39AddressSpace {
                 return Err(MmError::InvalidAddress);
             }
         };
-        self.register_lazy_file_vma(base, end, perm, file_offset, file_size, loader)?;
+        self.register_lazy_file_vma(base,
+                                    end,
+                                    perm,
+                                    file_offset,
+                                    file_size,
+                                    VmaBacking::File { loader })?;
         if req.addr_hint
               .is_none()
         {
@@ -682,8 +687,8 @@ impl MmapOps for Sv39AddressSpace {
                                                              perm : vma.perm,
                                                              file_offset : vma.file_offset,
                                                              file_size : vma.file_size,
-                                                             loader : vma.loader
-                                                                         .duplicate_box()? })
+                                                             backing : vma.backing
+                                                                      .duplicate()? })
                 })
                 .transpose()?;
         if lazy_overlap && lazy_vma.is_none() {
@@ -757,7 +762,7 @@ impl MmapOps for Sv39AddressSpace {
                                         vma.perm,
                                         vma.file_offset,
                                         vma.file_size,
-                                        vma.loader)?;
+                                        vma.backing)?;
         } else if flags & MREMAP_FIXED != 0 {
             self.remove_lazy_file_vmas(result, result_end)?;
         }

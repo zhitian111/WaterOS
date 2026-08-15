@@ -12,13 +12,59 @@ use api_v0::error::{MmError, MmResult};
 use api_v0::mmap::{DemandPageLoader, DeviceMappingLease};
 use api_v0::perm::PagePerm;
 
+/// 描述 VMA 缺页时如何取得内容。
+///
+/// `Anonymous` 对应零页/COW；`File` 暂保留 loader，但 VMA 本身不再直接持有
+/// `Box<dyn DemandPageLoader>`，后续 Task 06 再把 File 转为统一 page cache backing。
+pub enum VmaBacking {
+    Anonymous,
+    File { loader : Box<dyn DemandPageLoader> },
+}
+
+impl VmaBacking {
+    pub fn duplicate(&self) -> MmResult<Self> {
+        Ok(match self {
+            Self::Anonymous => Self::Anonymous,
+            Self::File { loader } => Self::File { loader : loader.duplicate_box()? },
+        })
+    }
+
+    pub fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()> {
+        match self {
+            Self::Anonymous => Ok(()),
+            Self::File { loader } => loader.load_page(file_offset, dst),
+        }
+    }
+
+    pub fn load_shared_page(&mut self, file_offset : usize) -> MmResult<Option<PhysPageNum>> {
+        match self {
+            Self::Anonymous => Ok(None),
+            Self::File { loader } => loader.load_shared_page(file_offset),
+        }
+    }
+
+    pub fn write_page(&mut self, file_offset : usize, src : &[u8]) -> MmResult<()> {
+        match self {
+            Self::Anonymous => Err(MmError::Unsupported),
+            Self::File { loader } => loader.write_page(file_offset, src),
+        }
+    }
+
+    pub fn flush(&mut self) -> MmResult<()> {
+        match self {
+            Self::Anonymous => Ok(()),
+            Self::File { loader } => loader.flush(),
+        }
+    }
+}
+
 pub struct LazyFileVma {
     pub start : VirtAddr,
     pub end : VirtAddr,
     pub perm : PagePerm,
     pub file_offset : usize,
     pub file_size : usize,
-    pub loader : Box<dyn DemandPageLoader>,
+    pub backing : VmaBacking,
 }
 
 impl LazyFileVma {
@@ -28,7 +74,7 @@ impl LazyFileVma {
                   perm : self.perm,
                   file_offset : self.file_offset,
                   file_size : self.file_size,
-                  loader : self.loader.duplicate_box()? })
+                  backing : self.backing.duplicate()? })
     }
 
     pub fn contains_page(&self, page : VirtAddr) -> bool {
@@ -60,7 +106,7 @@ pub struct SharedFileVma {
     pub start : VirtAddr,
     pub end : VirtAddr,
     pub file_offset : usize,
-    pub loader : Box<dyn DemandPageLoader>,
+    pub backing : VmaBacking,
 }
 
 impl SharedFileVma {
@@ -68,7 +114,7 @@ impl SharedFileVma {
         Ok(Self { start : self.start,
                   end : self.end,
                   file_offset : self.file_offset,
-                  loader : self.loader.duplicate_box()? })
+                  backing : self.backing.duplicate()? })
     }
 
     pub fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
@@ -199,7 +245,7 @@ impl LazyVmaSet {
                                         perm : vma.perm,
                                         file_offset : vma.file_offset,
                                         file_size : vma.file_size,
-                                        loader : vma.loader.duplicate_box()? });
+                                        backing : vma.backing.duplicate()? });
             }
             let mid_start = VirtAddr(core::cmp::max(start.0, vma.start.0));
             let mid_end = VirtAddr(core::cmp::min(end.0, vma.end.0));
@@ -209,7 +255,7 @@ impl LazyVmaSet {
                                     file_offset : vma.file_offset +
                                                   (mid_start.0 - vma.start.0),
                                     file_size : vma.file_size,
-                                    loader : vma.loader.duplicate_box()? });
+                                    backing : vma.backing.duplicate()? });
             if end.0 < vma.end.0 {
                 next.push(LazyFileVma { start : end,
                                         end : vma.end,
@@ -217,7 +263,7 @@ impl LazyVmaSet {
                                         file_offset : vma.file_offset +
                                                       (end.0 - vma.start.0),
                                         file_size : vma.file_size,
-                                        loader : vma.loader });
+                                        backing : vma.backing });
             }
         }
         self.replace(next);
@@ -237,7 +283,7 @@ impl LazyVmaSet {
                                         perm : vma.perm,
                                         file_offset : vma.file_offset,
                                         file_size : vma.file_size,
-                                        loader : vma.loader.duplicate_box()? });
+                                        backing : vma.backing.duplicate()? });
             }
             if end.0 < vma.end.0 {
                 let delta = end.0.saturating_sub(vma.start.0);
@@ -247,7 +293,7 @@ impl LazyVmaSet {
                                         file_offset : vma.file_offset
                                                          .saturating_add(delta),
                                         file_size : vma.file_size,
-                                        loader : vma.loader });
+                                        backing : vma.backing });
             }
         }
         self.replace(next);
@@ -274,7 +320,7 @@ impl LazyVmaSet {
                                            perm : first_vma.perm,
                                            file_offset : first_vma.file_offset,
                                            file_size : first_vma.file_size,
-                                           loader : first_vma.loader.duplicate_box()? })
+                                           backing : first_vma.backing.duplicate()? })
         }).transpose()?;
         let last_vma = &self.inner[last - 1];
         let split_right = (end.0 < last_vma.end.0).then(|| {
@@ -284,7 +330,7 @@ impl LazyVmaSet {
                                            file_offset : last_vma.file_offset +
                                                          (end.0 - last_vma.start.0),
                                            file_size : last_vma.file_size,
-                                           loader : last_vma.loader.duplicate_box()? })
+                                           backing : last_vma.backing.duplicate()? })
         }).transpose()?;
 
         if split_left.is_some() {

@@ -26,7 +26,8 @@ use frame_alloctor::frame_alloc_result;
 #[cfg(not(feature = "vfs-root-read"))]
 use fs::api::{FsError, SharedFs};
 use impl_common::{
-    entry_file_offset, finalize_elf_read, rd_u16, rd_u32, rd_u64, ElfSegmentLoadParams, PT_LOAD,
+    entry_file_offset, finalize_elf_read, rd_u16, rd_u32, rd_u64, ElfSegmentLoadParams,
+    VmaBacking, PT_LOAD,
 };
 
 use crate::pagetable::Sv39AddressSpace;
@@ -1057,7 +1058,7 @@ fn register_lazy_segment_run(aspace : &mut Sv39AddressSpace,
                                   perm,
                                   vma_file_origin,
                                   vma_file_size,
-                                  loader)
+                                  VmaBacking::File { loader })
           .map_err(LoadElfError::Mm)
 }
 

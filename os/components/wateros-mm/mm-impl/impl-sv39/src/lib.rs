@@ -26,6 +26,8 @@ pub mod user_access;
 pub mod user_aspace;
 mod user_heap_mmap;
 
+use pagetable::VmaBacking;
+
 struct WritableFaultTestLoader;
 
 impl DemandPageLoader for WritableFaultTestLoader {
@@ -109,7 +111,7 @@ pub fn test_with_range(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
                                   PagePerm::R | PagePerm::U,
                                   0,
                                   0,
-                                  Box::new(WritableFaultTestLoader))
+                                   VmaBacking::File { loader : Box::new(WritableFaultTestLoader) })
           .expect("register lazy page");
     let lazy_changed = MmapOps::mprotect(&mut aspace,
                                          lazy_start,

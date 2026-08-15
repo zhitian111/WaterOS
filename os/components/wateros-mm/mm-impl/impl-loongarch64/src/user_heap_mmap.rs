@@ -23,7 +23,7 @@ use impl_common::{
     map_zeroed_range_with_alloc, mmap_map_end, mremap_range, MREMAP_FIXED, MREMAP_MAYMOVE,
 };
 
-use crate::pagetable::{DeviceVma, LazyFileVma, LoongArch64AddressSpace};
+use crate::pagetable::{DeviceVma, LazyFileVma, LoongArch64AddressSpace, VmaBacking};
 
 #[inline]
 fn fence_user_ptes() { platform::arch::paging::flush_address_space_translations(); }
@@ -289,7 +289,7 @@ impl LoongArch64AddressSpace {
                                         perm,
                                         0,
                                         0,
-                                        Box::new(impl_common::ZeroAnonLoader))?;
+                                        VmaBacking::Anonymous)?;
         }
         if req.addr_hint
               .is_none()
@@ -522,7 +522,7 @@ impl MmapOps for LoongArch64AddressSpace {
                                     perm,
                                     file_offset,
                                     file_size,
-                                    loader)?;
+                                    VmaBacking::File { loader })?;
         if req.addr_hint
               .is_none()
         {
@@ -703,8 +703,8 @@ impl MmapOps for LoongArch64AddressSpace {
                                                              perm : vma.perm,
                                                              file_offset : vma.file_offset,
                                                              file_size : vma.file_size,
-                                                             loader : vma.loader
-                                                                         .duplicate_box()? })
+                                                             backing : vma.backing
+                                                                      .duplicate()? })
                 })
                 .transpose()?;
         if lazy_overlap && lazy_vma.is_none() {
@@ -777,7 +777,7 @@ impl MmapOps for LoongArch64AddressSpace {
                                         vma.perm,
                                         vma.file_offset,
                                         vma.file_size,
-                                        vma.loader)?;
+                                        vma.backing)?;
         } else if flags & MREMAP_FIXED != 0 {
             self.remove_lazy_file_vmas(result, result_end)?;
         }
