@@ -127,6 +127,7 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     super::super::shm::drop_task_attachments(current_tid, old_aspace);
     for exited in &killed_threads {
         super::wait::drop_task_runtime_resources_with_aspace(exited.id, old_aspace);
+        cred::drop_task_cred(exited.id);
     }
     if !vfork_child {
         mm::kernel_mm::drop_user_aspace(old_aspace);

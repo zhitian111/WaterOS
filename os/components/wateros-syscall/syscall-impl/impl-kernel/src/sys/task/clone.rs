@@ -429,6 +429,7 @@ fn abort_initialized_fork(child_id : task::TaskId, child_pid : usize, aspace : u
     crate::sys::ipc::robust::drop_robust_state(child_id);
     crate::sys::ipc::signal::abort_fork_signal(child_pid, child_id);
     super::wait::drop_task_runtime_resources_with_aspace(child_id, aspace);
+    cred::drop_task_cred(child_id);
     let _ = task::abort_fork_child(child_id);
 }
 
