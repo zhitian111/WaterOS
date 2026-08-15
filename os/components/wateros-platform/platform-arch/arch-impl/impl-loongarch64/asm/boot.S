@@ -12,6 +12,7 @@ __wateros_arch_boot:
     add.d $sp, $t1, $t0
     li.d $t0, STACK_PER_CPU
     add.d $sp, $sp, $t0
+    bl __wateros_platform_boot_marker
     bl wateros_kernel_main
 
 1:
@@ -23,3 +24,9 @@ __wateros_arch_boot:
     .balign 4096
 __wateros_arch_boot_stacks:
     .space STACK_PER_CPU * MAX_CPUS
+
+    .section .text.entry.arch
+    .weak __wateros_platform_boot_marker
+    .type __wateros_platform_boot_marker, @function
+__wateros_platform_boot_marker:
+    jr $ra

@@ -23,3 +23,15 @@ _start:
     csrrd $r4, 0x20
     andi $r4, $r4, 0x1ff
     b __wateros_arch_boot
+
+    .globl __wateros_platform_boot_marker
+    .type __wateros_platform_boot_marker, @function
+__wateros_platform_boot_marker:
+    li.d $t0, 0x800000001fe20000
+1:
+    ld.bu $t1, $t0, 5
+    andi $t1, $t1, 0x20
+    beqz $t1, 1b
+    ori $t1, $zero, 0x52
+    st.b $t1, $t0, 0
+    jr $ra
