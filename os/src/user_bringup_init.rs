@@ -14,6 +14,8 @@ pub fn try_start_init() -> bool {
     match vfs::root::read_view().exists(INIT_PATH) {
         Ok(true) => {
             info!("[{LOG_TAG}] {INIT_PATH} present; entering userspace-init mode");
+            tty::configure(tty::ConsoleTtyMode::Interactive);
+            crate::user_operator::start_console_input_task();
             task::spawn_kernel_task(init_main, 0);
             true
         }

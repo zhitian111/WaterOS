@@ -193,7 +193,7 @@ fn configure_tty(mode : TtyMode) {
     }
 }
 
-fn start_console_input_task() {
+pub(crate) fn start_console_input_task() {
     if !CONSOLE_INPUT_TASK_STARTED.swap(true, Ordering::AcqRel) {
         task::spawn_kernel_task(console_input_main, 0);
     }

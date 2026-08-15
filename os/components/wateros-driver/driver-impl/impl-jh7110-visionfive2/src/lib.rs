@@ -36,7 +36,6 @@ impl MachineDriver for Machine {
         }
         let result = topology::discover(platform_dtb_pa()).and_then(|board| {
                          topology::store(board.clone());
-                         character::register_builtin_character_devices();
                          if let Some(console) = board.console_uart {
                              let index = uart::register(console);
                              log::info!("[driver][visionfive2] registered console uart #{} \
@@ -48,6 +47,7 @@ impl MachineDriver for Machine {
                              log::warn!("[driver][visionfive2] DTB has no supported /chosen \
                                          console UART; early console remains available");
                          }
+                         character::register_builtin_character_devices();
                          if let Some(plic) = board.plic {
                              log::info!("[driver][visionfive2] PLIC discovered base={:#x} \
                                          size={:#x} sources={} contexts={}; source activation \
