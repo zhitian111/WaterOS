@@ -51,6 +51,10 @@ pub trait SdTransport {
                          argument : u32,
                          output : &mut [u8; BLOCK_SIZE])
                          -> Result<(), MmcError>;
+    fn write_single_block(&mut self,
+                          argument : u32,
+                          input : &[u8; BLOCK_SIZE])
+                          -> Result<(), MmcError>;
 }
 
 impl<R : RegisterIo> SdTransport for DwMmc<R> {
@@ -81,6 +85,13 @@ impl<R : RegisterIo> SdTransport for DwMmc<R> {
                          output : &mut [u8; BLOCK_SIZE])
                          -> Result<(), MmcError> {
         DwMmc::read_single_block(self, argument, output).map(|_| ())
+    }
+
+    fn write_single_block(&mut self,
+                          argument : u32,
+                          input : &[u8; BLOCK_SIZE])
+                          -> Result<(), MmcError> {
+        DwMmc::write_single_block(self, argument, input)
     }
 }
 
@@ -251,12 +262,40 @@ impl<T : SdTransport + Send> BlockDevice for SdCard<T> {
         Ok(())
     }
 
-    fn write_blocks(&mut self, _start_block : Lba, _input : &[u8]) -> DriverResult<()> {
-        Err(DriverError::Unsupported)
+    fn write_blocks(&mut self, start_block : Lba, input : &[u8]) -> DriverResult<()> {
+        if input.len() % BLOCK_SIZE != 0 {
+            return Err(DriverError::InvalidParam);
+        }
+        let blocks = input.len() / BLOCK_SIZE;
+        let blocks = u64::try_from(blocks).map_err(|_| DriverError::InvalidParam)?;
+        let end = start_block.0
+                             .checked_add(blocks)
+                             .ok_or(DriverError::InvalidParam)?;
+        if self.info
+               .total_blocks
+               .is_some_and(|total| end > total)
+        {
+            return Err(DriverError::InvalidParam);
+        }
+        for (offset, block) in input.chunks_exact(BLOCK_SIZE)
+                                    .enumerate()
+        {
+            let lba = start_block.0
+                                 .checked_add(offset as u64)
+                                 .ok_or(DriverError::InvalidParam)?;
+            let argument = self.command_argument(lba)
+                               .map_err(map_error)?;
+            let block : &[u8; BLOCK_SIZE] = block.try_into()
+                                                 .map_err(|_| DriverError::InvalidParam)?;
+            self.transport
+                .write_single_block(argument, block)
+                .map_err(map_error)?;
+        }
+        Ok(())
     }
 
     fn flush(&mut self) -> DriverResult<()> {
-        // 当前 SD 路径为只读 PIO，无写缓冲需要落盘。
+        // PIO 写直接落卡，无内核侧缓冲；ext4 的 fsync/sync 语义由上层处理。
         Ok(())
     }
 }
@@ -338,11 +377,13 @@ mod tests {
     struct ScriptedCard {
         commands : VecDeque<ExpectedCommand>,
         reads : Vec<u32>,
+        writes : Vec<u32>,
     }
     impl ScriptedCard {
         fn new(commands : Vec<ExpectedCommand>) -> Self {
             Self { commands : commands.into(),
-                   reads : Vec::new() }
+                   reads : Vec::new(),
+                   writes : Vec::new() }
         }
     }
     impl SdTransport for ScriptedCard {
@@ -369,6 +410,14 @@ mod tests {
             {
                 *byte = argument.wrapping_add(index as u32) as u8;
             }
+            Ok(())
+        }
+        fn write_single_block(&mut self,
+                              argument : u32,
+                              _input : &[u8; BLOCK_SIZE])
+                              -> Result<(), MmcError> {
+            self.writes
+                .push(argument);
             Ok(())
         }
     }
@@ -520,7 +569,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_address_overflow_bad_buffers_and_writes() {
+    fn rejects_address_overflow_bad_buffers_and_accepts_writes() {
         let commands =
             common_prefix(Ok(CommandResponse::Short(0x1AA)),
                           OCR_VOLTAGE_27_TO_36_V | OCR_HIGH_CAPACITY_REQUEST,
@@ -532,11 +581,11 @@ mod tests {
                    Err(DriverError::InvalidParam));
         assert_eq!(card.read_blocks(Lba(0), &mut [0; 3]),
                    Err(DriverError::InvalidParam));
-        assert_eq!(card.write_blocks(Lba(0), &[0; BLOCK_SIZE]),
-                   Err(DriverError::Unsupported));
-        assert!(card.into_transport()
-                    .reads
-                    .is_empty());
+        assert_eq!(card.write_blocks(Lba(0), &[0; BLOCK_SIZE]), Ok(()));
+        let transport = card.into_transport();
+        assert!(transport.reads
+                         .is_empty());
+        assert_eq!(transport.writes, vec![0]);
     }
 
     #[test]

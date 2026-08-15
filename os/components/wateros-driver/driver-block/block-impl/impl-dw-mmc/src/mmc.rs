@@ -84,6 +84,7 @@ const RESP3 : usize = 0x03C;
 const RINTSTS : usize = 0x044;
 const STATUS : usize = 0x048;
 const STATUS_BUSY : u32 = 1 << 9;
+const STATUS_FIFO_FULL : u32 = 1 << 3;
 const FIFOTH : usize = 0x04C;
 const INTMASK : usize = 0x024;
 
@@ -102,6 +103,7 @@ const CMD_DATA_EXPECTED : u32 = 1 << 9;
 const CMD_CHECK_RESPONSE_CRC : u32 = 1 << 8;
 const CMD_RESPONSE_EXPECTED : u32 = 1 << 6;
 const CMD_RESPONSE_LONG : u32 = 1 << 7;
+const CMD_WRITE : u32 = 1 << 10;
 const INT_END_BIT : u32 = 1 << 15;
 const INT_START_BIT : u32 = 1 << 13;
 const INT_HARDWARE_LOCKED : u32 = 1 << 12;
@@ -151,8 +153,8 @@ pub const fn bus_width_value(bus_width : u8) -> Result<u32, MmcError> {
 }
 
 impl<R : RegisterIo> DwMmc<R> {
-    /// 读数据失败时抓取关键寄存器，便于真机定位具体错误位。
-    fn read_failure(&mut self, err : MmcError) -> MmcError {
+    /// 数据传输失败时抓取关键寄存器，便于真机定位具体错误位。
+    fn data_failure(&mut self, err : MmcError) -> MmcError {
         let rintsts = self.registers
                           .read32(RINTSTS)
                           .unwrap_or(0);
@@ -168,7 +170,7 @@ impl<R : RegisterIo> DwMmc<R> {
         let cmdarg = self.registers
                           .read32(CMDARG)
                           .unwrap_or(0);
-        log::error!("[dw-mmc] read_single_block failed err={err:?} \
+        log::error!("[dw-mmc] data transfer failed err={err:?} \
                      rintsts={rintsts:#x} status={status:#x} ctrl={ctrl:#x} \
                      resp0={resp0:#x} cmdarg={cmdarg:#x} fifo_offset={:#x}",
                     self.fifo_offset);
@@ -241,7 +243,7 @@ impl<R : RegisterIo> DwMmc<R> {
             let interrupts = self.registers
                                  .read32(RINTSTS)?;
             if let Err(err) = Self::check_errors(interrupts) {
-                return Err(self.read_failure(err));
+                return Err(self.data_failure(err));
             }
             if self.registers
                    .read32(CMD)? &
@@ -417,7 +419,7 @@ impl<R : RegisterIo> DwMmc<R> {
             let interrupts = self.registers
                                  .read32(RINTSTS)?;
             if let Err(err) = Self::check_errors(interrupts) {
-                return Err(self.read_failure(err));
+                return Err(self.data_failure(err));
             }
             data_over |= interrupts & INT_DATA_OVER != 0;
 
@@ -442,7 +444,72 @@ impl<R : RegisterIo> DwMmc<R> {
                            .read32(RESP0);
             }
         }
-        Err(self.read_failure(MmcError::Timeout))
+        Err(self.data_failure(MmcError::Timeout))
+    }
+
+    /// Issues CMD24 and transfers exactly one 512-byte block through the FIFO.
+    pub fn write_single_block(&mut self,
+                              argument : u32,
+                              input : &[u8])
+                              -> Result<(), MmcError> {
+        if input.len() != 512 {
+            return Err(MmcError::InvalidParameter);
+        }
+        self.wait_not_busy()?;
+        self.reset_fifo()?;
+        self.registers
+            .write32(RINTSTS, INT_ALL)?;
+        self.registers
+            .write32(BLKSIZ, 512)?;
+        self.registers
+            .write32(BYTCNT, 512)?;
+        self.registers
+            .write32(CMDARG, argument)?;
+        self.registers
+            .write32(CMD,
+                     CMD_START |
+                     CMD_USE_HOLD |
+                     CMD_WAIT_PREVIOUS_DATA |
+                     CMD_DATA_EXPECTED |
+                     CMD_WRITE |
+                     CMD_CHECK_RESPONSE_CRC |
+                     CMD_RESPONSE_EXPECTED |
+                     24)?;
+
+        let mut bytes = 0;
+        let mut data_over = false;
+        for _ in 0..self.poll_limit {
+            let interrupts = self.registers
+                                 .read32(RINTSTS)?;
+            if let Err(err) = Self::check_errors(interrupts) {
+                return Err(self.data_failure(err));
+            }
+            data_over |= interrupts & INT_DATA_OVER != 0;
+
+            while bytes < input.len() {
+                let status = self.registers
+                                 .read32(STATUS)?;
+                if status & STATUS_FIFO_FULL != 0 {
+                    break;
+                }
+                let word = u32::from_le_bytes([input[bytes],
+                                                input[bytes + 1],
+                                                input[bytes + 2],
+                                                input[bytes + 3]]);
+                self.registers
+                    .write32(self.fifo_offset, word)?;
+                bytes += 4;
+            }
+
+            if interrupts != 0 {
+                self.registers
+                    .write32(RINTSTS, interrupts)?;
+            }
+            if data_over && bytes == input.len() {
+                return Ok(());
+            }
+        }
+        Err(self.data_failure(MmcError::Timeout))
     }
 
     fn check_errors(interrupts : u32) -> Result<(), MmcError> {
