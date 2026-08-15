@@ -646,11 +646,11 @@ impl MmapOps for LoongArch64AddressSpace {
             return Err(MmError::AccessViolation);
         }
         let perm_u = perm | PagePerm::U;
-        self.protect_lazy_file_vmas(addr.floor_page()
-                                        .start_addr(),
-                                    end.ceil_page()
-                                       .start_addr(),
-                                    perm_u)?;
+        if self.lazy_file_vmas
+               .has_different_perm(page_start, page_end, perm_u)
+        {
+            self.protect_lazy_file_vmas(page_start, page_end, perm_u)?;
+        }
         let mut vpn = addr.floor_page();
         let vpn_end = end.ceil_page();
         let mut ptes_changed = false;

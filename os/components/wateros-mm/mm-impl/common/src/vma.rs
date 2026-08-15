@@ -228,6 +228,17 @@ impl LazyVmaSet {
         self.lookup_or_overlap_end(start, end)
     }
 
+    /// 返回 `[start, end)` 内是否存在权限不等于 `perm` 的 lazy VMA。
+    pub fn has_different_perm(&self,
+                             start : VirtAddr,
+                             end : VirtAddr,
+                             perm : PagePerm)
+                             -> bool {
+        self.inner
+            .iter()
+            .any(|vma| vma.overlaps(start, end) && vma.perm != perm)
+    }
+
     pub fn merge_perm(&mut self,
                       start : VirtAddr,
                       end : VirtAddr,
