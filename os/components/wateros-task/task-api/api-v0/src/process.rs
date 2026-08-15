@@ -46,12 +46,22 @@ pub struct ProcessCaps {
 }
 
 impl ProcessCaps {
-    // CAP_CHOWN | CAP_SETGID | CAP_SETUID | CAP_SETPCAP。
+    pub const CAP_CHOWN : u32 = 1 << 0;
+    pub const CAP_SETGID : u32 = 1 << 6;
+    pub const CAP_SETUID : u32 = 1 << 7;
+    pub const CAP_SETPCAP : u32 = 1 << 8;
+
     // 必须包含 SETUID/SETGID：setpriv 在 PR_SET_KEEPCAPS + setresuid 后仍需
     // effective 集合持有 CAP_SETGID 才能 setresgid（libcap-ng bump_cap 只会把
     // permitted 中的 cap 提升到 effective）。
-    pub const ROOT : Self = Self { effective : (1 << 0) | (1 << 6) | (1 << 7) | (1 << 8),
-                                   permitted : (1 << 0) | (1 << 6) | (1 << 7) | (1 << 8),
+    pub const ROOT : Self = Self { effective : Self::CAP_CHOWN |
+                                               Self::CAP_SETGID |
+                                               Self::CAP_SETUID |
+                                               Self::CAP_SETPCAP,
+                                   permitted : Self::CAP_CHOWN |
+                                               Self::CAP_SETGID |
+                                               Self::CAP_SETUID |
+                                               Self::CAP_SETPCAP,
                                    inheritable : 0 };
 }
 

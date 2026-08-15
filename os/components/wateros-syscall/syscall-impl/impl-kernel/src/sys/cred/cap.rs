@@ -186,22 +186,37 @@ pub(crate) fn sys_capset(args : SyscallArgs) -> UserRet {
         Ok(c) => c,
         Err(e) => return UserRet::from_error(e),
     };
-    // 自洽性：effective / inheritable 必须是 requested permitted 的子集。
+    // 自洽性：effective 必须是 requested permitted 的子集（Linux capset 强制）。
     if caps.effective & !caps.permitted != 0 {
         return UserRet::from_error(ErrNo::EPERM);
     }
-    if caps.inheritable & !caps.permitted != 0 {
-        return UserRet::from_error(ErrNo::EPERM);
+    // WaterOS 只支持低 32 位 capability（word 0）；V2/V3 的第二个
+    // CapUserData（cap 32..63）请求非零时明确拒绝，避免静默忽略。
+    if cap_data_words(hdr.version) > 1 {
+        let word1_ptr = data_ptr + core::mem::size_of::<CapUserData>();
+        let word1 : CapUserData = match copy_from_user_struct(word1_ptr) {
+            Ok(c) => c,
+            Err(e) => return UserRet::from_error(e),
+        };
+        if word1.effective != 0 || word1.permitted != 0 || word1.inheritable != 0 {
+            return UserRet::from_error(ErrNo::EPERM);
+        }
     }
 
     let cred = cred::current_credentials();
     let is_root = cred.effective_uid.0 == 0;
     let current = task::process_caps(current_pid).unwrap_or(ProcessCaps::ROOT);
-    // 非 root 只能把 requested 集合限制在当前 permitted 的子集内（不扩大）。
-    // 配合 PR_SET_KEEPCAPS，setuid 之后仍可重设 permitted 子集（setpriv 的
-    // “reactivate capabilities” 流程）；euid == 0 的 root 可任意设置。
-    if !is_root && caps.permitted & !current.permitted != 0 {
-        return UserRet::from_error(ErrNo::EPERM);
+    if !is_root {
+        // permitted 只减不增（Linux）；配合 PR_SET_KEEPCAPS，setuid 之后仍可
+        // 重设 permitted 子集（setpriv 的 “reactivate capabilities” 流程）。
+        if caps.permitted & !current.permitted != 0 {
+            return UserRet::from_error(ErrNo::EPERM);
+        }
+        // inheritable 只减不增（Linux capset 语义：非特权进程不能新增
+        // inheritable cap，避免通过 exec 传递）。
+        if caps.inheritable & !current.inheritable != 0 {
+            return UserRet::from_error(ErrNo::EPERM);
+        }
     }
 
     let stored = ProcessCaps { effective : caps.effective,

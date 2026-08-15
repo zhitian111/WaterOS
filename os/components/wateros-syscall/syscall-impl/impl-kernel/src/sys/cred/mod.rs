@@ -15,9 +15,7 @@ use cred::api::{Gid, Uid, SUPPLEMENTARY_GROUP_COUNT};
 
 use groups::{plan_getgroups, valid_setgroups_size, GetGroupsPlan};
 use setid::{plan_set_id, plan_set_re_id, plan_set_res_id, IdTriplet};
-
-const CAP_SETGID : u32 = 1 << 6;
-const CAP_SETUID : u32 = 1 << 7;
+use task::ProcessCaps;
 
 /// 当前进程 effective capability 掩码。
 ///
@@ -33,13 +31,13 @@ fn current_effective_caps() -> u32 {
 /// uid 系列 set*id 特权：euid==0 或 effective 含 CAP_SETUID。
 fn uid_privileged() -> bool {
     let cred = cred::current_credentials();
-    cred.effective_uid.0 == 0 || (current_effective_caps() & CAP_SETUID) != 0
+    cred.effective_uid.0 == 0 || (current_effective_caps() & ProcessCaps::CAP_SETUID) != 0
 }
 
 /// gid 系列 set*id / setgroups 特权：euid==0 或 effective 含 CAP_SETGID。
 fn gid_privileged() -> bool {
     let cred = cred::current_credentials();
-    cred.effective_uid.0 == 0 || (current_effective_caps() & CAP_SETGID) != 0
+    cred.effective_uid.0 == 0 || (current_effective_caps() & ProcessCaps::CAP_SETGID) != 0
 }
 
 fn current_uid_triplet() -> (IdTriplet, bool) {
