@@ -554,7 +554,30 @@ impl MmapOps for LoongArch64AddressSpace {
         if self.handle_brk_page_fault(allocator, fault_addr, access)? {
             return Ok(true);
         }
-        self.handle_lazy_page_fault(allocator, fault_addr, access)
+        if self.handle_lazy_page_fault(allocator, fault_addr, access)? {
+            return Ok(true);
+        }
+
+        let vpn = fault_addr.floor_page();
+        if self.translate_addr(vpn.start_addr())?
+               .is_some()
+        {
+            let perm = self.leaf_page_perm(vpn)?
+                           .unwrap_or(PagePerm::empty());
+            let allowed = match access {
+                PageFaultAccess::Read => perm.readable(),
+                PageFaultAccess::Write => perm.writable(),
+                PageFaultAccess::Execute => perm.executable(),
+            };
+            if perm.user() && allowed {
+                platform::arch::paging::flush_tlb_local(
+                    platform::arch::paging::TlbFlushRange::Page {
+                        addr : vpn.start_addr().0,
+                    });
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn munmap<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,
