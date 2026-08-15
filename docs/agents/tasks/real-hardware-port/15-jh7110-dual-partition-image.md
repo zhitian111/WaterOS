@@ -12,7 +12,7 @@ GPT 四分区（P1/P2 固件占位 2M/4M，P3 FAT 启动分区，P4 ext4 rootfs�
 
 ## 实施方案
 
-1. `os/scripts/root_image/root_image.py`：
+1. `user/tools/root_image.py`：
    - 新增 `--boot-dir` / `--boot-size-mib`（默认 64）；
    - `make_partition_table_vf2`：P1 2MiB、P2 4MiB 占位，P3 FAT boot，
      P4 ext4 rootfs（GPT 与 MBR 两套 sfdisk 规格）；
@@ -28,7 +28,7 @@ GPT 四分区（P1/P2 固件占位 2M/4M，P3 FAT 启动分区，P4 ext4 rootfs�
 
 ## 涉及文件 / CodeGraph 查询
 
-- `os/scripts/root_image/root_image.py`
+- `user/tools/root_image.py`
 - `user/tools/image.py`、`user/tools/userland.py`、`user/Makefile`
 - `user/README.md`、`os/scripts/README.md`
 
@@ -77,7 +77,7 @@ git diff --check
 - 完成日期：2026-08-15
 - commit：本任务实现提交（见 `git log --oneline -1`，分支 `feat/real-hardware-porting`）
 - 实际改动：
-  - `os/scripts/root_image/root_image.py`：新增 `--boot-dir`/`--boot-size-mib`；
+  - `user/tools/root_image.py`：新增 `--boot-dir`/`--boot-size-mib`；
     `make_partition_table_vf2` 生成 P1 2M、P2 4M、P3 FAT boot、P4 ext4
     rootfs 四分区（GPT：P3 用 Microsoft basic data GUID
     `EBD0A0A2-...`，避免 sfdisk `S` 简写误标成 swap；MBR：P3 `0c`）；

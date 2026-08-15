@@ -50,7 +50,7 @@ def create_disk_image(staging: Path, output: Path, arch: str,
                       boot_size_mb: int = 64) -> Path:
     """Build a partitioned (GPT/MBR) whole-disk image from a staging tree.
 
-    The rootfs partition is produced by `os/scripts/root_image/root_image.py`
+    The rootfs partition is produced by `user/tools/root_image.py`
     (loopback, no root required) and verified with `e2fsck -fn`. The raw EXT4
     from [`create_image`] remains the QEMU-facing artifact. When `boot_dir`
     is given, the VisionFive 2 layout is used (P1/P2 placeholders, P3 FAT
@@ -63,7 +63,7 @@ def create_disk_image(staging: Path, output: Path, arch: str,
         raise ImageError(f"staging directory does not exist: {staging}")
     if size_mb < 16:
         raise ImageError("disk image size must be at least 16 MiB")
-    root_image = USER_ROOT.parent / "os" / "scripts" / "root_image" / "root_image.py"
+    root_image = USER_ROOT / "tools" / "root_image.py"
     if not root_image.is_file():
         raise ImageError(f"root_image.py not found: {root_image}")
     output.parent.mkdir(parents=True, exist_ok=True)

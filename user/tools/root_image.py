@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Build and verify a small WaterOS physical root disk image without root access."""
+"""Build and verify a small WaterOS physical root disk image without root access.
+
+This script is owned by the userland builder and lives under `user/tools/`.
+"""
 
 from __future__ import annotations
 

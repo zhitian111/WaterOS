@@ -5,7 +5,7 @@
 从 `feat/real-hardware-common` 迁移两块板都要用的「根镜像构建 + 烧写」工具和
 「devfs 动态拓扑/稳定 slot/GPT/MBR 分区」能力。
 
-- `scripts/root_image/root_image.py`（loopback 无特权构建/验证镜像）；
+- `user/tools/root_image.py`（loopback 无特权构建/验证镜像）；
 - devfs 动态拓扑与稳定 slot，GPT/MBR 分区解析，支撑后续 SD（任务 08）与 SATA（任务 10）
   的持久化挂载。
 
@@ -17,7 +17,7 @@
 
 ## 涉及文件 / CodeGraph 查询
 
-- `os/scripts/root_image/root_image.py`
+- `user/tools/root_image.py`
 - `os/components/wateros-fs/fs-devfs/**`
 - 相关 partition/GPT/MBR 解析模块
 
@@ -39,7 +39,7 @@ codegraph explore "mount"
 
 ```bash
 cd os
-python3 scripts/root_image/root_image.py --help
+python3 user/tools/root_image.py --help
 make configure && make rv_check && make la_check
 git diff --check
 # 生成测试镜像后用宿主机 e2fsck -fn 做只读一致性检查
@@ -56,7 +56,7 @@ git diff --check
 - 完成日期：2026-08-15
 - commit：本任务实现提交（见 `git log --oneline -1`，分支 `feat/real-hardware-porting`）
 - 实际改动：
-  - 新增 `os/scripts/root_image/root_image.py`（自旧分支迁移，525 行）：loopback
+  - 新增 `user/tools/root_image.py`（自旧分支迁移，525 行）：loopback
     无特权构建 MBR/GPT 整盘镜像（`sfdisk` + `mkfs.ext4 -E offset=`），`verify`
     子命令做分区/`e2fsck -fn`/`dumpe2fs`/`debugfs` 校验。
   - 新增 `driver-block/block-api/api-v0/src/partition.rs`（自旧分支迁移并适配）：

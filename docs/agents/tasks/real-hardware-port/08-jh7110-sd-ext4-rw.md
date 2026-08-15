@@ -16,7 +16,7 @@
 
 ## 涉及文件 / CodeGraph 查询
 
-- `os/scripts/root_image/root_image.py`
+- `user/tools/root_image.py`
 - `os/components/wateros-fs/**`（fs bridge / page cache / ext4 适配）
 - `os/components/wateros-driver/driver-block/**`
 

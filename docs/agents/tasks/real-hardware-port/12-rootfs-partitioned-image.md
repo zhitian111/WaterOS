@@ -13,7 +13,7 @@ SATA（2K1000）与 SD/eMMC（VisionFive 2）能挂载真正的 rootfs 分区，
 
 ## 实施方案
 
-1. 审计并迁移旧 `feat/real-hardware-common` 的 `scripts/root_image/root_image.py`
+1. 审计并迁移旧 `feat/real-hardware-common` 的 `user/tools/root_image.py`
    （loopback 无特权构建/校验）到当前 main。
 2. 在 `user/Makefile` 的 `image` 目标下增加「整盘镜像」产物（`.img`/`.qcow2`），同时
    保留 raw `.ext4` 供 QEMU 回归。
@@ -22,7 +22,7 @@ SATA（2K1000）与 SD/eMMC（VisionFive 2）能挂载真正的 rootfs 分区，
 
 ## 涉及文件 / CodeGraph 查询
 
-- `os/scripts/root_image/root_image.py`
+- `user/tools/root_image.py`
 - `user/Makefile`
 - `user/README.md`（产物/参数变化同步）
 
@@ -63,7 +63,7 @@ git diff --check
 - 完成日期：2026-08-15
 - commit：本任务实现提交（见 `git log --oneline -1`，分支 `feat/real-hardware-porting`）
 - 实际改动：
-  - `os/scripts/root_image/root_image.py` 新增 `--copy-tree <staging>`：直接把既有
+  - `user/tools/root_image.py` 新增 `--copy-tree <staging>`：直接把既有
     staging 树作为 rootfs（保留模式/符号链接），`verify` 也支持以树为期望路径；
     原 manifest 路径保持兼容（任务 03 已迁移该工具）。
   - `user/tools/image.py` 新增 `create_disk_image`：调用 root_image.py 构建并校验
