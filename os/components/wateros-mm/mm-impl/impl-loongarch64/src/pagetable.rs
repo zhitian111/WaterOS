@@ -24,7 +24,7 @@ use api_v0::perm::PagePerm;
 
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result, frame_inc_ref, frame_ref_count};
 pub(crate) use impl_common::{
-    DeviceVma, LazyFileVma, LazyVmaSet, SharedAnonVma, SharedFileVma,
+    DeviceVma, LazyFileVma, LazyVmaSet, SharedAnonVma, SharedFileVma, VmaBacking,
 };
 
 /// LoongArch64 PTE 标志位。
@@ -521,11 +521,12 @@ impl LoongArch64AddressSpace {
                                            end : VirtAddr,
                                            file_offset : usize,
                                            loader : Box<dyn DemandPageLoader>) {
-        self.shared_file_vmas
-            .push(SharedFileVma { start,
-                                  end,
-                                  file_offset,
-                                  loader });
+        self.shared_file_vmas.push(SharedFileVma {
+            start,
+            end,
+            file_offset,
+            backing : VmaBacking::File { loader },
+        });
     }
 
     pub(crate) fn sync_shared_file_vmas(&mut self,
@@ -549,12 +550,11 @@ impl LoongArch64AddressSpace {
                                                         PAGE_SIZE)
                         };
                         let file_offset = vma.file_offset + (page.0 - vma.start.0);
-                        vma.loader
-                           .write_page(file_offset, src)?;
+                        vma.backing.write_page(file_offset, src)?;
                     }
                     page.0 += PAGE_SIZE;
                 }
-                vma.loader.flush()?;
+                vma.backing.flush()?;
             }
             Ok(())
         })();
@@ -578,14 +578,13 @@ impl LoongArch64AddressSpace {
                 next.push(SharedFileVma { start : vma.start,
                                           end : start,
                                           file_offset : vma.file_offset,
-                                          loader : vma.loader
-                                                      .duplicate_box()? });
+                                          backing : vma.backing.duplicate()? });
             }
             if end.0 < vma.end.0 {
                 next.push(SharedFileVma { start : end,
                                           end : vma.end,
                                           file_offset : vma.file_offset + (end.0 - vma.start.0),
-                                          loader : vma.loader });
+                                          backing : vma.backing });
             }
         }
         self.shared_file_vmas = next;
@@ -677,7 +676,7 @@ impl LoongArch64AddressSpace {
                                          perm : PagePerm,
                                          file_offset : usize,
                                          file_size : usize,
-                                         loader : Box<dyn DemandPageLoader>)
+                                         backing : VmaBacking)
                                          -> MmResult<()> {
         self.validate_user_mapping_range(start, end)?;
         if self.lazy_vma_overlaps(start, end) {
@@ -692,7 +691,7 @@ impl LoongArch64AddressSpace {
                                                  perm,
                                                  file_offset,
                                                  file_size,
-                                                 loader });
+                                                 backing });
         self.lazy_file_vmas.sort();
         Ok(())
     }
@@ -967,7 +966,7 @@ impl LoongArch64AddressSpace {
             let vma = self.lazy_file_vmas
                            .get_mut(index)
                            .ok_or(MmError::InvalidAddress)?;
-            if let Some(ppn) = vma.loader.load_shared_page(file_offset)?
+            if let Some(ppn) = vma.backing.load_shared_page(file_offset)?
             {
                 if let Err(error) = self.map_page_to_ppn(page.floor_page(), ppn, perm) {
                     let _ = frame_dealloc_result(ppn);
@@ -985,7 +984,7 @@ impl LoongArch64AddressSpace {
         let vma = self.lazy_file_vmas
                        .get_mut(index)
                        .ok_or(MmError::InvalidAddress)?;
-        if let Err(e) = vma.loader.load_page(file_offset, dst)
+        if let Err(e) = vma.backing.load_page(file_offset, dst)
         {
             let _ = allocator.dealloc_frame(ppn);
             return Err(e);
