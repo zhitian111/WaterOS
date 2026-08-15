@@ -472,6 +472,14 @@ pub(crate) struct ProcMemoryKb {
     stack_kb : usize,
 }
 
+fn process_user_mappings(
+    pid : ProcessId,
+) -> Option<Vec<mm_api_v0::user_mapping::UserMappingSnapshot>> {
+    let process = task::process_snapshot(pid)?;
+    let leader = task::task_snapshot(process.leader_task_id)?;
+    mm_api_v0::user_mapping::snapshot_user_mappings(leader.user_aspace_ptr).ok()
+}
+
 pub(crate) fn process_memory_kb(pid : ProcessId) -> FsResult<ProcMemoryKb> {
     let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
     let leader = task::task_snapshot(process.leader_task_id).ok_or(FsError::NotFound)?;
@@ -481,14 +489,33 @@ pub(crate) fn process_memory_kb(pid : ProcessId) -> FsResult<ProcMemoryKb> {
     let stack_kb = leader.user_stack
                          .map(|stack| stack.size().saturating_add(1023) / 1024)
                          .unwrap_or(0);
-    // ELF loader 首次只驻留栈顶 16 页；其余栈页按需缺页。当前 MM 尚未提供
-    // per-process RSS 计数，因此 RSS 取“整个主映像 + 初始栈页”的保守估计，
-    // VmSize 则发布确知的映像和完整栈保留区，避免此前固定伪造 4 MiB heap。
-    let initial_stack_rss_kb = stack_kb.min(16 * 4);
-    let rss_kb = image_kb.saturating_add(initial_stack_rss_kb);
-    Ok(ProcMemoryKb { size_kb : image_kb.saturating_add(stack_kb),
+    let Some(mappings) = process_user_mappings(pid) else {
+        let initial_stack_rss_kb = stack_kb.min(16 * 4);
+        return Ok(ProcMemoryKb { size_kb : image_kb.saturating_add(stack_kb),
+                                 rss_kb : image_kb.saturating_add(initial_stack_rss_kb),
+                                 private_dirty_kb : initial_stack_rss_kb,
+                                 image_kb,
+                                 stack_kb });
+    };
+    let size_kb = mappings.iter()
+                          .map(|mapping| mapping.end.saturating_sub(mapping.start) / 1024)
+                          .sum();
+    let rss_kb = mappings.iter()
+                         .map(|mapping| mapping.resident_pages.saturating_mul(4))
+                         .sum();
+    let private_dirty_kb = mappings.iter()
+                                   .filter(|mapping| {
+                                       !mapping.shared && mapping.perm.writable() &&
+                                       matches!(mapping.kind,
+                                                mm_api_v0::user_mapping::UserMappingKind::Anonymous |
+                                                mm_api_v0::user_mapping::UserMappingKind::Heap |
+                                                mm_api_v0::user_mapping::UserMappingKind::Stack)
+                                   })
+                                   .map(|mapping| mapping.resident_pages.saturating_mul(4))
+                                   .sum();
+    Ok(ProcMemoryKb { size_kb,
                       rss_kb,
-                      private_dirty_kb : initial_stack_rss_kb,
+                      private_dirty_kb,
                       image_kb,
                       stack_kb })
 }
@@ -497,18 +524,18 @@ pub(crate) fn format_maps(pid : ProcessId) -> FsResult<Vec<u8>> {
     let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
     let leader = task::task_snapshot(process.leader_task_id).ok_or(FsError::NotFound)?;
     let executable = exe_for(process.leader_task_id).unwrap_or_default();
+    let mappings = process_user_mappings(pid).ok_or(FsError::Io)?;
     let mut out = String::new();
-    if let Some(image) = leader.user_image {
-        let start = image.image_base();
-        let end = start.saturating_add(image.image_size());
+    for mapping in mappings {
+        let path = mapping_path(&mapping, leader.user_image, executable.as_str());
         let _ = writeln!(out,
-                         "{start:016x}-{end:016x} r-xp 00000000 00:00 0 {executable}");
-    }
-    if let Some(stack) = leader.user_stack {
-        let _ = writeln!(out,
-                         "{:016x}-{:016x} rw-p 00000000 00:00 0 [stack]",
-                         stack.bottom(),
-                         stack.top());
+                         "{:016x}-{:016x} {} {:08x} 00:00 0{}{}",
+                         mapping.start,
+                         mapping.end,
+                         mapping_perms(&mapping),
+                         mapping.file_offset,
+                         if path.is_empty() { "" } else { " " },
+                         path);
     }
     Ok(out.into_bytes())
 }
@@ -516,36 +543,82 @@ pub(crate) fn format_maps(pid : ProcessId) -> FsResult<Vec<u8>> {
 pub(crate) fn format_smaps(pid : ProcessId) -> FsResult<Vec<u8>> {
     let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
     let leader = task::task_snapshot(process.leader_task_id).ok_or(FsError::NotFound)?;
+    let executable = exe_for(process.leader_task_id).unwrap_or_default();
+    let mappings = process_user_mappings(pid).ok_or(FsError::Io)?;
     let mut out = String::new();
-    if let Some(image) = leader.user_image {
-        let start = image.image_base();
-        let end = start.saturating_add(image.image_size());
-        let size_kb = image.image_size().saturating_add(1023) / 1024;
-        let executable = exe_for(process.leader_task_id).unwrap_or_default();
+    for mapping in mappings {
+        let path = mapping_path(&mapping, leader.user_image, executable.as_str());
+        let size_kb = mapping.end.saturating_sub(mapping.start) / 1024;
+        let rss_kb = mapping.resident_pages.saturating_mul(4);
+        let anonymous = matches!(mapping.kind,
+                                 mm_api_v0::user_mapping::UserMappingKind::Anonymous |
+                                 mm_api_v0::user_mapping::UserMappingKind::Heap |
+                                 mm_api_v0::user_mapping::UserMappingKind::Stack);
+        let (shared_clean, shared_dirty, private_clean, private_dirty) = if mapping.shared {
+            if mapping.perm.writable() { (0, rss_kb, 0, 0) } else { (rss_kb, 0, 0, 0) }
+        } else if anonymous && mapping.perm.writable() {
+            (0, 0, 0, rss_kb)
+        } else {
+            (0, 0, rss_kb, 0)
+        };
         let _ = write!(out,
-                       "{start:016x}-{end:016x} r-xp 00000000 00:00 0 {executable}\n\
-                        Size:\t{size_kb}\tkB\nRss:\t{size_kb}\tkB\nPss:\t{size_kb}\tkB\n\
-                        Shared_Clean:\t0\tkB\nShared_Dirty:\t0\tkB\n\
-                        Private_Clean:\t{size_kb}\tkB\nPrivate_Dirty:\t0\tkB\n\
-                        Referenced:\t{size_kb}\tkB\nAnonymous:\t0\tkB\nSwap:\t0\tkB\n\
-                        KernelPageSize:\t4\tkB\nMMUPageSize:\t4\tkB\n\
-                        VmFlags: rd ex mr mw me sd\n");
-    }
-    if let Some(stack) = leader.user_stack {
-        let size_kb = stack.size().saturating_add(1023) / 1024;
-        let rss_kb = size_kb.min(16 * 4);
-        let _ = write!(out,
-                       "{:016x}-{:016x} rw-p 00000000 00:00 0 [stack]\n\
+                       "{:016x}-{:016x} {} {:08x} 00:00 0{}{}\n\
                         Size:\t{size_kb}\tkB\nRss:\t{rss_kb}\tkB\nPss:\t{rss_kb}\tkB\n\
-                        Shared_Clean:\t0\tkB\nShared_Dirty:\t0\tkB\n\
-                        Private_Clean:\t0\tkB\nPrivate_Dirty:\t{rss_kb}\tkB\n\
-                        Referenced:\t{rss_kb}\tkB\nAnonymous:\t{rss_kb}\tkB\nSwap:\t0\tkB\n\
+                        Shared_Clean:\t{shared_clean}\tkB\nShared_Dirty:\t{shared_dirty}\tkB\n\
+                        Private_Clean:\t{private_clean}\tkB\nPrivate_Dirty:\t{private_dirty}\tkB\n\
+                        Referenced:\t{rss_kb}\tkB\nAnonymous:\t{}\tkB\nSwap:\t0\tkB\n\
                         KernelPageSize:\t4\tkB\nMMUPageSize:\t4\tkB\n\
-                        VmFlags: rd wr mr mw me gd ac\n",
-                       stack.bottom(),
-                       stack.top());
+                        VmFlags:{}\n",
+                       mapping.start,
+                       mapping.end,
+                       mapping_perms(&mapping),
+                       mapping.file_offset,
+                       if path.is_empty() { "" } else { " " },
+                       path,
+                       if anonymous { rss_kb } else { 0 },
+                       mapping_vm_flags(&mapping));
     }
     Ok(out.into_bytes())
+}
+
+fn mapping_perms(mapping : &mm_api_v0::user_mapping::UserMappingSnapshot) -> String {
+    format!("{}{}{}{}",
+            if mapping.perm.readable() { 'r' } else { '-' },
+            if mapping.perm.writable() { 'w' } else { '-' },
+            if mapping.perm.executable() { 'x' } else { '-' },
+            if mapping.shared { 's' } else { 'p' })
+}
+
+fn mapping_vm_flags(mapping : &mm_api_v0::user_mapping::UserMappingSnapshot) -> String {
+    let mut out = String::new();
+    if mapping.perm.readable() { out.push_str(" rd"); }
+    if mapping.perm.writable() { out.push_str(" wr"); }
+    if mapping.perm.executable() { out.push_str(" ex"); }
+    if mapping.shared { out.push_str(" sh"); }
+    out.push_str(" mr mw me");
+    out
+}
+
+fn mapping_path(mapping : &mm_api_v0::user_mapping::UserMappingSnapshot,
+                image : Option<task::UserImageInfo>,
+                executable : &str)
+                -> String {
+    use mm_api_v0::user_mapping::UserMappingKind;
+    match mapping.kind {
+        UserMappingKind::Heap => String::from("[heap]"),
+        UserMappingKind::Stack => String::from("[stack]"),
+        UserMappingKind::Device => String::from("[device]"),
+        UserMappingKind::KernelTrampoline => String::from("[wateros-trampoline]"),
+        UserMappingKind::File => {
+            let belongs_to_image = image.is_some_and(|image| {
+                let image_start = image.image_base();
+                let image_end = image_start.saturating_add(image.image_size());
+                mapping.start < image_end && mapping.end > image_start
+            });
+            if belongs_to_image { String::from(executable) } else { String::new() }
+        }
+        UserMappingKind::Anonymous => String::new(),
+    }
 }
 
 // 本方法代码由AI完成

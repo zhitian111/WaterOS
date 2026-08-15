@@ -95,6 +95,12 @@ pub fn mark_inactive(_handle: usize, _cpu: wateros_base::cpu::CpuId) {
     // 该位保持到地址空间销毁，确保后续页表修改仍会通知这枚 CPU。
 }
 
+pub fn snapshot_user_mappings(
+    handle : usize,
+) -> MmResult<alloc::vec::Vec<api_v0::user_mapping::UserMappingSnapshot>> {
+    with_user_aspace_mut(handle, |aspace| Ok(aspace.user_mapping_snapshot()))
+}
+
 /// syscall trap 期间全局中断处于关闭状态，不能直接无限自旋等待 shootdown
 /// 串行锁。等待锁时主动处理本 CPU 已发布的 TLB 请求，避免持锁 CPU 等待
 /// 当前 CPU 确认、当前 CPU 又等待该锁的环形死锁。

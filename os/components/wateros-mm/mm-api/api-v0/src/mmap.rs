@@ -61,10 +61,20 @@ pub enum PageFaultAccess {
     Execute,
 }
 
+/// 懒加载 VMA 的后备类型，仅用于只读诊断，不改变装页语义。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DemandMappingKind {
+    Anonymous,
+    File,
+}
+
 /// 文件页懒加载器。实现者须自行持有 mmap 后仍可读取文件内容的状态。
 pub trait DemandPageLoader {
     /// 复制 loader；用于 fork 后父子地址空间都保留同一文件映射语义。
     fn duplicate_box(&self) -> MmResult<Box<dyn DemandPageLoader>>;
+
+    /// 标识该 loader 是匿名零页还是文件后备；默认实现保持文件语义。
+    fn mapping_kind(&self) -> DemandMappingKind { DemandMappingKind::File }
 
     /// 将文件偏移 `file_offset` 对应的一页加载到已清零的 `dst`。
     fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()>;

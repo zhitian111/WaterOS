@@ -294,6 +294,7 @@ impl LoongArch64AddressSpace {
                                         perm,
                                         0,
                                         0,
+                                        false,
                                         Box::new(impl_common::ZeroAnonLoader))?;
         }
         if req.addr_hint
@@ -527,6 +528,7 @@ impl MmapOps for LoongArch64AddressSpace {
                                     perm,
                                     file_offset,
                                     file_size,
+                                    req.flags.contains(MapFlags::SHARED),
                                     loader)?;
         if req.addr_hint
               .is_none()
@@ -735,6 +737,7 @@ impl MmapOps for LoongArch64AddressSpace {
                                                              perm : vma.perm,
                                                              file_offset : vma.file_offset,
                                                              file_size : vma.file_size,
+                                                             shared : vma.shared,
                                                              loader : vma.loader
                                                                          .duplicate_box()? })
                 })
@@ -809,6 +812,7 @@ impl MmapOps for LoongArch64AddressSpace {
                                         vma.perm,
                                         vma.file_offset,
                                         vma.file_size,
+                                        vma.shared,
                                         vma.loader)?;
         } else if flags & MREMAP_FIXED != 0 {
             self.remove_lazy_file_vmas(result, result_end)?;

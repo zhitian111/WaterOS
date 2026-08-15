@@ -93,6 +93,12 @@ pub fn mark_inactive(_handle: usize, _cpu: wateros_base::cpu::CpuId) {
     // 该位保持到地址空间销毁，保证页表修改与 ASID 回收会通知所有缓存 hart。
 }
 
+pub fn snapshot_user_mappings(
+    handle : usize,
+) -> MmResult<alloc::vec::Vec<api_v0::user_mapping::UserMappingSnapshot>> {
+    with_user_aspace_mut(handle, |aspace| Ok(aspace.user_mapping_snapshot()))
+}
+
 /// syscall trap 期间全局中断处于关闭状态，不能直接无限自旋等待 shootdown
 /// 串行锁。否则两个共享地址空间的 CPU 可形成：
 ///

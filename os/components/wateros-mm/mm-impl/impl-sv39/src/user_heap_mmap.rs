@@ -277,6 +277,7 @@ impl Sv39AddressSpace {
                                         perm,
                                         0,
                                         0,
+                                        false,
                                         Box::new(impl_common::ZeroAnonLoader))?;
         }
         if req.addr_hint
@@ -498,7 +499,13 @@ impl MmapOps for Sv39AddressSpace {
                 return Err(MmError::InvalidAddress);
             }
         };
-        self.register_lazy_file_vma(base, end, perm, file_offset, file_size, loader)?;
+        self.register_lazy_file_vma(base,
+                                    end,
+                                    perm,
+                                    file_offset,
+                                    file_size,
+                                    req.flags.contains(MapFlags::SHARED),
+                                    loader)?;
         if req.addr_hint
               .is_none()
         {
@@ -716,6 +723,7 @@ impl MmapOps for Sv39AddressSpace {
                                                              perm : vma.perm,
                                                              file_offset : vma.file_offset,
                                                              file_size : vma.file_size,
+                                                             shared : vma.shared,
                                                              loader : vma.loader
                                                                          .duplicate_box()? })
                 })
@@ -791,6 +799,7 @@ impl MmapOps for Sv39AddressSpace {
                                         vma.perm,
                                         vma.file_offset,
                                         vma.file_size,
+                                        vma.shared,
                                         vma.loader)?;
         } else if flags & MREMAP_FIXED != 0 {
             self.remove_lazy_file_vmas(result, result_end)?;

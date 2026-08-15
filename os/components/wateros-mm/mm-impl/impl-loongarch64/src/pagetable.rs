@@ -253,6 +253,7 @@ pub(crate) struct LazyFileVma {
     pub perm : PagePerm,
     pub file_offset : usize,
     pub file_size : usize,
+    pub shared : bool,
     pub loader : Box<dyn DemandPageLoader>,
 }
 
@@ -263,6 +264,7 @@ impl LazyFileVma {
                   perm : self.perm,
                   file_offset : self.file_offset,
                   file_size : self.file_size,
+                  shared : self.shared,
                   loader : self.loader
                                .duplicate_box()? })
     }
@@ -320,6 +322,10 @@ impl SharedFileVma {
 
     pub(crate) fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
         start.0 < self.end.0 && end.0 > self.start.0
+    }
+
+    pub(crate) fn contains_page(&self, page : VirtAddr) -> bool {
+        page.0 >= self.start.0 && page.0 < self.end.0
     }
 }
 
@@ -510,6 +516,7 @@ impl LoongArch64AddressSpace {
                                         perm : vma.perm,
                                         file_offset : vma.file_offset,
                                         file_size : vma.file_size,
+                                        shared : vma.shared,
                                         loader : vma.loader
                                                     .duplicate_box()? });
             }
@@ -520,6 +527,7 @@ impl LoongArch64AddressSpace {
                                     perm : vma.perm | perm,
                                     file_offset : vma.file_offset + (mid_start.0 - vma.start.0),
                                     file_size : vma.file_size,
+                                    shared : vma.shared,
                                     loader : vma.loader
                                                 .duplicate_box()? });
             if end.0 < vma.end.0 {
@@ -528,6 +536,7 @@ impl LoongArch64AddressSpace {
                                         perm : vma.perm,
                                         file_offset : vma.file_offset + (end.0 - vma.start.0),
                                         file_size : vma.file_size,
+                                        shared : vma.shared,
                                         loader : vma.loader });
             }
         }
@@ -843,6 +852,7 @@ impl LoongArch64AddressSpace {
                                          perm : PagePerm,
                                          file_offset : usize,
                                          file_size : usize,
+                                         shared : bool,
                                          loader : Box<dyn DemandPageLoader>)
                                          -> MmResult<()> {
         self.validate_user_mapping_range(start, end)?;
@@ -859,6 +869,7 @@ impl LoongArch64AddressSpace {
                                   perm,
                                   file_offset,
                                   file_size,
+                                  shared,
                                   loader });
         Ok(())
     }
@@ -908,6 +919,7 @@ impl LoongArch64AddressSpace {
                                         perm : vma.perm,
                                         file_offset : vma.file_offset,
                                         file_size : vma.file_size,
+                                        shared : vma.shared,
                                         loader : vma.loader
                                                     .duplicate_box()? });
             }
@@ -920,6 +932,7 @@ impl LoongArch64AddressSpace {
                                         file_offset : vma.file_offset
                                                          .saturating_add(delta),
                                         file_size : vma.file_size,
+                                        shared : vma.shared,
                                         loader : vma.loader });
             }
         }
@@ -950,6 +963,7 @@ impl LoongArch64AddressSpace {
                                            perm : first_vma.perm,
                                            file_offset : first_vma.file_offset,
                                            file_size : first_vma.file_size,
+                                           shared : first_vma.shared,
                                            loader : first_vma.loader.duplicate_box()? })
         }).transpose()?;
         let last_vma = &self.lazy_file_vmas[last - 1];
@@ -960,6 +974,7 @@ impl LoongArch64AddressSpace {
                                            file_offset : last_vma.file_offset +
                                                          (end.0 - last_vma.start.0),
                                            file_size : last_vma.file_size,
+                                           shared : last_vma.shared,
                                            loader : last_vma.loader.duplicate_box()? })
         }).transpose()?;
 
@@ -1421,6 +1436,110 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
 }
 
 impl LoongArch64AddressSpace {
+    /// 汇总页表叶子与 VMA 元数据，供 procfs/debugger 只读观察。
+    pub(crate) fn user_mapping_snapshot(
+        &self,
+    ) -> Vec<api_v0::user_mapping::UserMappingSnapshot> {
+        use api_v0::mmap::DemandMappingKind;
+        use api_v0::user_mapping::{UserMappingKind, UserMappingSnapshot};
+
+        let mut leaves = Vec::new();
+        unsafe {
+            collect_user_leaf_pages(self.root, LOONGARCH64_LEVELS - 1, 0, &mut leaves)
+        };
+        let resident_in = |start : usize, end : usize| {
+            leaves.iter().filter(|leaf| leaf.addr >= start && leaf.addr < end).count()
+        };
+        let mut mappings = Vec::new();
+
+        for vma in &self.lazy_file_vmas {
+            let kind = match vma.loader.mapping_kind() {
+                DemandMappingKind::Anonymous => UserMappingKind::Anonymous,
+                DemandMappingKind::File => UserMappingKind::File,
+            };
+            mappings.push(UserMappingSnapshot { start : vma.start.0,
+                                                end : vma.end.0,
+                                                perm : vma.perm,
+                                                shared : vma.shared,
+                                                file_offset : vma.file_offset,
+                                                resident_pages : resident_in(vma.start.0,
+                                                                             vma.end.0),
+                                                kind });
+        }
+        if self.user_brk_start.0 < self.user_brk_current_end.0 {
+            let start = self.user_brk_start.floor_page().start_addr().0;
+            let end = self.user_brk_current_end.ceil_page().start_addr().0;
+            mappings.push(UserMappingSnapshot { start,
+                                                end,
+                                                perm : PagePerm::R | PagePerm::W | PagePerm::U,
+                                                shared : false,
+                                                file_offset : 0,
+                                                resident_pages : resident_in(start, end),
+                                                kind : UserMappingKind::Heap });
+        }
+        if self.user_stack_bottom.0 < self.user_stack_top.0 {
+            let start = self.user_stack_bottom.floor_page().start_addr().0;
+            let end = self.user_stack_top.ceil_page().start_addr().0;
+            mappings.push(UserMappingSnapshot { start,
+                                                end,
+                                                perm : PagePerm::R | PagePerm::W | PagePerm::U,
+                                                shared : false,
+                                                file_offset : 0,
+                                                resident_pages : resident_in(start, end),
+                                                kind : UserMappingKind::Stack });
+        }
+        for vma in &self.device_vmas {
+            mappings.push(UserMappingSnapshot { start : vma.start.0,
+                                                end : vma.end.0,
+                                                perm : vma.perm,
+                                                shared : true,
+                                                file_offset : 0,
+                                                resident_pages : resident_in(vma.start.0,
+                                                                             vma.end.0),
+                                                kind : UserMappingKind::Device });
+        }
+
+        let mut leaf_mappings : Vec<UserMappingSnapshot> = Vec::new();
+        for leaf in leaves {
+            if mappings.iter().any(|mapping| leaf.addr >= mapping.start && leaf.addr < mapping.end)
+            {
+                continue;
+            }
+            let page = VirtAddr(leaf.addr);
+            let shared_file = self.shared_file_vmas.iter().find(|vma| vma.contains_page(page));
+            let shared = shared_file.is_some() || self.shared_anon_vmas
+                                                       .iter()
+                                                       .any(|vma| vma.contains_page(page));
+            let (kind, file_offset) = if let Some(vma) = shared_file {
+                (UserMappingKind::File, vma.file_offset + (leaf.addr - vma.start.0))
+            } else {
+                (UserMappingKind::Anonymous, 0)
+            };
+            if let Some(previous) = leaf_mappings.last_mut() {
+                let offset_contiguous = kind != UserMappingKind::File ||
+                                        previous.file_offset + (previous.end - previous.start) ==
+                                        file_offset;
+                if previous.end == leaf.addr && previous.perm == leaf.perm &&
+                   previous.shared == shared && previous.kind == kind && offset_contiguous
+                {
+                    previous.end += PAGE_SIZE;
+                    previous.resident_pages += 1;
+                    continue;
+                }
+            }
+            leaf_mappings.push(UserMappingSnapshot { start : leaf.addr,
+                                                     end : leaf.addr + PAGE_SIZE,
+                                                     perm : leaf.perm,
+                                                     shared,
+                                                     file_offset,
+                                                     resident_pages : 1,
+                                                     kind });
+        }
+        mappings.extend(leaf_mappings);
+        mappings.sort_by_key(|mapping| mapping.start);
+        mappings
+    }
+
     pub(crate) fn translate_addr_with_perm(&self,
                                            va : VirtAddr)
                                            -> MmResult<Option<(PhysAddr, PagePerm)>> {
@@ -1438,6 +1557,39 @@ impl LoongArch64AddressSpace {
         Ok(Some((PhysAddr(pte.ppn().0 * PAGE_SIZE + off),
                  pte.flags()
                     .to_page_perm())))
+    }
+}
+
+#[derive(Clone, Copy)]
+struct UserLeafPage {
+    addr : usize,
+    perm : PagePerm,
+}
+
+unsafe fn collect_user_leaf_pages(ppn : PhysPageNum,
+                                  level : usize,
+                                  vpn_prefix : usize,
+                                  out : &mut Vec<UserLeafPage>) {
+    let table = unsafe { table_mut(ppn) };
+    for i in 0..LOONGARCH64_ENTRIES {
+        let pte = table[i];
+        if pte.0 == 0 {
+            continue;
+        }
+        let flags = pte.flags();
+        let prefix = vpn_prefix | (i << (level * VPN_INDEX_BITS));
+        if flags.is_leaf() {
+            let addr = VirtPageNum(prefix).start_addr().0;
+            let mut perm = flags.to_page_perm();
+            if flags.cow_was_writable() {
+                perm |= PagePerm::W;
+            }
+            if addr < USER_VA_LIMIT && perm.user() {
+                out.push(UserLeafPage { addr, perm });
+            }
+        } else if level > 0 {
+            unsafe { collect_user_leaf_pages(pte.ppn(), level - 1, prefix, out) };
+        }
     }
 }
 

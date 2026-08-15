@@ -1077,6 +1077,7 @@ fn register_lazy_segment_run(aspace : &mut Sv39AddressSpace,
                                   perm,
                                   vma_file_origin,
                                   vma_file_size,
+                                  false,
                                   loader)
           .map_err(LoadElfError::Mm)
 }

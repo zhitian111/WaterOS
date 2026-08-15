@@ -107,6 +107,7 @@ pub fn test_with_range(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
                                   PagePerm::R | PagePerm::U,
                                   0,
                                   0,
+                                  false,
                                   Box::new(WritableFaultTestLoader))
           .expect("register lazy page");
     let lazy_changed = MmapOps::mprotect(&mut aspace,
