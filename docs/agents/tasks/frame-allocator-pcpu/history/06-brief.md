@@ -61,3 +61,22 @@ RV 中位数：`562.63`，低于 slab RV 中位数 `565.32`。
 ```
 
 低于 slab LA 中位数 `539.30`，仍需补足 LA 三轮中位数。
+
+## 按架构启用 batch 后的最终中位数
+
+```text
+RV（启用 frame batch + mprotect + SizeClass）:
+  578.57 / 553.75 / 562.63
+  中位数 562.63
+
+LA（关闭 frame batch + mprotect + SizeClass）:
+  535.56 / 538.64 / 554.85
+  中位数 538.64
+```
+
+对比 slab 基线：
+
+```text
+RV: 562.63 < 565.32
+LA: 538.64 < 539.30
+```
