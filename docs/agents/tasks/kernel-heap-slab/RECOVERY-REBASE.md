@@ -43,6 +43,21 @@ db9418fa [heap-slab] 00 完成两架构 buildstorm 基线采集
 ## VMA 分支完成后如何恢复
 
 1. 检查 VMA 分支是否已经把 VMA 有序性/统一路径修好；
+
+   当前 VMA 分支已完成，最新 HEAD 为：
+
+   ```text
+   fffad37f97d6e0c72efb992756ab2f1222990139
+   ```
+
+   关键结果：
+
+   - RV 单核 / RV 8 核 BuildStorm：`OK`
+   - LA 单核 / LA 12 核 BuildStorm：`OK`
+   - LA 12 核最终 36G `elapsed_s=513.19`
+   - 静态检查：`make rv_check`、`make la_check`、
+     `make kernel-rv-final`、`make kernel-la-final` 全部通过
+
 2. 把 `perf/kernel-heap-slab` rebase 到 VMA 分支：
 
    ```bash
