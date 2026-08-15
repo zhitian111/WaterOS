@@ -255,20 +255,10 @@ pub(crate) fn format_interrupts() -> Vec<u8> {
 
 // 本方法代码由AI完成
 pub(crate) fn format_cgroups() -> Vec<u8> {
-    b"#subsys_name\thierarchy\tnum_cgroups\tenabled\n\
-      memory\t1\t1\t1\n\
-      cpuset\t2\t1\t1\n\
-      cpu\t3\t1\t1\n\
-      cpuacct\t4\t1\t1\n\
-      pids\t5\t1\t1\n\
-      freezer\t6\t1\t1\n\
-      devices\t7\t1\t1\n\
-      blkio\t8\t1\t1\n\
-      net_cls\t9\t1\t1\n\
-      perf_event\t10\t1\t1\n\
-      net_prio\t11\t1\t1\n\
-      hugetlb\t12\t1\t1\n"
-                          .to_vec()
+    // WaterOS 尚未实现 cgroup controller 或 cgroupfs。Linux 在没有任何
+    // v1 controller 的环境中仍保留表头；发布 header-only 比声称 memory、
+    // cpu 等 controller 已启用更准确，也能让探测工具正常解析“无控制器”。
+    b"#subsys_name\thierarchy\tnum_cgroups\tenabled\n".to_vec()
 }
 
 // 取路径最后一段作为 comm 展示名。

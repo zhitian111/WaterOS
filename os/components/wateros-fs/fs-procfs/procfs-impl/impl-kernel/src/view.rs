@@ -98,7 +98,9 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidCmdline(pid) |
             ProcNode::PidStatm(pid) |
             ProcNode::PidLimits(pid) |
+            ProcNode::PidMounts(pid) |
             ProcNode::PidMountinfo(pid) |
+            ProcNode::PidCgroup(pid) |
             ProcNode::PidWchan(pid) |
             ProcNode::PidExe(pid) |
             ProcNode::PidCwd(pid) |
@@ -229,7 +231,9 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidCmdline(pid) |
             ProcNode::PidStatm(pid) |
             ProcNode::PidLimits(pid) |
+            ProcNode::PidMounts(pid) |
             ProcNode::PidMountinfo(pid) |
+            ProcNode::PidCgroup(pid) |
             ProcNode::PidWchan(pid) |
             ProcNode::PidFdInfo(pid, _) |
             ProcNode::PidTaskComm(pid, _) => {
@@ -374,7 +378,15 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidCmdline(pid) => format_cmdline(pid),
             ProcNode::PidStatm(pid) => format_statm(pid),
             ProcNode::PidLimits(pid) => format_limits(pid),
+            ProcNode::PidMounts(pid) => {
+                process_visible(pid).then(format_mounts).ok_or(FsError::NotFound)
+            }
             ProcNode::PidMountinfo(pid) => format_mountinfo(pid),
+            // cgroup controller/cgroupfs 尚未实现；空文件表示该进程未加入
+            // 任何可见层级，比伪造 `0::/` 更准确。
+            ProcNode::PidCgroup(pid) => {
+                process_visible(pid).then(Vec::new).ok_or(FsError::NotFound)
+            }
             ProcNode::PidWchan(pid) => format_wchan(pid),
             ProcNode::PidFdInfo(pid, fd) => format_fdinfo(pid, fd),
             ProcNode::PidTaskComm(pid, task_id) => format_task_comm(pid, task_id),
@@ -618,6 +630,7 @@ impl ProcFsView for KernelProcFs {
                         FsDirEntry { name: String::from("limits"), node_type: FsNodeType::File },
                         FsDirEntry { name: String::from("mountinfo"), node_type: FsNodeType::File },
                         FsDirEntry { name: String::from("wchan"), node_type: FsNodeType::File },
+                        FsDirEntry { name: String::from("cgroup"), node_type: FsNodeType::File },
                         FsDirEntry { name:
                                          String::from("exe"),
                                      node_type:
