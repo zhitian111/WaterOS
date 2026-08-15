@@ -149,6 +149,27 @@ pub const fn bus_width_value(bus_width : u8) -> Result<u32, MmcError> {
 }
 
 impl<R : RegisterIo> DwMmc<R> {
+    /// 读数据失败时抓取关键寄存器，便于真机定位具体错误位。
+    fn read_failure(&mut self, err : MmcError) -> MmcError {
+        let rintsts = self.registers
+                          .read32(RINTSTS)
+                          .unwrap_or(0);
+        let status = self.registers
+                         .read32(STATUS)
+                         .unwrap_or(0);
+        let ctrl = self.registers
+                       .read32(CTRL)
+                       .unwrap_or(0);
+        let resp0 = self.registers
+                        .read32(RESP0)
+                        .unwrap_or(0);
+        log::error!("[dw-mmc] read_single_block failed err={err:?} \
+                     rintsts={rintsts:#x} status={status:#x} ctrl={ctrl:#x} \
+                     resp0={resp0:#x} fifo_offset={:#x}",
+                    self.fifo_offset);
+        err
+    }
+
     pub fn probe(mut registers : R, poll_limit : usize) -> Result<Self, MmcError> {
         // FIFO 数据寄存器固定 0x200（与同板 U-Boot `DWMCI_DATA` 一致）。
         // 按 VERID 猜测 0x100 会在真机读数据时取错偏移 → FIFO 溢出。
@@ -182,7 +203,9 @@ impl<R : RegisterIo> DwMmc<R> {
         for _ in 0..self.poll_limit {
             let interrupts = self.registers
                                  .read32(RINTSTS)?;
-            Self::check_errors(interrupts)?;
+            if let Err(err) = Self::check_errors(interrupts) {
+                return Err(self.read_failure(err));
+            }
             if self.registers
                    .read32(CMD)? &
                CMD_START ==
@@ -380,10 +403,10 @@ impl<R : RegisterIo> DwMmc<R> {
                            .read32(RESP0);
             }
             if bytes == output.len() && fifo_words > 0 {
-                return Err(MmcError::Fifo);
+                return Err(self.read_failure(MmcError::Fifo));
             }
         }
-        Err(MmcError::Timeout)
+        Err(self.read_failure(MmcError::Timeout))
     }
 
     fn check_errors(interrupts : u32) -> Result<(), MmcError> {

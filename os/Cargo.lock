@@ -776,6 +776,7 @@ dependencies = [
 name = "wateros-driver-block-impl-dw-mmc"
 version = "0.1.0"
 dependencies = [
+ "log",
  "spin 0.10.0",
  "wateros-driver-api-v0",
  "wateros-driver-block-api-v0",

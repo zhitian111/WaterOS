@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 api-v0 = { path = "../../../driver-api/api-v0", package = "wateros-driver-api-v0" }
 block = { path = "../../block-api/api-v0", package = "wateros-driver-block-api-v0", default-features = false }
+log = "0.4"
 spin = "0.10.0"
 
 [features]
