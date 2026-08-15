@@ -17,6 +17,15 @@
 
 ## 未完成
 
-- RV 8 核完整 BuildStorm 多次在 buildstorm 阶段被外部 SIGTERM 终止，尚未得到
-  最终结果标记；
-- 待无其他 QEMU 窗口后补跑 RV 8 核，并将完整结果写回本简报。
+- 无。RV 8 核已补跑通过。
+
+## RV 补测结果
+
+- RV 8 核完整 BuildStorm PASS：
+  `BUILDSTORM_RESULT status=OK rc=0 elapsed_s=561.53 run=OK`
+- 日志：`/tmp/wateros-vma-rv-smp8-final.log`
+- 日志 SHA-256：`17c996c76698d994c6186537b584dd7151f72d7f8c15f1793547853b1eb6aed8`
+
+## Task 04 结论
+
+LA 与 RV 在 rebase 后的 VMA 分支上均通过完整 BuildStorm；`elf-lazy-map` 保持默认开启。
