@@ -676,11 +676,11 @@ impl VfsIoHandle for PagedFileHandle {
 
     // 本方法代码由AI完成
     fn seek(&mut self, offset : i64, whence : VfsSeekWhence) -> VfsResult<u64> {
-        log::info!("[paged_handle] seek path={} whence={whence:?} offset={offset} cur={} size={}",
-                   self.active_path(),
-                   self.description
-                       .offset(),
-                   self.current_size(),);
+        log::trace!("[paged_handle] seek path={} whence={whence:?} offset={offset} cur={} size={}",
+                    self.active_path(),
+                    self.description
+                        .offset(),
+                    self.current_size(),);
         let result = (|| {
             let size = self.current_size();
             let new_off = match whence {
@@ -707,8 +707,8 @@ impl VfsIoHandle for PagedFileHandle {
             self.description
                 .set_offset_if_idle(new_off)
         })();
-        log::info!("[paged_handle] seek done path={} result={result:?}",
-                   self.active_path(),);
+        log::trace!("[paged_handle] seek done path={} result={result:?}",
+                    self.active_path(),);
         result
     }
 
