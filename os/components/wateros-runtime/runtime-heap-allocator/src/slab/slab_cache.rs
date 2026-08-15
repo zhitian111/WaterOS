@@ -64,10 +64,10 @@ impl SlabCache {
     ///
     /// # Safety
     /// `ptr` 必须来自 slab；调用方保证 owner CPU 独占访问。
-    pub(crate) unsafe fn dealloc(&mut self,
-                                 ptr : *mut u8,
-                                 class_idx : usize)
-                                 -> bool {
+    pub(crate) unsafe fn dealloc_local(&mut self,
+                                       ptr : *mut u8,
+                                       class_idx : usize)
+                                       -> bool {
         // SAFETY: ptr 由调用方保证来自 slab 页面。
         let hdr = unsafe { SlabPageHeader::from_obj(ptr) };
         if hdr.magic != SLAB_MAGIC || hdr.size_class() != class_idx {

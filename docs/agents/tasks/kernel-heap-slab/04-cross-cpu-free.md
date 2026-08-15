@@ -88,6 +88,9 @@ git diff --check
 
 所有 QEMU 运行均加 `-snapshot`。
 
+已知：RV `-smp 8` 在当前 main baseline 上本身存在间歇性 guest `SIGSEGV`
+（同镜像 baseline 对照同样失败）；本任务记录该问题，最终功能验收前必须另行修复。
+
 ## 完成后
 
 新增 `history/04-brief.md`，记录 remote-free 实现选择、压力测试结果和两架构
