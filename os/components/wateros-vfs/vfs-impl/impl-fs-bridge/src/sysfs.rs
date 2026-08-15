@@ -85,7 +85,8 @@ fn is_dir(path: &str) -> bool {
         "/" | "/devices" | "/devices/system" | "/devices/system/cpu" |
         "/devices/system/node" | "/devices/system/node/node0" |
         "/class" | "/class/net" | "/class/net/lo" | "/class/net/eth0" |
-        "/block" | "/block/vda" | "/block/vda/queue" | "/kernel" | "/firmware" => true,
+        "/block" | "/block/vda" | "/block/vda/queue" |
+        "/dev" | "/dev/block" | "/dev/char" | "/kernel" | "/firmware" => true,
         _ => {
             let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
             match parts.as_slice() {
@@ -102,6 +103,9 @@ fn is_dir(path: &str) -> bool {
 }
 
 fn is_symlink(path: &str) -> bool {
+    if path == "/dev/block/252:0" {
+        return true;
+    }
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     match parts.as_slice() {
         ["devices", "system", "cpu", cpu, "node0"] |
@@ -146,9 +150,19 @@ fn file_data(path: &str) -> Option<Vec<u8>> {
         "/class/net/eth0/type" => "1\n",
         "/class/net/eth0/ifindex" => "2\n",
         "/block/vda/dev" => "252:0\n",
+        "/block/vda/range" => "1\n",
+        "/block/vda/removable" |
+        "/block/vda/ro" |
+        "/block/vda/alignment_offset" => "0\n",
         "/block/vda/size" => return block_device_value(true),
         "/block/vda/queue/logical_block_size" |
-        "/block/vda/queue/physical_block_size" => return block_device_value(false),
+        "/block/vda/queue/physical_block_size" |
+        "/block/vda/queue/hw_sector_size" => return block_device_value(false),
+        "/block/vda/queue/minimum_io_size" => "512\n",
+        "/block/vda/queue/optimal_io_size" |
+        "/block/vda/queue/discard_granularity" |
+        "/block/vda/queue/discard_max_bytes" => "0\n",
+        "/block/vda/queue/rotational" => "0\n",
         "/kernel/uevent_seqnum" => "0\n",
         _ => return cpu_file_data(path),
     };
@@ -219,14 +233,15 @@ fn directory_entries(path: &str) -> Option<Vec<FsDirEntry>> {
     let dir = |name: &str| FsDirEntry { name: String::from(name), node_type: FsNodeType::Directory };
     let symlink = |name: &str| FsDirEntry { name: String::from(name), node_type: FsNodeType::Symlink };
     match path {
-        "/" => Some(vec![dir("devices"), dir("class"), dir("block"), dir("kernel"), dir("firmware")]),
+        "/" => Some(vec![dir("devices"), dir("class"), dir("block"), dir("dev"),
+                              dir("kernel"), dir("firmware")]),
         "/devices" => Some(vec![dir("system")]),
         "/devices/system" => Some(vec![dir("cpu"), dir("node")]),
         "/devices/system/cpu" => {
             let mut entries = vec![file("online"), file("present"), file("possible"),
                                    file("offline"), file("isolated"), file("kernel_max")];
             for cpu in online_cpus() {
-                entries.push(symlink(format!("cpu{cpu}").as_str()));
+                entries.push(dir(format!("cpu{cpu}").as_str()));
             }
             Some(entries)
         }
@@ -244,8 +259,15 @@ fn directory_entries(path: &str) -> Option<Vec<FsDirEntry>> {
         "/class/net/lo" | "/class/net/eth0" => Some(vec![file("address"), file("operstate"),
                                                              file("mtu"), file("type"), file("ifindex")]),
         "/block" => Some(vec![dir("vda")]),
-        "/block/vda" => Some(vec![file("dev"), file("size"), dir("queue")]),
-        "/block/vda/queue" => Some(vec![file("logical_block_size"), file("physical_block_size")]),
+        "/block/vda" => Some(vec![file("dev"), file("size"), file("range"), file("removable"),
+                                      file("ro"), file("alignment_offset"), dir("queue")]),
+        "/block/vda/queue" => Some(vec![file("logical_block_size"), file("physical_block_size"),
+                                            file("hw_sector_size"), file("minimum_io_size"),
+                                            file("optimal_io_size"), file("rotational"),
+                                            file("discard_granularity"), file("discard_max_bytes")]),
+        "/dev" => Some(vec![dir("block"), dir("char")]),
+        "/dev/block" => Some(vec![symlink("252:0")]),
+        "/dev/char" => Some(Vec::new()),
         "/kernel" => Some(vec![file("uevent_seqnum")]),
         "/firmware" => Some(Vec::new()),
         _ => cpu_directory_entries(path),
@@ -315,6 +337,7 @@ impl ProcFsView for KernelSysFs {
         let path = normalize(rel_path);
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
         let target = match parts.as_slice() {
+            ["dev", "block", "252:0"] => "../../block/vda",
             ["devices", "system", "cpu", cpu, "node0"]
                 if parse_cpu_component(cpu).is_some_and(is_online_cpu) => "../../node/node0",
             ["devices", "system", "node", "node0", cpu]

@@ -318,22 +318,52 @@ pub(crate) fn format_stat(pid : ProcessId) -> FsResult<Vec<u8>> {
     // pgrp 与 getpgid(1) 比对，必须填真实值而非 0。
     let pgrp = process.pgid.raw();
     let session = process.sid.raw();
+    let leader_snapshot = task::task_snapshot(leader);
     let utime = jiffies;
-    let stime = jiffies;
-    let leader_state = task::task_snapshot(leader).map(|snap| snap.state);
+    // 调度器尚未区分 user/system tick；与全局 /proc/stat 一致，统一计入 user。
+    let stime = 0;
+    let leader_state = leader_snapshot.map(|snap| snap.state);
     let sc = state_char(process.state, leader_state);
-    // 字段 7..13 分别是 tty_nr、tpgid、flags、minflt、cminflt、majflt、
-    // cmajflt；因此 utime 必须紧随这 **7** 个 0，处于第 14 列。
-    let line = format!("{} ({}) {} {} {} {} 0 0 0 0 0 0 0 {} {} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 \
-                        0 0 0 0 0 0 0 0 0\n",
-                       pid.raw(),
-                       comm15,
-                       sc,
-                       ppid,
-                       pgrp,
-                       session,
-                       utime,
-                       stime,);
+    let mem = process_memory_kb(pid)?;
+    let nice = leader_snapshot.map_or(0, |snapshot| snapshot.nice as i128);
+    let priority = 20i128.saturating_add(nice);
+    let processor = leader_snapshot
+        .and_then(|snapshot| snapshot.running_cpu_id.or(snapshot.last_cpu_id))
+        .map_or(0, |cpu| cpu.raw()) as i128;
+    let (rt_priority, policy) = leader_snapshot.map_or((0, 0), |snapshot| {
+        let policy = match snapshot.policy {
+            task::SchedPolicy::Other => 0,
+            task::SchedPolicy::Fifo => 1,
+            task::SchedPolicy::Rr => 2,
+            task::SchedPolicy::Batch => 3,
+            task::SchedPolicy::Idle => 5,
+        };
+        let realtime = matches!(snapshot.policy, task::SchedPolicy::Fifo | task::SchedPolicy::Rr)
+            .then_some(snapshot.priority.max(0) as i128)
+            .unwrap_or(0);
+        (realtime, policy)
+    });
+    // Linux proc_pid_stat(5) 定义了 52 列。WaterOS 暂无 fault/信号位图及
+    // 精确代码段地址统计，对应列保持 0；已拥有的线程数、调度策略、CPU 和
+    // 内存量则发布真实/一致的快照。数组正好对应字段 7..52。
+    let fields : [i128; 46] = [
+        0, -1, 0, 0, 0, 0, 0, // 7..13: tty/tpgid/flags/faults
+        utime as i128, stime, 0, 0, priority, nice, process.task_count as i128,
+        0, 0, // itrealvalue, starttime（尚未记录进程创建 tick）
+        (mem.size_kb.saturating_mul(1024)) as i128,
+        ((mem.rss_kb + 3) / 4) as i128,
+        u64::MAX as i128, // rsslim
+        0, 0, 0, 0, 0, // code/stack/IP
+        0, 0, 0, 0, 0, // signal masks, wchan
+        0, 0, 17, processor, rt_priority, policy,
+        0, 0, 0, // delayacct, guest_time, cguest_time
+        0, 0, 0, 0, 0, 0, 0, 0, // data/brk/argv/env/exit_code
+    ];
+    let mut line = format!("{} ({}) {} {} {} {}", pid.raw(), comm15, sc, ppid, pgrp, session);
+    for field in fields {
+        let _ = write!(line, " {field}");
+    }
+    line.push('\n');
     Ok(line.into_bytes())
 }
 
@@ -356,7 +386,31 @@ pub(crate) fn format_status(pid : ProcessId) -> FsResult<Vec<u8>> {
         _ => "running",
     };
     let caps = task::process_caps(pid).unwrap_or_default();
-    let line = format!("Name:\t{comm}\nState:\t{sc} ({state_str})\nTgid:\t{}\nPid:\t{}\nPPid:\t{ppid}\nUid:\t{}\t{}\t{}\t{}\nGid:\t{}\t{}\t{}\t{}\nCapInh:\t{:08x}{:08x}\nCapPrm:\t{:08x}{:08x}\nCapEff:\t{:08x}{:08x}\nCapBnd:\t{:08x}{:08x}\nCapAmb:\t0000000000000000\nVmPeak:\t{}\tkB\nVmSize:\t{}\tkB\nVmRSS:\t{}\tkB\nVmData:\t{}\tkB\nVmStk:\t128\tkB\n",
+    let groups = cred.supplementary_groups
+                     .iter()
+                     .take(cred.supplementary_group_len)
+                     .fold(String::new(), |mut out, gid| {
+                         let _ = write!(out, "{} ", gid.0);
+                         out
+                     });
+    let leader_snapshot = task::task_snapshot(leader);
+    let affinity = leader_snapshot.map_or(task::CpuMask::ALL, |snapshot| snapshot.affinity);
+    let cpu_bits = affinity.bits();
+    let cpu_hex = if cpu_bits >> 32 == 0 {
+        format!("{:08x}", cpu_bits as u32)
+    } else {
+        format!("{:08x},{:08x}", (cpu_bits >> 32) as u32, cpu_bits as u32)
+    };
+    let mut cpu_list = String::new();
+    for cpu in 0..u64::BITS as usize {
+        if affinity.contains(task::CpuId::from_raw(cpu)) {
+            if !cpu_list.is_empty() {
+                cpu_list.push(',');
+            }
+            cpu_list.push_str(cpu.to_string().as_str());
+        }
+    }
+    let line = format!("Name:\t{comm}\nState:\t{sc} ({state_str})\nTgid:\t{}\nNgid:\t0\nPid:\t{}\nPPid:\t{ppid}\nTracerPid:\t0\nUid:\t{}\t{}\t{}\t{}\nGid:\t{}\t{}\t{}\t{}\nFDSize:\t1024\nGroups:\t{groups}\nNStgid:\t{}\nNSpid:\t{}\nNSpgid:\t{}\nNSsid:\t{}\nVmPeak:\t{}\tkB\nVmSize:\t{}\tkB\nVmLck:\t0\tkB\nVmPin:\t0\tkB\nVmHWM:\t{}\tkB\nVmRSS:\t{}\tkB\nRssAnon:\t{}\tkB\nRssFile:\t0\tkB\nRssShmem:\t0\tkB\nVmData:\t{}\tkB\nVmStk:\t128\tkB\nVmExe:\t0\tkB\nVmLib:\t0\tkB\nVmPTE:\t0\tkB\nVmSwap:\t0\tkB\nThreads:\t{}\nSigQ:\t0/1024\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000000000000\nSigCgt:\t0000000000000000\nCapInh:\t{:08x}{:08x}\nCapPrm:\t{:08x}{:08x}\nCapEff:\t{:08x}{:08x}\nCapBnd:\t{:08x}{:08x}\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSpeculation_Store_Bypass:\tnot vulnerable\nCpus_allowed:\t{cpu_hex}\nCpus_allowed_list:\t{cpu_list}\nMems_allowed:\t00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t{}\nnonvoluntary_ctxt_switches:\t0\n",
                        pid.raw(),
                        pid.raw(),
                        cred.real_uid.0,
@@ -367,6 +421,17 @@ pub(crate) fn format_status(pid : ProcessId) -> FsResult<Vec<u8>> {
                        cred.effective_gid.0,
                        cred.saved_gid.0,
                        cred.fs_gid.0,
+                       pid.raw(),
+                       pid.raw(),
+                       process.pgid.raw(),
+                       process.sid.raw(),
+                       mem.size_kb,
+                       mem.size_kb,
+                       mem.rss_kb,
+                       mem.rss_kb,
+                       mem.rss_kb,
+                       mem.private_dirty_kb,
+                       process.task_count,
                        0u32,
                        caps.inheritable,
                        0u32,
@@ -375,10 +440,7 @@ pub(crate) fn format_status(pid : ProcessId) -> FsResult<Vec<u8>> {
                        caps.effective,
                        0u32,
                        caps.bounding,
-                       mem.size_kb,
-                       mem.size_kb,
-                       mem.rss_kb,
-                       mem.private_dirty_kb,);
+                       leader_snapshot.map_or(0, |snapshot| snapshot.stats.schedule_count),);
     Ok(line.into_bytes())
 }
 
