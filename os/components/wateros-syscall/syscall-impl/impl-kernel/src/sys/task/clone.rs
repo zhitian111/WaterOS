@@ -18,6 +18,7 @@ const CLONE_PIDFD : usize = 0x0000_1000;
 const CLONE_VM_RAW : usize = 0x0000_0100;
 const CLONE_FS_RAW : usize = 0x0000_0200;
 const CLONE_FILES_RAW : usize = 0x0000_0400;
+const CLONE_SIGHAND_RAW : usize = 0x0000_0800;
 const CLONE_PARENT_RAW : usize = 0x0000_8000;
 const CLONE_VFORK : usize = 0x0000_4000;
 const CLONE_PARENT_SETTID_RAW : usize = 0x0010_0000;
@@ -36,6 +37,7 @@ const CLONE_FORK_COMPAT_MASK : usize = CLONE_CSIGNAL_MASK |
                                        CLONE_VM_RAW |
                                        CLONE_FS_RAW |
                                        CLONE_FILES_RAW |
+                                       CLONE_SIGHAND_RAW |
                                        CLONE_PARENT_RAW |
                                        CLONE_NEWNS_RAW |
                                        CLONE_PARENT_SETTID_RAW |
@@ -397,7 +399,8 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
     // 返回给父进程的 pidfd；同时仍在 start_fork_child 之前，失败可完整回滚。
     if let Some(pidfd_ptr) = pidfd {
         let pidfd_fd = match super::pidfd::allocate_pidfd(task::ProcessId::from_raw(child_pid),
-                                                          false) {
+                                                          false)
+        {
             Ok(fd) => fd,
             Err(error) => {
                 abort_initialized_fork(child_id, child_pid, new_aspace_ptr);

@@ -417,7 +417,7 @@ pub(crate) fn sys_clock_settime(args : SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 
-/// `settimeofday(2)`：设置实时时钟；非 root 返回 EPERM（Linux 需 CAP_SYS_TIME）。
+/// `settimeofday(2)`：设置实时时钟；需要 effective 持有 CAP_SYS_TIME。
 /// timezone 参数（arg1）已废弃，忽略。
 pub(crate) fn sys_settimeofday(args : SyscallArgs) -> UserRet {
     let tv_ptr = args.arg(0);
@@ -425,10 +425,13 @@ pub(crate) fn sys_settimeofday(args : SyscallArgs) -> UserRet {
         // Linux：tv == NULL 时成功（仅清 offset）。
         return UserRet::from_success(0);
     }
-    if cred::current_credentials().effective_uid
-                                  .0 !=
-       0
-    {
+    // Linux：权限看 effective 是否持有 CAP_SYS_TIME（与 euid 无关）。
+    // WaterOS root 默认 effective 含 CAP_SYS_TIME；LTP settimeofday02 用
+    // TST_CAP_DROP 移除后应返回 EPERM。
+    let caps = task::current_process_task_snapshot().map(|snapshot| snapshot.pid)
+                                                    .and_then(|pid| task::process_caps(pid))
+                                                    .unwrap_or(task::ProcessCaps::ROOT);
+    if caps.effective & task::ProcessCaps::CAP_SYS_TIME == 0 {
         return UserRet::from_error(ErrNo::EPERM);
     }
     let tv = match copy_from_user_struct::<UserTimeVal>(tv_ptr) {
