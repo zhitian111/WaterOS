@@ -53,6 +53,8 @@ PID=$!
 exec 3>"$FIFO"
 
 remaining=900
+elapsed=0
+echo "Minecraft smoke started; waiting up to 900 seconds for Done ..."
 while ! grep -F 'Done (' "$LOG" >/dev/null 2>&1; do
     if ! kill -0 "$PID" 2>/dev/null; then
         cat "$LOG"
@@ -65,8 +67,17 @@ while ! grep -F 'Done (' "$LOG" >/dev/null 2>&1; do
         echo "Minecraft server startup timed out after 900 seconds." >&2
         exit 1
     fi
-    remaining=$((remaining - 1))
     sleep 1
+    remaining=$((remaining - 1))
+    elapsed=$((elapsed + 1))
+    if [ $((elapsed % 30)) -eq 0 ]; then
+        last_line=$(tail -n 1 "$LOG" 2>/dev/null || true)
+        if [ -n "$last_line" ]; then
+            echo "Minecraft smoke still running (${elapsed}s/900s): $last_line"
+        else
+            echo "Minecraft smoke still running (${elapsed}s/900s): waiting for Java output"
+        fi
+    fi
 done
 
 echo stop >&3
