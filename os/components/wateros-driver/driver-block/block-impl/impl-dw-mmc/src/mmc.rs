@@ -83,6 +83,7 @@ const RESP2 : usize = 0x038;
 const RESP3 : usize = 0x03C;
 const RINTSTS : usize = 0x044;
 const STATUS : usize = 0x048;
+const STATUS_BUSY : u32 = 1 << 9;
 const FIFOTH : usize = 0x04C;
 const INTMASK : usize = 0x024;
 
@@ -164,9 +165,12 @@ impl<R : RegisterIo> DwMmc<R> {
         let resp0 = self.registers
                         .read32(RESP0)
                         .unwrap_or(0);
+        let cmdarg = self.registers
+                          .read32(CMDARG)
+                          .unwrap_or(0);
         log::error!("[dw-mmc] read_single_block failed err={err:?} \
                      rintsts={rintsts:#x} status={status:#x} ctrl={ctrl:#x} \
-                     resp0={resp0:#x} fifo_offset={:#x}",
+                     resp0={resp0:#x} cmdarg={cmdarg:#x} fifo_offset={:#x}",
                     self.fifo_offset);
         err
     }
@@ -204,6 +208,21 @@ impl<R : RegisterIo> DwMmc<R> {
             if self.registers
                    .read32(CTRL)? &
                CTRL_FIFO_RESET ==
+               0
+            {
+                return Ok(());
+            }
+        }
+        Err(MmcError::Timeout)
+    }
+
+    /// 等待数据引擎空闲（`STATUS.BUSY` 清零），对齐 U-Boot
+    /// `dwmci_send_cmd` 的命令前等待，避免上次数据未结束时发新读导致 FRUN。
+    fn wait_not_busy(&mut self) -> Result<(), MmcError> {
+        for _ in 0..self.poll_limit {
+            if self.registers
+                   .read32(STATUS)? &
+               STATUS_BUSY ==
                0
             {
                 return Ok(());
@@ -372,6 +391,7 @@ impl<R : RegisterIo> DwMmc<R> {
         if output.len() != 512 {
             return Err(MmcError::InvalidParameter);
         }
+        self.wait_not_busy()?;
         self.reset_fifo()?;
         self.registers
             .write32(RINTSTS, INT_ALL)?;
