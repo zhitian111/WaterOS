@@ -83,6 +83,15 @@ pub(crate) fn is_slab_layout(layout : Layout) -> bool {
     SizeClass::from_layout(layout).is_some()
 }
 
+/// 判断旧 slab 对象的 size class 是否还能容纳 `new_size`，从而支持原地 realloc。
+pub(crate) fn fits_existing_class(layout : Layout, new_size : usize) -> bool {
+    if new_size == 0 {
+        return false;
+    }
+    SizeClass::from_layout(layout)
+             .map_or(false, |class| new_size <= class.size())
+}
+
 /// 从 frame source 分配连续多页；仅支持页对齐且对齐不超过页大小的大对象。
 pub(crate) fn alloc_large(layout : Layout) -> Option<*mut u8> {
     if layout.align() > SLAB_PAGE_SIZE {

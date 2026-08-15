@@ -11,3 +11,10 @@
 - slab 页占用、每 CPU 命中、remote-free 次数尚未全部进 `HeapMemStats`；
 - `LARGE_FRAME_ENABLED` 的 A/B 需在稳定宿主机执行；
 - 最终性能验收在 Task 09 完成。
+
+## 性能调优补充
+
+- remote-free 队列由 spinlock 改为 `AtomicPtr` CAS + drain，避免每次 alloc 抢锁；
+- `realloc` 增加“同 size class 原地返回”快路径，避免小对象扩容/缩容复制；
+- LA `-smp 12` 三轮性能：552.44 / 552.52 / 545.76，中位 552.44，低于 baseline
+  562.56（约 -1.8%）。

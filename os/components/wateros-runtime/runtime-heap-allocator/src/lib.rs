@@ -131,6 +131,11 @@ unsafe impl GlobalAlloc for KernelAllocator {
                       layout : Layout,
                       new_size : usize)
                       -> *mut u8 {
+        if !ptr.is_null() && new_size > 0 && self.slab_active() &&
+           !in_boot_heap(ptr) && slab::fits_existing_class(layout, new_size)
+        {
+            return ptr;
+        }
         if ptr.is_null() {
             let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
                 return ptr::null_mut();

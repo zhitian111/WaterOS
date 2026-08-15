@@ -1,5 +1,7 @@
 //! 单个 CPU 持有的全部 size class cache。
 
+use core::sync::atomic::{AtomicPtr, Ordering};
+
 use super::size_class::SIZE_CLASS_COUNT;
 use super::slab_cache::SlabCache;
 use super::slab_page::{read_next, write_next, SlabPageHeader, SLAB_MAGIC};
@@ -7,13 +9,13 @@ use super::HeapFrameSource;
 
 pub(crate) struct CpuSlab {
     caches : [SlabCache; SIZE_CLASS_COUNT],
-    remote_head : spin::Mutex<*mut u8>,
+    remote_head : AtomicPtr<u8>,
 }
 
 impl CpuSlab {
     pub(crate) fn new() -> Self {
         Self { caches : core::array::from_fn(|_| SlabCache::new()),
-               remote_head : spin::Mutex::new(core::ptr::null_mut()) }
+               remote_head : AtomicPtr::new(core::ptr::null_mut()) }
     }
 
     pub(crate) unsafe fn alloc(&mut self,
@@ -21,7 +23,11 @@ impl CpuSlab {
                                class_idx : usize,
                                owner_cpu : u16)
                                -> Option<*mut u8> {
-        self.drain_remote();
+        if !self.remote_head.load(Ordering::Relaxed)
+                             .is_null()
+        {
+            self.drain_remote();
+        }
         unsafe { self.caches[class_idx].alloc(frames, class_idx, owner_cpu) }
     }
 
@@ -34,20 +40,25 @@ impl CpuSlab {
 
     /// 把对象压入本 CPU 的 remote-free 队列；owner CPU 下一次 alloc 时 drain。
     pub(crate) fn remote_push(&self, ptr : *mut u8) {
-        let mut head = self.remote_head.lock();
-        // SAFETY: ptr 是刚释放的 slab 对象，首字可安全写入 next 指针。
-        unsafe { write_next(ptr, *head) };
-        *head = ptr;
+        let mut head = self.remote_head.load(Ordering::Relaxed);
+        loop {
+            // SAFETY: ptr 是刚释放的 slab 对象，首字可安全写入 next 指针。
+            unsafe { write_next(ptr, head) };
+            match self.remote_head
+                      .compare_exchange_weak(head,
+                                             ptr,
+                                             Ordering::AcqRel,
+                                             Ordering::Relaxed)
+            {
+                Ok(_) => break,
+                Err(cur) => head = cur,
+            }
+        }
     }
 
     /// 把本 CPU remote 队列中的对象放回对应 size class 的本地 cache。
     fn drain_remote(&mut self) {
-        let head = {
-            let mut guard = self.remote_head.lock();
-            let head = *guard;
-            *guard = core::ptr::null_mut();
-            head
-        };
+        let head = self.remote_head.swap(core::ptr::null_mut(), Ordering::AcqRel);
         let mut cur = head;
         while !cur.is_null() {
             // SAFETY: remote 队列只包含 slab 对象。
