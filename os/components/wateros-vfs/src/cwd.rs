@@ -186,6 +186,20 @@ pub fn lookup_exe_for_task(task_id: task::TaskId) -> Option<String> {
     reg.get_exe_path(task_id).map(String::from)
 }
 
+/// 读取指定任务的逻辑 cwd（procfs 回调用）。
+pub fn lookup_cwd_for_task(task_id: task::TaskId) -> Option<String> {
+    let mut reg = registry().exclusive_access();
+    reg.ensure_task_cwd(task_id);
+    Some(String::from(reg.get_cwd(task_id)))
+}
+
+/// 读取指定任务的进程根目录（procfs 回调用）。
+pub fn lookup_root_for_task(task_id: task::TaskId) -> Option<String> {
+    let mut reg = registry().exclusive_access();
+    reg.ensure_task_cwd(task_id);
+    Some(String::from(reg.get_root(task_id)))
+}
+
 /// 读取当前任务的可执行文件路径。
 pub fn current_exe_path() -> VfsResult<String> {
     let task_id = crate::fd::current_task_id()?;

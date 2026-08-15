@@ -17,12 +17,12 @@ use core::fmt::Write;
 use fs_api_v0::{FsAccessMode, FsCapability, FsImpl, FsKind};
 use network::{SocketKind, SocketState};
 use spin::Mutex;
-use task::{ProcessId, ProcessState, TaskState, ThreadId};
+use task::{ProcessId, ProcessState, TaskState, TaskWaitTarget, ThreadId};
 
 #[path = "callbacks.rs"]
 mod callbacks;
 pub use callbacks::*;
-pub(crate) use callbacks::{argv_for, exe_for, fds_for, fd_target_for, mount_lines, sysvipc_table,
+pub(crate) use callbacks::{argv_for, cwd_for, exe_for, fds_for, fd_target_for, mount_lines, root_for, sysvipc_table,
                             thread_comm_str, timer_slack_for};
 #[path = "path.rs"]
 mod path;

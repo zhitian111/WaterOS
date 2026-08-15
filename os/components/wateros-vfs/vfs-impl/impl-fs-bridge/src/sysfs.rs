@@ -83,6 +83,7 @@ fn is_online_cpu(cpu: usize) -> bool { online_cpus().contains(&cpu) }
 fn is_dir(path: &str) -> bool {
     match path {
         "/" | "/devices" | "/devices/system" | "/devices/system/cpu" |
+        "/devices/system/node" | "/devices/system/node/node0" |
         "/class" | "/class/net" | "/class/net/lo" | "/class/net/eth0" |
         "/block" | "/block/vda" | "/block/vda/queue" | "/kernel" | "/firmware" => true,
         _ => {
@@ -100,6 +101,17 @@ fn is_dir(path: &str) -> bool {
     }
 }
 
+fn is_symlink(path: &str) -> bool {
+    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    match parts.as_slice() {
+        ["devices", "system", "cpu", cpu, "node0"] |
+        ["devices", "system", "node", "node0", cpu] => {
+            parse_cpu_component(cpu).is_some_and(is_online_cpu)
+        }
+        _ => false,
+    }
+}
+
 fn file_data(path: &str) -> Option<Vec<u8>> {
     let online = online_cpus();
     let cpu_set = cpu_list(&online);
@@ -114,6 +126,15 @@ fn file_data(path: &str) -> Option<Vec<u8>> {
             let max = task::cpu_states().len().saturating_sub(1);
             return Some(format!("{max}\n").into_bytes());
         }
+        "/devices/system/node/online" |
+        "/devices/system/node/possible" |
+        "/devices/system/node/has_cpu" |
+        "/devices/system/node/has_memory" => "0\n",
+        "/devices/system/node/node0/cpulist" => return Some(format!("{cpu_set}\n").into_bytes()),
+        "/devices/system/node/node0/cpumap" => {
+            return Some(format!("{}\n", cpu_mask_hex(&online)).into_bytes());
+        }
+        "/devices/system/node/node0/distance" => "10\n",
         "/class/net/lo/address" => "00:00:00:00:00:00\n",
         "/class/net/lo/operstate" => "unknown\n",
         "/class/net/lo/mtu" => "65536\n",
@@ -165,13 +186,19 @@ fn cpu_file_data(path: &str) -> Option<Vec<u8>> {
 }
 
 fn cpu_mask_hex(cpus: &[usize]) -> String {
-    let mut mask = 0u64;
+    let mut words = [0u32; 2];
     for &cpu in cpus {
         if cpu < u64::BITS as usize {
-            mask |= 1u64 << cpu;
+            words[cpu / 32] |= 1u32 << (cpu % 32);
         }
     }
-    format!("{mask:x}")
+    // Linux sysfs cpumap 以 32-bit word、每组固定 8 个十六进制字符输出，
+    // 高位组在前；util-linux 的 cpuset 解析器依赖这一格式。
+    if words[1] == 0 {
+        format!("{:08x}", words[0])
+    } else {
+        format!("{:08x},{:08x}", words[1], words[0])
+    }
 }
 
 fn block_device_value(capacity: bool) -> Option<Vec<u8>> {
@@ -190,13 +217,23 @@ fn block_device_value(capacity: bool) -> Option<Vec<u8>> {
 fn directory_entries(path: &str) -> Option<Vec<FsDirEntry>> {
     let file = |name: &str| FsDirEntry { name: String::from(name), node_type: FsNodeType::File };
     let dir = |name: &str| FsDirEntry { name: String::from(name), node_type: FsNodeType::Directory };
+    let symlink = |name: &str| FsDirEntry { name: String::from(name), node_type: FsNodeType::Symlink };
     match path {
         "/" => Some(vec![dir("devices"), dir("class"), dir("block"), dir("kernel"), dir("firmware")]),
         "/devices" => Some(vec![dir("system")]),
-        "/devices/system" => Some(vec![dir("cpu")]),
+        "/devices/system" => Some(vec![dir("cpu"), dir("node")]),
         "/devices/system/cpu" => {
             let mut entries = vec![file("online"), file("present"), file("possible"),
                                    file("offline"), file("isolated"), file("kernel_max")];
+            for cpu in online_cpus() {
+                entries.push(symlink(format!("cpu{cpu}").as_str()));
+            }
+            Some(entries)
+        }
+        "/devices/system/node" => Some(vec![file("online"), file("possible"),
+                                              file("has_cpu"), file("has_memory"), dir("node0")]),
+        "/devices/system/node/node0" => {
+            let mut entries = vec![file("cpulist"), file("cpumap"), file("distance")];
             for cpu in online_cpus() {
                 entries.push(dir(format!("cpu{cpu}").as_str()));
             }
@@ -225,8 +262,9 @@ fn cpu_directory_entries(path: &str) -> Option<Vec<FsDirEntry>> {
     }
     let file = |name: &str| FsDirEntry { name: String::from(name), node_type: FsNodeType::File };
     let dir = |name: &str| FsDirEntry { name: String::from(name), node_type: FsNodeType::Directory };
+    let symlink = |name: &str| FsDirEntry { name: String::from(name), node_type: FsNodeType::Symlink };
     match rest {
-        [] => Some(vec![file("online"), file("uevent"), dir("topology")]),
+        [] => Some(vec![file("online"), file("uevent"), dir("topology"), symlink("node0")]),
         ["topology"] => Some(vec![file("core_id"), file("physical_package_id"),
                                     file("die_id"), file("cluster_id"),
                                     file("thread_siblings"), file("thread_siblings_list"),
@@ -248,13 +286,15 @@ fn inode_for(path: &str) -> u64 {
 impl ProcFsView for KernelSysFs {
     fn exists(&self, rel_path: &str) -> FsResult<bool> {
         let path = normalize(rel_path);
-        Ok(is_dir(path.as_str()) || file_data(path.as_str()).is_some())
+        Ok(is_dir(path.as_str()) || is_symlink(path.as_str()) || file_data(path.as_str()).is_some())
     }
 
     fn metadata(&self, rel_path: &str) -> FsResult<FsMetadata> {
         let path = normalize(rel_path);
         let (node_type, size, mode) = if is_dir(path.as_str()) {
             (FsNodeType::Directory, 0, 0o555)
+        } else if is_symlink(path.as_str()) {
+            (FsNodeType::Symlink, self.read_symlink(path.as_str())?.len() as u64, 0o777)
         } else if let Some(data) = file_data(path.as_str()) {
             (FsNodeType::File, data.len() as u64, 0o444)
         } else {
@@ -271,7 +311,20 @@ impl ProcFsView for KernelSysFs {
         file_data(path.as_str()).ok_or(FsError::NotFound)
     }
 
-    fn read_symlink(&self, _rel_path: &str) -> FsResult<Vec<u8>> { Err(FsError::NotAFile) }
+    fn read_symlink(&self, rel_path: &str) -> FsResult<Vec<u8>> {
+        let path = normalize(rel_path);
+        let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+        let target = match parts.as_slice() {
+            ["devices", "system", "cpu", cpu, "node0"]
+                if parse_cpu_component(cpu).is_some_and(is_online_cpu) => "../../node/node0",
+            ["devices", "system", "node", "node0", cpu]
+                if parse_cpu_component(cpu).is_some_and(is_online_cpu) => {
+                    return Ok(format!("../../cpu/{cpu}").into_bytes());
+                }
+            _ => return Err(FsError::NotAFile),
+        };
+        Ok(target.as_bytes().to_vec())
+    }
 
     fn read_dir(&self, rel_path: &str) -> FsResult<Vec<FsDirEntry>> {
         let path = normalize(rel_path);

@@ -165,6 +165,20 @@ impl VfsIoHandle for ProcDirectoryHandle {
         Err(VfsError::ReadOnlyFs)
     }
 
+    /// procfs/sysfs 目录同样使用 dirent 索引作为 `d_off` cookie，支持
+    /// `rewinddir()` 以及 `seekdir()` 返回过的 cookie。
+    fn seek(&mut self, offset: i64, whence: VfsSeekWhence) -> VfsResult<u64> {
+        match whence {
+            VfsSeekWhence::Set if offset >= 0 => {
+                let value = offset as u64;
+                self.description.set_offset(value);
+                Ok(value)
+            }
+            VfsSeekWhence::Cur => self.description.add_signed_offset(offset),
+            VfsSeekWhence::Set | VfsSeekWhence::End => Err(VfsError::InvalidPath),
+        }
+    }
+
 // 本方法代码由AI完成
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
         Ok(Box::new(self.clone()))

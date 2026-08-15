@@ -4,6 +4,8 @@ use super::*;
 pub(crate) static ARGV_LOOKUP : Mutex<Option<TaskArgvLookup>> = Mutex::new(None);
 // 本变量代码由AI完成
 pub(crate) static EXE_LOOKUP : Mutex<Option<TaskExeLookup>> = Mutex::new(None);
+pub(crate) static CWD_LOOKUP : Mutex<Option<TaskPathLookup>> = Mutex::new(None);
+pub(crate) static ROOT_LOOKUP : Mutex<Option<TaskPathLookup>> = Mutex::new(None);
 pub(crate) static FD_LOOKUP : Mutex<Option<TaskFdLookup>> = Mutex::new(None);
 pub(crate) static FD_TARGET_LOOKUP : Mutex<Option<TaskFdTargetLookup>> = Mutex::new(None);
 pub(crate) static TIMER_SLACK_LOOKUP : Mutex<Option<TaskTimerSlackLookup>> = Mutex::new(None);
@@ -20,6 +22,10 @@ pub fn register_task_argv_lookup(f : TaskArgvLookup) { *ARGV_LOOKUP.lock() = Som
 /// 注册按 leader task id 查询 exe 路径的回调。
 // 本方法代码由AI完成
 pub fn register_task_exe_lookup(f : TaskExeLookup) { *EXE_LOOKUP.lock() = Some(f); }
+
+/// 注册按 task id 查询 cwd 与进程根目录的回调。
+pub fn register_task_cwd_lookup(f : TaskPathLookup) { *CWD_LOOKUP.lock() = Some(f); }
+pub fn register_task_root_lookup(f : TaskPathLookup) { *ROOT_LOOKUP.lock() = Some(f); }
 
 /// 注册按 task id 枚举打开 fd 的回调。
 pub fn register_task_fd_lookup(f : TaskFdLookup) { *FD_LOOKUP.lock() = Some(f); }
@@ -60,6 +66,14 @@ pub(crate) fn argv_for(leader : TaskId) -> Option<Vec<String>> {
 pub(crate) fn exe_for(leader : TaskId) -> Option<String> {
     let lookup = *EXE_LOOKUP.lock();
     lookup.and_then(|f| f(leader))
+}
+
+pub(crate) fn cwd_for(leader : TaskId) -> Option<String> {
+    (*CWD_LOOKUP.lock()).and_then(|lookup| lookup(leader))
+}
+
+pub(crate) fn root_for(leader : TaskId) -> Option<String> {
+    (*ROOT_LOOKUP.lock()).and_then(|lookup| lookup(leader))
 }
 
 pub(crate) fn thread_comm_str(task_id : TaskId) -> Option<String> {

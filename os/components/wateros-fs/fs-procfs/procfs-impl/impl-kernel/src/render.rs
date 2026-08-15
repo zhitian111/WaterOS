@@ -168,6 +168,71 @@ pub(crate) fn format_partitions() -> Vec<u8> {
     format!("major minor  #blocks  name\n\n 252        0 {blocks_kb:>10} vda\n").into_bytes()
 }
 
+/// Linux `/proc/diskstats` 的最小兼容视图。WaterOS 块设备层目前没有逐请求
+/// 计数器，所以容量与设备身份是真实的，I/O 统计列明确保持为 0。
+pub(crate) fn format_diskstats() -> Vec<u8> {
+    if driver_block_api_v0::first_block_device().is_none() {
+        return Vec::new();
+    }
+    b" 252       0 vda 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n".to_vec()
+}
+
+/// 常见工具会读取 vmstat 判断分页和内存压力。尚未拥有的内核计数不伪造，
+/// 但发布当前可用/已用物理页，使 free、procps 和 stress-ng 能稳定解析。
+pub(crate) fn format_vmstat() -> Vec<u8> {
+    let stats = mm_frame_alloctor::frame_mem_stats();
+    let free_pages = stats.free_bytes() / 4096;
+    let total_pages = stats.total_bytes() / 4096;
+    let used_pages = total_pages.saturating_sub(free_pages);
+    format!("nr_free_pages {free_pages}\n\
+             nr_zone_inactive_anon 0\n\
+             nr_zone_active_anon {used_pages}\n\
+             nr_zone_inactive_file 0\n\
+             nr_zone_active_file 0\n\
+             nr_anon_pages {used_pages}\n\
+             nr_mapped 0\n\
+             nr_file_pages 0\n\
+             nr_dirty 0\n\
+             nr_writeback 0\n\
+             pgpgin 0\npgpgout 0\npswpin 0\npswpout 0\npgfault 0\npgmajfault 0\n")
+        .into_bytes()
+}
+
+pub(crate) fn format_proc_net_dev() -> Vec<u8> {
+    b"Inter-|   Receive                                                |  Transmit\n\
+       face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n\
+          lo:       0       0    0    0    0     0          0         0        0       0    0    0    0     0       0          0\n\
+        eth0:       0       0    0    0    0     0          0         0        0       0    0    0    0     0       0          0\n"
+        .to_vec()
+}
+
+pub(crate) fn format_proc_net_route() -> Vec<u8> {
+    b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n\
+      eth0\t00000000\t0202000A\t0003\t0\t0\t0\t00000000\t0\t0\t0\n\
+      eth0\t0002000A\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n"
+        .to_vec()
+}
+
+pub(crate) fn format_sockstat(ipv6 : bool) -> Vec<u8> {
+    if ipv6 {
+        return b"TCP6: inuse 0\nUDP6: inuse 0\nUDPLITE6: inuse 0\nRAW6: inuse 0\nFRAG6: inuse 0 memory 0\n".to_vec();
+    }
+    let sockets = network::stack::network_socket_table_snapshot().unwrap_or_default();
+    let tcp = sockets.iter().filter(|socket| socket.kind == SocketKind::Tcp).count();
+    let udp = sockets.iter().filter(|socket| socket.kind == SocketKind::Udp).count();
+    format!("sockets: used {}\nTCP: inuse {tcp} orphan 0 tw 0 alloc {tcp} mem 0\n\
+             UDP: inuse {udp} mem 0\nUDPLITE: inuse 0\nRAW: inuse 0\nFRAG: inuse 0 memory 0\n",
+            sockets.len()).into_bytes()
+}
+
+pub(crate) fn format_pressure(full : bool) -> Vec<u8> {
+    let mut out = String::from("some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
+    if full {
+        out.push_str("full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
+    }
+    out.into_bytes()
+}
+
 pub(crate) fn format_interrupts() -> Vec<u8> {
     let states = task::cpu_states();
     let online: Vec<_> = states.iter().filter(|(_, cpu)| cpu.online).collect();
@@ -395,6 +460,90 @@ pub(crate) fn format_cmdline(pid : ProcessId) -> FsResult<Vec<u8>> {
         out.extend_from_slice(exe.as_bytes());
     }
     Ok(out)
+}
+
+pub(crate) fn format_statm(pid : ProcessId) -> FsResult<Vec<u8>> {
+    let mem = process_memory_kb(pid)?;
+    let size = (mem.size_kb + 3) / 4;
+    let resident = (mem.rss_kb + 3) / 4;
+    // size resident shared text lib data dirty，单位均为页。
+    Ok(format!("{size} {resident} 0 0 0 {size} 0\n").into_bytes())
+}
+
+fn format_limit(value : u64) -> String {
+    if value == u64::MAX { String::from("unlimited") } else { value.to_string() }
+}
+
+/// `/proc/<pid>/limits` 与 getrlimit 共用同一份进程资源限制；未显式设置的
+/// 项使用 syscall 层的 Linux 风格默认值。
+pub(crate) fn format_limits(pid : ProcessId) -> FsResult<Vec<u8>> {
+    if !process_visible(pid) {
+        return Err(FsError::NotFound);
+    }
+    const DEFAULTS : &[(usize, &str, u64, u64, &str)] = &[
+        (0, "Max cpu time", u64::MAX, u64::MAX, "seconds"),
+        (1, "Max file size", u64::MAX, u64::MAX, "bytes"),
+        (2, "Max data size", u64::MAX, u64::MAX, "bytes"),
+        (3, "Max stack size", 8 * 1024 * 1024, 8 * 1024 * 1024, "bytes"),
+        (4, "Max core file size", 0, 0, "bytes"),
+        (5, "Max resident set", u64::MAX, u64::MAX, "bytes"),
+        (6, "Max processes", 1024, 1024, "processes"),
+        (7, "Max open files", 1024, 1024, "files"),
+        (8, "Max locked memory", 64 * 1024, 64 * 1024, "bytes"),
+        (9, "Max address space", u64::MAX, u64::MAX, "bytes"),
+        (10, "Max file locks", u64::MAX, u64::MAX, "locks"),
+        (11, "Max pending signals", 1024, 1024, "signals"),
+        (12, "Max msgqueue size", 819200, 819200, "bytes"),
+        (13, "Max nice priority", 0, 0, ""),
+        (14, "Max realtime priority", 0, 0, ""),
+        (15, "Max realtime timeout", u64::MAX, u64::MAX, "us"),
+    ];
+    let mut out = String::from("Limit                     Soft Limit           Hard Limit           Units     \n");
+    for &(resource, name, default_cur, default_max, units) in DEFAULTS {
+        let (cur, max) = task::process_resource_limit(pid, resource)
+            .map(|limit| (limit.cur, limit.max))
+            .unwrap_or((default_cur, default_max));
+        let _ = writeln!(out, "{name:<25} {:<20} {:<20} {units}", format_limit(cur), format_limit(max));
+    }
+    Ok(out.into_bytes())
+}
+
+pub(crate) fn format_mountinfo(pid : ProcessId) -> FsResult<Vec<u8>> {
+    if !process_visible(pid) {
+        return Err(FsError::NotFound);
+    }
+    let mut out = String::new();
+    for (index, line) in mount_lines().into_iter().enumerate() {
+        let id = index + 1;
+        let parent = if id == 1 { 0 } else { 1 };
+        let access = if line.readonly { "ro" } else { "rw" };
+        let _ = writeln!(out, "{id} {parent} 0:0 / {} {access},relatime - {} {} {access}",
+                         line.mount_point, line.fstype, line.device);
+    }
+    Ok(out.into_bytes())
+}
+
+pub(crate) fn format_wchan(pid : ProcessId) -> FsResult<Vec<u8>> {
+    let leader = task::leader_task_for_process(pid).ok_or(FsError::NotFound)?;
+    let name = match task::task_snapshot(leader).map(|snapshot| snapshot.state) {
+        Some(TaskState::Sleeping { .. }) => "hrtimer_nanosleep",
+        Some(TaskState::Blocking(TaskWaitTarget::WaitQueue(_))) => "wait_queue",
+        Some(TaskState::Blocking(TaskWaitTarget::TaskExit(_))) => "wait_task",
+        Some(TaskState::Blocking(TaskWaitTarget::ChildExit(_))) => "do_wait",
+        Some(TaskState::Blocking(TaskWaitTarget::Manual)) => "schedule",
+        _ => "0",
+    };
+    Ok(format!("{name}\n").into_bytes())
+}
+
+pub(crate) fn format_fdinfo(pid : ProcessId, fd : usize) -> FsResult<Vec<u8>> {
+    let leader = task::leader_task_for_process(pid).ok_or(FsError::NotFound)?;
+    if !fds_for(leader).contains(&fd) {
+        return Err(FsError::NotFound);
+    }
+    // VFS 暂未向 procfs 暴露共享 open-description 的 offset/flags；不要伪造
+    // 可写状态，只发布能被 procps、shell 和 lsof 稳定解析的保守值。
+    Ok(b"pos:\t0\nflags:\t0100000\nmnt_id:\t1\nino:\t0\n".to_vec())
 }
 
 // 本方法代码由AI完成

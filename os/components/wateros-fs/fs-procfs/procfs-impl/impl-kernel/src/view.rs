@@ -25,15 +25,23 @@ impl ProcFsView for KernelProcFs {
             ProcNode::Swaps |
             ProcNode::Partitions |
             ProcNode::Interrupts |
+            ProcNode::Cmdline |
+            ProcNode::Vmstat |
+            ProcNode::Diskstats |
             ProcNode::Uptime |
             ProcNode::Cgroups |
             ProcNode::Mounts |
             ProcNode::NetDir |
+            ProcNode::PressureDir |
             ProcNode::SysVIpcDir |
             ProcNode::SysDir |
             ProcNode::SysKernelDir |
+            ProcNode::SysKernelRandomDir |
             ProcNode::SysVmDir |
-            ProcNode::SysFsDir => true,
+            ProcNode::SysFsDir |
+            ProcNode::SysNetDir |
+            ProcNode::SysNetCoreDir |
+            ProcNode::SysNetIpv4Dir => true,
             ProcNode::ProcNetTcp |
             ProcNode::ProcNetTcp6 |
             ProcNode::ProcNetUdp |
@@ -41,6 +49,13 @@ impl ProcFsView for KernelProcFs {
             ProcNode::ProcNetRaw |
             ProcNode::ProcNetRaw6 |
             ProcNode::ProcNetUnix |
+            ProcNode::ProcNetDev |
+            ProcNode::ProcNetRoute |
+            ProcNode::ProcNetSockstat |
+            ProcNode::ProcNetSockstat6 |
+            ProcNode::PressureCpu |
+            ProcNode::PressureIo |
+            ProcNode::PressureMemory |
             ProcNode::SysVIpcShm |
             ProcNode::SysVIpcMsg |
             ProcNode::SysVIpcSem => true,
@@ -63,6 +78,14 @@ impl ProcFsView for KernelProcFs {
             ProcNode::SysFsFileMax |
             ProcNode::SysFsNrOpen |
             ProcNode::SysFsPipeMaxSize |
+            ProcNode::SysFsFileNr |
+            ProcNode::SysFsAioMaxNr |
+            ProcNode::SysNetCoreSomaxconn |
+            ProcNode::SysNetIpv4PortRange |
+            ProcNode::SysNetIpv4TcpSyncookies |
+            ProcNode::SysKernelRandomBootId |
+            ProcNode::SysKernelRandomUuid |
+            ProcNode::SysKernelRandomizeVaSpace |
             ProcNode::SelfLink |
             ProcNode::ThreadSelfLink => true,
             ProcNode::PidDir(pid) |
@@ -73,8 +96,15 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidSmaps(pid) |
             ProcNode::PidMaps(pid) |
             ProcNode::PidCmdline(pid) |
+            ProcNode::PidStatm(pid) |
+            ProcNode::PidLimits(pid) |
+            ProcNode::PidMountinfo(pid) |
+            ProcNode::PidWchan(pid) |
             ProcNode::PidExe(pid) |
+            ProcNode::PidCwd(pid) |
+            ProcNode::PidRoot(pid) |
             ProcNode::PidFdDir(pid) |
+            ProcNode::PidFdInfoDir(pid) |
             ProcNode::PidTaskRoot(pid) => process_visible(pid),
             ProcNode::PidTaskDir(pid, _) | ProcNode::PidTaskComm(pid, _) => process_visible(pid),
             ProcNode::PidFd(pid, fd) => {
@@ -82,6 +112,9 @@ impl ProcFsView for KernelProcFs {
                     .map(|leader| fds_for(leader).contains(&fd))
                     .unwrap_or(false)
             }
+            ProcNode::PidFdInfo(pid, fd) => task::leader_task_for_process(pid)
+                .map(|leader| fds_for(leader).contains(&fd))
+                .unwrap_or(false),
         })
     }
 
@@ -91,13 +124,19 @@ impl ProcFsView for KernelProcFs {
         match node {
             ProcNode::Root |
             ProcNode::NetDir |
+            ProcNode::PressureDir |
             ProcNode::SysVIpcDir |
             ProcNode::SysDir |
             ProcNode::SysKernelDir |
+            ProcNode::SysKernelRandomDir |
             ProcNode::SysVmDir |
             ProcNode::SysFsDir |
+            ProcNode::SysNetDir |
+            ProcNode::SysNetCoreDir |
+            ProcNode::SysNetIpv4Dir |
             ProcNode::PidDir(_) |
             ProcNode::PidFdDir(_) |
+            ProcNode::PidFdInfoDir(_) |
             ProcNode::PidTaskRoot(_) |
             ProcNode::PidTaskDir(_, _) => Ok(FsMetadata { node_type : FsNodeType::Directory,
                                                    size : 0,
@@ -116,6 +155,9 @@ impl ProcFsView for KernelProcFs {
             ProcNode::Swaps |
             ProcNode::Partitions |
             ProcNode::Interrupts |
+            ProcNode::Cmdline |
+            ProcNode::Vmstat |
+            ProcNode::Diskstats |
             ProcNode::Uptime |
             ProcNode::Cgroups |
             ProcNode::Mounts |
@@ -126,6 +168,13 @@ impl ProcFsView for KernelProcFs {
             ProcNode::ProcNetRaw |
             ProcNode::ProcNetRaw6 |
             ProcNode::ProcNetUnix |
+            ProcNode::ProcNetDev |
+            ProcNode::ProcNetRoute |
+            ProcNode::ProcNetSockstat |
+            ProcNode::ProcNetSockstat6 |
+            ProcNode::PressureCpu |
+            ProcNode::PressureIo |
+            ProcNode::PressureMemory |
             ProcNode::SysVIpcShm |
             ProcNode::SysVIpcMsg |
             ProcNode::SysVIpcSem |
@@ -157,6 +206,17 @@ impl ProcFsView for KernelProcFs {
                                                           nlink : 1,
                                                           uid : 0,
                                                           gid : 0 }),
+            ProcNode::SysFsFileNr |
+            ProcNode::SysFsAioMaxNr |
+            ProcNode::SysNetCoreSomaxconn |
+            ProcNode::SysNetIpv4PortRange |
+            ProcNode::SysNetIpv4TcpSyncookies |
+            ProcNode::SysKernelRandomBootId |
+            ProcNode::SysKernelRandomUuid |
+            ProcNode::SysKernelRandomizeVaSpace => Ok(FsMetadata { node_type : FsNodeType::File,
+                                                          size : self.read(rel_path)?.len() as u64,
+                                                          mode : 0o444,
+                                                          inode : proc_inode(node), nlink : 1, uid : 0, gid : 0 }),
             ProcNode::PidStat(pid) |
             ProcNode::PidStatus(pid) |
             ProcNode::PidComm(pid) |
@@ -164,6 +224,11 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidSmaps(pid) |
             ProcNode::PidMaps(pid) |
             ProcNode::PidCmdline(pid) |
+            ProcNode::PidStatm(pid) |
+            ProcNode::PidLimits(pid) |
+            ProcNode::PidMountinfo(pid) |
+            ProcNode::PidWchan(pid) |
+            ProcNode::PidFdInfo(pid, _) |
             ProcNode::PidTaskComm(pid, _) => {
                 if !process_visible(pid) {
                     return Err(FsError::NotFound);
@@ -177,7 +242,8 @@ impl ProcFsView for KernelProcFs {
                                 uid : 0,
                                 gid : 0 })
             }
-            ProcNode::PidExe(pid) | ProcNode::PidFd(pid, _) => {
+            ProcNode::PidExe(pid) | ProcNode::PidCwd(pid) | ProcNode::PidRoot(pid) |
+            ProcNode::PidFd(pid, _) => {
                 if !process_visible(pid) {
                     return Err(FsError::NotFound);
                 }
@@ -211,12 +277,20 @@ impl ProcFsView for KernelProcFs {
             ProcNode::SysKernelDir |
             ProcNode::SysVmDir |
             ProcNode::SysFsDir |
+            ProcNode::SysNetDir |
+            ProcNode::SysNetCoreDir |
+            ProcNode::SysNetIpv4Dir |
+            ProcNode::SysKernelRandomDir |
+            ProcNode::PressureDir |
             ProcNode::PidDir(_) |
             ProcNode::PidFdDir(_) |
+            ProcNode::PidFdInfoDir(_) |
             ProcNode::PidTaskRoot(_) |
             ProcNode::PidTaskDir(_, _) |
             ProcNode::NetDir |
             ProcNode::PidExe(_) |
+            ProcNode::PidCwd(_) |
+            ProcNode::PidRoot(_) |
             ProcNode::PidFd(_, _) => {
                 Err(FsError::NotAFile)
             }
@@ -227,6 +301,12 @@ impl ProcFsView for KernelProcFs {
             ProcNode::ProcNetRaw |
             ProcNode::ProcNetRaw6 => Ok(PROC_NET_TABLE.to_vec()),
             ProcNode::ProcNetUnix => Ok(PROC_NET_UNIX_TABLE.to_vec()),
+            ProcNode::ProcNetDev => Ok(format_proc_net_dev()),
+            ProcNode::ProcNetRoute => Ok(format_proc_net_route()),
+            ProcNode::ProcNetSockstat => Ok(format_sockstat(false)),
+            ProcNode::ProcNetSockstat6 => Ok(format_sockstat(true)),
+            ProcNode::PressureCpu => Ok(format_pressure(false)),
+            ProcNode::PressureIo | ProcNode::PressureMemory => Ok(format_pressure(true)),
             ProcNode::SysVIpcShm => Ok(sysvipc_table(SysVIpcTable::Shm)),
             ProcNode::SysVIpcMsg => Ok(sysvipc_table(SysVIpcTable::Msg)),
             ProcNode::SysVIpcSem => Ok(sysvipc_table(SysVIpcTable::Sem)),
@@ -240,6 +320,9 @@ impl ProcFsView for KernelProcFs {
             ProcNode::Swaps => Ok(b"Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n".to_vec()),
             ProcNode::Partitions => Ok(format_partitions()),
             ProcNode::Interrupts => Ok(format_interrupts()),
+            ProcNode::Cmdline => Ok(b"\n".to_vec()),
+            ProcNode::Vmstat => Ok(format_vmstat()),
+            ProcNode::Diskstats => Ok(format_diskstats()),
             ProcNode::Uptime => Ok(format_uptime()),
             ProcNode::Cgroups => Ok(format_cgroups()),
             ProcNode::Mounts => Ok(format_mounts()),
@@ -266,6 +349,17 @@ impl ProcFsView for KernelProcFs {
             ProcNode::SysFsFileMax => Ok(b"9223372036854775807\n".to_vec()),
             ProcNode::SysFsNrOpen => Ok(b"1048576\n".to_vec()),
             ProcNode::SysFsPipeMaxSize => Ok(b"1048576\n".to_vec()),
+            ProcNode::SysFsFileNr => Ok(b"0\t0\t9223372036854775807\n".to_vec()),
+            ProcNode::SysFsAioMaxNr => Ok(b"65536\n".to_vec()),
+            ProcNode::SysNetCoreSomaxconn => Ok(b"4096\n".to_vec()),
+            ProcNode::SysNetIpv4PortRange => Ok(b"32768\t60999\n".to_vec()),
+            ProcNode::SysNetIpv4TcpSyncookies => Ok(b"1\n".to_vec()),
+            // 第一版没有熵池 UUID 生成器；boot_id 在单次启动内稳定，uuid 节点
+            // 则按 Linux 约定每次读取均应变化。当前两者先发布合法格式，明确
+            // 保持只读，后续接入 RNG 后替换。
+            ProcNode::SysKernelRandomBootId => Ok(b"57415445-524f-532d-424f-4f5449440001\n".to_vec()),
+            ProcNode::SysKernelRandomUuid => Ok(b"57415445-524f-532d-5555-494400000001\n".to_vec()),
+            ProcNode::SysKernelRandomizeVaSpace => Ok(b"0\n".to_vec()),
             ProcNode::PidStat(pid) => format_stat(pid),
             ProcNode::PidStatus(pid) => format_status(pid),
             ProcNode::PidComm(pid) => format_pid_comm(pid),
@@ -273,6 +367,11 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidSmaps(pid) => format_smaps(pid),
             ProcNode::PidMaps(pid) => format_maps(pid),
             ProcNode::PidCmdline(pid) => format_cmdline(pid),
+            ProcNode::PidStatm(pid) => format_statm(pid),
+            ProcNode::PidLimits(pid) => format_limits(pid),
+            ProcNode::PidMountinfo(pid) => format_mountinfo(pid),
+            ProcNode::PidWchan(pid) => format_wchan(pid),
+            ProcNode::PidFdInfo(pid, fd) => format_fdinfo(pid, fd),
             ProcNode::PidTaskComm(pid, task_id) => format_task_comm(pid, task_id),
             ProcNode::SelfLink | ProcNode::ThreadSelfLink => Err(FsError::NotAFile),
         }
@@ -320,6 +419,14 @@ impl ProcFsView for KernelProcFs {
                     .map(String::into_bytes)
                     .ok_or(FsError::NotFound)
             }
+            ProcNode::PidCwd(pid) => {
+                let leader = task::leader_task_for_process(pid).ok_or(FsError::NotFound)?;
+                cwd_for(leader).map(String::into_bytes).ok_or(FsError::NotFound)
+            }
+            ProcNode::PidRoot(pid) => {
+                let leader = task::leader_task_for_process(pid).ok_or(FsError::NotFound)?;
+                root_for(leader).map(String::into_bytes).ok_or(FsError::NotFound)
+            }
             ProcNode::PidFd(pid, fd) => {
                 let leader = task::leader_task_for_process(pid).ok_or(FsError::NotFound)?;
                 if !fds_for(leader).contains(&fd) {
@@ -358,6 +465,9 @@ impl ProcFsView for KernelProcFs {
                                        FsDirEntry { name : String::from("swaps"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("partitions"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("interrupts"), node_type : FsNodeType::File },
+                                       FsDirEntry { name : String::from("cmdline"), node_type : FsNodeType::File },
+                                       FsDirEntry { name : String::from("vmstat"), node_type : FsNodeType::File },
+                                       FsDirEntry { name : String::from("diskstats"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("uptime"),
                                                     node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("cgroups"),
@@ -365,6 +475,8 @@ impl ProcFsView for KernelProcFs {
                                        FsDirEntry { name : String::from("mounts"),
                                                     node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("net"),
+                                                    node_type : FsNodeType::Directory },
+                                       FsDirEntry { name : String::from("pressure"),
                                                     node_type : FsNodeType::Directory },
                                        FsDirEntry { name : String::from("sysvipc"),
                                                     node_type : FsNodeType::Directory },
@@ -381,7 +493,8 @@ impl ProcFsView for KernelProcFs {
             ProcNode::SysDir => Ok(vec![FsDirEntry { name : String::from("kernel"),
                                                      node_type : FsNodeType::Directory },
                                              FsDirEntry { name : String::from("vm"), node_type : FsNodeType::Directory },
-                                             FsDirEntry { name : String::from("fs"), node_type : FsNodeType::Directory }]),
+                                             FsDirEntry { name : String::from("fs"), node_type : FsNodeType::Directory },
+                                             FsDirEntry { name : String::from("net"), node_type : FsNodeType::Directory }]),
             ProcNode::SysKernelDir => {
                 Ok(vec![FsDirEntry { name : String::from("pid_max"),
                                      node_type : FsNodeType::File },
@@ -399,14 +512,31 @@ impl ProcFsView for KernelProcFs {
                         FsDirEntry { name : String::from("shmmax"), node_type : FsNodeType::File },
                         FsDirEntry { name : String::from("shmall"), node_type : FsNodeType::File },
                         FsDirEntry { name : String::from("shmmni"), node_type : FsNodeType::File },
-                        FsDirEntry { name : String::from("shm_rmid_forced"), node_type : FsNodeType::File }])
+                        FsDirEntry { name : String::from("shm_rmid_forced"), node_type : FsNodeType::File },
+                        FsDirEntry { name : String::from("random"), node_type : FsNodeType::Directory },
+                        FsDirEntry { name : String::from("randomize_va_space"), node_type : FsNodeType::File }])
             }
+            ProcNode::SysKernelRandomDir => Ok(vec![
+                FsDirEntry { name: String::from("boot_id"), node_type: FsNodeType::File },
+                FsDirEntry { name: String::from("uuid"), node_type: FsNodeType::File },
+            ]),
             ProcNode::SysVmDir => Ok(vec![FsDirEntry { name: String::from("overcommit_memory"), node_type: FsNodeType::File },
                                               FsDirEntry { name: String::from("max_map_count"), node_type: FsNodeType::File },
                                               FsDirEntry { name: String::from("mmap_min_addr"), node_type: FsNodeType::File }]),
             ProcNode::SysFsDir => Ok(vec![FsDirEntry { name: String::from("file-max"), node_type: FsNodeType::File },
                                               FsDirEntry { name: String::from("nr_open"), node_type: FsNodeType::File },
-                                              FsDirEntry { name: String::from("pipe-max-size"), node_type: FsNodeType::File }]),
+                                              FsDirEntry { name: String::from("pipe-max-size"), node_type: FsNodeType::File },
+                                              FsDirEntry { name: String::from("file-nr"), node_type: FsNodeType::File },
+                                              FsDirEntry { name: String::from("aio-max-nr"), node_type: FsNodeType::File }]),
+            ProcNode::SysNetDir => Ok(vec![
+                FsDirEntry { name: String::from("core"), node_type: FsNodeType::Directory },
+                FsDirEntry { name: String::from("ipv4"), node_type: FsNodeType::Directory },
+            ]),
+            ProcNode::SysNetCoreDir => Ok(vec![FsDirEntry { name: String::from("somaxconn"), node_type: FsNodeType::File }]),
+            ProcNode::SysNetIpv4Dir => Ok(vec![
+                FsDirEntry { name: String::from("ip_local_port_range"), node_type: FsNodeType::File },
+                FsDirEntry { name: String::from("tcp_syncookies"), node_type: FsNodeType::File },
+            ]),
             ProcNode::NetDir => Ok(vec![
                 FsDirEntry { name : String::from("tcp"),
                              node_type : FsNodeType::File },
@@ -422,6 +552,15 @@ impl ProcFsView for KernelProcFs {
                              node_type : FsNodeType::File },
                 FsDirEntry { name : String::from("unix"),
                              node_type : FsNodeType::File },
+                FsDirEntry { name : String::from("dev"), node_type : FsNodeType::File },
+                FsDirEntry { name : String::from("route"), node_type : FsNodeType::File },
+                FsDirEntry { name : String::from("sockstat"), node_type : FsNodeType::File },
+                FsDirEntry { name : String::from("sockstat6"), node_type : FsNodeType::File },
+            ]),
+            ProcNode::PressureDir => Ok(vec![
+                FsDirEntry { name: String::from("cpu"), node_type: FsNodeType::File },
+                FsDirEntry { name: String::from("io"), node_type: FsNodeType::File },
+                FsDirEntry { name: String::from("memory"), node_type: FsNodeType::File },
             ]),
             ProcNode::SysVIpcDir => Ok(vec![
                 FsDirEntry { name : String::from("shm"), node_type : FsNodeType::File },
@@ -464,14 +603,21 @@ impl ProcFsView for KernelProcFs {
                                          String::from("cmdline"),
                                      node_type:
                                          FsNodeType::File },
+                        FsDirEntry { name: String::from("statm"), node_type: FsNodeType::File },
+                        FsDirEntry { name: String::from("limits"), node_type: FsNodeType::File },
+                        FsDirEntry { name: String::from("mountinfo"), node_type: FsNodeType::File },
+                        FsDirEntry { name: String::from("wchan"), node_type: FsNodeType::File },
                         FsDirEntry { name:
                                          String::from("exe"),
                                      node_type:
                                          FsNodeType::Symlink },
+                        FsDirEntry { name: String::from("cwd"), node_type: FsNodeType::Symlink },
+                        FsDirEntry { name: String::from("root"), node_type: FsNodeType::Symlink },
                         FsDirEntry { name:
                                          String::from("fd"),
                                      node_type:
                                          FsNodeType::Directory },
+                        FsDirEntry { name: String::from("fdinfo"), node_type: FsNodeType::Directory },
                         FsDirEntry { name:
                                          String::from("task"),
                                      node_type:
@@ -484,6 +630,12 @@ impl ProcFsView for KernelProcFs {
                     .map(|fd| FsDirEntry { name : fd.to_string(),
                                            node_type : FsNodeType::Symlink })
                     .collect())
+            }
+            ProcNode::PidFdInfoDir(pid) => {
+                let leader = task::leader_task_for_process(pid).ok_or(FsError::NotFound)?;
+                Ok(fds_for(leader).into_iter().map(|fd| FsDirEntry {
+                    name: fd.to_string(), node_type: FsNodeType::File,
+                }).collect())
             }
             ProcNode::PidTaskRoot(pid) => {
                 if !process_visible(pid) {
