@@ -67,6 +67,17 @@ impl MachineDriver for Machine {
                                         plan.host.bus_width,
                                         plan.host.max_frequency_hz,
                                         plan.blockers);
+                             match mmc::activate_and_register_readonly(host) {
+                                 Ok(index) => log::info!("[driver][visionfive2] MMC host \
+                                                          base={:#x} activated; registered \
+                                                          block device #{}",
+                                                         host.mmio.base,
+                                                         index),
+                                 Err(err) => log::error!("[driver][visionfive2] MMC host \
+                                                          base={:#x} activation failed: {}",
+                                                         host.mmio.base,
+                                                         err),
+                             }
                          }
                          Ok(())
                      });

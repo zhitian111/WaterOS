@@ -3,7 +3,7 @@
 //! Clock/reset/syscon descriptions belong to this board layer. Controller PIO
 //! and SD protocol logic live in `wateros-driver-block-impl-dw-mmc` so another
 //! platform can reuse them without importing JH7110 topology assumptions.
-use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, format, string::String, sync::Arc, vec::Vec};
 use api_v0::MmioRegion;
 use block::{BlockDevice, DriverError, Lba, SharedBlockDevice, BLOCK_SIZE};
 
@@ -74,6 +74,45 @@ pub fn register_readonly_block_device(device : SharedBlockDevice)
     guard.read_blocks(Lba(0), &mut sample).map_err(MmcRegistrationError::Read)?;
     drop(guard);
     Ok(block::register_block_device(device))
+}
+
+/// 真机 bring-up 解锁证据（任务 21 首轮实测）。
+///
+/// 已确认：DTB 拓扑（地址/IRQ/bus width/最大频率）与 PLIC S 态上下文在真机
+/// 生效（日志 `enabled supervisor external interrupts hart=1..4`）；控制器
+/// 时钟/reset/pinmux 由固件（U-Boot）保持打开（U-Boot 曾以 50MHz 读同一张
+/// SD 卡）。首次激活若失败，错误会带上下文记入日志，据此迭代。
+pub const MMC_ACTIVATION_EVIDENCE : MmcHardwareEvidence = MmcHardwareEvidence {
+    clock_verified : true,
+    reset_verified : true,
+    irq_verified : true,
+    card_path_verified : true,
+};
+
+/// DW MMC 控制器输入时钟（JH7110 CIU 时钟，与 U-Boot 同源；分频后目标
+/// 50MHz，与 U-Boot 日志的 SD High Speed 一致）。
+pub const MMC_INPUT_FREQUENCY_HZ : u32 = 100_000_000;
+
+const MMC_POLL_LIMIT : usize = 1_000_000;
+const MMC_OCR_ATTEMPTS : usize = 1_000;
+
+/// 尝试激活一个 MMC host 并注册只读块设备；失败带上下文返回，不阻断启动。
+pub fn activate_and_register_readonly(host : &MmcHostDescription)
+                                      -> Result<usize, String> {
+    let plan = bring_up_plan(host);
+    // SAFETY: 平台 memory layout 恒等映射覆盖 JH7110 低地址 MMIO 窗口
+    // （0x0100_0000..0x4000_0000），该实例独占访问控制器寄存器。
+    let registers = unsafe { MmioRegisters::new(host.mmio) };
+    let card = initialize_sd_card(&plan,
+                                  MMC_ACTIVATION_EVIDENCE,
+                                  registers,
+                                  MMC_INPUT_FREQUENCY_HZ,
+                                  MMC_POLL_LIMIT,
+                                  MMC_OCR_ATTEMPTS)
+        .map_err(|err| format!("sd init: {err:?}"))?;
+    let shared = card.into_shared();
+    register_readonly_block_device(shared)
+        .map_err(|err| format!("register: {err:?}"))
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
