@@ -364,7 +364,12 @@ impl SignalRegistry {
                          .get(&pid)
                          .ok_or(SignalError::NoSuchProcess)?
                          .action(sig);
-        if action.is_ignore() || action.is_default() && default_ignored(sig) {
+        // Default-ignored signals (SIGCHLD/SIGURG/SIGWINCH) must still become
+        // pending when blocked and consumed through signalfd(2)/sigwait(2).
+        // Only an explicit SIG_IGN disposition can discard the signal at
+        // generation time; the normal default-ignore path is handled again
+        // when a thread later selects the pending signal for delivery.
+        if action.is_ignore() {
             Ok(SignalDelivery::Ignored)
         } else if sig == SIGCONT {
             Ok(SignalDelivery::Continue)
