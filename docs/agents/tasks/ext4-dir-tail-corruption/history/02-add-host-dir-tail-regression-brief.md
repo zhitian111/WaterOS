@@ -6,7 +6,7 @@
   目录块 12 字节 `DirEntryTail` 边界。
 - 回归程序创建 512MB / 4K 镜像，向单个目录写入 360 个 4 字符文件，再创建
   3 字符子目录 `vim`，校验 `listdir` 条目完整、无非法 UTF-8 名。
-- 提交：`6749a6c0 [test] another_ext4 新增目录块 tail 边界 host 回归`
+- 提交：`802ee817 [test] another_ext4 新增目录块 tail 边界 host 回归`
 
 ## 修改文件
 

@@ -97,11 +97,23 @@ apt-get install -y --no-install-recommends neovim-runtime
 apt_rc=$?
 echo "apt install rc=${apt_rc}"
 
+apt-get install -y --no-install-recommends neovim
+apt_rc=$?
+echo "apt neovim install rc=${apt_rc}"
+
 syntax_dir="$(ls -d /usr/share/vim/vim*/syntax 2>/dev/null | head -1)"
 echo "syntax_dir=${syntax_dir}"
 test -n "$syntax_dir"
 test -d "$syntax_dir/vim"
 test -f "$syntax_dir/vim/generated.vim"
+
+nvim --version > /tmp/nvim-version.txt
+head -5 /tmp/nvim-version.txt
+/usr/bin/timeout 15 nvim --headless +q
+nvim_rc=$?
+echo "nvim headless rc=${nvim_rc}"
+[ "$nvim_rc" -eq 0 ]
+echo "#### NVIM RUN PASS ####"
 
 dpkg --configure -a
 dpkg_rc=$?
@@ -140,7 +152,7 @@ if rg -q "$PASS_MARKER" "$QEMU_LOG"; then
     info "guest 回归通过（${PASS_MARKER}）"
 else
     error "guest 回归未通过；关键日志：" 1
-    rg -n "REG DIR TAIL|REGRESS DIR TAIL|apt install rc=|syntax_dir|dpkg|ENOENT|Directory not empty|Kernel panic|RefCell" \
+    rg -n "REG DIR TAIL|REGRESS DIR TAIL|apt install rc=|apt neovim install rc=|nvim|syntax_dir|dpkg|ENOENT|Directory not empty|Kernel panic|RefCell" \
         "$QEMU_LOG" | tail -50
     exit 1
 fi

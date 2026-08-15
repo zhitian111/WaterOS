@@ -10,7 +10,10 @@
 - apt 模式在合入远端 `github/main` 的 syscall 修复后通过：`apt-get install
   neovim-runtime` 返回 0，`syntax/vim/generated.vim` 存在，`dpkg --configure -a`
   返回 0，overlay `e2fsck -fn` 五阶段干净。
-- 提交：`90b64543 [test] 新增 ext4 目录尾损坏的 QEMU 回归脚本（fs 模式）`
+- neovim 运行：`apt-get install -y --no-install-recommends neovim` 返回 0，
+  `nvim --version` 输出 `NVIM v0.10.4`，`timeout 15 nvim --headless +q`
+  退出码为 0（guest 输出 `NVIM RUN PASS`）。
+- 提交：`bbf16a37 [test] 新增 ext4 目录尾损坏的 QEMU 回归脚本（fs 模式）`
 
 ## 修改文件
 
@@ -36,6 +39,9 @@ e2fsck -fn: Pass 1..5 通过
 
 ```text
 apt install rc=0
+apt neovim install rc=0
+nvim headless rc=0
+#### NVIM RUN PASS ####
 dpkg configure rc=0
 #### REGRESS DIR TAIL PASS ####
 e2fsck -fn: Pass 1..5 通过

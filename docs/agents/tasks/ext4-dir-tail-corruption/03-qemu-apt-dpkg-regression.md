@@ -66,6 +66,9 @@ REGRESS_MODE=apt bash scripts/regress_ext4_dir_tail.sh
 - apt 模式：`apt-get install -y --no-install-recommends neovim-runtime` 返回 0，
   guest 输出 `REGRESS DIR TAIL PASS`，`/usr/share/vim/vim*/syntax/vim/generated.vim`
   存在；
+- neovim 运行：`apt-get install -y --no-install-recommends neovim` 返回 0，
+  `nvim --version` 输出 `NVIM v0.10.4`，`timeout 15 nvim --headless +q`
+  退出码为 0（guest 输出 `NVIM RUN PASS`）；
 - `e2fsck -fy` 与 `e2fsck -fn` 均通过，Pass 2 无 `illegal characters`、
   `fails checksum` 等目录结构错误；
 - 基准镜像未被 guest 写穿（使用 overlay）。
@@ -99,7 +102,8 @@ c0bd9c6b [fix] 统一网络错误日志格式
 ```
 
 合入后 apt 模式回归通过：`apt install rc=0`，`dpkg --configure -a` 返回 0，
-`e2fsck -fn` 五阶段干净。
+`e2fsck -fn` 五阶段干净；`neovim` 二进制可安装并可启动（`nvim v0.10.4`，
+`nvim --headless +q` 退出码 0）。
 
 ## 完成后简报
 

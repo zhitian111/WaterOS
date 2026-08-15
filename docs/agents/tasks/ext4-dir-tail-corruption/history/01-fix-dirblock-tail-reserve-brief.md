@@ -3,8 +3,9 @@
 ## 完成情况
 
 - 已修复 `another_ext4` 的 `DirBlock` 将目录项写入 12 字节 `DirEntryTail` 的问题。
-- 已新增 `insert_reserves_checksum_tail` 单元测试覆盖 340/341 边界。
-- 提交：`096df78a [fix] another_ext4 目录项禁止占用 checksum tail`
+- 未在 vendor 内新增 `#[test]`（main 分支不接受）；340/341 边界回归由任务 02
+  的 host 回归与任务 03 的 QEMU 回归覆盖。
+- 提交：`9f4ddd9e [fix] another_ext4 目录项禁止占用 checksum tail`
 
 ## 修改文件
 
@@ -14,7 +15,7 @@
 
 ```text
 cargo test --offline --manifest-path os/vendor/another_ext4/Cargo.toml --features block_cache
-4 passed; 0 failed
+3 passed; 0 failed
 
 cargo check --offline --manifest-path os/vendor/another_ext4/Cargo.toml --features block_cache
 Finished

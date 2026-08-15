@@ -2,7 +2,7 @@
 
 ## 状态
 
-待实施（准备阶段已完成，代码草案已拷入本工作树但未提交）。
+已完成。
 
 ## 目标
 
@@ -28,8 +28,8 @@
 3. `insert` 在 tail 之前无可用空间时返回 `false`，让 `dir_add_entry` 走
    “追加新目录块”的正常路径。
 4. `set_checksum` / `init` / `ensure_tail` 统一使用 `TAIL_OFFSET`。
-5. 新增单元测试 `insert_reserves_checksum_tail`，覆盖“第 341 个 12 字节目录项
-   不得进入 tail”的边界。
+5. 不在 vendor 内新增 `#[test]`；该边界的回归由任务 02 的 host 回归
+   （`ext4_regression`）与任务 03 的 QEMU 回归覆盖。
 
 ## 涉及文件
 
@@ -59,23 +59,10 @@
    }
    ```
 
-4. 新增单元测试：
-
-   ```rust
-   #[test]
-   fn insert_reserves_checksum_tail() {
-       let mut dir = DirBlock::new(Block::default());
-       dir.init();
-       for inode in 1..=340 {
-           assert!(dir.insert("f000", inode, FileType::RegularFile));
-       }
-       assert!(!dir.insert("f000", 341, FileType::RegularFile));
-       let tail_offset = BLOCK_SIZE - size_of::<DirEntryTail>();
-       let tail: DirEntryTail = dir.block().read_offset_as(tail_offset);
-       assert_eq!(tail.rec_len as usize, size_of::<DirEntryTail>());
-       assert_eq!(tail.reserved_ft, 0xDE);
-   }
-   ```
+4. 边界覆盖说明：任务 02 的 `ext4_regression` 用完整 ext4 镜像复现
+   “第 341 个 12 字节目录项不得进入 tail”，并在宿主执行 `e2fsck -fn`；
+   任务 03 在 QEMU 中复现同一边界。不在 `another_ext4` 内保留新增的
+   `#[test]`。
 
 5. 提交信息格式：
 
@@ -116,7 +103,7 @@ git diff --check
 验收标准：
 
 - 上述命令全部通过；
-- `cargo test` 中 `insert_reserves_checksum_tail` 和原有目录块测试均通过；
+- `cargo test` 保持原有测试通过（当前为 3 项）；
 - `git diff --check` 无空白错误。
 
 ## 完成后简报
