@@ -132,8 +132,7 @@ pub fn scan_mbr(device : &SharedBlockDevice) -> Result<Vec<MbrPartition>, Partit
 /// until the public device-number contract grows a GPT-specific role.
 fn scan_gpt_at(device : &SharedBlockDevice,
                header_lba : u64,
-               total_blocks : u64,
-               expected_backup_lba : u64)
+               total_blocks : u64)
                -> Result<Vec<GptPartition>, PartitionScanError> {
     let mut header = [0u8; BLOCK_SIZE];
     device.lock().read_blocks(Lba(header_lba), &mut header).map_err(PartitionScanError::Io)?;
@@ -151,7 +150,7 @@ fn scan_gpt_at(device : &SharedBlockDevice,
     let backup_lba = read_u64_le(&header[32..40]);
     let first_usable = read_u64_le(&header[40..48]);
     let last_usable = read_u64_le(&header[48..56]);
-    if backup_lba != expected_backup_lba || backup_lba >= total_blocks ||
+    if backup_lba >= total_blocks ||
        first_usable > last_usable || last_usable >= total_blocks {
         return Err(PartitionScanError::InvalidGptHeader);
     }
@@ -223,10 +222,10 @@ pub fn scan_gpt(device : &SharedBlockDevice) -> Result<Vec<GptPartition>, Partit
     if total_blocks < 2 {
         return Err(PartitionScanError::InvalidGptHeader);
     }
-    let primary = scan_gpt_at(device, 1, total_blocks, total_blocks - 1);
+    let primary = scan_gpt_at(device, 1, total_blocks);
     match primary {
         Ok(partitions) => Ok(partitions),
-        Err(primary_error) => scan_gpt_at(device, total_blocks - 1, total_blocks, 1)
+        Err(primary_error) => scan_gpt_at(device, total_blocks - 1, total_blocks)
             .map_err(|_| primary_error),
     }
 }
