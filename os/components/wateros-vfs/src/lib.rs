@@ -21,6 +21,25 @@ extern crate task;
 pub use api_v0 as api;
 pub use api_v0::*;
 
+/// `/proc/<pid>/ns/<type>` 是 Linux 的 magic link：`readlink` 返回
+/// `type:[inode]`，但路径解析不能把该文本当作普通文件名继续跟随。
+fn is_proc_namespace_magic_link(path : &str, target : &str) -> bool {
+    let mut components = path.rsplit('/').filter(|part| !part.is_empty());
+    let Some(namespace) = components.next() else { return false; };
+    if components.next() != Some("ns") || components.next().is_none() ||
+       components.next() != Some("proc")
+    {
+        return false;
+    }
+    let Some(inode) = target.strip_prefix(namespace)
+                            .and_then(|rest| rest.strip_prefix(":["))
+                            .and_then(|rest| rest.strip_suffix(']'))
+    else {
+        return false;
+    };
+    !inode.is_empty() && inode.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 /// per-task 文件描述符会话（`impl-fd-session` feature）。
 #[cfg(feature = "impl-fd-session")]
 pub mod fd;
@@ -103,7 +122,11 @@ pub fn resolve_symlink_absolute(
             Ok(target) => {
                 let target = alloc::string::String::from_utf8(target)
                     .map_err(|_| VfsError::NotUtf8)?;
-                Ok(Some(target))
+                if is_proc_namespace_magic_link(candidate, target.as_str()) {
+                    Ok(None)
+                } else {
+                    Ok(Some(target))
+                }
             }
             Err(VfsError::NotAFile) => Ok(None),
             Err(error) => Err(error),
@@ -150,11 +173,15 @@ pub fn resolve_symlink_in_root_absolute(
         if !is_final || final_symlink == FinalSymlink::Follow {
             match impl_fs_bridge::read_symlink_path(candidate.as_str()) {
                 Ok(target) => {
+                    let target = String::from_utf8(target).map_err(|_| VfsError::NotUtf8)?;
+                    if is_proc_namespace_magic_link(candidate.as_str(), target.as_str()) {
+                        resolved = candidate;
+                        continue;
+                    }
                     if followed == MAX_SYMLINKS {
                         return Err(VfsError::TooManySymlinks);
                     }
                     followed += 1;
-                    let target = String::from_utf8(target).map_err(|_| VfsError::NotUtf8)?;
                     let mut combined = cwd::resolve_with_virtual_root(root,
                                                                       resolved.as_str(),
                                                                       target.as_str())?;

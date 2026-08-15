@@ -415,6 +415,10 @@ impl TaskControlBlock {
                                                       .unwrap_or(0))),
             _ => None,
         };
+        let (user_image, user_stack) = match &self.inner {
+            TaskInner::User(u) => (u.user.image(), u.user.stack()),
+            _ => (None, None),
+        };
         TaskSnapshot { id : self.id,
                        parent_id : self.parent_id,
                        kind,
@@ -431,6 +435,8 @@ impl TaskControlBlock {
                        last_cpu_id : self.last_cpu_id,
                        affinity : self.affinity,
                        user_aspace_ptr : self.user_aspace_ptr(),
+                       user_image,
+                       user_stack,
                        user_address_space_token : self.user_address_space_raw(),
                        trap_return_address_space_token : self.trap_return_address_space_token(),
                        kernel_stack_top : self.kernel_stack_top(),

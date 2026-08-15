@@ -34,6 +34,28 @@ fn reject_long_path_component(path: &str) -> Result<(), ErrNo> {
     Ok(())
 }
 
+fn is_proc_namespace_path(path : &str) -> bool {
+    let mut components = path.rsplit('/').filter(|part| !part.is_empty());
+    components.next().is_some() && components.next() == Some("ns") &&
+    components.next().is_some() && components.next() == Some("proc")
+}
+
+/// nsfs magic link 在跟随式 stat 下表现为 namespace 对象，而不是普通软链接。
+/// VFS 保留 procfs 原路径以避免解析 `user:[inode]`，这里仅调整最终 stat 类型；
+/// inode 继续取 procfs 为该全局 namespace 发布的稳定编号。
+fn metadata_for_stat(path : &str, follow_final_symlink : bool)
+                     -> Result<VfsMetadata, VfsError> {
+    let mut meta = active_impl::backend().metadata(path)?;
+    if follow_final_symlink && meta.node_type == VfsNodeType::Symlink &&
+       is_proc_namespace_path(path)
+    {
+        meta.node_type = VfsNodeType::File;
+        meta.mode = 0o444;
+        meta.size = 0;
+    }
+    Ok(meta)
+}
+
 fn check_stat_parent_search(path: &str, cred: &ProcessCredentials) -> Result<(), ErrNo> {
     if cred.effective_uid.0 == 0 {
         return Ok(());
@@ -141,7 +163,7 @@ pub(crate) fn sys_fstatat(args: SyscallArgs) -> UserRet {
         if let Err(e) = check_stat_parent_search(resolved.as_str(), &cred) {
             return UserRet::from_error(e);
         }
-        match active_impl::backend().metadata(resolved.as_str()) {
+        match metadata_for_stat(resolved.as_str(), final_symlink == FinalSymlink::Follow) {
             Ok(meta) => {
                 let mut stat = fill_linux_stat(&meta, meta.size);
                 stat_times::apply_stat(&meta, &mut stat);
@@ -216,7 +238,7 @@ pub(crate) fn sys_statx(args: SyscallArgs) -> UserRet {
         if let Err(e) = check_stat_parent_search(resolved.as_str(), &cred) {
             return UserRet::from_error(e);
         }
-        match active_impl::backend().metadata(resolved.as_str()) {
+        match metadata_for_stat(resolved.as_str(), flags & AT_SYMLINK_NOFOLLOW == 0) {
             Ok(meta) => {
                 let mut statx = fill_linux_statx(&meta, meta.size, mask);
                 stat_times::apply_statx(&meta, &mut statx);

@@ -1,5 +1,68 @@
 use super::*;
 
+/// WaterOS 首期只有一组全局 namespace；这些类型用于向 procfs 发布稳定身份，
+/// 不表示已经支持 `clone(CLONE_NEW*)` 或 `unshare()`。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProcNamespace {
+    Cgroup,
+    Ipc,
+    Mnt,
+    Net,
+    Pid,
+    PidForChildren,
+    Time,
+    TimeForChildren,
+    User,
+    Uts,
+}
+
+impl ProcNamespace {
+    pub(crate) const ALL : [Self; 10] = [Self::Cgroup,
+                                         Self::Ipc,
+                                         Self::Mnt,
+                                         Self::Net,
+                                         Self::Pid,
+                                         Self::PidForChildren,
+                                         Self::Time,
+                                         Self::TimeForChildren,
+                                         Self::User,
+                                         Self::Uts];
+
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::Cgroup => "cgroup",
+            Self::Ipc => "ipc",
+            Self::Mnt => "mnt",
+            Self::Net => "net",
+            Self::Pid => "pid",
+            Self::PidForChildren => "pid_for_children",
+            Self::Time => "time",
+            Self::TimeForChildren => "time_for_children",
+            Self::User => "user",
+            Self::Uts => "uts",
+        }
+    }
+
+    pub(crate) const fn inode(self) -> u64 {
+        // 只要求同类 namespace 在所有进程间身份一致；采用 Linux 初始
+        // namespace 常见编号，便于工具输出和人工识别。
+        match self {
+            Self::Mnt => 4_026_531_840,
+            Self::Uts => 4_026_531_838,
+            Self::Ipc => 4_026_531_839,
+            Self::User => 4_026_531_837,
+            Self::Pid | Self::PidForChildren => 4_026_531_836,
+            Self::Net => 4_026_531_992,
+            Self::Cgroup => 4_026_531_835,
+            Self::Time | Self::TimeForChildren => 4_026_531_834,
+        }
+    }
+
+    pub(crate) fn parse(name : &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|namespace| namespace.name() == name)
+    }
+}
+
 // 内部路径解析结果；覆盖全局文件与 per-pid 子树。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProcNode {
@@ -97,6 +160,8 @@ pub(crate) enum ProcNode {
     PidFd(ProcessId, usize),
     PidFdInfoDir(ProcessId),
     PidFdInfo(ProcessId, usize),
+    PidNsDir(ProcessId),
+    PidNamespace(ProcessId, ProcNamespace),
     PidTaskRoot(ProcessId),
     PidTaskDir(ProcessId, TaskId),
     PidTaskComm(ProcessId, TaskId),
@@ -198,6 +263,8 @@ pub(crate) fn proc_inode(node : ProcNode) -> u64 {
         ProcNode::PidRoot(pid) => 0x4000_0006 | ((pid.raw() as u64) << 8),
         ProcNode::PidFdDir(pid) => 0x1000_0007 | ((pid.raw() as u64) << 4),
         ProcNode::PidFdInfoDir(pid) => 0x4000_0007 | ((pid.raw() as u64) << 8),
+        ProcNode::PidNsDir(pid) => 0x4000_0008 | ((pid.raw() as u64) << 8),
+        ProcNode::PidNamespace(_, namespace) => namespace.inode(),
         ProcNode::PidTaskRoot(pid) => 0x1000_0008 | ((pid.raw() as u64) << 4),
         ProcNode::PidTaskDir(pid, tid) => {
             0x3000_0000_0000_0000 | ((pid.raw() as u64) << 32) | (tid as u64)
@@ -371,6 +438,10 @@ pub(crate) fn parse_node(path : &str) -> Option<ProcNode> {
         [pid_name, "root"] => Some(ProcNode::PidRoot(parse_pid(pid_name)?)),
         [pid_name, "fd"] => Some(ProcNode::PidFdDir(parse_pid(pid_name)?)),
         [pid_name, "fdinfo"] => Some(ProcNode::PidFdInfoDir(parse_pid(pid_name)?)),
+        [pid_name, "ns"] => Some(ProcNode::PidNsDir(parse_pid(pid_name)?)),
+        [pid_name, "ns", namespace] => {
+            Some(ProcNode::PidNamespace(parse_pid(pid_name)?, ProcNamespace::parse(namespace)?))
+        }
         [pid_name, "task"] => Some(ProcNode::PidTaskRoot(parse_pid(pid_name)?)),
         [pid_name, "fd", fd] => Some(ProcNode::PidFd(parse_pid(pid_name)?, fd.parse().ok()?)),
         [pid_name, "fdinfo", fd] => Some(ProcNode::PidFdInfo(parse_pid(pid_name)?, fd.parse().ok()?)),

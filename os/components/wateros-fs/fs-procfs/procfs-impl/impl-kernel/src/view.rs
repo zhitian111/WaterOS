@@ -105,7 +105,9 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidRoot(pid) |
             ProcNode::PidFdDir(pid) |
             ProcNode::PidFdInfoDir(pid) |
+            ProcNode::PidNsDir(pid) |
             ProcNode::PidTaskRoot(pid) => process_visible(pid),
+            ProcNode::PidNamespace(pid, _) => process_visible(pid),
             ProcNode::PidTaskDir(pid, _) | ProcNode::PidTaskComm(pid, _) => process_visible(pid),
             ProcNode::PidFd(pid, fd) => {
                 task::leader_task_for_process(pid)
@@ -137,6 +139,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidDir(_) |
             ProcNode::PidFdDir(_) |
             ProcNode::PidFdInfoDir(_) |
+            ProcNode::PidNsDir(_) |
             ProcNode::PidTaskRoot(_) |
             ProcNode::PidTaskDir(_, _) => Ok(FsMetadata { node_type : FsNodeType::Directory,
                                                    size : 0,
@@ -243,7 +246,7 @@ impl ProcFsView for KernelProcFs {
                                 gid : 0 })
             }
             ProcNode::PidExe(pid) | ProcNode::PidCwd(pid) | ProcNode::PidRoot(pid) |
-            ProcNode::PidFd(pid, _) => {
+            ProcNode::PidFd(pid, _) | ProcNode::PidNamespace(pid, _) => {
                 if !process_visible(pid) {
                     return Err(FsError::NotFound);
                 }
@@ -285,13 +288,15 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidDir(_) |
             ProcNode::PidFdDir(_) |
             ProcNode::PidFdInfoDir(_) |
+            ProcNode::PidNsDir(_) |
             ProcNode::PidTaskRoot(_) |
             ProcNode::PidTaskDir(_, _) |
             ProcNode::NetDir |
             ProcNode::PidExe(_) |
             ProcNode::PidCwd(_) |
             ProcNode::PidRoot(_) |
-            ProcNode::PidFd(_, _) => {
+            ProcNode::PidFd(_, _) |
+            ProcNode::PidNamespace(_, _) => {
                 Err(FsError::NotAFile)
             }
             ProcNode::ProcNetTcp => Ok(format_proc_net_table(SocketKind::Tcp)),
@@ -435,6 +440,12 @@ impl ProcFsView for KernelProcFs {
                 Ok(fd_target_for(leader, fd)
                     .unwrap_or_else(|| format!("anon_inode:[wateros-fd-{fd}]"))
                     .into_bytes())
+            }
+            ProcNode::PidNamespace(pid, namespace) => {
+                if !process_visible(pid) {
+                    return Err(FsError::NotFound);
+                }
+                Ok(format!("{}:[{}]", namespace.name(), namespace.inode()).into_bytes())
             }
             ProcNode::SelfLink => {
                 let pid = task::current_process_task_snapshot().ok_or(FsError::NotFound)?.pid;
@@ -618,6 +629,7 @@ impl ProcFsView for KernelProcFs {
                                      node_type:
                                          FsNodeType::Directory },
                         FsDirEntry { name: String::from("fdinfo"), node_type: FsNodeType::Directory },
+                        FsDirEntry { name: String::from("ns"), node_type: FsNodeType::Directory },
                         FsDirEntry { name:
                                          String::from("task"),
                                      node_type:
@@ -636,6 +648,16 @@ impl ProcFsView for KernelProcFs {
                 Ok(fds_for(leader).into_iter().map(|fd| FsDirEntry {
                     name: fd.to_string(), node_type: FsNodeType::File,
                 }).collect())
+            }
+            ProcNode::PidNsDir(pid) => {
+                if !process_visible(pid) {
+                    return Err(FsError::NotFound);
+                }
+                Ok(ProcNamespace::ALL
+                    .into_iter()
+                    .map(|namespace| FsDirEntry { name : String::from(namespace.name()),
+                                                  node_type : FsNodeType::Symlink })
+                    .collect())
             }
             ProcNode::PidTaskRoot(pid) => {
                 if !process_visible(pid) {

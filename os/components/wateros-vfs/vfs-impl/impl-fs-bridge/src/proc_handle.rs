@@ -88,7 +88,7 @@ fn open_pseudo(
         return Err(VfsError::NotFound);
     }
     let fs_meta = view.metadata(rel.as_str()).map_err(map_fs_err)?;
-    let meta = map_meta(fs_meta, identity);
+    let mut meta = map_meta(fs_meta, identity);
     if meta.node_type == VfsNodeType::Directory {
         if flags.contains(VfsOpenFlags::DIRECTORY) || !flags.contains(VfsOpenFlags::WRITE) {
             return Ok(Box::new(ProcDirectoryHandle {
@@ -105,6 +105,28 @@ fn open_pseudo(
     if flags.contains(VfsOpenFlags::DIRECTORY) {
         return Err(VfsError::NotAFile);
     }
+    // Linux exposes `/proc/<pid>/ns/*` as magic symlinks for pathname
+    // inspection, while opening one returns an nsfs file descriptor rather
+    // than opening the textual link target.  WaterOS does not yet implement
+    // `setns(2)`, but tools such as util-linux `lsns` still need a stable fd
+    // which can be opened and inspected with `fstat(2)`.  Represent that fd as
+    // an empty read-only regular file and preserve the namespace inode.  Path
+    // metadata/readlink remain symlink-shaped because this conversion is local
+    // to the opened handle.
+    if matches!(view_kind, PseudoViewKind::Proc) &&
+       meta.node_type == VfsNodeType::Symlink &&
+       is_proc_namespace_path(rel.as_str())
+    {
+        meta.node_type = VfsNodeType::File;
+        meta.size = 0;
+        meta.mode = 0o444;
+        return Ok(Box::new(ProcFileHandle {
+            rel,
+            meta,
+            data: Arc::new(Vec::new()),
+            description: Arc::new(VfsOpenDescriptionState::new(0, 0)),
+        }));
+    }
     let data = view.read(rel.as_str()).map_err(map_fs_err)?;
     Ok(Box::new(ProcFileHandle {
         rel,
@@ -112,6 +134,38 @@ fn open_pseudo(
         data: Arc::new(data),
         description: Arc::new(VfsOpenDescriptionState::new(0, 0)),
     }))
+}
+
+/// 判断 procfs 相对路径是否为 Linux namespace magic link。
+///
+/// 第一段允许数字 PID、`self` 与 `thread-self`；namespace 名称保持显式
+/// 白名单，避免把普通 procfs 符号链接错误地转换成可读文件句柄。
+fn is_proc_namespace_path(rel: &str) -> bool {
+    proc_namespace_kind(rel).is_some()
+}
+
+fn proc_namespace_kind(rel: &str) -> Option<VfsNamespaceKind> {
+    let mut parts = rel.trim_matches('/').split('/');
+    let pid = parts.next()?;
+    let directory = parts.next()?;
+    let namespace = parts.next()?;
+    if parts.next().is_some() || directory != "ns" {
+        return None;
+    }
+    if pid != "self" && pid != "thread-self" && !pid.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    match namespace {
+        "cgroup" => Some(VfsNamespaceKind::Cgroup),
+        "ipc" => Some(VfsNamespaceKind::Ipc),
+        "mnt" => Some(VfsNamespaceKind::Mount),
+        "net" => Some(VfsNamespaceKind::Network),
+        "pid" | "pid_for_children" => Some(VfsNamespaceKind::Pid),
+        "time" | "time_for_children" => Some(VfsNamespaceKind::Time),
+        "user" => Some(VfsNamespaceKind::User),
+        "uts" => Some(VfsNamespaceKind::Uts),
+        _ => None,
+    }
 }
 
 impl ProcDirectoryHandle {
@@ -224,6 +278,10 @@ impl VfsIoHandle for ProcFileHandle {
 // 本方法代码由AI完成
     fn metadata(&self) -> VfsResult<VfsMetadata> {
         Ok(self.meta.clone())
+    }
+
+    fn namespace_kind(&self) -> Option<VfsNamespaceKind> {
+        proc_namespace_kind(self.rel.as_str())
     }
 
 // 本方法代码由AI完成

@@ -402,15 +402,29 @@ pub(crate) fn format_status(pid : ProcessId) -> FsResult<Vec<u8>> {
         format!("{:08x},{:08x}", (cpu_bits >> 32) as u32, cpu_bits as u32)
     };
     let mut cpu_list = String::new();
-    for cpu in 0..u64::BITS as usize {
-        if affinity.contains(task::CpuId::from_raw(cpu)) {
-            if !cpu_list.is_empty() {
-                cpu_list.push(',');
-            }
-            cpu_list.push_str(cpu.to_string().as_str());
+    let mut cpu = 0usize;
+    while cpu < u64::BITS as usize {
+        if !affinity.contains(task::CpuId::from_raw(cpu)) {
+            cpu += 1;
+            continue;
         }
+        let start = cpu;
+        while cpu + 1 < u64::BITS as usize &&
+              affinity.contains(task::CpuId::from_raw(cpu + 1))
+        {
+            cpu += 1;
+        }
+        if !cpu_list.is_empty() {
+            cpu_list.push(',');
+        }
+        if start == cpu {
+            let _ = write!(cpu_list, "{start}");
+        } else {
+            let _ = write!(cpu_list, "{start}-{cpu}");
+        }
+        cpu += 1;
     }
-    let line = format!("Name:\t{comm}\nState:\t{sc} ({state_str})\nTgid:\t{}\nNgid:\t0\nPid:\t{}\nPPid:\t{ppid}\nTracerPid:\t0\nUid:\t{}\t{}\t{}\t{}\nGid:\t{}\t{}\t{}\t{}\nFDSize:\t1024\nGroups:\t{groups}\nNStgid:\t{}\nNSpid:\t{}\nNSpgid:\t{}\nNSsid:\t{}\nVmPeak:\t{}\tkB\nVmSize:\t{}\tkB\nVmLck:\t0\tkB\nVmPin:\t0\tkB\nVmHWM:\t{}\tkB\nVmRSS:\t{}\tkB\nRssAnon:\t{}\tkB\nRssFile:\t0\tkB\nRssShmem:\t0\tkB\nVmData:\t{}\tkB\nVmStk:\t128\tkB\nVmExe:\t0\tkB\nVmLib:\t0\tkB\nVmPTE:\t0\tkB\nVmSwap:\t0\tkB\nThreads:\t{}\nSigQ:\t0/1024\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000000000000\nSigCgt:\t0000000000000000\nCapInh:\t{:08x}{:08x}\nCapPrm:\t{:08x}{:08x}\nCapEff:\t{:08x}{:08x}\nCapBnd:\t{:08x}{:08x}\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSpeculation_Store_Bypass:\tnot vulnerable\nCpus_allowed:\t{cpu_hex}\nCpus_allowed_list:\t{cpu_list}\nMems_allowed:\t00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t{}\nnonvoluntary_ctxt_switches:\t0\n",
+    let line = format!("Name:\t{comm}\nState:\t{sc} ({state_str})\nTgid:\t{}\nNgid:\t0\nPid:\t{}\nPPid:\t{ppid}\nTracerPid:\t0\nUid:\t{}\t{}\t{}\t{}\nGid:\t{}\t{}\t{}\t{}\nFDSize:\t1024\nGroups:\t{groups}\nNStgid:\t{}\nNSpid:\t{}\nNSpgid:\t{}\nNSsid:\t{}\nVmPeak:\t{}\tkB\nVmSize:\t{}\tkB\nVmLck:\t0\tkB\nVmPin:\t0\tkB\nVmHWM:\t{}\tkB\nVmRSS:\t{}\tkB\nRssAnon:\t{}\tkB\nRssFile:\t{}\tkB\nRssShmem:\t0\tkB\nVmData:\t0\tkB\nVmStk:\t{}\tkB\nVmExe:\t{}\tkB\nVmLib:\t0\tkB\nVmPTE:\t0\tkB\nVmSwap:\t0\tkB\nThreads:\t{}\nSigQ:\t0/1024\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000000000000\nSigCgt:\t0000000000000000\nCapInh:\t{:08x}{:08x}\nCapPrm:\t{:08x}{:08x}\nCapEff:\t{:08x}{:08x}\nCapBnd:\t{:08x}{:08x}\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSpeculation_Store_Bypass:\tnot vulnerable\nCpus_allowed:\t{cpu_hex}\nCpus_allowed_list:\t{cpu_list}\nMems_allowed:\t00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t{}\nnonvoluntary_ctxt_switches:\t0\n",
                        pid.raw(),
                        pid.raw(),
                        cred.real_uid.0,
@@ -429,8 +443,10 @@ pub(crate) fn format_status(pid : ProcessId) -> FsResult<Vec<u8>> {
                        mem.size_kb,
                        mem.rss_kb,
                        mem.rss_kb,
-                       mem.rss_kb,
                        mem.private_dirty_kb,
+                       mem.image_kb,
+                       mem.stack_kb,
+                       mem.image_kb,
                        process.task_count,
                        0u32,
                        caps.inheritable,
@@ -451,53 +467,84 @@ pub(crate) struct ProcMemoryKb {
     size_kb : usize,
     rss_kb : usize,
     private_dirty_kb : usize,
+    image_kb : usize,
+    stack_kb : usize,
 }
 
-// 本方法代码由AI完成
 pub(crate) fn process_memory_kb(pid : ProcessId) -> FsResult<ProcMemoryKb> {
     let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
-    let thread_extra = process.task_count
-                              .saturating_sub(1) *
-                       64;
-    let heap_like = 4096usize.saturating_add(thread_extra);
-    Ok(ProcMemoryKb { size_kb : heap_like,
-                      rss_kb : heap_like,
-                      private_dirty_kb : heap_like })
+    let leader = task::task_snapshot(process.leader_task_id).ok_or(FsError::NotFound)?;
+    let image_kb = leader.user_image
+                         .map(|image| image.image_size().saturating_add(1023) / 1024)
+                         .unwrap_or(0);
+    let stack_kb = leader.user_stack
+                         .map(|stack| stack.size().saturating_add(1023) / 1024)
+                         .unwrap_or(0);
+    // ELF loader 首次只驻留栈顶 16 页；其余栈页按需缺页。当前 MM 尚未提供
+    // per-process RSS 计数，因此 RSS 取“整个主映像 + 初始栈页”的保守估计，
+    // VmSize 则发布确知的映像和完整栈保留区，避免此前固定伪造 4 MiB heap。
+    let initial_stack_rss_kb = stack_kb.min(16 * 4);
+    let rss_kb = image_kb.saturating_add(initial_stack_rss_kb);
+    Ok(ProcMemoryKb { size_kb : image_kb.saturating_add(stack_kb),
+                      rss_kb,
+                      private_dirty_kb : initial_stack_rss_kb,
+                      image_kb,
+                      stack_kb })
 }
 
-// 本方法代码由AI完成
 pub(crate) fn format_maps(pid : ProcessId) -> FsResult<Vec<u8>> {
-    let mem = process_memory_kb(pid)?;
-    let heap_start = 0x1000_0000usize;
-    let heap_end = heap_start.saturating_add(mem.size_kb
-                                                .saturating_mul(1024));
-    Ok(format!("{heap_start:016x}-{heap_end:016x} rw-p 00000000 00:00 0 \
-                [heap]\n3f0000000000-3f0000010000 r-xp 00000000 00:00 0 [vdso]\n").into_bytes())
+    let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
+    let leader = task::task_snapshot(process.leader_task_id).ok_or(FsError::NotFound)?;
+    let executable = exe_for(process.leader_task_id).unwrap_or_default();
+    let mut out = String::new();
+    if let Some(image) = leader.user_image {
+        let start = image.image_base();
+        let end = start.saturating_add(image.image_size());
+        let _ = writeln!(out,
+                         "{start:016x}-{end:016x} r-xp 00000000 00:00 0 {executable}");
+    }
+    if let Some(stack) = leader.user_stack {
+        let _ = writeln!(out,
+                         "{:016x}-{:016x} rw-p 00000000 00:00 0 [stack]",
+                         stack.bottom(),
+                         stack.top());
+    }
+    Ok(out.into_bytes())
 }
 
-// 本方法代码由AI完成
 pub(crate) fn format_smaps(pid : ProcessId) -> FsResult<Vec<u8>> {
-    let mem = process_memory_kb(pid)?;
-    let start = 0x1000_0000usize;
-    let end = start.saturating_add(mem.size_kb
-                                      .saturating_mul(1024));
-    let line =
-        format!("{start:016x}-{end:016x} rw-p 00000000 00:00 0 [heap]\n\
-                 Size:\t{}\tkB\n\
-                 Rss:\t{}\tkB\n\
-                 Pss:\t{}\tkB\n\
-                 Shared_Clean:\t0\tkB\n\
-                 Shared_Dirty:\t0\tkB\n\
-                 Private_Clean:\t0\tkB\n\
-                 Private_Dirty:\t{}\tkB\n\
-                 Referenced:\t{}\tkB\n\
-                 Anonymous:\t{}\tkB\n\
-                 Swap:\t0\tkB\n\
-                 KernelPageSize:\t4\tkB\n\
-                 MMUPageSize:\t4\tkB\n\
-                 VmFlags: rd wr mr mw me ac sd\n",
-                mem.size_kb, mem.rss_kb, mem.rss_kb, mem.private_dirty_kb, mem.rss_kb, mem.rss_kb,);
-    Ok(line.into_bytes())
+    let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
+    let leader = task::task_snapshot(process.leader_task_id).ok_or(FsError::NotFound)?;
+    let mut out = String::new();
+    if let Some(image) = leader.user_image {
+        let start = image.image_base();
+        let end = start.saturating_add(image.image_size());
+        let size_kb = image.image_size().saturating_add(1023) / 1024;
+        let executable = exe_for(process.leader_task_id).unwrap_or_default();
+        let _ = write!(out,
+                       "{start:016x}-{end:016x} r-xp 00000000 00:00 0 {executable}\n\
+                        Size:\t{size_kb}\tkB\nRss:\t{size_kb}\tkB\nPss:\t{size_kb}\tkB\n\
+                        Shared_Clean:\t0\tkB\nShared_Dirty:\t0\tkB\n\
+                        Private_Clean:\t{size_kb}\tkB\nPrivate_Dirty:\t0\tkB\n\
+                        Referenced:\t{size_kb}\tkB\nAnonymous:\t0\tkB\nSwap:\t0\tkB\n\
+                        KernelPageSize:\t4\tkB\nMMUPageSize:\t4\tkB\n\
+                        VmFlags: rd ex mr mw me sd\n");
+    }
+    if let Some(stack) = leader.user_stack {
+        let size_kb = stack.size().saturating_add(1023) / 1024;
+        let rss_kb = size_kb.min(16 * 4);
+        let _ = write!(out,
+                       "{:016x}-{:016x} rw-p 00000000 00:00 0 [stack]\n\
+                        Size:\t{size_kb}\tkB\nRss:\t{rss_kb}\tkB\nPss:\t{rss_kb}\tkB\n\
+                        Shared_Clean:\t0\tkB\nShared_Dirty:\t0\tkB\n\
+                        Private_Clean:\t0\tkB\nPrivate_Dirty:\t{rss_kb}\tkB\n\
+                        Referenced:\t{rss_kb}\tkB\nAnonymous:\t{rss_kb}\tkB\nSwap:\t0\tkB\n\
+                        KernelPageSize:\t4\tkB\nMMUPageSize:\t4\tkB\n\
+                        VmFlags: rd wr mr mw me gd ac\n",
+                       stack.bottom(),
+                       stack.top());
+    }
+    Ok(out.into_bytes())
 }
 
 // 本方法代码由AI完成
