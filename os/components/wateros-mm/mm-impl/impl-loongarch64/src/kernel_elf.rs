@@ -1219,13 +1219,12 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
     let stack_bottom = ELF_STACK_TOP - ELF_STACK_SIZE;
     let heap_start = VirtAddr(max_vaddr).ceil_page()
                                         .start_addr();
-    let gap = 256usize * PAGE_SIZE;
-    let brk_max = VirtAddr(stack_bottom.saturating_sub(gap));
-    if brk_max.0 <= heap_start.0 {
+    let mmap_base = initial_mmap_base(heap_start);
+    let brk_max = mmap_base;
+    if brk_max.0 <= heap_start.0 || mmap_base.0 >= stack_bottom {
         runtime::logging::trace!("[elf-load] abort: image/stack gap too small for brk arena");
         return Err(LoadElfError::Parse);
     }
-    let mmap_base = initial_mmap_base(heap_start);
     aspace.init_user_layout(heap_start,
                             heap_start,
                             brk_max,
@@ -1442,13 +1441,12 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
     let stack_bottom = ELF_STACK_TOP - ELF_STACK_SIZE;
     let heap_start = VirtAddr(max_vaddr).ceil_page()
                                         .start_addr();
-    let gap = 256usize * PAGE_SIZE;
-    let brk_max = VirtAddr(stack_bottom.saturating_sub(gap));
-    if brk_max.0 <= heap_start.0 {
+    let mmap_base = initial_mmap_base(heap_start);
+    let brk_max = mmap_base;
+    if brk_max.0 <= heap_start.0 || mmap_base.0 >= stack_bottom {
         runtime::logging::trace!("[elf-load] abort: image/stack gap too small for brk arena");
         return Err(LoadElfError::Parse);
     }
-    let mmap_base = initial_mmap_base(heap_start);
     aspace.init_user_layout(heap_start,
                             heap_start,
                             brk_max,

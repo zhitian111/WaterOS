@@ -22,13 +22,15 @@ fn sys_brk_mm(handle: usize, addr: usize) -> UserRet {
                 // Linux 的原始 brk(2) ABI 不返回负 errno。扩展失败时仍返回
                 // 旧 break；glibc/musl 通过“返回值小于请求值”转换成 ENOMEM。
                 let current = HeapBrk::brk_region(aspace).current_end.0;
-                log::warn!("[brk] rejected requested={:#x} current={:#x} start={:#x} max={:#x} \
-                            error={:?}",
-                           addr,
-                           current,
-                           HeapBrk::brk_region(aspace).start.0,
-                           HeapBrk::brk_region(aspace).max.0,
-                           error);
+                // brk 失败是正常的原始 syscall ABI：libc 会转为 ENOMEM 并回退
+                // mmap。仅保留 debug 级诊断，避免 malloc 压力下污染串口。
+                log::debug!("[brk] rejected requested={:#x} current={:#x} start={:#x} max={:#x} \
+                             error={:?}",
+                            addr,
+                            current,
+                            HeapBrk::brk_region(aspace).start.0,
+                            HeapBrk::brk_region(aspace).max.0,
+                            error);
                 Ok(current)
             }
         }
