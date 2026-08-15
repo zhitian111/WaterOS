@@ -13,7 +13,7 @@ pub fn current_cpu_id() -> CpuId {
     unsafe {
         core::arch::asm!("csrrd {}, 0x20", out(reg) cpu_id);
     }
-    CpuId::from_raw(cpu_id)
+    CpuId::from_raw(cpu_id & 0x1ff)
 }
 
 /// 验证启动代码传入的逻辑 CPU 与本 hart 的硬件 CPUID 一致。

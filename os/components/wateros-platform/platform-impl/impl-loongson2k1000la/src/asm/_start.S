@@ -21,4 +21,5 @@ _start:
     move $r6, $r5
     move $r5, $r4
     csrrd $r4, 0x20
+    andi $r4, $r4, 0x1ff
     b __wateros_arch_boot
