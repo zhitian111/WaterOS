@@ -52,13 +52,13 @@ struct HeapFrameSourceAdapter;
 
 impl runtime::heap_allocator::HeapFrameSource for HeapFrameSourceAdapter {
     fn alloc_frame(&self) -> Option<usize> {
-        mm::frame_alloctor::frame_alloc_result()
+        mm::frame_alloctor::frame_alloc_batch_result()
             .ok()
             .map(|ppn| ppn.0 * mm::api::addr::PAGE_SIZE)
     }
 
     fn dealloc_frame(&self, frame : usize) {
-        let _ = mm::frame_alloctor::frame_dealloc_result(
+        let _ = mm::frame_alloctor::frame_dealloc_batch_result(
             mm::api::addr::PhysPageNum(frame / mm::api::addr::PAGE_SIZE),
         );
     }
