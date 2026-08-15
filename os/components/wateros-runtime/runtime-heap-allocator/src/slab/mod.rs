@@ -18,7 +18,7 @@ use base::sync::BootOnceCell;
 use config::task::MAX_CPUS;
 
 use cpu_slab::CpuSlab;
-use size_class::SizeClass;
+use size_class::{SizeClass, SLAB_PAGE_SIZE};
 use slab_page::{SlabPageHeader, SLAB_MAGIC};
 
 /// slab 页来源：返回页对齐的内核可访问基址（WaterOS 恒等映射下为 `PPN * PAGE_SIZE`）。
@@ -28,6 +28,12 @@ pub trait HeapFrameSource : Send + Sync {
 
     /// 归还先前由 [`Self::alloc_frame`] 返回的页。
     fn dealloc_frame(&self, frame : usize);
+
+    /// 分配 `pages` 个连续页并返回起始基址；不支持时返回 `None`。
+    fn alloc_contiguous(&self, _pages : usize) -> Option<usize> { None }
+
+    /// 归还连续页分配。
+    fn dealloc_contiguous(&self, _frame : usize, _pages : usize) {}
 }
 
 static FRAME_SOURCE : BootOnceCell<&'static dyn HeapFrameSource> = BootOnceCell::new();
@@ -56,6 +62,35 @@ pub(crate) fn alloc_on(cpu : CpuId, layout : Layout) -> Option<*mut u8> {
 pub(crate) fn dealloc_on(cpu : CpuId, ptr : *mut u8, layout : Layout) -> bool {
     SLAB.get()
         .map_or(false, |slab| slab.dealloc_on(cpu, ptr, layout))
+}
+
+pub(crate) fn is_slab_layout(layout : Layout) -> bool {
+    SizeClass::from_layout(layout).is_some()
+}
+
+/// 从 frame source 分配连续多页；仅支持页对齐且对齐不超过页大小的大对象。
+pub(crate) fn alloc_large(layout : Layout) -> Option<*mut u8> {
+    if layout.align() > SLAB_PAGE_SIZE {
+        return None;
+    }
+    let pages = align_up(layout.size(), SLAB_PAGE_SIZE) / SLAB_PAGE_SIZE;
+    let frames = FRAME_SOURCE.get()?;
+    let base = frames.alloc_contiguous(pages)?;
+    Some(base as *mut u8)
+}
+
+/// 释放连续多页大对象。
+pub(crate) fn dealloc_large(ptr : *mut u8, layout : Layout) -> bool {
+    let pages = align_up(layout.size(), SLAB_PAGE_SIZE) / SLAB_PAGE_SIZE;
+    let Some(frames) = FRAME_SOURCE.get() else {
+        return false;
+    };
+    frames.dealloc_contiguous(ptr as usize, pages);
+    true
+}
+
+fn align_up(value : usize, align : usize) -> usize {
+    (value + align - 1) & !(align - 1)
 }
 
 /// 每个 CPU 持有自己的 slab 状态；`CpuLocal` 只保证槽位边界，跨核互斥由调用方

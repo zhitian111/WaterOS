@@ -62,6 +62,21 @@ impl runtime::heap_allocator::HeapFrameSource for HeapFrameSourceAdapter {
             mm::api::addr::PhysPageNum(frame / mm::api::addr::PAGE_SIZE),
         );
     }
+
+    fn alloc_contiguous(&self, pages : usize) -> Option<usize> {
+        mm::frame_alloctor::frame_alloc_contiguous_result(pages)
+            .ok()
+            .map(|ppn| ppn.0 * mm::api::addr::PAGE_SIZE)
+    }
+
+    fn dealloc_contiguous(&self, frame : usize, pages : usize) {
+        let base_ppn = frame / mm::api::addr::PAGE_SIZE;
+        for ppn in base_ppn..base_ppn + pages {
+            let _ = mm::frame_alloctor::frame_dealloc_result(
+                mm::api::addr::PhysPageNum(ppn),
+            );
+        }
+    }
 }
 
 // ── 共享 bring-up ──────────────────────────────────────────────

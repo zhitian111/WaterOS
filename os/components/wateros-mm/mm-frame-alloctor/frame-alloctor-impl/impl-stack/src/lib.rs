@@ -279,6 +279,37 @@ unsafe fn write_recycled_next(ppn : PhysPageNum, next : Option<PhysPageNum>) {
 }
 
 impl StackFrameAllocator {
+    /// 从尚未使用的连续高段分配 `pages` 个连续物理帧。
+    ///
+    /// 只支持 `next_novel` 高段；回收链表中的碎片帧不保证连续，因此本方法不触碰。
+    pub fn alloc_contiguous(&mut self, pages : usize) -> FrameAllocResult<PhysPageNum> {
+        if pages == 0 {
+            return Err(FrameAllocError::Unsupported);
+        }
+        let end = self.next_novel;
+        let Some(new_novel) = end.checked_sub(pages) else {
+            return Err(FrameAllocError::OutOfMemory);
+        };
+        if new_novel < self.start_ppn {
+            return Err(FrameAllocError::OutOfMemory);
+        }
+        if new_novel < self.reserved_end_ppn && end > self.reserved_start_ppn {
+            return Err(FrameAllocError::OutOfMemory);
+        }
+        for ppn in new_novel..end {
+            let idx = ppn - self.start_ppn;
+            if self.allocated[idx] {
+                log::warn!("[frame-allocator] contiguous novel ppn already allocated ppn={:#x}",
+                           ppn);
+                return Err(FrameAllocError::InvalidFrame);
+            }
+            self.allocated[idx] = true;
+            self.ref_counts[idx] = 1;
+        }
+        self.next_novel = new_novel;
+        Ok(PhysPageNum(new_novel))
+    }
+
     pub fn inc_ref(&mut self, frame : PhysPageNum) -> FrameAllocResult<usize> {
         let Some(idx) = self.index(frame) else {
             log::warn!("[frame-allocator] invalid inc_ref ppn={:#x} range=[{:#x},{:#x})",
@@ -357,6 +388,11 @@ pub fn frame_allocator_cell() -> &'static MultiprocessorSafeCell<StackFrameAlloc
 /// 分配一个物理帧（返回帧标识）。
 pub fn frame_alloc() -> Option<PhysPageNum> {
     with_frame_allocator(|allocator| allocator.alloc_frame().ok())
+}
+
+/// 从尚未使用的连续高段分配 `pages` 个连续物理帧；失败时返回错误。
+pub fn frame_alloc_contiguous_result(pages : usize) -> FrameAllocResult<PhysPageNum> {
+    with_frame_allocator(|allocator| allocator.alloc_contiguous(pages))
 }
 
 /// 回收一个物理帧。
