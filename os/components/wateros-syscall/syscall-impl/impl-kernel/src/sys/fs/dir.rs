@@ -7,9 +7,9 @@ use vfs::api::{VfsError, VfsMetadata, VfsNodeType};
 use vfs::SingleRootReadView;
 
 use crate::sys::path_at::{resolve_path_at, resolve_symlinks, AT_REMOVEDIR};
-use vfs::api::FinalSymlink;
 use crate::user_copy::{copy_to_user, copy_user_path_cstr};
 use crate::vfs_util::vfs_error_to_errno;
+use vfs::api::FinalSymlink;
 
 const S_IFMT : u32 = 0o170_000;
 const S_IFREG : u32 = 0o100_000;
@@ -36,7 +36,9 @@ pub(crate) fn sys_mkdirat(args : SyscallArgs) -> UserRet {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
     };
-    let resolved = match resolve_symlinks(resolved.as_str(), FinalSymlink::NoFollow) {
+    let resolved = match resolve_symlinks(resolved.as_str(),
+                                          FinalSymlink::NoFollow)
+    {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
     };
@@ -90,10 +92,9 @@ fn check_parent_create(path : &str, cred : &ProcessCredentials) -> Result<VfsMet
     }
 }
 
-pub(crate) fn check_directory_create(
-    path : &str,
-    cred : &ProcessCredentials,
-) -> Result<VfsMetadata, ErrNo> {
+pub(crate) fn check_directory_create(path : &str,
+                                     cred : &ProcessCredentials)
+                                     -> Result<VfsMetadata, ErrNo> {
     let meta = match active_impl::backend().metadata(path) {
         Ok(meta) if meta.node_type == VfsNodeType::Directory => meta,
         Ok(_) => return Err(ErrNo::ENOTDIR),
@@ -143,7 +144,9 @@ pub(crate) fn sys_mknodat(args : SyscallArgs) -> UserRet {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
-    let resolved = match resolve_symlinks(resolved.as_str(), FinalSymlink::NoFollow) {
+    let resolved = match resolve_symlinks(resolved.as_str(),
+                                          FinalSymlink::NoFollow)
+    {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
@@ -234,7 +237,9 @@ pub(crate) fn sys_linkat(args : SyscallArgs) -> UserRet {
             Ok(path) => path,
             Err(error) => return UserRet::from_error(error),
         };
-        let new_resolved = match resolve_symlinks(new_resolved.as_str(), FinalSymlink::NoFollow) {
+        let new_resolved = match resolve_symlinks(new_resolved.as_str(),
+                                                  FinalSymlink::NoFollow)
+        {
             Ok(path) => path,
             Err(error) => return UserRet::from_error(error),
         };
@@ -243,8 +248,8 @@ pub(crate) fn sys_linkat(args : SyscallArgs) -> UserRet {
             return UserRet::from_error(error);
         }
         return match vfs::fd::with_current_io(old_dirfd as usize, |handle| {
-            handle.link_at_empty_path(new_resolved.as_str())
-        }) {
+                  handle.link_at_empty_path(new_resolved.as_str())
+              }) {
             Ok(()) => {
                 super::inotify::notify_create(new_resolved.as_str(), false);
                 UserRet::from_success(0)
@@ -261,12 +266,16 @@ pub(crate) fn sys_linkat(args : SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
     let old_resolved = if flags & AT_SYMLINK_FOLLOW != 0 {
-        match resolve_symlinks(old_resolved.as_str(), FinalSymlink::Follow) {
+        match resolve_symlinks(old_resolved.as_str(),
+                               FinalSymlink::Follow)
+        {
             Ok(path) => path,
             Err(e) => return UserRet::from_error(e),
         }
     } else {
-        match resolve_symlinks(old_resolved.as_str(), FinalSymlink::NoFollow) {
+        match resolve_symlinks(old_resolved.as_str(),
+                               FinalSymlink::NoFollow)
+        {
             Ok(path) => path,
             Err(e) => return UserRet::from_error(e),
         }
@@ -275,7 +284,9 @@ pub(crate) fn sys_linkat(args : SyscallArgs) -> UserRet {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
-    let new_resolved = match resolve_symlinks(new_resolved.as_str(), FinalSymlink::NoFollow) {
+    let new_resolved = match resolve_symlinks(new_resolved.as_str(),
+                                              FinalSymlink::NoFollow)
+    {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
@@ -371,6 +382,15 @@ pub(crate) fn sys_symlinkat(args : SyscallArgs) -> UserRet {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
+    // 展开链接路径中的中间符号链接（如 `/lib -> usr/lib`），但保留最终待创建的
+    // 链接名（NoFollow）。否则 fs 后端 `generic_lookup` 无法穿过 `/lib` 这类中间
+    // 链接，会误报 NotAFile → EISDIR（Linux 的 VFS 层负责跟随中间链接）。
+    let resolved = match resolve_symlinks(resolved.as_str(),
+                                          FinalSymlink::NoFollow)
+    {
+        Ok(path) => path,
+        Err(e) => return UserRet::from_error(e),
+    };
     let cred = cred::current_credentials();
     if let Err(e) = check_parent_create(resolved.as_str(), &cred) {
         return UserRet::from_error(e);
@@ -411,7 +431,9 @@ pub(crate) fn sys_unlinkat(args : SyscallArgs) -> UserRet {
         Err(e) => return UserRet::from_error(e),
     };
 
-    let resolved = match resolve_symlinks(resolved.as_str(), FinalSymlink::NoFollow) {
+    let resolved = match resolve_symlinks(resolved.as_str(),
+                                          FinalSymlink::NoFollow)
+    {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
     };
@@ -429,8 +451,8 @@ pub(crate) fn sys_unlinkat(args : SyscallArgs) -> UserRet {
     }
 
     let is_dir = active_impl::backend().metadata(resolved.as_str())
-                            .map(|meta| meta.node_type == VfsNodeType::Directory)
-                            .unwrap_or(remove_dir);
+                                       .map(|meta| meta.node_type == VfsNodeType::Directory)
+                                       .unwrap_or(remove_dir);
     match vfs::unlink_absolute(resolved.as_str(), remove_dir) {
         Ok(()) => {
             super::inotify::notify_delete(resolved.as_str(), is_dir);
@@ -491,11 +513,10 @@ fn check_readlink_parent_search(path : &str, cred : &ProcessCredentials) -> Resu
     if cred.effective_uid.0 == 0 {
         return Ok(());
     }
-    let parts : alloc::vec::Vec<&str> = path
-        .trim_start_matches('/')
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .collect();
+    let parts : alloc::vec::Vec<&str> = path.trim_start_matches('/')
+                                            .split('/')
+                                            .filter(|part| !part.is_empty())
+                                            .collect();
     if parts.len() <= 1 {
         return Ok(());
     }
@@ -536,16 +557,20 @@ pub(crate) fn sys_readlinkat(args : SyscallArgs) -> UserRet {
     if buf_size == 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    let path = match copy_user_path_cstr(path_ptr, crate::user_copy::USER_PATH_MAX) {
-        Ok(path) => path,
-        Err(e) => return UserRet::from_error(e),
-    };
-    let resolved = match resolve_path_at(dirfd, path.as_str())
-        .and_then(|path| resolve_symlinks(path.as_str(), FinalSymlink::NoFollow))
+    let path = match copy_user_path_cstr(path_ptr,
+                                         crate::user_copy::USER_PATH_MAX)
     {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
+    let resolved =
+        match resolve_path_at(dirfd, path.as_str()).and_then(|path| {
+                                                       resolve_symlinks(path.as_str(),
+                                                                        FinalSymlink::NoFollow)
+                                                   }) {
+            Ok(path) => path,
+            Err(e) => return UserRet::from_error(e),
+        };
     let cred = cred::current_credentials();
     if let Err(e) = check_readlink_parent_search(resolved.as_str(), &cred) {
         return UserRet::from_error(e);
