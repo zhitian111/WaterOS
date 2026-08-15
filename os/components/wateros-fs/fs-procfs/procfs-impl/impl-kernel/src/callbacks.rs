@@ -4,6 +4,7 @@ use super::*;
 pub(crate) static ARGV_LOOKUP : Mutex<Option<TaskArgvLookup>> = Mutex::new(None);
 pub(crate) static ENV_LOOKUP : Mutex<Option<TaskEnvLookup>> = Mutex::new(None);
 pub(crate) static AUXV_LOOKUP : Mutex<Option<TaskAuxvLookup>> = Mutex::new(None);
+pub(crate) static IO_LOOKUP : Mutex<Option<TaskIoLookup>> = Mutex::new(None);
 // 本变量代码由AI完成
 pub(crate) static EXE_LOOKUP : Mutex<Option<TaskExeLookup>> = Mutex::new(None);
 pub(crate) static CWD_LOOKUP : Mutex<Option<TaskPathLookup>> = Mutex::new(None);
@@ -23,6 +24,7 @@ pub fn register_task_argv_lookup(f : TaskArgvLookup) { *ARGV_LOOKUP.lock() = Som
 
 pub fn register_task_env_lookup(f : TaskEnvLookup) { *ENV_LOOKUP.lock() = Some(f); }
 pub fn register_task_auxv_lookup(f : TaskAuxvLookup) { *AUXV_LOOKUP.lock() = Some(f); }
+pub fn register_task_io_lookup(f : TaskIoLookup) { *IO_LOOKUP.lock() = Some(f); }
 
 /// 注册按 leader task id 查询 exe 路径的回调。
 // 本方法代码由AI完成
@@ -73,6 +75,11 @@ pub(crate) fn env_for(leader : TaskId) -> Option<Vec<String>> {
 
 pub(crate) fn auxv_for(leader : TaskId) -> Option<Vec<u8>> {
     let lookup = *AUXV_LOOKUP.lock();
+    lookup.and_then(|f| f(leader))
+}
+
+pub(crate) fn io_for(leader : TaskId) -> Option<[u64; 4]> {
+    let lookup = *IO_LOOKUP.lock();
     lookup.and_then(|f| f(leader))
 }
 

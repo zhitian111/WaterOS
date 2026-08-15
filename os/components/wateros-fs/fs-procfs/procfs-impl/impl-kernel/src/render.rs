@@ -587,6 +587,15 @@ pub(crate) fn format_auxv(pid : ProcessId) -> FsResult<Vec<u8>> {
     Ok(auxv_for(process.leader_task_id).unwrap_or_default())
 }
 
+pub(crate) fn format_pid_io(pid : ProcessId) -> FsResult<Vec<u8>> {
+    let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
+    let [rchar, wchar, syscr, syscw] = io_for(process.leader_task_id).unwrap_or([0; 4]);
+    // read_bytes/write_bytes 需要块层按进程归属；当前没有可靠数据源，明确为 0，
+    // 而不是把 pipe/socket/TTY 的字符流量误报成物理存储 I/O。
+    Ok(format!("rchar: {rchar}\nwchar: {wchar}\nsyscr: {syscr}\nsyscw: {syscw}\n\
+                read_bytes: 0\nwrite_bytes: 0\ncancelled_write_bytes: 0\n").into_bytes())
+}
+
 pub(crate) fn format_statm(pid : ProcessId) -> FsResult<Vec<u8>> {
     let mem = process_memory_kb(pid)?;
     let size = (mem.size_kb + 3) / 4;

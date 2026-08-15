@@ -33,6 +33,9 @@ pub type TaskEnvLookup = fn(TaskId) -> Option<Vec<String>>;
 /// 按 leader task id 查询 exec 时保存的 auxv 原始字节。
 pub type TaskAuxvLookup = fn(TaskId) -> Option<Vec<u8>>;
 
+/// 返回 `[rchar, wchar, syscr, syscw]` 字符 I/O 计数。
+pub type TaskIoLookup = fn(TaskId) -> Option<[u64; 4]>;
+
 /// 按 leader task id 查询 exe 路径。
 pub type TaskExeLookup = fn(TaskId) -> Option<String>;
 
