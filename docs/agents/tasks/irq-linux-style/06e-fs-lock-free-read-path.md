@@ -37,6 +37,28 @@ IRQ 模式用户态冻结的完整根因链（见 `history/06d-block-irq-task-sl
 - 其余路径（page-cache miss 读 T07-a、`LocalRwFs` 读锁 T07-c）需逐一核对是否
   仍存在「持锁 → 块读 → 睡眠」。
 
+## 追加：IRQ 驱动读路径的完整故障证据（2026-08-15 深挖）
+
+在开启 IRQ 模式的多个等待策略下复现并定位，新增证据（细节与 GDB 现场见
+`history/06d-block-irq-task-sleep.md` 追加节）：
+
+1. **virtio 多在途请求损坏**：8 请求在途时，冻结现场
+   `avail=1227 used=1227 last_used=1219 num_used=8`——设备完成 8 条但驱动只
+   消费到 1219；drain 在队头 `used token=1` 无匹配 InFlight 槽位处 break，
+   槽表出现**重复 token**（同一描述符索引同时出现在 Done 与 InFlight 槽），
+   说明 nb+自定义 drain 在多在途下破坏了描述符回收不变量。
+2. **单在途门闩的抢占竞态**：用 `io_gate` 把读串行到 1 个在途后，冻结现场 6 个
+   CPU 自旋在 io_gate 的 `amoor.w.aq` 获取处（反汇编确认），门闩持有者被切出——
+   「仅外部中断」窗口屏蔽 timer/soft，但**外部 IRQ trap 的公共尾部仍可能执行
+   重调度**，把持门闩的任务切走，其余 CPU 永久自旋。
+3. 结论：IRQ 驱动读要可用，需按顺序完成：
+   a. 修 virtio nb+drain 多在途完成/回收（或先保持 1 在途并解决持锁跨切换）；
+   b. 外部 IRQ trap 尾部不得在持设备/FS 锁的临界区切出任务（或临界区内全关
+      中断，仅靠 drain 轮询——即 sync 路径语义）；
+   c. FS 层去持锁（本任务原目标）。
+   在 a/b 完成前，`BLOCK_IRQ_MODE_ENABLED` 保持关闭，读路径走已验证的 sync
+   `add_notify_wait_pop`。
+
 ## 涉及文件
 
 - `os/components/wateros-fs/fs-impl/impl-another-ext4/`（元数据读路径）
