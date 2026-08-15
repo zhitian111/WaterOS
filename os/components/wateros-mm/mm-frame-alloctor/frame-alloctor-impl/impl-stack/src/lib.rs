@@ -9,10 +9,12 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use core::cell::UnsafeCell;
 
 use api_v0::{FrameAllocError, FrameAllocResult, FrameMemStats, PhysicalFrameAllocator};
 use mm_api::addr::{PhysPageNum, PAGE_SIZE};
 use wateros_base::sync::MultiprocessorSafeCell;
+use wateros_base::cpu::{CpuId, CpuLocal};
 use arch::interrupt::{
     disable_global_interrupt, read_global_interrupt_state, restore_global_interrupt_state,
     ArchInterruptState,
@@ -20,6 +22,9 @@ use arch::interrupt::{
 
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
+
+const FRAME_BATCH_CAPACITY : usize = 16;
+const MAX_CPUS : usize = 32;
 
 struct FrameAllocatorInterruptGuard {
     state : ArchInterruptState,
@@ -39,6 +44,58 @@ impl Drop for FrameAllocatorInterruptGuard {
         restore_global_interrupt_state(self.state)
             .expect("restore global interrupt state for frame allocator guard");
     }
+}
+
+struct FrameBatch {
+    slots : [MaybeUninit<PhysPageNum>; FRAME_BATCH_CAPACITY],
+    len : usize,
+}
+
+impl FrameBatch {
+    const fn new() -> Self {
+        Self { slots : [const { MaybeUninit::uninit() }; FRAME_BATCH_CAPACITY],
+               len : 0 }
+    }
+
+    fn pop(&mut self) -> Option<PhysPageNum> {
+        if self.len == 0 {
+            return None;
+        }
+        self.len -= 1;
+        Some(unsafe { self.slots[self.len].assume_init() })
+    }
+
+    fn push(&mut self, ppn : PhysPageNum) -> bool {
+        if self.len >= FRAME_BATCH_CAPACITY {
+            return false;
+        }
+        self.slots[self.len].write(ppn);
+        self.len += 1;
+        true
+    }
+
+    fn clear(&mut self) {
+        self.len = 0;
+    }
+}
+
+struct CpuFrameBatch(UnsafeCell<FrameBatch>);
+
+impl CpuFrameBatch {
+    const fn new() -> Self { Self(UnsafeCell::new(FrameBatch::new())) }
+}
+
+// SAFETY: 每个槽位只允许当前 CPU 在关闭中断后独占访问，跨 CPU 不修改同一槽位。
+unsafe impl Sync for CpuFrameBatch {}
+
+static FRAME_BATCHES : CpuLocal<CpuFrameBatch, MAX_CPUS> =
+    CpuLocal::from_cells([const { UnsafeCell::new(CpuFrameBatch::new()) }; MAX_CPUS]);
+
+fn current_frame_batch_mut() -> Option<&'static mut FrameBatch> {
+    let cpu = CpuId::from_raw(arch::cpu::current_cpu_id().raw());
+    let slot = FRAME_BATCHES.get(cpu)?;
+    // SAFETY: 调用方在 FrameAllocatorInterruptGuard 内，且仅当前 CPU 访问自己的槽位。
+    Some(unsafe { &mut *slot.0.get() })
 }
 
 fn with_frame_allocator<R>(f : impl FnOnce(&mut StackFrameAllocator) -> R) -> R {
@@ -406,6 +463,54 @@ pub fn frame_dealloc(frame : PhysPageNum) {
 
 pub fn frame_alloc_result() -> FrameAllocResult<PhysPageNum> {
     with_frame_allocator(|allocator| allocator.alloc_frame())
+}
+
+/// 从当前 CPU 的 frame batch 分配一个物理页；batch 空时批量补充一次全局帧池。
+pub fn frame_alloc_batch_result() -> FrameAllocResult<PhysPageNum> {
+    let _irq = FrameAllocatorInterruptGuard::new();
+    let batch = current_frame_batch_mut()
+        .ok_or(FrameAllocError::InvalidFrame)?;
+    if let Some(ppn) = batch.pop() {
+        return Ok(ppn);
+    }
+
+    with_frame_allocator(|allocator| {
+        let mut filled = 0usize;
+        while filled < FRAME_BATCH_CAPACITY {
+            match allocator.alloc_frame() {
+                Ok(ppn) => {
+                    batch.slots[filled].write(ppn);
+                    filled += 1;
+                }
+                Err(FrameAllocError::OutOfMemory) => break,
+                Err(_) => return,
+            }
+        }
+        batch.len = filled;
+    });
+
+    batch.pop().ok_or(FrameAllocError::OutOfMemory)
+}
+
+/// 将一个物理页还给当前 CPU frame batch；batch 满时批量归还给全局帧池。
+pub fn frame_dealloc_batch_result(frame : PhysPageNum) -> FrameAllocResult<()> {
+    let _irq = FrameAllocatorInterruptGuard::new();
+    let batch = current_frame_batch_mut()
+        .ok_or(FrameAllocError::InvalidFrame)?;
+    if batch.push(frame) {
+        return Ok(());
+    }
+
+    // batch 已满：把 batch 内缓存页和本次释放页一起归还全局帧池，降低锁次数。
+    with_frame_allocator(|allocator| {
+        for index in 0..batch.len {
+            let ppn = unsafe { batch.slots[index].assume_init() };
+            let _ = allocator.dealloc_frame(ppn);
+        }
+        let _ = allocator.dealloc_frame(frame);
+        batch.clear();
+    });
+    Ok(())
 }
 
 pub fn frame_dealloc_result(frame : PhysPageNum) -> FrameAllocResult<()> {
