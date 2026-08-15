@@ -14,15 +14,16 @@
 
 extern crate alloc;
 
-use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, vec::Vec};
 
 use api_v0::addr::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
-use api_v0::mmap::{DemandPageLoader, DeviceMappingLease, PageFaultAccess};
+use api_v0::mmap::{DemandPageLoader, PageFaultAccess};
 use api_v0::perm::PagePerm;
 
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result, frame_inc_ref, frame_ref_count};
+pub(crate) use impl_common::{DeviceVma, LazyFileVma, SharedAnonVma, SharedFileVma};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Sv39PteFlags(u16);
@@ -243,92 +244,6 @@ pub struct Sv39AddressSpace {
 // serializes the non-Send lazy-loader state as well as page-table mutation.
 unsafe impl Send for Sv39AddressSpace {}
 unsafe impl Sync for Sv39AddressSpace {}
-
-// 本结构代码由AI完成
-pub(crate) struct LazyFileVma {
-    pub start : VirtAddr,
-    pub end : VirtAddr,
-    pub perm : PagePerm,
-    pub file_offset : usize,
-    pub file_size : usize,
-    pub loader : Box<dyn DemandPageLoader>,
-}
-
-impl LazyFileVma {
-    fn duplicate(&self) -> MmResult<Self> {
-        Ok(Self { start : self.start,
-                  end : self.end,
-                  perm : self.perm,
-                  file_offset : self.file_offset,
-                  file_size : self.file_size,
-                  loader : self.loader
-                               .duplicate_box()? })
-    }
-
-    pub(crate) fn contains_page(&self, page : VirtAddr) -> bool {
-        page.0 >= self.start.0 && page.0 < self.end.0
-    }
-
-    pub(crate) fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
-        start.0 < self.end.0 && end.0 > self.start.0
-    }
-}
-
-// 本结构代码由AI完成
-#[derive(Clone, Copy)]
-pub(crate) struct SharedAnonVma {
-    pub start : VirtAddr,
-    pub end : VirtAddr,
-}
-
-pub(crate) struct SharedFileVma {
-    pub start : VirtAddr,
-    pub end : VirtAddr,
-    pub file_offset : usize,
-    pub loader : Box<dyn DemandPageLoader>,
-}
-
-#[derive(Clone)]
-pub(crate) struct DeviceVma {
-    pub start : VirtAddr,
-    pub end : VirtAddr,
-    pub phys_start : PhysPageNum,
-    pub perm : PagePerm,
-    pub lease : Arc<dyn DeviceMappingLease>,
-}
-
-impl DeviceVma {
-    pub(crate) fn contains_page(&self, page : VirtAddr) -> bool {
-        page.0 >= self.start.0 && page.0 < self.end.0
-    }
-
-    pub(crate) fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
-        start.0 < self.end.0 && end.0 > self.start.0
-    }
-}
-
-impl SharedFileVma {
-    fn duplicate(&self) -> MmResult<Self> {
-        Ok(Self { start : self.start,
-                  end : self.end,
-                  file_offset : self.file_offset,
-                  loader : self.loader.duplicate_box()? })
-    }
-
-    pub(crate) fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
-        start.0 < self.end.0 && end.0 > self.start.0
-    }
-}
-
-impl SharedAnonVma {
-    pub(crate) fn contains_page(&self, page : VirtAddr) -> bool {
-        page.0 >= self.start.0 && page.0 < self.end.0
-    }
-
-    pub(crate) fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
-        start.0 < self.end.0 && end.0 > self.start.0
-    }
-}
 
 impl Sv39AddressSpace {
     /// 分配并清零根页表帧；依赖帧分配器与 [`table_mut`] 的物理访问假设。
