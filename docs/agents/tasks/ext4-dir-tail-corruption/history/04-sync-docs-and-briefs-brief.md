@@ -38,5 +38,6 @@ fc11239f [docs] 归档 ext4 目录尾损坏专项简报并同步文档
 - 根因（`DirBlock` 把 12 字节 checksum tail 当作目录项空间）已修复；
 - host 侧单元测试与完整文件系统回归通过；
 - QEMU fs 模式通过（guest 构造 tail 边界 + 宿主 e2fsck 干净）；
-- apt/dpkg 全量路径仍被 main 分支的 `unlockpt`、文件 seek、管道读 syscall 缺口
-  阻断，已在任务 03 文档与简报中记录，不属于本专项代码改动。
+- 合入远端 `github/main` 的 syscall 修复并 rebase 后，apt 模式也通过：
+  `apt-get install neovim-runtime` 返回 0，`syntax/vim/generated.vim` 存在，
+  `e2fsck -fn` 干净。

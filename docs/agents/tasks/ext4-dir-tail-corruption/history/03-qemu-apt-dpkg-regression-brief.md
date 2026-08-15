@@ -7,6 +7,9 @@
 - fs 模式已在 RISC-V QEMU 上通过：guest 创建 360 个 4 字符文件与 `vim` 子目录，
   输出 `REG DIR TAIL FSCK PASS`；overlay 经 `e2fsck -fy` 后 `e2fsck -fn`
   五阶段全部通过。
+- apt 模式在合入远端 `github/main` 的 syscall 修复后通过：`apt-get install
+  neovim-runtime` 返回 0，`syntax/vim/generated.vim` 存在，`dpkg --configure -a`
+  返回 0，overlay `e2fsck -fn` 五阶段干净。
 - 提交：`90b64543 [test] 新增 ext4 目录尾损坏的 QEMU 回归脚本（fs 模式）`
 
 ## 修改文件
@@ -26,21 +29,18 @@ e2fsck -fn: Pass 1..5 通过
 工作副本执行一次 `e2fsck -fy` 清理；guest 写盘使用 qcow2 overlay，基准镜像未被
 写穿。
 
-## apt 模式：已知阻断
+## apt 模式：已解决
 
-`REGRESS_MODE=apt` 复现了原始 `apt-get install neovim-runtime` 路径，但 main
-（本分支基座 `59f50c44`）缺少三类 syscall 兼容，apt 在解包阶段提前中止：
+合入远端 `github/main`（提交 `3bf7ee0f`、`d1713ddb`、`39f12e99`、`c0bd9c6b`）
+并 rebase 本分支后，apt 模式回归通过：
 
 ```text
-unlockpt (22: Invalid argument)                    # PTY/TIOCSPTLCK
-cannot skip padding ... failed to seek (EOPNOTSUPP) # 普通文件 seek
-grep: (standard input): Operation not supported     # 管道读
+apt install rc=0
+dpkg configure rc=0
+#### REGRESS DIR TAIL PASS ####
+e2fsck -fn: Pass 1..5 通过
 ```
-
-队友声称的 `unlockpt/ptsname` 与 `lseek ESPIPE` 修复不在当前分支，需要先合入
-对应 syscall 修复，apt 模式才能作为本任务验收项。
 
 ## 未验证 / 剩余风险
 
-- apt/dpkg 端到端仍被上述 syscall 缺口阻断；
 - 未执行 LoongArch64 端到端回归（RISC-V 已覆盖）。

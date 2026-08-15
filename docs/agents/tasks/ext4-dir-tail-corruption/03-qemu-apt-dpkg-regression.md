@@ -2,7 +2,7 @@
 
 ## 状态
 
-fs 模式已完成并通过；apt 模式被 main 分支缺失的 syscall 兼容阻断（见下文证据）。
+fs 模式与 apt 模式均已完成并通过。
 
 ## 目标
 
@@ -57,19 +57,22 @@ rg -n "operator-run|WATEROS_OPERATOR_SCRIPT|rv_qemu_run_snapshot" os/Makefile os
 ```sh
 cd /tmp/WaterOS_ext4_dir_tail_fix/os
 REGRESS_MODE=fs bash scripts/regress_ext4_dir_tail.sh
+REGRESS_MODE=apt bash scripts/regress_ext4_dir_tail.sh
 ```
 
-验收标准（fs 模式）：
+验收标准：
 
-- guest 输出 `REG DIR TAIL FSCK PASS`；
+- fs 模式：guest 输出 `REG DIR TAIL FSCK PASS`；
+- apt 模式：`apt-get install -y --no-install-recommends neovim-runtime` 返回 0，
+  guest 输出 `REGRESS DIR TAIL PASS`，`/usr/share/vim/vim*/syntax/vim/generated.vim`
+  存在；
 - `e2fsck -fy` 与 `e2fsck -fn` 均通过，Pass 2 无 `illegal characters`、
   `fails checksum` 等目录结构错误；
 - 基准镜像未被 guest 写穿（使用 overlay）。
 
-## apt/dpkg 模式的已知阻断
+## apt/dpkg 模式的历史阻断与解决
 
-`REGRESS_MODE=apt` 在 main（本分支基座）上复现了原始安装路径，但 apt 在
-解包阶段提前中止，证据如下（`os/tem/regress-dir-tail.qemu.log`）：
+首次尝试 `REGRESS_MODE=apt` 时，apt 在解包阶段提前中止，证据如下：
 
 ```text
 E: Unlocking the slave of master fd 11 failed! - unlockpt (22: Invalid argument)
@@ -83,23 +86,20 @@ dpkg-deb: error: paste subprocess was killed by signal (Broken pipe)
 `grep: (standard input): Operation not supported`。
 
 这三个问题都是 syscall 层兼容缺口（PTY `unlockpt`/`TIOCSPTLCK`、普通文件
-seek、管道读），与 ext4 目录块 tail 修复无关，也不是本任务引入的。队友此前
-声称的 `unlockpt/ptsname` 与 `lseek ESPIPE` 修复不在 main HEAD
-（`59f50c44`）中，需要先合入对应分支的 syscall 修复后，apt 模式才能作为
-本任务的验收项。
+seek、管道读），与 ext4 目录块 tail 修复无关。
 
-跨仓库核查（2026-08-15）：
+解决方式（2026-08-15）：fetch 远端 `github/main` 后合入 main，再 rebase 本分支。
+github/main 新增提交：
 
 ```text
-git branch -a                                       # 无 PTY/seek 修复分支
-git log --all --oneline --grep='unlockpt|ptsname|PTY|ESPIPE' -i
-                                                    # 无对应提交
-git log --oneline 59f50c44..github/main             # github/main 落后于 main
-timeout 30 git ls-remote gitlab                     # gitlab 不可达（超时）
+3bf7ee0f [fix] 删除 pty 中的 usergraph      # 修复 unlockpt EINVAL
+d1713ddb [fix] lseek 对不可定位句柄返回 ESPIPE # 修复 dpkg seek
+39f12e99 [fix] 支持 O_DSYNC/O_SYNC 文件同步写入
+c0bd9c6b [fix] 统一网络错误日志格式
 ```
 
-因此无法在本环境直接引用队友的 syscall 修复；需要用户提供对应分支/提交，
-或授权在本分支实现这三项 syscall 兼容后，再跑 `REGRESS_MODE=apt`。
+合入后 apt 模式回归通过：`apt install rc=0`，`dpkg --configure -a` 返回 0，
+`e2fsck -fn` 五阶段干净。
 
 ## 完成后简报
 

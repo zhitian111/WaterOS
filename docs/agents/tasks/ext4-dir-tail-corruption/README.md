@@ -29,9 +29,8 @@ find 看到 \3232\032、:\t\220 等乱码目录项
 
 1. [01 修复 DirBlock 目录块校验尾被覆盖](./01-fix-dirblock-tail-reserve.md) — 已完成
 2. [02 新增 host 侧目录块边界回归](./02-add-host-dir-tail-regression.md) — 已完成
-3. [03 QEMU 端到端回归](./03-qemu-apt-dpkg-regression.md) — fs 模式已完成，
-   apt 模式被 main 分支 syscall 缺口阻断
-4. [04 文档同步与任务简报归档](./04-sync-docs-and-briefs.md) — 进行中
+3. [03 QEMU 端到端回归](./03-qemu-apt-dpkg-regression.md) — fs 与 apt 模式均已完成
+4. [04 文档同步与任务简报归档](./04-sync-docs-and-briefs.md) — 已完成
 
 ## 测试镜像
 
