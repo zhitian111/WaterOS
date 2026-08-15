@@ -24,6 +24,19 @@ _start:
     andi $r4, $r4, 0x1ff
     b __wateros_arch_boot
 
+    .globl wateros_kernel_main
+    .type wateros_kernel_main, @function
+wateros_kernel_main:
+    /* 在真正进入 Rust 函数前再写一个 'S'，确认 boot.S 的 bl 落点正确。 */
+    li.d $t0, 0x800000001fe20000
+1:
+    ld.bu $t1, $t0, 5
+    andi $t1, $t1, 0x20
+    beqz $t1, 1b
+    ori $t1, $zero, 0x53
+    st.b $t1, $t0, 0
+    b wateros_kernel_main_rust
+
     .globl __wateros_platform_boot_marker
     .type __wateros_platform_boot_marker, @function
 __wateros_platform_boot_marker:
