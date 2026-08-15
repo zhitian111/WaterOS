@@ -16,9 +16,7 @@ mod stress;
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::{self, addr_of_mut};
-use core::sync::atomic::AtomicU8;
-#[cfg(feature = "impl-slab")]
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use config::mm::KERNEL_HEAP_SIZE;
 use heap_backend::HeapBackend;
 
@@ -26,6 +24,10 @@ pub use slab::HeapFrameSource;
 
 const STATE_BOOT : u8 = 0;
 const STATE_SLAB : u8 = 1;
+
+/// 大对象是否走 frame-backed 连续帧路径；默认关闭（boot TLSF 有界，避免
+/// 大分配把 guest 内存提交到 QEMU 导致宿主机 OOM）。Task 07 调参时开启。
+static LARGE_FRAME_ENABLED : AtomicBool = AtomicBool::new(false);
 
 #[cfg(all(feature = "impl-tlsf", feature = "impl-linked-list-allocator"))]
 compile_error!("enable only one of `impl-tlsf` or `impl-linked-list-allocator`");
@@ -88,7 +90,13 @@ unsafe impl GlobalAlloc for KernelAllocator {
     unsafe fn alloc(&self, layout : Layout) -> *mut u8 {
         if self.slab_active() {
             let ptr = interrupt_guard::with_allocator_interrupt_guard(|| {
-                slab::alloc_on(arch::cpu::current_cpu_id(), layout)
+                if slab::is_slab_layout(layout) {
+                    slab::alloc_on(arch::cpu::current_cpu_id(), layout)
+                } else if LARGE_FRAME_ENABLED.load(Ordering::Acquire) {
+                    slab::alloc_large(layout)
+                } else {
+                    None
+                }
             });
             if let Some(ptr) = ptr {
                 return ptr;
@@ -103,7 +111,13 @@ unsafe impl GlobalAlloc for KernelAllocator {
         }
         if self.slab_active() && !in_boot_heap(ptr) {
             let freed = interrupt_guard::with_allocator_interrupt_guard(|| {
-                slab::dealloc_on(arch::cpu::current_cpu_id(), ptr, layout)
+                if slab::is_slab_layout(layout) {
+                    slab::dealloc_on(arch::cpu::current_cpu_id(), ptr, layout)
+                } else if LARGE_FRAME_ENABLED.load(Ordering::Acquire) {
+                    slab::dealloc_large(ptr, layout)
+                } else {
+                    false
+                }
             });
             if freed {
                 return;

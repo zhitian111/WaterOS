@@ -30,6 +30,10 @@ feature/统计开关，不能留下未实现路径。
    - 多页大对象：按 `layout.size` 对齐到页，调用 `alloc_contiguous`；
    - 分配失败时允许回退 boot TLSF，但要记录统计，不能静默吞掉 OOM。
 
+   当前默认 `LARGE_FRAME_ENABLED=false`：大对象仍走 boot TLSF。原因是在本机
+   `-m 36G` 下开启连续帧大对象会使 guest 把大量物理页提交给 QEMU，导致宿主机 OOM
+   kill。该开关由 Task 07 调参时按环境评估。
+
 4. 大对象释放必须知道页数；用页首 header 或 page metadata 记录 order/pages。
 
 ## 涉及文件
