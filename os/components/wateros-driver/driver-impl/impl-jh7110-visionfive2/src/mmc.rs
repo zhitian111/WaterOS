@@ -98,9 +98,10 @@ const MMC_OCR_ATTEMPTS : usize = 1_000;
 /// SD 识别阶段时钟（规范 100–400kHz；过快会导致响应 CRC 错）。
 const SD_IDENTIFICATION_HZ : u32 = 400_000;
 /// 识别完成后提升到的传输时钟。本板 SD host FIFO 仅 32 字（128B），U-Boot
-/// 实际走 IDMAC；PIO 在 25MHz 下连续读会溢出，故暂降到 1MHz 保证可靠。
-/// 正确解法是 IDMAC（+ Zicbom 缓存维护），后续任务实现后再恢复高速。
-const SD_TRANSFER_HZ : u32 = 1_000_000;
+/// 实际走 IDMAC；PIO 在 25MHz 下连续读会间歇 FRUN。10MHz 是比 1MHz 快约
+/// 8 倍、且保留约 4 倍余量的保守档。正确解法是 IDMAC（+ 缓存维护），后续
+/// 任务实现后再恢复 4-bit/50MHz。
+const SD_TRANSFER_HZ : u32 = 10_000_000;
 
 /// 尝试激活一个 MMC host 并注册只读块设备；失败带上下文返回，不阻断启动。
 pub fn activate_and_register_readonly(host : &MmcHostDescription)
