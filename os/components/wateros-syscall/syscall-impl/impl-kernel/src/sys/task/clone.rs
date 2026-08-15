@@ -626,11 +626,10 @@ fn validate_fork_clone_flags(clone_flags : task::CloneFlags) -> Result<(), ErrNo
     }
 
     let unsupported = bits & !CLONE_FORK_COMPAT_MASK;
-    log::warn!("[syscall] clone(nr=220) fork unsupported flags={:#x} (allowed CSIGNAL={:#x}, tid \
-                compat={:#x}, vfork compat={:#x})",
-               unsupported,
-               bits & CLONE_CSIGNAL_MASK,
-               CLONE_PARENT_SETTID_RAW | CLONE_CHILD_CLEARTID_RAW | CLONE_CHILD_SETTID_RAW,
-               CLONE_VM_RAW | CLONE_VFORK | CLONE_CLEAR_SIGHAND_RAW,);
+    // clone/stress-ng 会系统性探测未知 flag；返回 EINVAL/EOPNOTSUPP 才是 ABI，
+    // 不是需要污染 operator 串口的内核异常。需要排查兼容性时再开 trace。
+    log::trace!("[syscall] clone fork unsupported flags={:#x} csig={:#x}",
+                unsupported,
+                bits & CLONE_CSIGNAL_MASK,);
     Err(ErrNo::EINVAL)
 }

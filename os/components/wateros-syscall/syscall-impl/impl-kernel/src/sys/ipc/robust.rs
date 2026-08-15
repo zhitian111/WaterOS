@@ -97,9 +97,11 @@ pub(crate) fn robust_exit_cleanup(task_id : TaskId) {
         (entry, entry_is_pi) = robust_entry(next_raw);
     }
     if steps == ROBUST_LIST_LIMIT && entry != list_head && entry != 0 {
-        log::warn!("[robust] list traversal limit reached task_id={} head={:#x}",
-                   task_id,
-                   head_ptr);
+        // Linux 同样以 ROBUST_LIST_LIMIT 防御损坏或并发变化的用户链表。
+        // 这是用户态输入截断，不是内核故障；压力工具会故意触发，降为 debug。
+        log::debug!("[robust] list traversal limit reached task_id={} head={:#x}",
+                    task_id,
+                    head_ptr);
     }
     if pending != 0 && !pending_is_pi {
         // pending 可能已在主链表中，上面的 `entry != pending` 保证只处理一次。
