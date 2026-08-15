@@ -185,6 +185,13 @@ impl<T : SdTransport> SdCard<T> {
     pub fn info(&self) -> SdCardInfo { self.info }
     pub fn into_transport(self) -> T { self.transport }
 
+    /// Re-wrap a transport and the negotiated card info without re-running
+    /// identification (e.g., after reconfiguring the controller clock for
+    /// high-speed transfer).
+    pub fn from_transport(transport : T, info : SdCardInfo) -> Self {
+        Self { transport, info }
+    }
+
     /// Convert an initialized card to the common block-device handle. This is
     /// deliberately separate from registry insertion so board bring-up can
     /// validate capacity and sample reads before making the disk visible.

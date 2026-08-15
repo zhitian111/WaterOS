@@ -95,21 +95,35 @@ pub const MMC_INPUT_FREQUENCY_HZ : u32 = 100_000_000;
 
 const MMC_POLL_LIMIT : usize = 1_000_000;
 const MMC_OCR_ATTEMPTS : usize = 1_000;
+/// SD 识别阶段时钟（规范 100–400kHz；过快会导致响应 CRC 错）。
+const SD_IDENTIFICATION_HZ : u32 = 400_000;
+/// 识别完成后提升到的传输时钟（与 U-Boot 日志的 SD High Speed 一致）。
+const SD_TRANSFER_HZ : u32 = 50_000_000;
 
 /// 尝试激活一个 MMC host 并注册只读块设备；失败带上下文返回，不阻断启动。
 pub fn activate_and_register_readonly(host : &MmcHostDescription)
                                       -> Result<usize, String> {
-    let plan = bring_up_plan(host);
     // SAFETY: 平台 memory layout 恒等映射覆盖 JH7110 低地址 MMIO 窗口
     // （0x0100_0000..0x4000_0000），该实例独占访问控制器寄存器。
     let registers = unsafe { MmioRegisters::new(host.mmio) };
-    let card = initialize_sd_card(&plan,
-                                  MMC_ACTIVATION_EVIDENCE,
-                                  registers,
-                                  MMC_INPUT_FREQUENCY_HZ,
-                                  MMC_POLL_LIMIT,
-                                  MMC_OCR_ATTEMPTS)
+    // 识别阶段按 SD 规范跑 400kHz（过快响应采样失败 → ResponseCrc），
+    // 卡状态（RCA/CSD/addressing）建立后再提升到传输时钟。
+    let mut ident_host = host.clone();
+    ident_host.max_frequency_hz = Some(SD_IDENTIFICATION_HZ);
+    let ident_plan = bring_up_plan(&ident_host);
+    let controller = initialize_controller(&ident_plan,
+                                           MMC_ACTIVATION_EVIDENCE,
+                                           registers,
+                                           MMC_INPUT_FREQUENCY_HZ,
+                                           MMC_POLL_LIMIT)
+        .map_err(|err| format!("controller: {err:?}"))?;
+    let card = SdCard::initialize(controller, MMC_OCR_ATTEMPTS)
         .map_err(|err| format!("sd init: {err:?}"))?;
+    let info = card.info();
+    let mut controller = card.into_transport();
+    controller.configure_card_clock(MMC_INPUT_FREQUENCY_HZ, SD_TRANSFER_HZ)
+        .map_err(|err| format!("reclock: {err:?}"))?;
+    let card = SdCard::from_transport(controller, info);
     let shared = card.into_shared();
     register_readonly_block_device(shared)
         .map_err(|err| format!("register: {err:?}"))
