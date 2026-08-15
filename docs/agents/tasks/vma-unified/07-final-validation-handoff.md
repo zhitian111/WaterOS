@@ -4,6 +4,15 @@
 
 完成 VMA 分支最终验收，准备与 `perf/kernel-heap-slab` 分支 rebase 的交接条件。
 
+## 当前进度
+
+- 静态验收已通过：`make rv_check`、`make la_check`、`make kernel-rv-final`、
+  `make kernel-la-final`、`git diff --check`。
+- RV 单核、RV 8 核、LA 单核完整 BuildStorm 已通过。
+- LA 12 核当前受宿主机内存压力阻塞，详见
+  `07-LA12-RESOURCE-BLOCKER.md`。
+- 在 LA 12 通过前不生成最终 `history/07-brief.md`，也不标记本任务完成。
+
 ## 实施方案
 
 1. 功能验收：
