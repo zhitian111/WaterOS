@@ -41,3 +41,12 @@ IRQ 模式开启时 cagent 卡在 `paged_handle seek` 循环（bash 反复 seek/
   走 IRQ + waitqueue 睡眠/唤醒往返；同步路径是锁内紧自旋，微秒级完成。
 - 结论：性能收益必须回到**多请求在途（async slots）**，而它此前被 virtio
   描述符回收损坏（重复 token / used 条目未消费）挡住，是下一个主攻点。
+
+## 多请求在途实验（槽位自旋版）
+
+- 恢复 8 槽位 async 结构 + 强制 kick + bh 回收 + 无超时 waitqueue，并把槽位满
+  改为自旋等待空闲槽。结果 cagent 很快 `failed to read block ... IoError`（
+  非槽位耗尽，而是完成路径失败），子进程 `exit_code=-11`。
+- 定性为 vendor `virtio-drivers` 在「nb 提交 + 按 used 顺序回收 + 多请求在途 +
+  乱序完成」下描述符 free-list 不变量被破坏，导致重复 token，drain 错槽，
+  `complete_*` 返回 WrongToken。下一步在 vendor 描述符生命周期层面修复。
