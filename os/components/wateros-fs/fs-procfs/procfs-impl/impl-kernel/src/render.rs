@@ -582,6 +582,11 @@ pub(crate) fn format_environ(pid : ProcessId) -> FsResult<Vec<u8>> {
     Ok(out)
 }
 
+pub(crate) fn format_auxv(pid : ProcessId) -> FsResult<Vec<u8>> {
+    let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
+    Ok(auxv_for(process.leader_task_id).unwrap_or_default())
+}
+
 pub(crate) fn format_statm(pid : ProcessId) -> FsResult<Vec<u8>> {
     let mem = process_memory_kb(pid)?;
     let size = (mem.size_kb + 3) / 4;

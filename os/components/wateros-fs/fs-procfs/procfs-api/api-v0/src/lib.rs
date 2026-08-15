@@ -30,6 +30,9 @@ pub type TaskArgvLookup = fn(TaskId) -> Option<Vec<String>>;
 /// 按 leader task id 查询 exec 时的环境向量。
 pub type TaskEnvLookup = fn(TaskId) -> Option<Vec<String>>;
 
+/// 按 leader task id 查询 exec 时保存的 auxv 原始字节。
+pub type TaskAuxvLookup = fn(TaskId) -> Option<Vec<u8>>;
+
 /// 按 leader task id 查询 exe 路径。
 pub type TaskExeLookup = fn(TaskId) -> Option<String>;
 

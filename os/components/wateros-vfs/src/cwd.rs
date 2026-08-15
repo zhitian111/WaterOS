@@ -163,6 +163,12 @@ where
     Ok(())
 }
 
+/// 保存实际写入初始用户栈的 auxv 原始字节。
+pub fn set_task_auxv(task_id: task::TaskId, auxv: Vec<u8>) -> VfsResult<()> {
+    registry().exclusive_access().set_auxv(task_id, auxv);
+    Ok(())
+}
+
 /// 读取指定任务的 argv。
 pub fn task_argv(task_id: task::TaskId) -> VfsResult<Vec<String>> {
     let mut reg = registry().exclusive_access();
@@ -195,6 +201,12 @@ pub fn lookup_env_for_task(task_id: task::TaskId) -> Option<Vec<String>> {
     let mut reg = registry().exclusive_access();
     reg.ensure_task_cwd(task_id);
     reg.get_env(task_id).map(|v| v.to_vec())
+}
+
+pub fn lookup_auxv_for_task(task_id: task::TaskId) -> Option<Vec<u8>> {
+    let mut reg = registry().exclusive_access();
+    reg.ensure_task_cwd(task_id);
+    reg.get_auxv(task_id).map(|v| v.to_vec())
 }
 
 /// 读取指定任务 exe 路径（procfs 回调用）。

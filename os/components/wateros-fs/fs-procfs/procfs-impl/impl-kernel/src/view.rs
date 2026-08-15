@@ -130,6 +130,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidMaps(pid) |
             ProcNode::PidCmdline(pid) |
             ProcNode::PidEnviron(pid) |
+            ProcNode::PidAuxv(pid) |
             ProcNode::PidStatm(pid) |
             ProcNode::PidLimits(pid) |
             ProcNode::PidMounts(pid) |
@@ -260,6 +261,18 @@ impl ProcFsView for KernelProcFs {
                                                           size : self.read(rel_path)?.len() as u64,
                                                           mode : 0o444,
                                                           inode : proc_inode(node), nlink : 1, uid : 0, gid : 0 }),
+            ProcNode::PidEnviron(pid) | ProcNode::PidAuxv(pid) => {
+                if !process_visible(pid) {
+                    return Err(FsError::NotFound);
+                }
+                Ok(FsMetadata { node_type : FsNodeType::File,
+                                size : self.read(rel_path)?.len() as u64,
+                                mode : 0o400,
+                                inode : proc_inode(node),
+                                nlink : 1,
+                                uid : 0,
+                                gid : 0 })
+            }
             ProcNode::PidStat(pid) |
             ProcNode::PidStatus(pid) |
             ProcNode::PidComm(pid) |
@@ -267,7 +280,6 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidSmaps(pid) |
             ProcNode::PidMaps(pid) |
             ProcNode::PidCmdline(pid) |
-            ProcNode::PidEnviron(pid) |
             ProcNode::PidStatm(pid) |
             ProcNode::PidLimits(pid) |
             ProcNode::PidMounts(pid) |
@@ -417,6 +429,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidMaps(pid) => format_maps(pid),
             ProcNode::PidCmdline(pid) => format_cmdline(pid),
             ProcNode::PidEnviron(pid) => format_environ(pid),
+            ProcNode::PidAuxv(pid) => format_auxv(pid),
             ProcNode::PidStatm(pid) => format_statm(pid),
             ProcNode::PidLimits(pid) => format_limits(pid),
             ProcNode::PidMounts(pid) => {
@@ -534,6 +547,7 @@ impl ProcFsView for KernelProcFs {
                                        FsDirEntry { name : String::from("interrupts"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("cmdline"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("environ"), node_type : FsNodeType::File },
+                                       FsDirEntry { name : String::from("auxv"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("vmstat"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("diskstats"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("uptime"),

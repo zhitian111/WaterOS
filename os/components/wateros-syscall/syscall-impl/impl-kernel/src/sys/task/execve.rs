@@ -76,7 +76,7 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     let envp_refs : Vec<&str> = envp.iter()
                                     .map(String::as_str)
                                     .collect();
-    let new_sp = match mm::kernel_mm::prepare_elf_user_stack(&new_elf, &final_argv_refs, &envp_refs)
+    let prepared = match mm::kernel_mm::prepare_elf_user_stack(&new_elf, &final_argv_refs, &envp_refs)
     {
         Ok(new_sp) => new_sp,
         Err(err) => {
@@ -85,6 +85,7 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
             return Err(errno);
         }
     };
+    let new_sp = prepared.sp;
 
     if let Some(qemu_path) = qemu_system_invocation(executable_path.as_str(),
                                                     &final_argv_refs)
@@ -183,6 +184,7 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     let _ = vfs::cwd::set_task_env(current_tid,
                                    envp.iter()
                                        .map(String::as_str));
+    let _ = vfs::cwd::set_task_auxv(current_tid, prepared.auxv);
     let mut comm = [0u8; 16];
     let basename = executable_path.rsplit('/')
                                   .find(|part| !part.is_empty())

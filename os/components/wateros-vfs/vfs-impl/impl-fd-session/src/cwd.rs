@@ -18,6 +18,7 @@ pub struct PerTaskCwdRegistry {
     exe_paths: BTreeMap<task::TaskId, String>,
     argv_vectors: BTreeMap<task::TaskId, Vec<String>>,
     env_vectors: BTreeMap<task::TaskId, Vec<String>>,
+    auxv_vectors: BTreeMap<task::TaskId, Vec<u8>>,
     owners: BTreeMap<task::TaskId, task::TaskId>,
     ref_counts: BTreeMap<task::TaskId, usize>,
 }
@@ -30,6 +31,7 @@ impl PerTaskCwdRegistry {
             exe_paths: BTreeMap::new(),
             argv_vectors: BTreeMap::new(),
             env_vectors: BTreeMap::new(),
+            auxv_vectors: BTreeMap::new(),
             owners: BTreeMap::new(),
             ref_counts: BTreeMap::new(),
         }
@@ -116,6 +118,7 @@ impl PerTaskCwdRegistry {
             self.exe_paths.remove(&owner);
             self.argv_vectors.remove(&owner);
             self.env_vectors.remove(&owner);
+            self.auxv_vectors.remove(&owner);
         }
         if task_id != owner {
             self.cwd_tables.remove(&task_id);
@@ -123,6 +126,7 @@ impl PerTaskCwdRegistry {
             self.exe_paths.remove(&task_id);
             self.argv_vectors.remove(&task_id);
             self.env_vectors.remove(&task_id);
+            self.auxv_vectors.remove(&task_id);
         }
     }
 
@@ -133,6 +137,7 @@ impl PerTaskCwdRegistry {
         let parent_exe = self.get_exe_path(parent).map(ToString::to_string);
         let parent_argv = self.get_argv(parent).map(|v| v.to_vec());
         let parent_env = self.get_env(parent).map(|v| v.to_vec());
+        let parent_auxv = self.get_auxv(parent).map(|v| v.to_vec());
         if self.owners.contains_key(&child) {
             self.drop_task(child);
         }
@@ -151,6 +156,9 @@ impl PerTaskCwdRegistry {
         }
         if let Some(env) = parent_env {
             self.env_vectors.insert(child_owner, env);
+        }
+        if let Some(auxv) = parent_auxv {
+            self.auxv_vectors.insert(child_owner, auxv);
         }
     }
 
@@ -204,5 +212,15 @@ impl PerTaskCwdRegistry {
     pub fn get_env(&self, task_id: task::TaskId) -> Option<&[String]> {
         let owner = self.effective_owner(task_id);
         self.env_vectors.get(&owner).map(Vec::as_slice)
+    }
+
+    pub fn set_auxv(&mut self, task_id: task::TaskId, auxv: Vec<u8>) {
+        let owner = self.ensure_owner(task_id);
+        self.auxv_vectors.insert(owner, auxv);
+    }
+
+    pub fn get_auxv(&self, task_id: task::TaskId) -> Option<&[u8]> {
+        let owner = self.effective_owner(task_id);
+        self.auxv_vectors.get(&owner).map(Vec::as_slice)
     }
 }
