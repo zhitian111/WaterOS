@@ -152,6 +152,7 @@ pub(crate) enum ProcNode {
     PidEnviron(ProcessId),
     PidAuxv(ProcessId),
     PidIo(ProcessId),
+    PidSched(ProcessId),
     PidStatm(ProcessId),
     PidLimits(ProcessId),
     PidMounts(ProcessId),
@@ -173,6 +174,7 @@ pub(crate) enum ProcNode {
     PidTaskStat(ProcessId, TaskId),
     PidTaskStatus(ProcessId, TaskId),
     PidTaskWchan(ProcessId, TaskId),
+    PidTaskSched(ProcessId, TaskId),
 }
 
 // 为 proc 节点分配稳定 inode 号（pid 子树按 pid 编码）。
@@ -265,6 +267,7 @@ pub(crate) fn proc_inode(node : ProcNode) -> u64 {
         ProcNode::PidEnviron(pid) => 0x4000_000B | ((pid.raw() as u64) << 8),
         ProcNode::PidAuxv(pid) => 0x4000_000C | ((pid.raw() as u64) << 8),
         ProcNode::PidIo(pid) => 0x4000_000D | ((pid.raw() as u64) << 8),
+        ProcNode::PidSched(pid) => 0x4000_000E | ((pid.raw() as u64) << 8),
         ProcNode::PidStatm(pid) => 0x4000_0001 | ((pid.raw() as u64) << 8),
         ProcNode::PidLimits(pid) => 0x4000_0002 | ((pid.raw() as u64) << 8),
         ProcNode::PidMountinfo(pid) => 0x4000_0003 | ((pid.raw() as u64) << 8),
@@ -293,6 +296,9 @@ pub(crate) fn proc_inode(node : ProcNode) -> u64 {
         }
         ProcNode::PidTaskWchan(pid, tid) => {
             0x3400_0000_0000_0000 | ((pid.raw() as u64) << 32) | (tid as u64)
+        }
+        ProcNode::PidTaskSched(pid, tid) => {
+            0x3500_0000_0000_0000 | ((pid.raw() as u64) << 32) | (tid as u64)
         }
         ProcNode::PidFd(pid, fd) => 0x2000_0000_0000_0000 | ((pid.raw() as u64) << 32) | fd as u64,
         ProcNode::PidFdInfo(pid, fd) => 0x2100_0000_0000_0000 | ((pid.raw() as u64) << 32) | fd as u64,
@@ -454,6 +460,7 @@ pub(crate) fn parse_node(path : &str) -> Option<ProcNode> {
         [pid_name, "environ"] => Some(ProcNode::PidEnviron(parse_pid(pid_name)?)),
         [pid_name, "auxv"] => Some(ProcNode::PidAuxv(parse_pid(pid_name)?)),
         [pid_name, "io"] => Some(ProcNode::PidIo(parse_pid(pid_name)?)),
+        [pid_name, "sched"] => Some(ProcNode::PidSched(parse_pid(pid_name)?)),
         [pid_name, "statm"] => Some(ProcNode::PidStatm(parse_pid(pid_name)?)),
         [pid_name, "limits"] => Some(ProcNode::PidLimits(parse_pid(pid_name)?)),
         [pid_name, "mountinfo"] => Some(ProcNode::PidMountinfo(parse_pid(pid_name)?)),
@@ -490,6 +497,10 @@ pub(crate) fn parse_node(path : &str) -> Option<ProcNode> {
         [pid_name, "task", tid_name, "wchan"] => {
             let pid = parse_pid(pid_name)?;
             Some(ProcNode::PidTaskWchan(pid, parse_thread_task(pid, tid_name)?))
+        }
+        [pid_name, "task", tid_name, "sched"] => {
+            let pid = parse_pid(pid_name)?;
+            Some(ProcNode::PidTaskSched(pid, parse_thread_task(pid, tid_name)?))
         }
         _ => None,
     }

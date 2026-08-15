@@ -132,6 +132,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidEnviron(pid) |
             ProcNode::PidAuxv(pid) |
             ProcNode::PidIo(pid) |
+            ProcNode::PidSched(pid) |
             ProcNode::PidStatm(pid) |
             ProcNode::PidLimits(pid) |
             ProcNode::PidMounts(pid) |
@@ -151,6 +152,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidTaskStat(pid, _) |
             ProcNode::PidTaskStatus(pid, _) |
             ProcNode::PidTaskWchan(pid, _) => process_visible(pid),
+            ProcNode::PidTaskSched(pid, _) => process_visible(pid),
             ProcNode::PidFd(pid, fd) => {
                 task::leader_task_for_process(pid)
                     .map(|leader| fds_for(leader).contains(&fd))
@@ -282,6 +284,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidMaps(pid) |
             ProcNode::PidCmdline(pid) |
             ProcNode::PidIo(pid) |
+            ProcNode::PidSched(pid) |
             ProcNode::PidStatm(pid) |
             ProcNode::PidLimits(pid) |
             ProcNode::PidMounts(pid) |
@@ -292,7 +295,8 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidTaskComm(pid, _) |
             ProcNode::PidTaskStat(pid, _) |
             ProcNode::PidTaskStatus(pid, _) |
-            ProcNode::PidTaskWchan(pid, _) => {
+            ProcNode::PidTaskWchan(pid, _) |
+            ProcNode::PidTaskSched(pid, _) => {
                 if !process_visible(pid) {
                     return Err(FsError::NotFound);
                 }
@@ -433,6 +437,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidEnviron(pid) => format_environ(pid),
             ProcNode::PidAuxv(pid) => format_auxv(pid),
             ProcNode::PidIo(pid) => format_pid_io(pid),
+            ProcNode::PidSched(pid) => format_sched(pid),
             ProcNode::PidStatm(pid) => format_statm(pid),
             ProcNode::PidLimits(pid) => format_limits(pid),
             ProcNode::PidMounts(pid) => {
@@ -450,6 +455,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidTaskStat(pid, task_id) => format_task_stat(pid, task_id),
             ProcNode::PidTaskStatus(pid, task_id) => format_task_status(pid, task_id),
             ProcNode::PidTaskWchan(pid, task_id) => format_task_wchan(pid, task_id),
+            ProcNode::PidTaskSched(pid, task_id) => format_task_sched(pid, task_id),
             ProcNode::SelfLink | ProcNode::ThreadSelfLink => Err(FsError::NotAFile),
         }
     }
@@ -549,9 +555,6 @@ impl ProcFsView for KernelProcFs {
                                        FsDirEntry { name : String::from("partitions"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("interrupts"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("cmdline"), node_type : FsNodeType::File },
-                                       FsDirEntry { name : String::from("environ"), node_type : FsNodeType::File },
-                                       FsDirEntry { name : String::from("auxv"), node_type : FsNodeType::File },
-                                       FsDirEntry { name : String::from("io"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("vmstat"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("diskstats"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("uptime"),
@@ -689,10 +692,14 @@ impl ProcFsView for KernelProcFs {
                                          String::from("cmdline"),
                                      node_type:
                                          FsNodeType::File },
+                        FsDirEntry { name: String::from("environ"), node_type: FsNodeType::File },
+                        FsDirEntry { name: String::from("auxv"), node_type: FsNodeType::File },
+                        FsDirEntry { name: String::from("io"), node_type: FsNodeType::File },
                         FsDirEntry { name: String::from("statm"), node_type: FsNodeType::File },
                         FsDirEntry { name: String::from("limits"), node_type: FsNodeType::File },
                         FsDirEntry { name: String::from("mountinfo"), node_type: FsNodeType::File },
                         FsDirEntry { name: String::from("wchan"), node_type: FsNodeType::File },
+                        FsDirEntry { name: String::from("sched"), node_type: FsNodeType::File },
                         FsDirEntry { name: String::from("cgroup"), node_type: FsNodeType::File },
                         FsDirEntry { name:
                                          String::from("exe"),
@@ -762,6 +769,8 @@ impl ProcFsView for KernelProcFs {
                         FsDirEntry { name : String::from("status"),
                                      node_type : FsNodeType::File },
                         FsDirEntry { name : String::from("wchan"),
+                                     node_type : FsNodeType::File },
+                        FsDirEntry { name : String::from("sched"),
                                      node_type : FsNodeType::File }])
             }
             _ => Err(FsError::NotAFile),

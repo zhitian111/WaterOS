@@ -676,6 +676,41 @@ pub(crate) fn format_task_wchan(pid : ProcessId, task_id : TaskId) -> FsResult<V
     Ok(format!("{name}\n").into_bytes())
 }
 
+pub(crate) fn format_sched(pid : ProcessId) -> FsResult<Vec<u8>> {
+    let leader = task::leader_task_for_process(pid).ok_or(FsError::NotFound)?;
+    format_task_sched(pid, leader)
+}
+
+/// 生成 procps/stress-ng 可解析的线程调度快照。
+pub(crate) fn format_task_sched(pid : ProcessId, task_id : TaskId) -> FsResult<Vec<u8>> {
+    let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
+    task::process_task_snapshot(task_id).filter(|entry| entry.pid == pid)
+                                         .ok_or(FsError::NotFound)?;
+    let snapshot = task::task_snapshot(task_id).ok_or(FsError::NotFound)?;
+    let comm = thread_comm_str(task_id).unwrap_or_else(|| comm_for(pid));
+    let tid = task::process_task_snapshot(task_id).map(|entry| entry.tid.raw())
+                                                   .unwrap_or(task_id);
+    let runtime_ms = (snapshot.stats.tick_count as u64).saturating_mul(10);
+    let switches = snapshot.stats.schedule_count as u64;
+    let priority = match snapshot.policy {
+        task::SchedPolicy::Fifo | task::SchedPolicy::Rr => {
+            99i64.saturating_sub(snapshot.priority.max(1) as i64)
+        }
+        _ => 120i64.saturating_add(snapshot.nice as i64),
+    };
+    Ok(format!("{comm} ({tid}, #threads: {})\n\
+                ---------------------------------------------------------\n\
+                se.exec_start                                :         0.000000\n\
+                se.vruntime                                  :         {}.000000\n\
+                se.sum_exec_runtime                          :         {runtime_ms}.000000\n\
+                nr_switches                                  :         {switches}\n\
+                nr_voluntary_switches                        :         {switches}\n\
+                nr_involuntary_switches                      :         0\n\
+                policy                                       :         {}\n\
+                prio                                         :         {priority}\n",
+               process.task_count, snapshot.vruntime, snapshot.policy as i32).into_bytes())
+}
+
 pub(crate) fn format_fdinfo(pid : ProcessId, fd : usize) -> FsResult<Vec<u8>> {
     let leader = task::leader_task_for_process(pid).ok_or(FsError::NotFound)?;
     if !fds_for(leader).contains(&fd) {
