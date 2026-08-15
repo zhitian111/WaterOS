@@ -373,13 +373,13 @@ impl<R : RegisterIo> DwMmc<R> {
                      17)?;
 
         let mut bytes = 0;
-        let mut command_done = false;
         let mut data_over = false;
         for _ in 0..self.poll_limit {
             let interrupts = self.registers
                                  .read32(RINTSTS)?;
-            Self::check_errors(interrupts)?;
-            command_done |= interrupts & INT_COMMAND_DONE != 0;
+            if let Err(err) = Self::check_errors(interrupts) {
+                return Err(self.read_failure(err));
+            }
             data_over |= interrupts & INT_DATA_OVER != 0;
 
             let fifo_words = ((self.registers
@@ -398,12 +398,9 @@ impl<R : RegisterIo> DwMmc<R> {
                 self.registers
                     .write32(RINTSTS, interrupts)?;
             }
-            if command_done && data_over && bytes == output.len() {
+            if data_over && bytes == output.len() {
                 return self.registers
                            .read32(RESP0);
-            }
-            if bytes == output.len() && fifo_words > 0 {
-                return Err(self.read_failure(MmcError::Fifo));
             }
         }
         Err(self.read_failure(MmcError::Timeout))
