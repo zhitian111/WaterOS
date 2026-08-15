@@ -8,7 +8,7 @@
 
 __wateros_arch_boot:
     slli.d $t0, $r4, STACK_PER_CPU_SHIFT
-    la.local $t1, __wateros_arch_boot_stacks
+    la.global $t1, __wateros_arch_boot_stacks
     add.d $sp, $t1, $t0
     li.d $t0, STACK_PER_CPU
     add.d $sp, $sp, $t0

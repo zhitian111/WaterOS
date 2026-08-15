@@ -35,7 +35,8 @@ wateros_kernel_main:
     beqz $t1, 1b
     ori $t1, $zero, 0x53
     st.b $t1, $t0, 0
-    b wateros_kernel_main_rust
+    la.global $t0, wateros_kernel_main_rust
+    jr $t0
 
     .globl __wateros_platform_boot_marker
     .type __wateros_platform_boot_marker, @function
