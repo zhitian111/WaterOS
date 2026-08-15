@@ -3,11 +3,11 @@
 //!
 //! ## trap 与映射语义
 //!
-//! [`init`] 在 **S 态** 安装 `satp` 后映射 QEMU virt **RAM
-//! 恒等区**（`0x8000_0000` 起，`R|W|X`）与 **MMIO**（`R|W`），保证内核、trap
-//! 入口、设备 MMIO 访问在同一套映射下有效；不包含 `U`
-//! 位，用户态须使用独立用户页表或后续 `protect`/`map_identity_range_user`
-//! 等路径。
+//! [`init`] 在 **S 态** 安装 `satp` 后按平台内存布局
+//! （[`platform::memory::kernel_layout`]）恒等映射 **RAM**（`R|W|X`）与
+//! **MMIO**（`R|W`），保证内核、trap 入口、设备 MMIO 访问在同一套映射下
+//! 有效；不包含 `U` 位，用户态须使用独立用户页表或后续
+//! `protect`/`map_identity_range_user` 等路径。
 //!
 //! ## 页大小与 PPN
 //!
@@ -58,9 +58,17 @@ pub fn kernel_satp() -> usize { api_v0::kernel_satp::get() }
 /// `ram_end_exclusive` 为物理 RAM 上界（不包含），应与 DTB `/memory` 或
 /// bring-up 约定一致。
 pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
-    assert!(ram_end_exclusive > 0x8000_0000,
-            "kernel_mm: ram_end_exclusive must be above RAM base");
-    PHYS_RAM_END_EXCL.store(ram_end_exclusive, Ordering::Release);
+    let layout = platform::memory::kernel_layout();
+    let ram_start = layout.ram.start;
+    let ram_end = layout.ram.end;
+    assert!(ram_end > ram_start,
+            "kernel_mm: invalid platform RAM range [{:#x},{:#x})",
+            ram_start,
+            ram_end);
+    debug_assert_eq!(ram_end,
+                     ram_end_exclusive,
+                     "kernel_mm: ram_end must match platform layout");
+    PHYS_RAM_END_EXCL.store(ram_end, Ordering::Release);
 
     // 从 kernel_end 到 DTB `/memory` 上界都属于帧池；DTB 自身仅作为一个小的
     // reserved region 排除，不能再把 DTB 的放置地址误当成 RAM 终点。QEMU 9.2.1
@@ -71,9 +79,10 @@ pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
         core::arch::asm!("la {}, kernel_end", out(reg) kernel_end_addr);
     }
     let start_ppn = (kernel_end_addr + PAGE_SIZE - 1) / PAGE_SIZE;
-    let end_ppn = ram_end_exclusive / PAGE_SIZE;
+    let end_ppn = ram_end / PAGE_SIZE;
     let (reserved_start_ppn, reserved_end_ppn) = dtb_reserved_ppns(dtb_pa,
-                                                                   ram_end_exclusive)
+                                                                   ram_start,
+                                                                   ram_end)
         .unwrap_or((start_ppn, start_ppn));
 
     frame_alloctor::init_frame_allocator_with_reserved(PhysPageNum(start_ppn),
@@ -103,31 +112,28 @@ pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
     };
 
     map_identity(&mut aspace,
-                 0x8000_0000,
-                 ram_end_exclusive,
+                 ram_start,
+                 ram_end,
                  PagePerm::R | PagePerm::W | PagePerm::X,
                  "RAM");
 
-    // 访问 virtio / UART 等 MMIO（如 0x1000_8000）必须映射；与 `-m` 无关。
-    map_identity(&mut aspace,
-                 wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_START,
-                 wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_END,
-                 PagePerm::R | PagePerm::W,
-                 "MMIO");
-
-    // Goldfish RTC 位于 0x0010_1000，不在 UART/VirtIO 的常规 MMIO 窗口内。
-    map_identity(&mut aspace,
-                 wateros_base_config::mm::QEMU_VIRT_RTC_PHYS_START,
-                 wateros_base_config::mm::QEMU_VIRT_RTC_PHYS_END,
-                 PagePerm::R | PagePerm::W,
-                 "RTC MMIO");
+    for range in layout.mmio {
+        map_identity(&mut aspace,
+                     range.start,
+                     range.end,
+                     PagePerm::R | PagePerm::W,
+                     "MMIO");
+    }
 
     // 选一枚位于帧池内的物理页做 satp 切换后的翻译与内存一致性探针（与 RAM
     // 恒等区无重叠的任意 VA）。
     assert!(start_ppn + 16 < end_ppn,
             "kernel_mm: probe ppn out of range");
     let probe_ppn = PhysPageNum(start_ppn + 16);
-    let probe_va = VirtAddr(0x4000_0000usize + 0x2A0);
+    // 探测 VA 取平台布局指定的空闲虚拟页（QEMU virt 为 0x4000_0000，
+    // VisionFive 2 为 0x0020_0000），页内偏移固定 0x2A0 以覆盖部分页错误。
+    let probe_page = layout.probe_virtual_page.unwrap_or(0x4000_0000);
+    let probe_va = VirtAddr(probe_page + 0x2A0);
     let probe_vpn = probe_va.floor_page();
     aspace.map_page_to_ppn(probe_vpn,
                            probe_ppn,
@@ -137,11 +143,12 @@ pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
     let satp_target = aspace.kernel_satp_value();
     #[cfg(all(feature = "impl-riscv64", target_arch = "riscv64"))]
     platform::arch::trap::set_kernel_trap_satp(satp_target);
-    runtime::logging::trace!("[kernel-mm] identity map RAM [0x80000000,{:#x}) MMIO [{:#x},{:#x}) \
-                              satp target={:#x}",
-                             ram_end_exclusive,
-                             wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_START,
-                             wateros_base_config::mm::QEMU_VIRT_MMIO_PHYS_END,
+    runtime::logging::trace!("[kernel-mm] identity map RAM [{:#x},{:#x}) MMIO ranges={} \
+                              probe_va={:#x} satp target={:#x}",
+                             ram_start,
+                             ram_end,
+                             layout.mmio.len(),
+                             probe_va.0,
                              satp_target);
     platform::arch::paging::activate_address_space_token_and_flush(satp_target);
     assert_eq!(platform::arch::paging::active_address_space_token(),
@@ -181,13 +188,14 @@ pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
 }
 
 /// 返回 DTB 实际 blob 覆盖的页区间；无效/不在 RAM 中时不建立保留区。
-fn dtb_reserved_ppns(dtb_pa : usize, ram_end_exclusive : usize) -> Option<(usize, usize)> {
-    if dtb_pa < 0x8000_0000 || dtb_pa >= ram_end_exclusive {
+fn dtb_reserved_ppns(dtb_pa : usize, ram_start : usize, ram_end : usize)
+                     -> Option<(usize, usize)> {
+    if dtb_pa < ram_start || dtb_pa >= ram_end {
         return None;
     }
     let fdt = unsafe { fdt::Fdt::from_ptr(dtb_pa as *const u8) }.ok()?;
     let dtb_end = dtb_pa.checked_add(fdt.total_size())?
-                        .min(ram_end_exclusive);
+                        .min(ram_end);
     let start_ppn = dtb_pa / PAGE_SIZE;
     let end_ppn = dtb_end.checked_add(PAGE_SIZE - 1)? / PAGE_SIZE;
     (end_ppn > start_ppn).then_some((start_ppn, end_ppn))
