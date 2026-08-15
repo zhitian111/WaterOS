@@ -76,6 +76,12 @@
     `command succeeded program=/glibc/cagent_testcode.sh exit_code=0`；
   - buildstorm-glibc：`BUILDSTORM_COMPILE mode=multi ok=true elapsed_s=635.41
     cores=8`，`command succeeded … exit_code=0`。
+  - 复跑一次 buildstorm 出现一次内部失败（`ok=false rc=1`）：日志为
+    `[trap] SIGSEGV signal not delivered — killing user task`，
+    `cause=Exception(StorePageFault) pc=0x101187c0 fault_addr=0x70022b40`
+    （rustc 子进程被内核终止）；脚本仍以 `exit_code=0` 结束。该失败发生在
+    同步路径（与 block IRQ 无关），同代码首跑为 `ok=true`，判定为既有用户
+    态 MM/信号路径在负载下的偶发问题，另开任务跟进，不作为本任务回归。
 - IRQ 模式（开启）仅限调试：boot 读盘/根卷挂载正常；用户态冻结如上。
 
 ## 未验证项 / 剩余风险
