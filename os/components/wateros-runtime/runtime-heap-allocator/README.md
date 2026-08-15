@@ -10,6 +10,10 @@
 唯一活动后端（`backend_tlsf` / `backend_linked_list`）。后续 slab 后端也将实现
 同一接口，由该入口按运行期状态切换。
 
+`heap-slab` 顶层 feature 会启用 frame-backed 每核 slab；开启后 BSP 在 frame
+allocator 初始化完成时通过 `register_frame_source` + `activate_slab` 切换，
+小对象走 slab，大对象和早期启动分配仍走 boot TLSF。
+
 `HEAP_SPACE` 是链接脚本放入 `.kernel.heap` 的静态池。只有 BSP 可调用一次 `init()`；
 AP 必须在其后才可走可能分配的路径。每次分配在本 CPU 上临时关中断并以 `CpuLocal`
 深度检测递归；backend 自身锁负责跨 CPU allocator 元数据互斥。

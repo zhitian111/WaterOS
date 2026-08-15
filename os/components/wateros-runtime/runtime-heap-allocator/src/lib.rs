@@ -15,8 +15,17 @@ mod slab;
 mod stress;
 
 use core::alloc::{GlobalAlloc, Layout};
+use core::ptr::{self, addr_of_mut};
+use core::sync::atomic::AtomicU8;
+#[cfg(feature = "impl-slab")]
+use core::sync::atomic::Ordering;
 use config::mm::KERNEL_HEAP_SIZE;
 use heap_backend::HeapBackend;
+
+pub use slab::HeapFrameSource;
+
+const STATE_BOOT : u8 = 0;
+const STATE_SLAB : u8 = 1;
 
 #[cfg(all(feature = "impl-tlsf", feature = "impl-linked-list-allocator"))]
 compile_error!("enable only one of `impl-tlsf` or `impl-linked-list-allocator`");
@@ -51,18 +60,55 @@ pub struct HeapMemStats {
 ///
 /// 该类型保持为无状态门面，后端状态仍由各 backend 模块自己的静态对象持有；
 /// Task 03 在这里增加运行期 boot/slab 后端切换。
-pub(crate) struct KernelAllocator;
+pub(crate) struct KernelAllocator {
+    state : AtomicU8,
+}
 
 impl KernelAllocator {
-    pub(crate) const fn new() -> Self { Self }
+    pub(crate) const fn new() -> Self { Self { state : AtomicU8::new(STATE_BOOT) } }
+
+    fn activate_slab(&self) {
+        #[cfg(feature = "impl-slab")]
+        self.state.store(STATE_SLAB, Ordering::Release);
+    }
+
+    fn slab_active(&self) -> bool {
+        #[cfg(feature = "impl-slab")]
+        {
+            return self.state.load(Ordering::Acquire) == STATE_SLAB;
+        }
+        #[cfg(not(feature = "impl-slab"))]
+        {
+            false
+        }
+    }
 }
 
 unsafe impl GlobalAlloc for KernelAllocator {
     unsafe fn alloc(&self, layout : Layout) -> *mut u8 {
+        if self.slab_active() {
+            let ptr = interrupt_guard::with_allocator_interrupt_guard(|| {
+                slab::alloc_on(arch::cpu::current_cpu_id(), layout)
+            });
+            if let Some(ptr) = ptr {
+                return ptr;
+            }
+        }
         unsafe { backend::ACTIVE_ALLOCATOR.alloc(layout) }
     }
 
     unsafe fn dealloc(&self, ptr : *mut u8, layout : Layout) {
+        if ptr.is_null() {
+            return;
+        }
+        if self.slab_active() && !in_boot_heap(ptr) {
+            let freed = interrupt_guard::with_allocator_interrupt_guard(|| {
+                slab::dealloc_on(arch::cpu::current_cpu_id(), ptr, layout)
+            });
+            if freed {
+                return;
+            }
+        }
         unsafe { backend::ACTIVE_ALLOCATOR.dealloc(ptr, layout) }
     }
 
@@ -71,12 +117,54 @@ unsafe impl GlobalAlloc for KernelAllocator {
                       layout : Layout,
                       new_size : usize)
                       -> *mut u8 {
-        unsafe { backend::ACTIVE_ALLOCATOR.realloc(ptr, layout, new_size) }
+        if ptr.is_null() {
+            let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
+                return ptr::null_mut();
+            };
+            return unsafe { <Self as GlobalAlloc>::alloc(self, new_layout) };
+        }
+        if new_size == 0 {
+            unsafe { <Self as GlobalAlloc>::dealloc(self, ptr, layout) };
+            return ptr::null_mut();
+        }
+        let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
+            return ptr::null_mut();
+        };
+        let new_ptr = unsafe { <Self as GlobalAlloc>::alloc(self, new_layout) };
+        if !new_ptr.is_null() {
+            let copy_size = layout.size().min(new_size);
+            // SAFETY: 新旧分配均按各自 layout 有效，拷贝不超过旧对象大小。
+            unsafe { ptr::copy_nonoverlapping(ptr, new_ptr, copy_size) };
+            unsafe { <Self as GlobalAlloc>::dealloc(self, ptr, layout) };
+        }
+        new_ptr
     }
+}
+
+/// 判断指针是否落在静态 boot TLSF 池内。
+fn in_boot_heap(ptr : *mut u8) -> bool {
+    let start = addr_of_mut!(HEAP_SPACE) as usize;
+    let end = start.saturating_add(KERNEL_HEAP_SIZE);
+    let value = ptr as usize;
+    value >= start && value < end
 }
 
 #[global_allocator]
 pub(crate) static HEAP_ALLOCATOR : KernelAllocator = KernelAllocator::new();
+
+/// 注册 slab 使用的真实 frame source；由 BSP 在 frame allocator 初始化后调用。
+pub fn register_frame_source(source : &'static dyn HeapFrameSource) -> Result<(), ()> {
+    slab::register_frame_source(source)
+}
+
+/// 激活 slab 后端；`impl-slab` feature 关闭时为空操作。
+pub fn activate_slab() -> Result<(), ()> {
+    slab::activate_slab()?;
+    HEAP_ALLOCATOR.activate_slab();
+    #[cfg(feature = "impl-slab")]
+    log::info!("[heap] slab backend activated (small objects via frame-backed per-CPU caches)");
+    Ok(())
+}
 
 /// 返回当前内核堆用量（`used`/`free`/`capacity`）。
 ///

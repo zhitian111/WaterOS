@@ -47,6 +47,23 @@ pub fn alloc_error_handler(layout : core::alloc::Layout) -> ! {
     runtime::heap_allocator::handle_alloc_error(layout)
 }
 
+/// 把 frame allocator 适配为 slab 的页来源（恒等映射下 PPN 基址即内核 VA）。
+struct HeapFrameSourceAdapter;
+
+impl runtime::heap_allocator::HeapFrameSource for HeapFrameSourceAdapter {
+    fn alloc_frame(&self) -> Option<usize> {
+        mm::frame_alloctor::frame_alloc_result()
+            .ok()
+            .map(|ppn| ppn.0 * mm::api::addr::PAGE_SIZE)
+    }
+
+    fn dealloc_frame(&self, frame : usize) {
+        let _ = mm::frame_alloctor::frame_dealloc_result(
+            mm::api::addr::PhysPageNum(frame / mm::api::addr::PAGE_SIZE),
+        );
+    }
+}
+
 // ── 共享 bring-up ──────────────────────────────────────────────
 
 /// 网络协议栈轮询任务：周期性驱动 smoltcp 收发包。
@@ -192,6 +209,10 @@ fn init_after_boot(dtb_pa: usize, memory_end: usize, cpu_id: task::CpuId) {
     crate::dashboard::init();
     crate::trap_handler::init();
     mm::init_after_boot(dtb_pa, memory_end);
+    runtime::heap_allocator::register_frame_source(&HeapFrameSourceAdapter)
+        .expect("register heap frame source");
+    runtime::heap_allocator::activate_slab()
+        .expect("activate heap slab");
 }
 
 #[cfg(feature = "self_test")]

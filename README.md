@@ -360,7 +360,7 @@ make run ARCH=la PROFILE=final SMP=4 SDCARD=/path/to/rootfs.img
 | `SDCARD` | 本次运行使用的根文件系统镜像，可覆盖架构和阶段对应的默认镜像 | 见下方镜像参数 |
 | `SNAPSHOT` | `1` 使用 QEMU 内存快照，不向基础镜像写回；`0` 允许正常块设备写入 | 未启用写盘时为 `1` |
 | `WRITE_DISK` | `1` 明确请求持久化写盘，并使 `SNAPSHOT` 默认变为 `0`；`0` 保护基础镜像 | `0` |
-| `HEAP_ALLOCATOR_FEATURE` | 顶层内核堆 feature。当前常用值为 `heap-tlsf` 或 `heap-linked-list` | `heap-tlsf` |
+| `HEAP_ALLOCATOR_FEATURE` | 顶层内核堆 feature。当前常用值为 `heap-tlsf`、`heap-linked-list` 或 `heap-slab` | `heap-tlsf` |
 | `EXTRA_FEATURES` | 追加一个或多个逗号分隔的顶层 Cargo features，例如 `bringup-stats`、`stall-debug`、`gui` | 空 |
 
 #### 默认镜像

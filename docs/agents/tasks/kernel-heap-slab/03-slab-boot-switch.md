@@ -36,6 +36,9 @@ frame allocator 初始化完成后切换到 slab；先只让**小对象**走每�
      -> boot backend
    ```
 
+   `heap-slab` feature 负责启用该路由；不启用时 `activate_slab` 为空操作，
+   `HEAP_ALLOCATOR_FEATURE=heap-slab make kernel-*-final` 用于功能/性能对比构建。
+
 5. `dealloc`/`realloc` 必须能区分分配来自 slab 还是 boot backend：
 
    - slab 对象通过页首 header 识别；
@@ -81,6 +84,9 @@ git diff --check
    - LA：QEMU 9.2.1，`-m 36G -smp 12`；
    - RV：QEMU 9.2.1，`-m 16G -smp 8`。
    - 所有 QEMU 运行必须加 `-snapshot`，避免污染临时镜像。
+
+   当前 Task 03 的运行时验收以 `-smp 1` 完成（排除跨核 free 干扰）；线上 `-smp 8/12`
+   的多核完整回归由 Task 04 在实现跨核 free 后执行。
 2. 必须满足功能验收：
 
    ```text
