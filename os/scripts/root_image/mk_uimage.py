@@ -15,7 +15,10 @@ from pathlib import Path
 
 IH_MAGIC = 0x27051956
 IH_OS_LINUX = 5
-IH_ARCH = {"loongarch": 24, "riscv": 22}
+# Legacy uImage architecture IDs are defined by U-Boot's `include/image.h`.
+# LoongArch does not exist in upstream 2022.04 and is `IH_ARCH_LA` in the
+# Loongson vendor tree: it is appended after `IH_ARCH_RISCV`, so it is 27.
+IH_ARCH = {"loongarch": 27, "riscv": 26}
 IH_TYPE_KERNEL = 2
 IH_COMP_NONE = 0
 HEADER_SIZE = 64

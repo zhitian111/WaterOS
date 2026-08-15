@@ -499,7 +499,8 @@ kernel-la2k:
 	$(call INFO, "loongson2k1000la 内核构建完成！")
 
 la2k_uimage: kernel-la2k
-	@loongarch64-linux-gnu-objcopy -O binary --strip-all ./kernel-la2k ./kernel-la2k.bin
+	@loongarch64-linux-gnu-objcopy -O binary --strip-all --remove-section=.kernel.heap \
+		./kernel-la2k ./kernel-la2k.bin
 	@if mkimage -A loongarch -O linux -T kernel -C none \
 		-a 0x90000000 -e 0x90000000 \
 		-n "WaterOS 2K1000LA" -d ./kernel-la2k.bin ./kernel-la2k.ui 2>/dev/null; then \
