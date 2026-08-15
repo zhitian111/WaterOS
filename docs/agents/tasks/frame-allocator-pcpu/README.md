@@ -73,6 +73,7 @@ global frame allocator / buddy     <- 仅在 batch 耗尽时批量进入
 | `03-low-risk-fastpaths.md` | size class 查找与 remote-free 等低风险热路径优化 |
 | `04-functional-acceptance.md` | 双架构完整功能回归 |
 | `05-performance-acceptance.md` | 双架构 3 轮中位数验收与收尾 |
+| `06-serial-compile-phase.md` | 后续分析 BuildStorm 串行编译阶段瓶颈 |
 
 ## 任务简报
 
@@ -83,4 +84,3 @@ docs/agents/tasks/frame-allocator-pcpu/history/<task-id>-brief.md
 ```
 
 内容至少包括完成情况、改动文件、验收命令和结果、未验证项、文档同步清单。
-
