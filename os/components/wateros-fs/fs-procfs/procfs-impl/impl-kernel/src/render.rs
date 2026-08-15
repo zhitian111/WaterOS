@@ -554,13 +554,9 @@ pub(crate) fn format_cmdline(pid : ProcessId) -> FsResult<Vec<u8>> {
     let leader = process.leader_task_id;
     let mut out = Vec::new();
     if let Some(argv) = argv_for(leader) {
-        for (i, arg) in argv.iter()
-                            .enumerate()
-        {
-            if i > 0 {
-                out.push(0);
-            }
+        for arg in &argv {
             out.extend_from_slice(arg.as_bytes());
+            out.push(0);
         }
         if !out.is_empty() {
             return Ok(out);
@@ -568,6 +564,20 @@ pub(crate) fn format_cmdline(pid : ProcessId) -> FsResult<Vec<u8>> {
     }
     if let Some(exe) = exe_for(leader) {
         out.extend_from_slice(exe.as_bytes());
+    }
+    Ok(out)
+}
+
+/// 生成 Linux 风格的 NUL 分隔环境向量。
+pub(crate) fn format_environ(pid : ProcessId) -> FsResult<Vec<u8>> {
+    let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
+    let Some(env) = env_for(process.leader_task_id) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for entry in &env {
+        out.extend_from_slice(entry.as_bytes());
+        out.push(0);
     }
     Ok(out)
 }

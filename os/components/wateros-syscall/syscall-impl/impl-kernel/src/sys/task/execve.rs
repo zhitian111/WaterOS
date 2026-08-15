@@ -180,6 +180,9 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
     let _ = vfs::cwd::set_task_argv(current_tid,
                                     final_argv.iter()
                                               .map(String::as_str));
+    let _ = vfs::cwd::set_task_env(current_tid,
+                                   envp.iter()
+                                       .map(String::as_str));
     let mut comm = [0u8; 16];
     let basename = executable_path.rsplit('/')
                                   .find(|part| !part.is_empty())

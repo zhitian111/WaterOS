@@ -27,6 +27,9 @@ pub struct ProcMountLine {
 /// 按 leader task id 查询 argv。
 pub type TaskArgvLookup = fn(TaskId) -> Option<Vec<String>>;
 
+/// 按 leader task id 查询 exec 时的环境向量。
+pub type TaskEnvLookup = fn(TaskId) -> Option<Vec<String>>;
+
 /// 按 leader task id 查询 exe 路径。
 pub type TaskExeLookup = fn(TaskId) -> Option<String>;
 

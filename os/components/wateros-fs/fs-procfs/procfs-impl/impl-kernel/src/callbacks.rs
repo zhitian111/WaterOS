@@ -2,6 +2,7 @@ use super::*;
 
 // 本变量代码由AI完成
 pub(crate) static ARGV_LOOKUP : Mutex<Option<TaskArgvLookup>> = Mutex::new(None);
+pub(crate) static ENV_LOOKUP : Mutex<Option<TaskEnvLookup>> = Mutex::new(None);
 // 本变量代码由AI完成
 pub(crate) static EXE_LOOKUP : Mutex<Option<TaskExeLookup>> = Mutex::new(None);
 pub(crate) static CWD_LOOKUP : Mutex<Option<TaskPathLookup>> = Mutex::new(None);
@@ -18,6 +19,8 @@ pub(crate) static SYSVIPC_LOOKUP : Mutex<Option<SysVIpcTableLookup>> = Mutex::ne
 /// 注册按 leader task id 查询 argv 的回调（VFS 层在 init 时注入）。
 // 本方法代码由AI完成
 pub fn register_task_argv_lookup(f : TaskArgvLookup) { *ARGV_LOOKUP.lock() = Some(f); }
+
+pub fn register_task_env_lookup(f : TaskEnvLookup) { *ENV_LOOKUP.lock() = Some(f); }
 
 /// 注册按 leader task id 查询 exe 路径的回调。
 // 本方法代码由AI完成
@@ -58,6 +61,11 @@ pub fn register_sysvipc_table_lookup(f : SysVIpcTableLookup) {
 // 本方法代码由AI完成
 pub(crate) fn argv_for(leader : TaskId) -> Option<Vec<String>> {
     let lookup = *ARGV_LOOKUP.lock();
+    lookup.and_then(|f| f(leader))
+}
+
+pub(crate) fn env_for(leader : TaskId) -> Option<Vec<String>> {
+    let lookup = *ENV_LOOKUP.lock();
     lookup.and_then(|f| f(leader))
 }
 

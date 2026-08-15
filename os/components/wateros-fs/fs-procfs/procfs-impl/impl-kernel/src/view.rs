@@ -129,6 +129,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidSmaps(pid) |
             ProcNode::PidMaps(pid) |
             ProcNode::PidCmdline(pid) |
+            ProcNode::PidEnviron(pid) |
             ProcNode::PidStatm(pid) |
             ProcNode::PidLimits(pid) |
             ProcNode::PidMounts(pid) |
@@ -266,6 +267,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidSmaps(pid) |
             ProcNode::PidMaps(pid) |
             ProcNode::PidCmdline(pid) |
+            ProcNode::PidEnviron(pid) |
             ProcNode::PidStatm(pid) |
             ProcNode::PidLimits(pid) |
             ProcNode::PidMounts(pid) |
@@ -414,6 +416,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidSmaps(pid) => format_smaps(pid),
             ProcNode::PidMaps(pid) => format_maps(pid),
             ProcNode::PidCmdline(pid) => format_cmdline(pid),
+            ProcNode::PidEnviron(pid) => format_environ(pid),
             ProcNode::PidStatm(pid) => format_statm(pid),
             ProcNode::PidLimits(pid) => format_limits(pid),
             ProcNode::PidMounts(pid) => {
@@ -530,6 +533,7 @@ impl ProcFsView for KernelProcFs {
                                        FsDirEntry { name : String::from("partitions"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("interrupts"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("cmdline"), node_type : FsNodeType::File },
+                                       FsDirEntry { name : String::from("environ"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("vmstat"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("diskstats"), node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("uptime"),

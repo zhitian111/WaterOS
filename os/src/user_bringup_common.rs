@@ -105,6 +105,8 @@ pub fn run_one_elf_argv_env_exit(log_tag : &str,
     #[cfg(feature = "vfs-bridge")]
     vfs::cwd::on_user_task_spawned_for_elf(tid, executable_path.as_str(), &final_argv_refs);
     #[cfg(feature = "vfs-bridge")]
+    let _ = vfs::cwd::set_task_env(tid, envp.iter().copied());
+    #[cfg(feature = "vfs-bridge")]
     if envp.iter().any(|entry| *entry == "PWD=/root") {
         if let Err(error) = vfs::cwd::set_task_cwd(tid, "/root") {
             warn!("[{log_tag}] failed to set operator cwd to /root: {error:?}");

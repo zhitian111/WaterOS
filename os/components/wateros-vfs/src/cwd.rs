@@ -152,6 +152,17 @@ where
     Ok(())
 }
 
+/// 记录任务 exec/spawn 时的环境向量，供 `/proc/<pid>/environ` 使用。
+pub fn set_task_env<I>(task_id: task::TaskId, env: I) -> VfsResult<()>
+where
+    I: IntoIterator,
+    I::Item: AsRef<str>,
+{
+    let env: Vec<String> = env.into_iter().map(|s| String::from(s.as_ref())).collect();
+    registry().exclusive_access().set_env(task_id, env);
+    Ok(())
+}
+
 /// 读取指定任务的 argv。
 pub fn task_argv(task_id: task::TaskId) -> VfsResult<Vec<String>> {
     let mut reg = registry().exclusive_access();
@@ -177,6 +188,13 @@ pub fn lookup_argv_for_task(task_id: task::TaskId) -> Option<Vec<String>> {
     let mut reg = registry().exclusive_access();
     reg.ensure_task_cwd(task_id);
     reg.get_argv(task_id).map(|v| v.to_vec())
+}
+
+/// 读取指定任务的环境向量（procfs 回调用）。
+pub fn lookup_env_for_task(task_id: task::TaskId) -> Option<Vec<String>> {
+    let mut reg = registry().exclusive_access();
+    reg.ensure_task_cwd(task_id);
+    reg.get_env(task_id).map(|v| v.to_vec())
 }
 
 /// 读取指定任务 exe 路径（procfs 回调用）。
