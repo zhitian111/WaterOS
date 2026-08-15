@@ -247,10 +247,11 @@ mod riscv64_opensbi_entry {
 
     fn start_secondary_harts(boot_cpu : task::CpuId, dtb_pa : usize) -> base::cpu::CpuMask {
         let entry = __wateros_arch_boot as *const () as usize;
+        let configured = platform::smp::configured_cpu_mask();
         let mut requested = base::cpu::CpuMask::EMPTY;
         for raw in 0..base_config::task::MAX_CPUS {
             let cpu = task::CpuId::from_raw(raw);
-            if cpu == boot_cpu {
+            if cpu == boot_cpu || !configured.contains(cpu) {
                 continue;
             }
             info!("[smp] hart_start cpu={} entry={:#x} opaque={:#x}",

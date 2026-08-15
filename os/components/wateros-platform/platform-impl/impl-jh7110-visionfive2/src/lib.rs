@@ -17,7 +17,9 @@ pub mod console;
 pub mod dtb;
 pub mod memory;
 #[cfg(target_arch = "riscv64")]
-pub use opensbi_common::{reset, smp, timer};
+pub use opensbi_common::{reset, timer};
+#[cfg(target_arch = "riscv64")]
+pub mod smp;
 pub mod time;
 
 #[cfg(feature = "self_test")]

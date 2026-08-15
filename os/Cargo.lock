@@ -1575,6 +1575,7 @@ version = "0.1.0"
 dependencies = [
  "fdt",
  "log",
+ "wateros-base",
  "wateros-platform-api-v0",
  "wateros-platform-impl-opensbi-common",
 ]
