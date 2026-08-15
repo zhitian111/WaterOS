@@ -261,9 +261,10 @@ impl<H: Hal, T: Transport> VirtIOBlk<H, T> {
         let token = self
             .queue
             .add(&[req.as_bytes()], &mut [buf, resp.as_mut_bytes()])?;
-        if self.queue.should_notify() {
-            self.transport.notify(QUEUE);
-        }
+        // 显式 kick：`should_notify` 在 event_idx 下会因 avail_event 的「下一
+        // 预期值」语义抑制通知，导致设备不处理新请求（IRQ 空转/陈旧中断）。
+        // 与 Linux virtio-blk 提交路径一致，无条件通知保证请求必达。
+        self.transport.notify(QUEUE);
         Ok(token)
     }
 
@@ -343,9 +344,8 @@ impl<H: Hal, T: Transport> VirtIOBlk<H, T> {
         let token = self
             .queue
             .add(&[req.as_bytes(), buf], &mut [resp.as_mut_bytes()])?;
-        if self.queue.should_notify() {
-            self.transport.notify(QUEUE);
-        }
+        // 显式 kick：同 `read_blocks_nb`。
+        self.transport.notify(QUEUE);
         Ok(token)
     }
 

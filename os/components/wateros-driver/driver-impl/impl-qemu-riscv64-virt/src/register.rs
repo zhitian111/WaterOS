@@ -39,14 +39,13 @@ static BLK_IRQ_BASE : [AtomicUsize; MAX_IRQ_BLK_DEVICES] =
 ///
 /// T06 睡眠升级：boot 阶段（FS 探测/根卷挂载）IRQ 读盘在自旋 + 定期 drain 路径
 /// 已验证；任务上下文走 waitqueue 睡眠等待 + bottom-half 唤醒。IRQ 模式在用户态
-/// 负载下仍会冻结（证据见 history/06d 简报：block IRQ 投递后各 AP 定时器停止、
-/// 全部落入 idle WFI），根因未定位前保持关闭以维持同步路径正确性。调试/回归时
-/// 置 `true`，性能回归或需要同步路径时置 `false`。
+/// block IRQ 完成模式（历史单请求原型的移植：IRQ top-half 无锁 ack + 唤醒，
+/// 等待任务持设备锁在 waitqueue 上睡眠）。测试期间置 `true`。
 const BLOCK_IRQ_MODE_ENABLED : bool = false;
 
 /// block IRQ top-half：无锁原始 MMIO ack 设备 ISR（`dev_id` = MMIO 基址），
-/// 不触碰设备锁、不做 PLIC mask，避免 ISR 重入与 mask 卡死；返回 Handled 后由
-/// 分发路径自动调度 bottom-half 完成回收并唤醒等待任务。
+/// 不触碰设备锁、不做 PLIC mask，避免 ISR 重入与 mask 卡死；唤醒由 bottom-half
+/// 在可调度上下文执行（不在 trap 上下文进 scheduler 锁）。
 #[allow(dead_code)] // 由 BLOCK_IRQ_MODE_ENABLED 控制是否接线；关闭时保留代码。
 fn blk_irq_top(_virq : irq::types::Virq, dev_id : usize) -> irq::action::IrqReturn {
     let base = BLK_IRQ_BASE.get(dev_id)
@@ -65,13 +64,10 @@ fn blk_irq_top(_virq : irq::types::Virq, dev_id : usize) -> irq::action::IrqRetu
     irq::action::IrqReturn::Handled
 }
 
-/// block IRQ bottom-half：回收设备完成（ack + 按序 complete used ring）并唤醒
-/// 等待队列；在可调度上下文执行，可安全持设备锁。
-#[allow(dead_code)] // 由 BLOCK_IRQ_MODE_ENABLED 控制是否接线；关闭时保留代码。
-fn blk_irq_bottom(_virq : irq::types::Virq, dev_id : usize) {
-    if let Some(dev) = block::block_device_at(dev_id) {
-        let _ = dev.irq_bottom_half();
-    }
+/// block IRQ bottom-half：置完成标志并唤醒等待任务；由 bottom-half 内核任务在
+/// 可调度上下文调用，安全进 scheduler 锁。完成回收由等待者自己执行。
+fn blk_irq_bottom(_virq : irq::types::Virq, _dev_id : usize) {
+    block::notify_irq();
 }
 
 /// 成功注册为 virtio-blk 的 MMIO 窗口列表（供自检读取块 0）。

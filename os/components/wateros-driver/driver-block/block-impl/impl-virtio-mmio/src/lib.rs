@@ -9,7 +9,6 @@
 #![no_std]
 extern crate alloc;
 
-use alloc::vec;
 use alloc::vec::Vec;
 use core::ptr;
 use core::ptr::NonNull;
@@ -24,53 +23,36 @@ use mm_api::addr::PhysPageNum;
 use virtio_drivers::device::blk::{BlkReq, BlkResp, VirtIOBlk};
 use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
 use virtio_drivers::{BufferDirection, Hal, PhysAddr, PAGE_SIZE};
-use irq::wait::with_external_only_interrupts;
 use task::WaitQueue;
 
 const _ : () = assert!(PAGE_SIZE == mm_api::addr::PAGE_SIZE);
 const IOZONE_PROBE_MIN_WRITE_BYTES : usize = 4096;
-/// 异步请求槽位数（队列深度上限；当前 FS 串行化下实际在途为 1，T07 锁拆分后
-/// 才能并发填充多个槽位）。
-const ASYNC_SLOTS : usize = 8;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum SlotKind { Read, Write }
+/// 单请求 IRQ 完成通知：top-half 只做 MMIO ack + 置位 + 唤醒；等待任务持设备
+/// `inner` 锁期间在 waitqueue 上睡眠。当前按「单块设备」简化，使用全局标志与
+/// 队列（多设备时再拆分为每设备数组）。
+static IRQ_FIRED : AtomicBool = AtomicBool::new(false);
+static IRQ_WAIT : Once<WaitQueue> = Once::new();
+static RUNTIME_READY : AtomicBool = AtomicBool::new(false);
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SlotState { Free, InFlight, Done }
-
-/// 单个在途请求：请求/响应/数据缓冲由驱动自持，避免中断上下文借用调用者栈引用。
-struct PendingSlot {
-    state : SlotState,
-    kind : SlotKind,
-    token : u16,
-    req : BlkReq,
-    resp : BlkResp,
-    data : Vec<u8>,
-    status_ok : bool,
-}
-
-impl PendingSlot {
-    fn free() -> Self {
-        Self { state : SlotState::Free,
-               kind : SlotKind::Read,
-               token : 0,
-               req : BlkReq::default(),
-               resp : BlkResp::default(),
-               data : Vec::new(),
-               status_ok : false }
+/// IRQ top-half 通知：置完成标志并唤醒等待任务；在 trap 上下文安全（无锁）。
+pub fn notify_irq() {
+    IRQ_FIRED.store(true, Ordering::Release);
+    if let Some(queue) = IRQ_WAIT.get() {
+        let _ = queue.wake_one();
     }
 }
 
-struct AsyncState {
-    slots : Vec<PendingSlot>,
+/// 消费完成标志；`true` 表示本周期有 IRQ 到达。
+fn consume_irq() -> bool { IRQ_FIRED.swap(false, Ordering::AcqRel) }
+
+/// 平台全局中断与 PLIC 接线就绪后调用；此前 block IRQ 等待退化为同步路径，
+/// 避免 boot 阶段（全局中断尚未打开）在 IRQ 等待上永久睡眠。
+pub fn enable_runtime_dispatch() {
+    RUNTIME_READY.store(true, Ordering::Release);
 }
 
-impl AsyncState {
-    fn new() -> Self {
-        Self { slots : (0..ASYNC_SLOTS).map(|_| PendingSlot::free()).collect() }
-    }
-}
+fn runtime_ready() -> bool { RUNTIME_READY.load(Ordering::Acquire) }
 
 /// 将内核帧分配器接到 `virtio-drivers` 的 [`Hal`]：恒等映射下返回的 `PhysAddr` 与可写虚拟指针相同。
 struct VirtioMmioHal;
@@ -157,19 +139,11 @@ unsafe impl Hal for VirtioMmioHal {
 pub struct VirtioBlkDevice {
     /// `virtio-drivers` 侧已握手的传输与队列状态。
     inner : Mutex<VirtIOBlk<VirtioMmioHal, MmioTransport<'static>>>,
-    /// 异步请求槽位（submit/complete 路径共享）。
-    async_state : Mutex<AsyncState>,
-    /// 每槽位完成标志：供等待条件在调度器临界区内无锁复查（避免持调度器锁
-    /// 期间去抢 `async_state` 导致与 bottom-half 成环死锁）。
-    slots_done : [AtomicBool; ASYNC_SLOTS],
     /// 是否已启用 IRQ 完成路径（由注册路径在 PLIC 接线成功后置位）。
     irq_mode : AtomicBool,
-    /// 请求完成等待队列：等待者睡眠，IRQ bottom-half 回收后唤醒。
-    ///
-    /// 驱动在 `task::init()` 之前的 boot 阶段实例化（`from_mmio`），而等待队列
-    /// 依赖调度器注册表，因此必须惰性分配（首次等待/唤醒时 `task::init()` 已
-    /// 完成），不能在构造器里创建。
-    wait_queue : Once<WaitQueue>,
+    /// 单请求在途门闩（原子）：等待任务睡眠时不持 `inner` 自旋锁，避免「持锁
+    /// 跨 task 睡眠 + trap 唤醒」的锁序死锁；同一时刻只允许一个 IRQ 请求在途。
+    in_flight : AtomicBool,
 }
 
 impl VirtioBlkDevice {
@@ -185,10 +159,8 @@ impl VirtioBlkDevice {
                                                                          DriverError::Unsupported
                                                                      })?;
         Ok(Self { inner : Mutex::new(inner),
-                  async_state : Mutex::new(AsyncState::new()),
-                  slots_done : [const { AtomicBool::new(false) }; ASYNC_SLOTS],
                   irq_mode : AtomicBool::new(false),
-                  wait_queue : Once::new() })
+                  in_flight : AtomicBool::new(false) })
     }
 }
 
@@ -202,22 +174,23 @@ impl BlockDevice for VirtioBlkDevice {
     /// 以 LBA 为单位读入 `buf`；长度须为块大小的整数倍，否则由 VirtIO 层返回错误。
     fn read_blocks(&self, start_block : Lba, buf : &mut [u8]) -> DriverResult<()> {
         self.check_request_range(start_block, buf.len())?;
-        if self.irq_mode.load(Ordering::Acquire) {
+        if self.irq_mode.load(Ordering::Acquire) && runtime_ready() {
             self.read_blocks_irq(start_block, buf)
         } else {
             let start =
                 usize::try_from(start_block.0).map_err(|_| DriverError::InvalidParam)?;
-            self.inner
-                .lock()
-                .read_blocks(start, buf)
-                .map_err(|_| DriverError::IoError)
+            let result = self.inner
+                             .lock()
+                             .read_blocks(start, buf)
+                             .map_err(|_| DriverError::IoError);
+            result
         }
     }
 
     /// 将 `buf` 写回磁盘；语义与 [`read_blocks`] 对称。
     fn write_blocks(&self, start_block : Lba, buf : &[u8]) -> DriverResult<()> {
         self.check_request_range(start_block, buf.len())?;
-        if self.irq_mode.load(Ordering::Acquire) {
+        if self.irq_mode.load(Ordering::Acquire) && runtime_ready() {
             self.write_blocks_irq(start_block, buf)
         } else {
             let start =
@@ -261,172 +234,78 @@ impl BlockDevice for VirtioBlkDevice {
     fn enable_irq(&self) {
         self.irq_mode.store(true, Ordering::Release);
     }
-
-    fn irq_bottom_half(&self) -> DriverResult<()> {
-        {
-            let mut state = self.async_state.lock();
-            let mut inner = self.inner.lock();
-            let _ = inner.ack_interrupt();
-            loop {
-                let Some(token) = inner.peek_used() else {
-                    break;
-                };
-                let Some(slot_idx) = state.slots
-                                          .iter()
-                                          .position(|slot| slot.state == SlotState::InFlight &&
-                                                            slot.token == token)
-                else {
-                    break;
-                };
-                let slot = &mut state.slots[slot_idx];
-                let result = match slot.kind {
-                    SlotKind::Read => unsafe {
-                        inner.complete_read_blocks(token,
-                                                   &slot.req,
-                                                   &mut slot.data,
-                                                   &mut slot.resp)
-                    },
-                    SlotKind::Write => unsafe {
-                        inner.complete_write_blocks(token,
-                                                    &slot.req,
-                                                    &slot.data,
-                                                    &mut slot.resp)
-                    },
-                };
-                slot.state = SlotState::Done;
-                slot.status_ok = result.is_ok();
-                self.slots_done[slot_idx].store(true, Ordering::Release);
-            }
-        }
-        // 锁已释放后唤醒等待者，避免 async_state → scheduler 锁序。等待队列
-        // 尚未分配（boot 阶段自旋路径或 bottom-half 先于任何等待者运行）时
-        // 跳过 wake：`wait_current_while` 会在调度器临界区内复查完成条件，
-        // 不会丢失完成事件。
-        if let Some(queue) = self.wait_queue.get() {
-            let _ = queue.wake_all();
-        }
-        Ok(())
-    }
 }
 
 impl VirtioBlkDevice {
-    /// 提交异步请求并返回槽位下标；调用方随后自旋等待 [`Self::slot_done`]。
-    fn submit_async(&self,
-                    start_block : Lba,
-                    buf : &[u8],
-                    kind : SlotKind)
-                    -> DriverResult<usize> {
+    fn read_blocks_irq(&self, start_block : Lba, buf : &mut [u8]) -> DriverResult<()> {
+        // Linux 式：提交/等待/回收期间不持设备自旋锁；`in_flight` 只做单请求
+        // 串行（多设备/多请求在途是后续 request_queue 任务）。
+        while self.in_flight.swap(true, Ordering::AcqRel) {
+            core::hint::spin_loop();
+        }
+        let result = self.read_blocks_irq_inner(start_block, buf);
+        self.in_flight.store(false, Ordering::Release);
+        result
+    }
+
+    fn read_blocks_irq_inner(&self, start_block : Lba, buf : &mut [u8]) -> DriverResult<()> {
+        let mut req = BlkReq::default();
+        let mut resp = BlkResp::default();
+        IRQ_FIRED.store(false, Ordering::Release);
         let start = usize::try_from(start_block.0).map_err(|_| DriverError::InvalidParam)?;
-        let mut state = self.async_state.lock();
-        let idx = state.slots
-                       .iter()
-                       .position(|slot| slot.state == SlotState::Free)
-                       .ok_or(DriverError::IoError)?;
-        self.slots_done[idx].store(false, Ordering::Release);
-        {
-            let slot = &mut state.slots[idx];
-            slot.state = SlotState::InFlight;
-            slot.kind = kind;
-            slot.token = 0;
-            slot.status_ok = false;
-            slot.req = BlkReq::default();
-            slot.resp = BlkResp::default();
-            slot.data = match kind {
-                SlotKind::Read => vec![0u8; buf.len()],
-                SlotKind::Write => buf.to_vec(),
+        let token = {
+            let mut inner = self.inner.lock();
+            unsafe { inner.read_blocks_nb(start, &mut req, buf, &mut resp) }
+                .map_err(|_| DriverError::IoError)?
+        };
+        loop {
+            let done = {
+                let mut inner = self.inner.lock();
+                inner.peek_used() == Some(token)
             };
+            if done {
+                break;
+            }
+            IRQ_WAIT.call_once(|| WaitQueue::new_named("virtio-blk-irq"))
+                    .wait_current_while(|| !consume_irq());
         }
         let mut inner = self.inner.lock();
-        let token = match kind {
-            SlotKind::Read => {
-                let slot = &mut state.slots[idx];
-                unsafe { inner.read_blocks_nb(start, &mut slot.req, &mut slot.data, &mut slot.resp) }
-            }
-            SlotKind::Write => {
-                let slot = &mut state.slots[idx];
-                unsafe { inner.write_blocks_nb(start, &mut slot.req, &slot.data, &mut slot.resp) }
-            }
-        };
-        match token {
-            Ok(token) => {
-                state.slots[idx].token = token;
-                Ok(idx)
-            }
-            Err(_) => {
-                state.slots[idx].state = SlotState::Free;
-                state.slots[idx].data.clear();
-                Err(DriverError::IoError)
-            }
-        }
-    }
-
-    fn slot_done(&self, idx : usize) -> bool {
-        // 无锁读取：等待条件在调度器临界区内被复查，不能在此获取 Mutex。
-        self.slots_done[idx].load(Ordering::Acquire)
-    }
-
-    /// 取回完成结果并把数据拷回调用方缓冲，随后释放槽位。
-    fn finish_async(&self, idx : usize, buf : &mut [u8]) -> DriverResult<()> {
-        let mut state = self.async_state.lock();
-        let slot = &mut state.slots[idx];
-        let status_ok = slot.status_ok;
-        self.slots_done[idx].store(false, Ordering::Release);
-        if slot.kind == SlotKind::Read {
-            let n = buf.len().min(slot.data.len());
-            buf[..n].copy_from_slice(&slot.data[..n]);
-        }
-        slot.state = SlotState::Free;
-        slot.data.clear();
-        if status_ok {
-            Ok(())
-        } else {
-            Err(DriverError::IoError)
-        }
-    }
-
-    fn read_blocks_irq(&self, start_block : Lba, buf : &mut [u8]) -> DriverResult<()> {
-        let slot = self.submit_async(start_block, buf, SlotKind::Read)?;
-        self.wait_irq_completion(slot);
-        self.finish_async(slot, buf)
+        unsafe { inner.complete_read_blocks(token, &req, buf, &mut resp) }
+            .map_err(|_| DriverError::IoError)
     }
 
     fn write_blocks_irq(&self, start_block : Lba, buf : &[u8]) -> DriverResult<()> {
-        let slot = self.submit_async(start_block, buf, SlotKind::Write)?;
-        self.wait_irq_completion(slot);
-        self.finish_async(slot, &mut [])
+        while self.in_flight.swap(true, Ordering::AcqRel) {
+            core::hint::spin_loop();
+        }
+        let result = self.write_blocks_irq_inner(start_block, buf);
+        self.in_flight.store(false, Ordering::Release);
+        result
     }
 
-    /// 任务睡眠等待 IRQ 完成：top-half ack + bottom-half 回收 used ring 并唤醒
-    /// 本队列；2 tick 超时兜底偶发唤醒丢失，超时后直接 drain 一次自愈（与旧
-    /// 自旋路径的定期回收语义一致），仍未完成则继续挂起等待。
-    ///
-    /// boot 阶段（`run_first_task` 之前）当前上下文只是调度器的 idle 占位，
-    /// 不能经 waitqueue 阻塞；退化为 T06 已验证的自旋 + 定期 drain 路径。
-    fn wait_irq_completion(&self, slot : usize) {
-        if task::in_boot_context() {
-            // 等待窗口内仅外部中断可投递（屏蔽 timer/soft），避免持 FS 锁期间
-            // 被定时器抢占；IRQ 是快速路径，等待者定期直接回收 used ring 作为
-            // 自愈兜底（与 bottom-half 在同一把设备锁下串行化，不丢事件）。
-            with_external_only_interrupts(|| {
-                let mut spins : u64 = 0;
-                while !self.slot_done(slot) {
-                    core::hint::spin_loop();
-                    spins += 1;
-                    if spins & 0xFFFFF == 0 {
-                        let _ = self.irq_bottom_half();
-                    }
-                }
-            });
-            return;
-        }
+    fn write_blocks_irq_inner(&self, start_block : Lba, buf : &[u8]) -> DriverResult<()> {
+        let mut req = BlkReq::default();
+        let mut resp = BlkResp::default();
+        IRQ_FIRED.store(false, Ordering::Release);
+        let start = usize::try_from(start_block.0).map_err(|_| DriverError::InvalidParam)?;
+        let token = {
+            let mut inner = self.inner.lock();
+            unsafe { inner.write_blocks_nb(start, &mut req, buf, &mut resp) }
+                .map_err(|_| DriverError::IoError)?
+        };
         loop {
-            let _ = self.wait_queue
-                        .call_once(|| WaitQueue::new_named("virtio-blk-irq"))
-                        .wait_current_while_for_ticks(2, || !self.slot_done(slot));
-            if self.slot_done(slot) {
-                return;
+            let done = {
+                let mut inner = self.inner.lock();
+                inner.peek_used() == Some(token)
+            };
+            if done {
+                break;
             }
-            let _ = self.irq_bottom_half();
+            IRQ_WAIT.call_once(|| WaitQueue::new_named("virtio-blk-irq"))
+                    .wait_current_while(|| !consume_irq());
         }
+        let mut inner = self.inner.lock();
+        unsafe { inner.complete_write_blocks(token, &req, buf, &mut resp) }
+            .map_err(|_| DriverError::IoError)
     }
 }
