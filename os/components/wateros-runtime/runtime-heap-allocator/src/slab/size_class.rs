@@ -19,6 +19,22 @@ pub(crate) const SIZE_CLASS_SIZES : [usize; SIZE_CLASS_COUNT] = [
     192, 256, 384, 512, 768, 1024, 1536, 2048,
 ];
 
+const CLASS_INDEX_BY_NEED : [u8; SLAB_MAX_SIZE + 1] = {
+    let mut table = [u8::MAX; SLAB_MAX_SIZE + 1];
+    let mut class = 0usize;
+    let mut need = 1usize;
+    while need <= SLAB_MAX_SIZE {
+        while class < SIZE_CLASS_COUNT && SIZE_CLASS_SIZES[class] < need {
+            class += 1;
+        }
+        if class < SIZE_CLASS_COUNT {
+            table[need] = class as u8;
+        }
+        need += 1;
+    }
+    table
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SizeClass(usize);
 
@@ -31,13 +47,13 @@ impl SizeClass {
         if layout.size() > SLAB_MAX_SIZE || layout.align() > SLAB_MAX_SIZE {
             return None;
         }
-        let need = layout.size().max(1);
-        let idx = SIZE_CLASS_SIZES
-                      .iter()
-                      .position(|size| {
-                          *size >= need && object_align_for_size(*size) >= layout.align()
-                      })?;
-        Some(Self(idx))
+        let need = align_up(layout.size().max(1), layout.align());
+        let idx = CLASS_INDEX_BY_NEED[need];
+        if idx == u8::MAX {
+            None
+        } else {
+            Some(Self(idx as usize))
+        }
     }
 
     pub(crate) fn index(self) -> usize { self.0 }
