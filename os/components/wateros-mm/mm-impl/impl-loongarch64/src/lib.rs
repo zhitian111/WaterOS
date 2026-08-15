@@ -184,6 +184,7 @@ pub mod kernel_mm_impl {
                             fault_addr : usize)
                             -> api_v0::error::MmResult<bool> {
         use api_v0::addr::VirtAddr;
+        use api_v0::address_space::AddressSpaceOps;
         use api_v0::error::MmError;
 
         if parent_aspace_ptr == 0 {
@@ -193,7 +194,10 @@ pub mod kernel_mm_impl {
             fault_addr,
             |aspace| {
                 let changed = aspace.handle_cow_fault_no_flush(VirtAddr(fault_addr))?;
-                Ok((changed, changed))
+                let stale_writable = !changed &&
+                    aspace.leaf_page_perm(VirtAddr(fault_addr).floor_page())?
+                          .is_some_and(|perm| perm.user() && perm.writable());
+                Ok((changed || stale_writable, changed))
             })
     }
 

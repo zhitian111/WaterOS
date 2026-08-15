@@ -247,18 +247,24 @@ pub fn with_user_aspace_mut_and_flush_if_changed<R>(
     }
 }
 
-/// Run `f`, then invalidate one user page locally and on CPUs that cached this
-/// address space only when `f` reports that a PTE changed.
+/// Run `f`, always invalidate the faulting page locally, and notify other CPUs
+/// only when `f` reports that a PTE changed.
+///
+/// The unconditional local invalidation is required for a shared address
+/// space: another CPU may already have resolved the COW PTE and completed the
+/// remote shootdown while this CPU was entering the same store fault.  In that
+/// case the page table is writable, but this hart can still hold the stale
+/// read-only translation which caused the trap.
 pub fn with_user_aspace_mut_and_page_flush<R>(
     handle: usize,
     page: usize,
     f: impl FnOnce(&mut Sv39AddressSpace) -> MmResult<(R, bool)>,
 ) -> MmResult<R> {
     let (value, changed) = with_user_aspace_mut(handle, f)?;
+    platform::arch::paging::flush_tlb_local(
+        platform::arch::paging::TlbFlushRange::Page { addr: page },
+    );
     if changed {
-        platform::arch::paging::flush_tlb_local(
-            platform::arch::paging::TlbFlushRange::Page { addr: page },
-        );
         request_tlb_shootdown(handle);
     }
     Ok(value)
