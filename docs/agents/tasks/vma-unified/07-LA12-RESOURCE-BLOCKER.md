@@ -9,7 +9,8 @@
 | RV | 单核 | `status=OK run=OK` | 1329.63 | `/tmp/wateros-vma-rv-single.log` |
 | RV | 8 核 | `status=OK run=OK` | 547.65 | `/tmp/wateros-vma-rv-smp8-clean.log` |
 | LA | 单核 | `status=OK run=OK` | 1246.33 | `/tmp/wateros-vma-la-single.log` |
-| LA | 12 核 | 未完成 | - | - |
+| LA | 12 核（功能验证，24G） | `status=OK run=OK` | 524.53 | `/tmp/wateros-vma-la-smp12-func24g.log` |
+| LA | 12 核（最终性能，36G） | 未完成 | - | - |
 
 静态验收已通过：
 
@@ -54,5 +55,8 @@ Firefox、WPS、QQ、GNOME Shell 等桌面进程持续占用大量内存。外�
 
 ## 下一步
 
-LA 12 通过后，再完成 `history/07-brief.md`，并更新 slab 分支的
+已用 24G 完成 LA 12 核功能验证，说明 VMA 统一路径在 12 核下没有
+新的功能性问题；仍需在宿主机内存充足后执行用户给定的 36G 性能命令。
+
+最终 36G 通过后，再完成 `history/07-brief.md`，并更新 slab 分支的
 `RECOVERY-REBASE.md` 交接信息。
