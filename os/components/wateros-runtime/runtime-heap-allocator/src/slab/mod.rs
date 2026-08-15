@@ -10,6 +10,7 @@ pub(crate) mod slab_page;
 
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
+use core::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(feature = "impl-slab")]
 use alloc::boxed::Box;
 
@@ -39,6 +40,9 @@ pub trait HeapFrameSource : Send + Sync {
 static FRAME_SOURCE : BootOnceCell<&'static dyn HeapFrameSource> = BootOnceCell::new();
 static SLAB : BootOnceCell<&'static SlabAllocator> = BootOnceCell::new();
 
+static SLAB_ALLOC_COUNT : AtomicUsize = AtomicUsize::new(0);
+static SLAB_DEALLOC_COUNT : AtomicUsize = AtomicUsize::new(0);
+
 /// 注册真实 frame source；只能在 BSP 初始化 frame allocator 后调用一次。
 pub fn register_frame_source(source : &'static dyn HeapFrameSource) -> Result<(), ()> {
     FRAME_SOURCE.init(source).map_err(|_| ())
@@ -56,12 +60,23 @@ pub fn activate_slab() -> Result<(), ()> {
 }
 
 pub(crate) fn alloc_on(cpu : CpuId, layout : Layout) -> Option<*mut u8> {
-    SLAB.get()?.alloc_on(cpu, layout)
+    let ptr = SLAB.get()?.alloc_on(cpu, layout)?;
+    SLAB_ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
+    Some(ptr)
 }
 
 pub(crate) fn dealloc_on(cpu : CpuId, ptr : *mut u8, layout : Layout) -> bool {
-    SLAB.get()
-        .map_or(false, |slab| slab.dealloc_on(cpu, ptr, layout))
+    let ok = SLAB.get()
+                 .map_or(false, |slab| slab.dealloc_on(cpu, ptr, layout));
+    if ok {
+        SLAB_DEALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
+    }
+    ok
+}
+
+pub(crate) fn stats() -> (usize, usize) {
+    (SLAB_ALLOC_COUNT.load(Ordering::Relaxed),
+     SLAB_DEALLOC_COUNT.load(Ordering::Relaxed))
 }
 
 pub(crate) fn is_slab_layout(layout : Layout) -> bool {

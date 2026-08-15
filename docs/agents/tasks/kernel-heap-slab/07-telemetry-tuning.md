@@ -10,7 +10,7 @@
 1. 统计接口从 TLSF 估算升级为：
 
    - boot backend 使用字节/空闲字节；
-   - slab 使用页占用、对象计数、每 CPU 缓存命中、remote-free 次数；
+   - slab 使用分配/释放计数、页占用、每 CPU 缓存命中、remote-free 次数；
    - `HeapMemStats` 需要保持 dashboard 和 OOM 日志兼容，必要时增加字段但不得破坏
      现有调用方。
 
