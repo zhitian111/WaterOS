@@ -502,13 +502,13 @@ la2k_uimage: kernel-la2k
 	@loongarch64-linux-gnu-objcopy -O binary --strip-all --remove-section=.kernel.heap \
 		./kernel-la2k ./kernel-la2k.bin
 	@if mkimage -A loongarch -O linux -T kernel -C none \
-		-a 0x90000000 -e 0x90000000 \
+		-a 0x98000000 -e 0x98000000 \
 		-n "WaterOS 2K1000LA" -d ./kernel-la2k.bin ./kernel-la2k.ui 2>/dev/null; then \
 		echo "[Makefile] [INFO] uImage（mkimage）生成完成：kernel-la2k.ui"; \
 	else \
 		python3 ./scripts/root_image/mk_uimage.py \
 			--input ./kernel-la2k.bin --output ./kernel-la2k.ui \
-			--load 0x90000000 --entry 0x90000000 \
+			--load 0x98000000 --entry 0x98000000 \
 			--name "WaterOS 2K1000LA"; \
 	fi
 

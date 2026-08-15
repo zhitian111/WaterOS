@@ -1,11 +1,13 @@
 //! Loongson 2K1000LA 物理内存发现：优先取 DTB 中包含内核链接地址的最大连续 RAM
-//! 段，否则回退到板级事实（RAM 0x9000_0000 起，保守 256 MiB）。
+//! 段，否则回退到板级事实（RAM 0x9000_0000 起，到 0xC000_0000 共 768 MiB；
+//! U-Boot bdinfo 显示 bank1 为 0x90000000..0xc0000000）。
 
 use api_v0::memory::{KernelMemoryLayout, PhysicalRange};
 
 const KERNEL_LINK_ADDRESS : usize = 0x9000_0000;
-/// 保守回退上界：参考实现（同款板）使用 256 MiB；DTB 缺失时不得越界分配。
-const FALLBACK_RAM_END : usize = 0xA000_0000;
+/// U-Boot 已报告的 bank1 上界；DTB 缺失时使用完整 bank1，而不是旧 PMON
+/// 参考的 256 MiB 保守值。
+const FALLBACK_RAM_END : usize = 0xC000_0000;
 const PAGE_MASK : usize = 4096 - 1;
 
 const MMIO : [PhysicalRange; 2] = [PhysicalRange::new(0x1000_0000, 0x3000_0000),
@@ -110,7 +112,7 @@ mod tests {
 
     #[test]
     fn keeps_larger_overlapping_candidate() {
-        let small = PhysicalRange::new(KERNEL_LINK_ADDRESS, 0xA000_0000);
+        let small = PhysicalRange::new(KERNEL_LINK_ADDRESS, FALLBACK_RAM_END);
         let large = PhysicalRange::new(0x8000_0000, 0x1_0000_0000);
         assert_eq!(prefer_larger(Some(small), large), large);
         assert_eq!(prefer_larger(Some(large), small), large);
