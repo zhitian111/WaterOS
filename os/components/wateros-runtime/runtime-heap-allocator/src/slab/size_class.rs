@@ -31,11 +31,12 @@ impl SizeClass {
         if layout.size() > SLAB_MAX_SIZE || layout.align() > SLAB_MAX_SIZE {
             return None;
         }
-        let need = layout.size()
-                          .max(layout.align())
-                          .max(1);
-        let idx = SIZE_CLASS_SIZES.iter()
-                                  .position(|size| *size >= need)?;
+        let need = layout.size().max(1);
+        let idx = SIZE_CLASS_SIZES
+                      .iter()
+                      .position(|size| {
+                          *size >= need && object_align_for_size(*size) >= layout.align()
+                      })?;
         Some(Self(idx))
     }
 
@@ -43,15 +44,13 @@ impl SizeClass {
 
     pub(crate) fn size(self) -> usize { SIZE_CLASS_SIZES[self.0] }
 
-    /// 返回该 size class 可能要求的最大 2 次幂对齐。
+    /// 返回该 size class 能保证的最大 2 次幂对象对齐。
+    ///
+    /// 对象以 `size` 为步长排布，因此只有 size 的最大 2 次幂因子可以同时
+    /// 保证页内每个对象的地址对齐。此前对非 2 次幂 class 使用“小于 size
+    /// 的最大 2 次幂”，会高估 `24/48/96/...` 类的对齐能力并产生未对齐对象。
     pub(crate) fn object_align(self) -> usize {
-        let size = self.size();
-        if size.is_power_of_two() {
-            size
-        } else {
-            size.next_power_of_two() /
-            2
-        }
+        object_align_for_size(self.size())
     }
 
     /// 返回第一个对象相对页基址的偏移，保证满足该类最大对齐要求。
@@ -64,6 +63,11 @@ impl SizeClass {
         let offset = self.object_offset();
         (SLAB_PAGE_SIZE - offset) / self.size()
     }
+}
+
+/// `size` 中最低置位的 1，等于能同时整除 `size` 的最大 2 次幂。
+fn object_align_for_size(size : usize) -> usize {
+    size & size.wrapping_neg()
 }
 
 fn align_up(value : usize, align : usize) -> usize {
@@ -86,5 +90,25 @@ mod tests {
         let layout = Layout::from_size_align(16, 64).unwrap();
         let class = SizeClass::from_layout(layout).unwrap();
         assert_eq!(class.size(), 64);
+    }
+
+    #[test]
+    fn non_power_of_two_alignment_preserves_object_stride() {
+        let class = SizeClass::from_layout(Layout::from_size_align(17, 16).unwrap())
+                        .unwrap();
+        assert_eq!(class.size(), 32);
+        assert_eq!(class.object_align(), 32);
+
+        let class24 = SizeClass::from_layout(Layout::from_size_align(17, 8).unwrap())
+                          .unwrap();
+        assert_eq!(class24.size(), 24);
+        assert_eq!(class24.object_align(), 8);
+    }
+
+    #[test]
+    fn object_align_is_largest_power_of_two_divisor() {
+        for (size, expected) in [(24, 8), (48, 16), (96, 32), (192, 64)] {
+            assert_eq!(object_align_for_size(size), expected);
+        }
     }
 }

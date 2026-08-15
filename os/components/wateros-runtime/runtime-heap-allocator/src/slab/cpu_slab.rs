@@ -22,7 +22,10 @@ impl CpuSlab {
                                owner_cpu : u16,
                                remote_head : &AtomicPtr<u8>)
                                -> Option<*mut u8> {
-        self.drain_remote(remote_head);
+        // 只有 remote 队列非空才执行昂贵的 atomic swap；本地 slab 分配是最热路径。
+        if !remote_head.load(Ordering::Relaxed).is_null() {
+            self.drain_remote(remote_head);
+        }
         unsafe { self.caches[class_idx].alloc(frames, class_idx, owner_cpu) }
     }
 
