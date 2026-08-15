@@ -24,7 +24,8 @@ use api_v0::perm::PagePerm;
 
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result, frame_inc_ref, frame_ref_count};
 pub(crate) use impl_common::{
-    DeviceVma, LazyFileVma, LazyVmaSet, SharedAnonVma, SharedFileVma, VmaBacking,
+    DeviceVma, LazyFileVma, LazyVmaSet, LazyVmaAccess, SharedAnonVma, SharedFileVma, VmaBacking,
+    handle_lazy_file_fault,
 };
 
 /// LoongArch64 PTE 标志位。
@@ -248,6 +249,12 @@ pub struct LoongArch64AddressSpace {
 // serializes the non-Send lazy-loader state as well as page-table mutation.
 unsafe impl Send for LoongArch64AddressSpace {}
 unsafe impl Sync for LoongArch64AddressSpace {}
+
+impl LazyVmaAccess for LoongArch64AddressSpace {
+    fn lazy_vma_set(&self) -> &LazyVmaSet { &self.lazy_file_vmas }
+
+    fn lazy_vma_set_mut(&mut self) -> &mut LazyVmaSet { &mut self.lazy_file_vmas }
+}
 
 impl LoongArch64AddressSpace {
     /// 分配并清零根页表帧；依赖帧分配器与 [`table_mut`] 的物理访问假设。
@@ -933,69 +940,12 @@ impl LoongArch64AddressSpace {
     {
         let page = fault_addr.floor_page()
                              .start_addr();
-        let Some(index) = self.lazy_file_vmas.lookup(page)
-        else {
-            return Ok(false);
-        };
-        let vma = self.lazy_file_vmas
-                       .get(index)
-                       .ok_or(MmError::InvalidAddress)?;
-        let perm = vma.perm;
-        let allowed = match access {
-            PageFaultAccess::Read => perm.readable(),
-            PageFaultAccess::Write => perm.writable(),
-            PageFaultAccess::Execute => perm.executable(),
-        };
-        if !allowed || !perm.user() {
-            return Ok(false);
-        }
-        if self.translate_addr(page)?
-               .is_some()
-        {
+        let handled = handle_lazy_file_fault(self, allocator, fault_addr, access)?;
+        if handled {
             platform::arch::paging::flush_tlb_local(
                 platform::arch::paging::TlbFlushRange::Page { addr : page.0 });
-            return Ok(true);
         }
-        let file_offset = {
-            let vma = self.lazy_file_vmas
-                           .get(index)
-                           .ok_or(MmError::InvalidAddress)?;
-            vma.file_offset + (page.0 - vma.start.0)
-        };
-        if !perm.writable() {
-            let vma = self.lazy_file_vmas
-                           .get_mut(index)
-                           .ok_or(MmError::InvalidAddress)?;
-            if let Some(ppn) = vma.backing.load_shared_page(file_offset)?
-            {
-                if let Err(error) = self.map_page_to_ppn(page.floor_page(), ppn, perm) {
-                    let _ = frame_dealloc_result(ppn);
-                    return Err(error);
-                }
-                platform::arch::paging::flush_tlb_local(
-                    platform::arch::paging::TlbFlushRange::Page { addr : page.0 });
-                return Ok(true);
-            }
-        }
-        let ppn = allocator.alloc_frame()?;
-        let pa = ppn.0 * PAGE_SIZE;
-        let dst = unsafe { core::slice::from_raw_parts_mut(pa as *mut u8, PAGE_SIZE) };
-        dst.fill(0);
-        let vma = self.lazy_file_vmas
-                       .get_mut(index)
-                       .ok_or(MmError::InvalidAddress)?;
-        if let Err(e) = vma.backing.load_page(file_offset, dst)
-        {
-            let _ = allocator.dealloc_frame(ppn);
-            return Err(e);
-        }
-        if let Err(e) = self.map_page_to_ppn(page.floor_page(), ppn, perm) {
-            let _ = allocator.dealloc_frame(ppn);
-            return Err(e);
-        }
-        platform::arch::paging::flush_tlb_local(
-            platform::arch::paging::TlbFlushRange::Page { addr : page.0 });
-        Ok(true)
+        Ok(handled)
     }
 
     // 本方法代码由AI完成
