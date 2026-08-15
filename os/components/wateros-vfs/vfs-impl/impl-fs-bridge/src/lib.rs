@@ -22,6 +22,7 @@ mod mount_table;
 mod paged_handle;
 mod proc_handle;
 mod read_lease;
+mod sysfs;
 mod tmpfs;
 
 pub use dir_handle::DirectoryHandle;
@@ -37,6 +38,8 @@ pub use paged_handle::PagedFileHandle;
 static RENAME_TEMP_ID : AtomicU64 = AtomicU64::new(1);
 
 fn proc_view() -> &'static impl ProcFsView { fs::procfs::active_impl::view() }
+
+fn sys_view() -> &'static impl ProcFsView { sysfs::view() }
 
 /// 通过 `wateros-fs` 访问根卷与 devfs 的零大小后端。
 #[derive(Debug, Clone, Copy, Default)]
@@ -174,7 +177,8 @@ fn fs_and_rel_rw(path : &str) -> VfsResult<(SharedRwFs, String)> {
             Err(VfsError::ReadOnlyFs)
         }
         FsRoute::AuxRw { fs, rel, .. } => Ok((fs, rel)),
-        FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } | FsRoute::PseudoSecurity { .. } => {
+        FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } | FsRoute::PseudoSys { .. } |
+        FsRoute::PseudoSecurity { .. } => {
             Err(VfsError::ReadOnlyFs)
         }
     }
@@ -360,6 +364,10 @@ impl FsBridge {
             FsRoute::PseudoProc { rel, .. } => {
                 proc_view().read_range(rel.as_str(), offset, buf)
                            .map_err(map_fs_err)
+            }
+            FsRoute::PseudoSys { rel, .. } => {
+                sys_view().read_range(rel.as_str(), offset, buf)
+                          .map_err(map_fs_err)
             }
             FsRoute::PseudoSecurity { .. } => Err(VfsError::NotFound),
             FsRoute::Root { abs, .. } => match root_rw()?.lock()

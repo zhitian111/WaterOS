@@ -80,6 +80,103 @@ pub(crate) fn format_uptime() -> Vec<u8> {
     format!("{seconds}.{centiseconds:02} {idle_seconds}.{idle_centiseconds:02}\n").into_bytes()
 }
 
+/// Linux `/proc/stat` 的核心计数。调度器目前只区分 busy/idle tick，无法可靠
+/// 拆分 user/nice/system，因此把全部非 idle 时间记入 user，其他列保持 0。
+pub(crate) fn format_global_stat() -> Vec<u8> {
+    let states = task::cpu_states();
+    let mut total_busy = 0u64;
+    let mut total_idle = 0u64;
+    let mut context_switches = 0u64;
+    let mut out = String::new();
+    for (cpu_id, cpu) in states.iter().filter(|(_, cpu)| cpu.online) {
+        let busy = cpu.timer_ticks.saturating_sub(cpu.idle_ticks);
+        total_busy = total_busy.saturating_add(busy);
+        total_idle = total_idle.saturating_add(cpu.idle_ticks);
+        context_switches = context_switches.saturating_add(cpu.context_switches);
+        let _ = writeln!(out, "cpu{} {} 0 0 {} 0 0 0 0 0 0", cpu_id.raw(), busy, cpu.idle_ticks);
+    }
+    let mut running = 0usize;
+    let mut blocked = 0usize;
+    let pids = task::all_process_pids();
+    for pid in &pids {
+        for task_id in task::task_ids_for_process(*pid).unwrap_or_default() {
+            match task::task_snapshot(task_id).map(|snapshot| snapshot.state) {
+                Some(TaskState::Ready | TaskState::Running { .. }) => running += 1,
+                Some(TaskState::Blocking(_) | TaskState::Sleeping { .. }) => blocked += 1,
+                Some(TaskState::Exited(_)) | None => {}
+            }
+        }
+    }
+    let last_pid = pids.iter().map(|pid| pid.raw()).max().unwrap_or(0);
+    let mut header = format!("cpu {total_busy} 0 0 {total_idle} 0 0 0 0 0 0\n");
+    header.push_str(out.as_str());
+    let _ = writeln!(header, "intr {}", states.iter().map(|(_, cpu)| cpu.timer_ticks).sum::<u64>());
+    let _ = writeln!(header, "ctxt {context_switches}");
+    let _ = writeln!(header, "processes {}", pids.len());
+    let _ = writeln!(header, "procs_running {running}");
+    let _ = writeln!(header, "procs_blocked {blocked}");
+    let _ = writeln!(header, "softirq 0 0 0 0 0 0 0 0 0 0 0");
+    let _ = last_pid; // last_pid 属于 loadavg；保留这里的单次 PID 扫描语义说明。
+    header.into_bytes()
+}
+
+pub(crate) fn format_loadavg() -> Vec<u8> {
+    let states = task::cpu_states();
+    let runnable = states.iter()
+                         .filter(|(_, cpu)| cpu.online)
+                         .map(|(_, cpu)| cpu.runnable_other + cpu.runnable_batch +
+                                          cpu.runnable_fifo + cpu.runnable_rr + cpu.runnable_idle +
+                                          usize::from(!cpu.current_is_idle && cpu.current_task_id.is_some()))
+                         .sum::<usize>();
+    let pids = task::all_process_pids();
+    let tasks = pids.iter()
+                    .map(|pid| task::task_ids_for_process(*pid).map_or(0, |ids| ids.len()))
+                    .sum::<usize>();
+    let last_pid = pids.iter().map(|pid| pid.raw()).max().unwrap_or(0);
+    // 尚无指数衰减历史，三个 load 字段都发布当前 runnable 数；格式与 Linux 一致。
+    format!("{runnable}.00 {runnable}.00 {runnable}.00 {runnable}/{tasks} {last_pid}\n").into_bytes()
+}
+
+pub(crate) fn format_filesystems() -> Vec<u8> {
+    b"\text4\nnodev\ttmpfs\nnodev\tproc\nnodev\tsysfs\nnodev\tdevtmpfs\nnodev\tcgroup\nnodev\tcgroup2\n".to_vec()
+}
+
+pub(crate) fn format_devices() -> Vec<u8> {
+    b"Character devices:\n  1 mem\n  5 tty\n 10 misc\n\nBlock devices:\n252 virtblk\n".to_vec()
+}
+
+pub(crate) fn format_partitions() -> Vec<u8> {
+    let Some(device) = driver_block_api_v0::first_block_device() else {
+        return b"major minor  #blocks  name\n\n".to_vec();
+    };
+    let device = device.lock();
+    let blocks_kb = device.total_blocks()
+                          .unwrap_or(0)
+                          .saturating_mul(device.block_size() as u64)
+                          / 1024;
+    format!("major minor  #blocks  name\n\n 252        0 {blocks_kb:>10} vda\n").into_bytes()
+}
+
+pub(crate) fn format_interrupts() -> Vec<u8> {
+    let states = task::cpu_states();
+    let online: Vec<_> = states.iter().filter(|(_, cpu)| cpu.online).collect();
+    let mut out = String::from("           ");
+    for (cpu_id, _) in &online {
+        let _ = write!(out, "CPU{:<8}", cpu_id.raw());
+    }
+    out.push('\n');
+    out.push_str("TIMER:     ");
+    for (_, cpu) in &online {
+        let _ = write!(out, "{:<11}", cpu.timer_ticks);
+    }
+    out.push_str(" WaterOS timer\nIPI:       ");
+    for _ in &online {
+        out.push_str("0          ");
+    }
+    out.push_str(" WaterOS IPI\n");
+    out.into_bytes()
+}
+
 // 本方法代码由AI完成
 pub(crate) fn format_cgroups() -> Vec<u8> {
     b"#subsys_name\thierarchy\tnum_cgroups\tenabled\n\
@@ -133,12 +230,11 @@ pub(crate) fn format_stat(pid : ProcessId) -> FsResult<Vec<u8>> {
                                              })
                                              .unwrap_or(0)
                                              .max(1);
+    // Linux 的 stat 第 2 列以括号包围，且传统工具只假定 comm 最多 15 个
+    // 字节。先去掉换行和括号，避免一个异常 argv 把后续列错位。
     let comm = comm_for(pid);
-    let comm15 = if comm.len() > 15 {
-        comm[..15].to_string()
-    } else {
-        comm
-    };
+    let comm = comm.replace(['\n', '\r', '(', ')'], "_");
+    let comm15: String = comm.chars().take(15).collect();
     let ppid = process.parent_pid
                       .map(|p| p.raw())
                       .unwrap_or(0);
@@ -150,7 +246,9 @@ pub(crate) fn format_stat(pid : ProcessId) -> FsResult<Vec<u8>> {
     let stime = jiffies;
     let leader_state = task::task_snapshot(leader).map(|snap| snap.state);
     let sc = state_char(process.state, leader_state);
-    let line = format!("{} ({}) {} {} {} {} 0 0 0 0 0 0 0 0 {} {} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 \
+    // 字段 7..13 分别是 tty_nr、tpgid、flags、minflt、cminflt、majflt、
+    // cmajflt；因此 utime 必须紧随这 **7** 个 0，处于第 14 列。
+    let line = format!("{} ({}) {} {} {} {} 0 0 0 0 0 0 0 {} {} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 \
                         0 0 0 0 0 0 0 0 0\n",
                        pid.raw(),
                        comm15,
@@ -176,12 +274,13 @@ pub(crate) fn format_status(pid : ProcessId) -> FsResult<Vec<u8>> {
     let leader_state = task::task_snapshot(leader).map(|snap| snap.state);
     let sc = state_char(process.state, leader_state);
     let state_str = match sc {
-        'S' => "S (sleeping)",
-        'Z' => "Z (zombie)",
-        _ => "R (running)",
+        'S' => "sleeping",
+        'Z' => "zombie",
+        'T' => "stopped",
+        _ => "running",
     };
     let caps = task::process_caps(pid).unwrap_or_default();
-    let line = format!("Name:\t{comm}\nState:\t{state_str} ({sc})\nTgid:\t{}\nPid:\t{}\nPPid:\t{ppid}\nUid:\t{}\t{}\t{}\t{}\nGid:\t{}\t{}\t{}\t{}\nCapInh:\t{:08x}{:08x}\nCapPrm:\t{:08x}{:08x}\nCapEff:\t{:08x}{:08x}\nCapBnd:\t{:08x}{:08x}\nCapAmb:\t0000000000000000\nVmPeak:\t{}\tkB\nVmSize:\t{}\tkB\nVmRSS:\t{}\tkB\nVmData:\t{}\tkB\nVmStk:\t128\tkB\n",
+    let line = format!("Name:\t{comm}\nState:\t{sc} ({state_str})\nTgid:\t{}\nPid:\t{}\nPPid:\t{ppid}\nUid:\t{}\t{}\t{}\t{}\nGid:\t{}\t{}\t{}\t{}\nCapInh:\t{:08x}{:08x}\nCapPrm:\t{:08x}{:08x}\nCapEff:\t{:08x}{:08x}\nCapBnd:\t{:08x}{:08x}\nCapAmb:\t0000000000000000\nVmPeak:\t{}\tkB\nVmSize:\t{}\tkB\nVmRSS:\t{}\tkB\nVmData:\t{}\tkB\nVmStk:\t128\tkB\n",
                        pid.raw(),
                        pid.raw(),
                        cred.real_uid.0,
@@ -245,11 +344,20 @@ pub(crate) fn format_smaps(pid : ProcessId) -> FsResult<Vec<u8>> {
     let end = start.saturating_add(mem.size_kb
                                       .saturating_mul(1024));
     let line =
-        format!("{start:016x}-{end:016x} rw-p 00000000 00:00 0 \
-                 [heap]\nSize:\t{}\tkB\nRss:\t{}\tkB\nPss:\t{}\tkB\nShared_Clean:\t0\tkB\\
-                 nShared_Dirty:\t0\tkB\nPrivate_Clean:\t0\tkB\nPrivate_Dirty:\t{}\tkB\\
-                 nReferenced:\t{}\tkB\nAnonymous:\t{}\tkB\nSwap:\t0\tkB\nKernelPageSize:\t4\tkB\\
-                 nMMUPageSize:\t4\tkB\nVmFlags: rd wr mr mw me ac sd\n",
+        format!("{start:016x}-{end:016x} rw-p 00000000 00:00 0 [heap]\n\
+                 Size:\t{}\tkB\n\
+                 Rss:\t{}\tkB\n\
+                 Pss:\t{}\tkB\n\
+                 Shared_Clean:\t0\tkB\n\
+                 Shared_Dirty:\t0\tkB\n\
+                 Private_Clean:\t0\tkB\n\
+                 Private_Dirty:\t{}\tkB\n\
+                 Referenced:\t{}\tkB\n\
+                 Anonymous:\t{}\tkB\n\
+                 Swap:\t0\tkB\n\
+                 KernelPageSize:\t4\tkB\n\
+                 MMUPageSize:\t4\tkB\n\
+                 VmFlags: rd wr mr mw me ac sd\n",
                 mem.size_kb, mem.rss_kb, mem.rss_kb, mem.private_dirty_kb, mem.rss_kb, mem.rss_kb,);
     Ok(line.into_bytes())
 }
@@ -281,8 +389,7 @@ pub(crate) fn format_cmdline(pid : ProcessId) -> FsResult<Vec<u8>> {
 // 本方法代码由AI完成
 pub(crate) fn format_meminfo() -> Vec<u8> {
     let stats = mm_frame_alloctor::frame_mem_stats();
-    format!("MemTotal:\t{}\tkB\nMemFree:\t{}\tkB\nMemAvailable:\t{}\tkB\nBuffers:\t0\tkB\nCached:\\
-             t0\tkB\n",
+    format!("MemTotal:\t{}\tkB\nMemFree:\t{}\tkB\nMemAvailable:\t{}\tkB\nBuffers:\t0\tkB\nCached:\t0\tkB\n",
             stats.total_bytes() / 1024,
             stats.free_bytes() / 1024,
             stats.free_bytes() / 1024,).into_bytes()
@@ -292,8 +399,9 @@ pub(crate) fn format_meminfo() -> Vec<u8> {
 pub(crate) fn format_mounts() -> Vec<u8> {
     let mut out = Vec::new();
     for line in mount_lines() {
-        let row = format!("{} {} {} rw,relatime 0 0\n",
-                          line.device, line.mount_point, line.fstype);
+        let access = if line.readonly { "ro" } else { "rw" };
+        let row = format!("{} {} {} {},relatime 0 0\n",
+                          line.device, line.mount_point, line.fstype, access);
         out.extend_from_slice(row.as_bytes());
     }
     out

@@ -357,6 +357,12 @@ pub fn ensure_proc_mount_point() -> VfsResult<()> {
     impl_fs_bridge::ensure_proc_mount_point()
 }
 
+/// 在根卷创建 `/sys` 挂载点（若不存在）。
+#[cfg(all(feature = "bridge-fs-api", feature = "impl-fd-session"))]
+pub fn ensure_sys_mount_point() -> VfsResult<()> {
+    impl_fs_bridge::ensure_sys_mount_point()
+}
+
 /// 挂载 procfs 到 `mount_point`（默认 `/proc`）。
 #[cfg(all(feature = "bridge-fs-api", feature = "impl-fd-session"))]
 pub fn mount_procfs_at(mount_point: &str) -> VfsResult<()> {
@@ -387,10 +393,28 @@ pub fn mount_bootstrap_procfs_at(mount_point: &str) -> VfsResult<()> {
     impl_fs_bridge::mount_bootstrap_proc_at(mount_point)
 }
 
+/// 挂载 sysfs 到当前任务的挂载命名空间。
+#[cfg(all(feature = "bridge-fs-api", feature = "impl-fd-session"))]
+pub fn mount_sysfs_at(mount_point: &str) -> VfsResult<()> {
+    impl_fs_bridge::mount_sysfs_at(mount_point)
+}
+
+/// 在 bootstrap namespace 中挂载 sysfs，供之后创建的任务继承。
+#[cfg(all(feature = "bridge-fs-api", feature = "impl-fd-session"))]
+pub fn mount_bootstrap_sysfs_at(mount_point: &str) -> VfsResult<()> {
+    impl_fs_bridge::mount_bootstrap_sys_at(mount_point)
+}
+
 /// procfs 是否已挂在 `mount_point`。
 #[cfg(feature = "bridge-fs-api")]
 pub fn is_proc_mounted_at(mount_point: &str) -> bool {
     impl_fs_bridge::is_proc_mounted_at(mount_point)
+}
+
+/// 查询路径是否为当前挂载命名空间中的挂载点。
+#[cfg(feature = "bridge-fs-api")]
+pub fn is_mount_point(mount_point: &str) -> bool {
+    impl_fs_bridge::is_mount_point(mount_point)
 }
 
 /// 卸载 `mount_point`；`detach` 为 true 时接受 lazy umount（`MNT_DETACH`）。

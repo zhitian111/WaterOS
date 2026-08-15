@@ -53,7 +53,7 @@ impl StableNodeLease {
         let (fs, rel, identity) = match resolve_route(new_path)? {
             FsRoute::Root { abs, identity } => (root_rw()?, abs, identity),
             FsRoute::AuxRw { fs, rel, identity, .. } => (fs, rel, identity),
-            FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } |
+            FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } | FsRoute::PseudoSys { .. } |
             FsRoute::PseudoSecurity { .. } => return Err(VfsError::ReadOnlyFs),
         };
         if identity.mount_id != self.identity.mount_id || !Arc::ptr_eq(&fs, &self.fs) {
@@ -102,7 +102,8 @@ pub(crate) fn open_stable_node(mount_gen : u64, path : &str) -> VfsResult<Option
     let (fs, rel, identity) = match resolve_route(path)? {
         FsRoute::Root { abs, identity } => (root_rw()?, abs, identity),
         FsRoute::AuxRw { fs, rel, identity, .. } => (fs, rel, identity),
-        FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } | FsRoute::PseudoSecurity { .. } => {
+        FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } | FsRoute::PseudoSys { .. } |
+        FsRoute::PseudoSecurity { .. } => {
             return Ok(None);
         }
     };
@@ -131,7 +132,7 @@ pub(crate) fn create_tmpfile_stable(
     let (fs, rel, identity) = match resolve_route(directory)? {
         FsRoute::Root { abs, identity } => (root_rw()?, abs, identity),
         FsRoute::AuxRw { fs, rel, identity, .. } => (fs, rel, identity),
-        FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } |
+        FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } | FsRoute::PseudoSys { .. } |
         FsRoute::PseudoSecurity { .. } => return Err(VfsError::ReadOnlyFs),
     };
     let node = fs.lock()

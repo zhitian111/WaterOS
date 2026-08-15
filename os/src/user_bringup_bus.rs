@@ -38,6 +38,15 @@ pub fn run() {
         Err(vfs::api::VfsError::Exists) => info!("[bringup][stage-00-bus] procfs already at /proc"),
         Err(err) => warn!("[bringup][stage-00-bus] mount procfs failed: {err:?}"),
     }
+    match vfs::ensure_sys_mount_point() {
+        Ok(()) => {}
+        Err(err) => warn!("[bringup][stage-00-bus] ensure /sys dir failed: {err:?}"),
+    }
+    match vfs::mount_bootstrap_sysfs_at("/sys") {
+        Ok(()) => info!("[bringup][stage-00-bus] sysfs mounted at /sys"),
+        Err(vfs::api::VfsError::Exists) => info!("[bringup][stage-00-bus] sysfs already at /sys"),
+        Err(err) => warn!("[bringup][stage-00-bus] mount sysfs failed: {err:?}"),
+    }
     info!("[bringup][stage-00-bus] END");
 
     #[cfg(feature = "pre")]

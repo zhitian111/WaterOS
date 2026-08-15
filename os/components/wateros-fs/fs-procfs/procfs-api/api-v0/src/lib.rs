@@ -20,6 +20,8 @@ pub struct ProcMountLine {
     pub mount_point: String,
     /// `mnt_type`（第 3 列）。
     pub fstype: String,
+    /// 当前挂载是否只读；用于生成与实际写权限一致的 `/proc/mounts`。
+    pub readonly: bool,
 }
 
 /// 按 leader task id 查询 argv。

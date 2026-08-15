@@ -15,14 +15,24 @@ use crate::mount_table::MountIdentity;
 use crate::{map_fs_err, map_fs_node, map_meta};
 
 // 本方法代码由AI完成
-fn proc_view() -> &'static impl ProcFsView {
-    fs::procfs::active_impl::view()
+#[derive(Clone, Copy)]
+enum PseudoViewKind {
+    Proc,
+    Sys,
+}
+
+fn pseudo_view(kind: PseudoViewKind) -> &'static dyn ProcFsView {
+    match kind {
+        PseudoViewKind::Proc => fs::procfs::active_impl::view(),
+        PseudoViewKind::Sys => crate::sysfs::view(),
+    }
 }
 
 /// procfs 目录句柄。
 #[derive(Clone)]
 // 本结构代码由AI完成
 pub struct ProcDirectoryHandle {
+    view_kind: PseudoViewKind,
     /// 挂载内相对路径（不含 `/proc` 前缀）。
     rel: String,
     /// 用户可见绝对路径。
@@ -50,10 +60,30 @@ pub fn open_proc(
     flags: VfsOpenFlags,
     identity: MountIdentity,
 ) -> VfsResult<Box<dyn VfsIoHandle>> {
+    open_pseudo(PseudoViewKind::Proc, rel, abs, flags, identity)
+}
+
+/// 打开 sysfs 节点；与 procfs 共用只读伪文件句柄实现。
+pub fn open_sys(
+    rel: String,
+    abs: String,
+    flags: VfsOpenFlags,
+    identity: MountIdentity,
+) -> VfsResult<Box<dyn VfsIoHandle>> {
+    open_pseudo(PseudoViewKind::Sys, rel, abs, flags, identity)
+}
+
+fn open_pseudo(
+    view_kind: PseudoViewKind,
+    rel: String,
+    abs: String,
+    flags: VfsOpenFlags,
+    identity: MountIdentity,
+) -> VfsResult<Box<dyn VfsIoHandle>> {
     if flags.contains(VfsOpenFlags::WRITE) {
         return Err(VfsError::ReadOnlyFs);
     }
-    let view = proc_view();
+    let view = pseudo_view(view_kind);
     if !view.exists(rel.as_str()).map_err(map_fs_err)? {
         return Err(VfsError::NotFound);
     }
@@ -62,6 +92,7 @@ pub fn open_proc(
     if meta.node_type == VfsNodeType::Directory {
         if flags.contains(VfsOpenFlags::DIRECTORY) || !flags.contains(VfsOpenFlags::WRITE) {
             return Ok(Box::new(ProcDirectoryHandle {
+                view_kind,
                 rel,
                 abs,
                 meta,
@@ -89,7 +120,7 @@ impl ProcDirectoryHandle {
         if self.dirents.is_some() {
             return Ok(());
         }
-        let entries = proc_view()
+        let entries = pseudo_view(self.view_kind)
             .read_dir(self.rel.as_str())
             .map_err(map_fs_err)?;
         self.dirents = Some(
