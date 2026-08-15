@@ -29,7 +29,7 @@ impl Ext4 {
     ///
     /// * `ENOTDIR` - Any parent along `path` is not a directory.
     /// * `ENOENT` - The object does not exist.
-    pub fn generic_lookup(&self, root: InodeId, path: &str) -> Result<InodeId> {
+    pub fn generic_lookup(&self, root : InodeId, path : &str) -> Result<InodeId> {
         trace!("generic_lookup({}, {})", root, path);
         // Search from the given parent inode
         let mut cur = root;
@@ -60,20 +60,27 @@ impl Ext4 {
     ///
     /// * `ENOTDIR` - Any parent along `path` is not a directory.
     /// * `EEXIST` - The object already exists.
-    pub fn generic_create(&self, root: InodeId, path: &str, mode: InodeMode) -> Result<InodeId> {
+    pub fn generic_create(&self, root : InodeId, path : &str, mode : InodeMode) -> Result<InodeId> {
         // Search from the given parent inode
         let mut cur = self.read_inode(root);
         let search_path = Self::split_path(path);
         // Search recursively
-        for (i, path) in search_path.iter().enumerate() {
+        for (i, path) in search_path.iter()
+                                    .enumerate()
+        {
             if !cur.inode.is_dir() {
-                return_error!(ErrCode::ENOTDIR, "Parent {} is not a directory", cur.id);
+                return_error!(ErrCode::ENOTDIR,
+                              "Parent {} is not a directory",
+                              cur.id);
             }
             match self.dir_find_entry(&cur, path) {
                 Ok(id) => {
                     if i == search_path.len() - 1 {
                         // Reach the object and it already exists
-                        return_error!(ErrCode::EEXIST, "Object {}/{} already exists", root, path);
+                        return_error!(ErrCode::EEXIST,
+                                      "Object {}/{} already exists",
+                                      root,
+                                      path);
                     }
                     cur = self.read_inode(id);
                 }
@@ -108,9 +115,15 @@ impl Ext4 {
     ///
     /// * `ENOENT` - The object does not exist.
     /// * `ENOTEMPTY` - The object is a non-empty directory.
-    pub fn generic_remove(&self, root: InodeId, path: &str) -> Result<()> {
+    pub fn generic_remove(&self, root : InodeId, path : &str) -> Result<()> {
         // Get the parent directory path and the file name
         let mut search_path = Self::split_path(path);
+        if search_path.is_empty() {
+            // 空路径（如 unlink("")/rmdir("")）：Linux 返回 ENOENT，不能越界。
+            return_error!(ErrCode::ENOENT,
+                          "No such file or directory: {}",
+                          path);
+        }
         let file_name = &search_path.split_off(search_path.len() - 1)[0];
         let parent_path = search_path.join("/");
         // Get the parent directory inode
@@ -120,8 +133,14 @@ impl Ext4 {
         let mut parent = self.read_inode(parent_id);
         let mut child = self.read_inode(child_id);
         // Check if child is a non-empty directory
-        if child.inode.is_dir() && self.dir_list_entries(&child).len() > 2 {
-            return_error!(ErrCode::ENOTEMPTY, "Directory {} not empty", path);
+        if child.inode.is_dir() &&
+           self.dir_list_entries(&child)
+               .len() >
+           2
+        {
+            return_error!(ErrCode::ENOTEMPTY,
+                          "Directory {} not empty",
+                          path);
         }
         // Unlink the file
         self.unlink_inode(&mut parent, &mut child, file_name, true)
@@ -140,27 +159,42 @@ impl Ext4 {
     /// * `ENOTDIR` - Any parent in the path is not a directory.
     /// * `ENOENT` - The source object does not exist.
     /// * `EEXIST` - The destination object already exists.
-    pub fn generic_rename(&self, root: InodeId, src: &str, dst: &str) -> Result<()> {
+    pub fn generic_rename(&self, root : InodeId, src : &str, dst : &str) -> Result<()> {
         // Parse the directories and file names
         let mut src_path = Self::split_path(src);
+        if src_path.is_empty() {
+            return_error!(ErrCode::ENOENT,
+                          "No such file or directory: {}",
+                          src);
+        }
         let src_file_name = &src_path.split_off(src_path.len() - 1)[0];
         let src_parent_path = src_path.join("/");
         let mut dst_path = Self::split_path(dst);
+        if dst_path.is_empty() {
+            return_error!(ErrCode::ENOENT,
+                          "No such file or directory: {}",
+                          dst);
+        }
         let dst_file_name = &dst_path.split_off(dst_path.len() - 1)[0];
         let dst_parent_path = dst_path.join("/");
         // Get source and des inodes
         let src_parent_id = self.generic_lookup(root, &src_parent_path)?;
         let dst_parent_id = self.generic_lookup(root, &dst_parent_path)?;
         // Move the file
-        self.rename(src_parent_id, src_file_name, dst_parent_id, dst_file_name)
+        self.rename(src_parent_id,
+                    src_file_name,
+                    dst_parent_id,
+                    dst_file_name)
     }
 
     /// A helper function to split a path by '/'
-    fn split_path(path: &str) -> Vec<String> {
+    fn split_path(path : &str) -> Vec<String> {
         let path = path.trim_start_matches("/");
         if path.is_empty() {
             return vec![]; // root
         }
-        path.split("/").map(|s| s.to_string()).collect()
+        path.split("/")
+            .map(|s| s.to_string())
+            .collect()
     }
 }
