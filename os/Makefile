@@ -16,7 +16,7 @@ BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 .PHONY: rv_pre_run-gdb rv_final_run-gdb rv_final_run_log-gdb rv_final_debug_run-gdb
 .PHONY: rv_qemu_run rv_qemu_run_snapshot
 .PHONY: rv_qemu_run_with_log
-.PHONY: la_check la2k_check jh7110_check kernel-la2k la2k_uimage kernel-jh7110 jh7110_uimage jh7110_bootdir dd_img_vf2 dd_img_2k1000 la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
+.PHONY: la_check la2k_check jh7110_check kernel-la2k la2k_uimage la2k_bootscr kernel-jh7110 jh7110_uimage jh7110_bootdir dd_img_vf2 dd_img_2k1000 la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
 .PHONY: kernel-la kernel-la-best kernel-la-pre kernel-la-final la_pre_run la_final_run la_final_run_log
 .PHONY: la_pre_run-gdb la_final_run-gdb la_final_run_log-gdb
 .PHONY: la_qemu_run la_qemu_run_snapshot
@@ -511,6 +511,12 @@ la2k_uimage: kernel-la2k
 			--load 0x90000000 --entry 0x90000000 \
 			--name "WaterOS 2K1000LA"; \
 	fi
+
+la2k_bootscr:
+	@mkdir -p ./build
+	@mkimage -T script -C none -n "WaterOS 2K1000 boot" \
+		-d ./scripts/root_image/boot-loongson2k1000.cmd ./build/wateros-2k1000.scr
+	$(call INFO, "Loongson 2K1000 网络启动脚本生成完成：./build/wateros-2k1000.scr")
 
 # VisionFive 2 / JH7110（U-Boot/uImage）构建与打包
 kernel-jh7110:
