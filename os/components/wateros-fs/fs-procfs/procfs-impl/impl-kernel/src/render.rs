@@ -56,6 +56,8 @@ pub(crate) fn format_cpuinfo() -> Vec<u8> {
     let mut output = String::new();
     for cpu in 0..u64::BITS as usize {
         if online.contains(task::CpuId::from_raw(cpu)) {
+            #[cfg(target_arch = "riscv64")]
+            {
             output.push_str(format!("processor\t: {cpu}\n").as_str());
             output.push_str("hart\t\t: ");
             output.push_str(cpu.to_string()
@@ -63,6 +65,15 @@ pub(crate) fn format_cpuinfo() -> Vec<u8> {
             output.push('\n');
             output.push_str("model name\t: WaterOS RISC-V virtual CPU\n");
             output.push_str("isa\t\t: rv64imafdch\n\n");
+            }
+            #[cfg(target_arch = "loongarch64")]
+            {
+                output.push_str("system type\t: WaterOS QEMU LoongArch64\n");
+                output.push_str(format!("processor\t: {cpu}\n").as_str());
+                output.push_str("cpu family\t: LoongArch\n");
+                output.push_str("model name\t: WaterOS LoongArch virtual CPU\n");
+                output.push_str("ISA\t\t: loongarch64\n\n");
+            }
         }
     }
     output.into_bytes()

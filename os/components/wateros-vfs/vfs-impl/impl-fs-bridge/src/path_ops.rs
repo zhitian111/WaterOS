@@ -377,7 +377,7 @@ pub fn getxattr_path(path : &str, name : &str, buf : &mut [u8]) -> VfsResult<usi
     if char_dev_exists(normalized.as_str()) {
         return Err(VfsError::Unsupported);
     }
-    let (fs, rel) = fs_and_rel_rw(path)?;
+    let (fs, rel) = fs_and_rel_rw_query(path)?;
     let sess = MountedRwSession::new(fs);
     sess.getxattr(rel.as_str(), name, buf)
         .map_err(map_xattr_get_err)
@@ -390,7 +390,7 @@ pub fn listxattr_path(path : &str, buf : &mut [u8]) -> VfsResult<usize> {
     if char_dev_exists(normalized.as_str()) {
         return Err(VfsError::Unsupported);
     }
-    let (fs, rel) = fs_and_rel_rw(path)?;
+    let (fs, rel) = fs_and_rel_rw_query(path)?;
     let sess = MountedRwSession::new(fs);
     sess.listxattr(rel.as_str(), buf)
 }

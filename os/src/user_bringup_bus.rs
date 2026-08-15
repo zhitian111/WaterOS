@@ -6,6 +6,49 @@
 
 use runtime::logging::*;
 
+use alloc::{string::String, vec::Vec};
+use core::fmt::Write;
+
+fn sysvipc_table(table : fs::procfs::api::SysVIpcTable) -> Vec<u8> {
+    match table {
+        fs::procfs::api::SysVIpcTable::Shm => {
+            // 先在 SHM 锁内复制稳定快照，格式化期间不持 IPC 全局锁。
+            let segments = ipc::shm::registry().lock().segment_infos();
+            let mut out = String::from(
+                "       key      shmid perms                  size  cpid  lpid nattch   uid   gid  cuid  cgid      atime      dtime      ctime                   rss                  swap\n",
+            );
+            for segment in segments {
+                let mode = segment.mode | if segment.marked_removed { 0o1000 } else { 0 };
+                let _ = writeln!(out,
+                                 "{:10} {:10}  {:4o} {:21} {:5} {:5} {:6} {:5} {:5} {:5} {:5} {:10} {:10} {:10} {:21} {:21}",
+                                 segment.key as i32,
+                                 segment.shmid,
+                                 mode,
+                                 segment.size,
+                                 segment.creator_pid,
+                                 segment.last_pid,
+                                 segment.nattch,
+                                 segment.owner_uid,
+                                 segment.owner_gid,
+                                 segment.creator_uid,
+                                 segment.creator_gid,
+                                 segment.attach_time,
+                                 segment.detach_time,
+                                 segment.change_time,
+                                 segment.size,
+                                 0);
+            }
+            out.into_bytes()
+        }
+        fs::procfs::api::SysVIpcTable::Msg => {
+            b"       key      msqid perms      cbytes       qnum lspid lrpid   uid   gid  cuid  cgid      stime      rtime      ctime\n".to_vec()
+        }
+        fs::procfs::api::SysVIpcTable::Sem => {
+            b"       key      semid perms      nsems   uid   gid  cuid  cgid      otime      ctime\n".to_vec()
+        }
+    }
+}
+
 /// 运行已登记的 bring-up 阶段（按编号递增顺序）。
 ///
 /// 仅在统一服务初始化成功且已完成根文件系统准备后调用。
@@ -33,6 +76,7 @@ pub fn run() {
             .saturating_mul(1_000_000)
     });
     fs::procfs::active_impl::register_task_timer_slack_lookup(syscall::timer_slack_for_task);
+    fs::procfs::active_impl::register_sysvipc_table_lookup(sysvipc_table);
     match vfs::mount_bootstrap_procfs_at("/proc") {
         Ok(()) => info!("[bringup][stage-00-bus] procfs mounted at /proc"),
         Err(vfs::api::VfsError::Exists) => info!("[bringup][stage-00-bus] procfs already at /proc"),

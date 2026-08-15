@@ -11,6 +11,7 @@ pub(crate) static TIMER_SLACK_LOOKUP : Mutex<Option<TaskTimerSlackLookup>> = Mut
 pub(crate) static MOUNT_LOOKUP : Mutex<Option<MountListLookup>> = Mutex::new(None);
 pub(crate) static UPTIME_LOOKUP : Mutex<Option<UptimeLookup>> = Mutex::new(None);
 pub(crate) static IDLE_TIME_LOOKUP : Mutex<Option<IdleTimeLookup>> = Mutex::new(None);
+pub(crate) static SYSVIPC_LOOKUP : Mutex<Option<SysVIpcTableLookup>> = Mutex::new(None);
 
 /// 注册按 leader task id 查询 argv 的回调（VFS 层在 init 时注入）。
 // 本方法代码由AI完成
@@ -41,6 +42,11 @@ pub fn register_uptime_lookup(f : UptimeLookup) { *UPTIME_LOOKUP.lock() = Some(f
 
 /// 注册所有 CPU 聚合 idle 时间回调。
 pub fn register_idle_time_lookup(f : IdleTimeLookup) { *IDLE_TIME_LOOKUP.lock() = Some(f); }
+
+/// 注册 SysV IPC 注册表快照回调。
+pub fn register_sysvipc_table_lookup(f : SysVIpcTableLookup) {
+    *SYSVIPC_LOOKUP.lock() = Some(f);
+}
 
 // 经静态回调查 argv；未注册时返回 None。
 // 本方法代码由AI完成
@@ -89,5 +95,11 @@ pub(crate) fn timer_slack_for(leader : TaskId) -> u64 {
 pub(crate) fn mount_lines() -> Vec<ProcMountLine> {
     let lookup = *MOUNT_LOOKUP.lock();
     lookup.map(|f| f())
+          .unwrap_or_default()
+}
+
+pub(crate) fn sysvipc_table(table : SysVIpcTable) -> Vec<u8> {
+    let lookup = *SYSVIPC_LOOKUP.lock();
+    lookup.map(|f| f(table))
           .unwrap_or_default()
 }

@@ -29,6 +29,7 @@ impl ProcFsView for KernelProcFs {
             ProcNode::Cgroups |
             ProcNode::Mounts |
             ProcNode::NetDir |
+            ProcNode::SysVIpcDir |
             ProcNode::SysDir |
             ProcNode::SysKernelDir |
             ProcNode::SysVmDir |
@@ -39,7 +40,10 @@ impl ProcFsView for KernelProcFs {
             ProcNode::ProcNetUdp6 |
             ProcNode::ProcNetRaw |
             ProcNode::ProcNetRaw6 |
-            ProcNode::ProcNetUnix => true,
+            ProcNode::ProcNetUnix |
+            ProcNode::SysVIpcShm |
+            ProcNode::SysVIpcMsg |
+            ProcNode::SysVIpcSem => true,
             ProcNode::SysKernelPidMax | ProcNode::SysKernelTainted |
             ProcNode::SysKernelCapLastCap |
             ProcNode::SysKernelOsType |
@@ -49,6 +53,10 @@ impl ProcFsView for KernelProcFs {
             ProcNode::SysKernelDomainname |
             ProcNode::SysKernelThreadsMax |
             ProcNode::SysKernelNgroupsMax |
+            ProcNode::SysKernelShmMax |
+            ProcNode::SysKernelShmAll |
+            ProcNode::SysKernelShmMni |
+            ProcNode::SysKernelShmRmidForced |
             ProcNode::SysVmOvercommitMemory |
             ProcNode::SysVmMaxMapCount |
             ProcNode::SysVmMmapMinAddr |
@@ -83,6 +91,7 @@ impl ProcFsView for KernelProcFs {
         match node {
             ProcNode::Root |
             ProcNode::NetDir |
+            ProcNode::SysVIpcDir |
             ProcNode::SysDir |
             ProcNode::SysKernelDir |
             ProcNode::SysVmDir |
@@ -117,6 +126,9 @@ impl ProcFsView for KernelProcFs {
             ProcNode::ProcNetRaw |
             ProcNode::ProcNetRaw6 |
             ProcNode::ProcNetUnix |
+            ProcNode::SysVIpcShm |
+            ProcNode::SysVIpcMsg |
+            ProcNode::SysVIpcSem |
             ProcNode::SysKernelPidMax |
             ProcNode::SysKernelTainted |
             ProcNode::SysKernelCapLastCap |
@@ -127,6 +139,10 @@ impl ProcFsView for KernelProcFs {
             ProcNode::SysKernelDomainname |
             ProcNode::SysKernelThreadsMax |
             ProcNode::SysKernelNgroupsMax |
+            ProcNode::SysKernelShmMax |
+            ProcNode::SysKernelShmAll |
+            ProcNode::SysKernelShmMni |
+            ProcNode::SysKernelShmRmidForced |
             ProcNode::SysVmOvercommitMemory |
             ProcNode::SysVmMaxMapCount |
             ProcNode::SysVmMmapMinAddr |
@@ -191,6 +207,7 @@ impl ProcFsView for KernelProcFs {
         match node {
             ProcNode::Root |
             ProcNode::SysDir |
+            ProcNode::SysVIpcDir |
             ProcNode::SysKernelDir |
             ProcNode::SysVmDir |
             ProcNode::SysFsDir |
@@ -210,6 +227,9 @@ impl ProcFsView for KernelProcFs {
             ProcNode::ProcNetRaw |
             ProcNode::ProcNetRaw6 => Ok(PROC_NET_TABLE.to_vec()),
             ProcNode::ProcNetUnix => Ok(PROC_NET_UNIX_TABLE.to_vec()),
+            ProcNode::SysVIpcShm => Ok(sysvipc_table(SysVIpcTable::Shm)),
+            ProcNode::SysVIpcMsg => Ok(sysvipc_table(SysVIpcTable::Msg)),
+            ProcNode::SysVIpcSem => Ok(sysvipc_table(SysVIpcTable::Sem)),
             ProcNode::Meminfo => Ok(format_meminfo()),
             ProcNode::Cpuinfo => Ok(format_cpuinfo()),
             ProcNode::Stat => Ok(format_global_stat()),
@@ -235,6 +255,11 @@ impl ProcFsView for KernelProcFs {
             ProcNode::SysKernelDomainname => Ok(b"(none)\n".to_vec()),
             ProcNode::SysKernelThreadsMax => Ok(b"32768\n".to_vec()),
             ProcNode::SysKernelNgroupsMax => Ok(b"65536\n".to_vec()),
+            // WaterOS 当前单段最多 4 MiB、最多 4096 段；shmall 的单位是页。
+            ProcNode::SysKernelShmMax => Ok(b"4194304\n".to_vec()),
+            ProcNode::SysKernelShmAll => Ok(b"4194304\n".to_vec()),
+            ProcNode::SysKernelShmMni => Ok(b"4096\n".to_vec()),
+            ProcNode::SysKernelShmRmidForced => Ok(b"0\n".to_vec()),
             ProcNode::SysVmOvercommitMemory => Ok(b"0\n".to_vec()),
             ProcNode::SysVmMaxMapCount => Ok(b"65530\n".to_vec()),
             ProcNode::SysVmMmapMinAddr => Ok(b"65536\n".to_vec()),
@@ -341,6 +366,8 @@ impl ProcFsView for KernelProcFs {
                                                     node_type : FsNodeType::File },
                                        FsDirEntry { name : String::from("net"),
                                                     node_type : FsNodeType::Directory },
+                                       FsDirEntry { name : String::from("sysvipc"),
+                                                    node_type : FsNodeType::Directory },
                                        FsDirEntry { name : String::from("sys"),
                                                     node_type : FsNodeType::Directory },
                                        FsDirEntry { name : String::from("self"), node_type : FsNodeType::Symlink },
@@ -368,7 +395,11 @@ impl ProcFsView for KernelProcFs {
                         FsDirEntry { name : String::from("hostname"), node_type : FsNodeType::File },
                         FsDirEntry { name : String::from("domainname"), node_type : FsNodeType::File },
                         FsDirEntry { name : String::from("threads-max"), node_type : FsNodeType::File },
-                        FsDirEntry { name : String::from("ngroups_max"), node_type : FsNodeType::File }])
+                        FsDirEntry { name : String::from("ngroups_max"), node_type : FsNodeType::File },
+                        FsDirEntry { name : String::from("shmmax"), node_type : FsNodeType::File },
+                        FsDirEntry { name : String::from("shmall"), node_type : FsNodeType::File },
+                        FsDirEntry { name : String::from("shmmni"), node_type : FsNodeType::File },
+                        FsDirEntry { name : String::from("shm_rmid_forced"), node_type : FsNodeType::File }])
             }
             ProcNode::SysVmDir => Ok(vec![FsDirEntry { name: String::from("overcommit_memory"), node_type: FsNodeType::File },
                                               FsDirEntry { name: String::from("max_map_count"), node_type: FsNodeType::File },
@@ -391,6 +422,11 @@ impl ProcFsView for KernelProcFs {
                              node_type : FsNodeType::File },
                 FsDirEntry { name : String::from("unix"),
                              node_type : FsNodeType::File },
+            ]),
+            ProcNode::SysVIpcDir => Ok(vec![
+                FsDirEntry { name : String::from("shm"), node_type : FsNodeType::File },
+                FsDirEntry { name : String::from("msg"), node_type : FsNodeType::File },
+                FsDirEntry { name : String::from("sem"), node_type : FsNodeType::File },
             ]),
             ProcNode::PidDir(pid) => {
                 if !process_visible(pid) {

@@ -22,7 +22,7 @@ use task::{ProcessId, ProcessState, TaskState, ThreadId};
 #[path = "callbacks.rs"]
 mod callbacks;
 pub use callbacks::*;
-pub(crate) use callbacks::{argv_for, exe_for, fds_for, fd_target_for, mount_lines,
+pub(crate) use callbacks::{argv_for, exe_for, fds_for, fd_target_for, mount_lines, sysvipc_table,
                             thread_comm_str, timer_slack_for};
 #[path = "path.rs"]
 mod path;

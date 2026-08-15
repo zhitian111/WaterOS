@@ -184,6 +184,21 @@ fn fs_and_rel_rw(path : &str) -> VfsResult<(SharedRwFs, String)> {
     }
 }
 
+/// 为只读元数据查询取得实现了 [`ReadWriteFs`] 的后端。
+///
+/// `readonly` 是挂载写保护，不应阻止 `getxattr/listxattr` 等只读操作。真正的
+/// RO 后端和 proc/sysfs 没有扩展属性接口，调用方应将它们报告为 Unsupported。
+fn fs_and_rel_rw_query(path : &str) -> VfsResult<(SharedRwFs, String)> {
+    match resolve_route(path)? {
+        FsRoute::Root { abs, .. } => Ok((root_rw()?, abs)),
+        FsRoute::AuxRw { fs, rel, .. } => Ok((fs, rel)),
+        FsRoute::AuxRo { .. } |
+        FsRoute::PseudoProc { .. } |
+        FsRoute::PseudoSys { .. } |
+        FsRoute::PseudoSecurity { .. } => Err(VfsError::Unsupported),
+    }
+}
+
 /// 同步路径所属的可写文件系统。
 ///
 /// 文件句柄在调用这里前负责写回自身页缓存；目录句柄没有文件数据，只需提交后端

@@ -346,6 +346,17 @@ impl ShmRegistry {
         }
     }
 
+    /// 返回当前仍存活的全部段快照，按 shmid 递增排列。
+    ///
+    /// 主要供 `/proc/sysvipc/shm` 等只读观测接口使用；调用方拿到快照后应立即
+    /// 释放 registry 锁，再进行字符串格式化或用户复制。
+    pub fn segment_infos(&self) -> Vec<ShmSegmentInfo> {
+        self.segments
+            .keys()
+            .filter_map(|shmid| self.segment_info(*shmid).ok())
+            .collect()
+    }
+
     /// `FLOW:` `IPC_RMID` 立即去除 key 可见性；最后一个 attachment 消失时才释放帧。
     pub fn mark_removed(&mut self, shmid: ShmId) -> ShmResult<()> {
         let remove_now = {

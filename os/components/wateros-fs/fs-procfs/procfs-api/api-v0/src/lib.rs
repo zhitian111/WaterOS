@@ -48,6 +48,17 @@ pub type UptimeLookup = fn() -> u128;
 /// 查询所有 CPU 聚合 idle 时间，单位纳秒。
 pub type IdleTimeLookup = fn() -> u128;
 
+/// `/proc/sysvipc` 中的 Linux SysV IPC 表类型。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SysVIpcTable {
+    Shm,
+    Msg,
+    Sem,
+}
+
+/// 查询一张 SysV IPC 文本表；回调方负责从对应注册表生成一致快照。
+pub type SysVIpcTableLookup = fn(SysVIpcTable) -> Vec<u8>;
+
 /// procfs 只读路径操作；`rel_path` 为相对 `/proc` 的路径（可带或不带前导 `/`）。
 pub trait ProcFsView {
     /// 路径是否对应已知 proc 节点（含目录与文件）。
