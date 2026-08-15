@@ -11,6 +11,7 @@ const AF_UNIX : usize = 1;
 const SOCK_STREAM : usize = 1;
 const SOCK_DGRAM : usize = 2;
 const SOCK_RAW : usize = 3;
+const SOCK_SEQPACKET : usize = 5;
 const SOCK_NONBLOCK : usize = 0o4000;
 const SOCK_CLOEXEC : usize = 0o2000000;
 const FD_CLOEXEC : usize = 1;
@@ -23,7 +24,7 @@ pub(crate) fn sys_socket(args : SyscallArgs) -> UserRet {
     let mut typ = args.arg(1);
     let protocol = args.arg(2);
 
-    if typ & !(0xf | SOCK_NONBLOCK | SOCK_CLOEXEC) != 0 {
+    if typ & !(0xF | SOCK_NONBLOCK | SOCK_CLOEXEC) != 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
@@ -35,7 +36,10 @@ pub(crate) fn sys_socket(args : SyscallArgs) -> UserRet {
             0
         };
         typ &= !(SOCK_NONBLOCK | SOCK_CLOEXEC);
-        if !matches!(typ, SOCK_STREAM | SOCK_DGRAM) || protocol != 0 {
+        if !matches!(typ,
+                     SOCK_STREAM | SOCK_DGRAM | SOCK_SEQPACKET) ||
+           protocol != 0
+        {
             return UserRet::from_error(ErrNo::EINVAL);
         }
         let (io_handle, sock) = match crate::unix_sock::alloc_unix_socket(typ, status_flags) {

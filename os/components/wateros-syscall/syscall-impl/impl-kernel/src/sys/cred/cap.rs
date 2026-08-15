@@ -232,14 +232,16 @@ pub(crate) fn sys_capset(args : SyscallArgs) -> UserRet {
         }
     }
 
-    let cred = cred::current_credentials();
-    let is_root = cred.effective_uid.0 == 0;
     let current = task::process_caps(current_pid).unwrap_or(ProcessCaps::ROOT);
     // 所有集合都不能超出 bounding set（Linux 对 root 同样生效）。
     if caps.permitted & !current.bounding != 0 || caps.inheritable & !current.bounding != 0 {
         return UserRet::from_error(ErrNo::EPERM);
     }
-    if !is_root {
+    // Linux cap_capset：特权与否看 effective 是否持有 CAP_SETPCAP，不是
+    // euid==0。root 默认有 CAP_SETPCAP 可任意设置；但可先 capset 去掉
+    // SETPCAP 再进入受限场景（LTP capset03 就是这样测的）。
+    let privileged = current.effective & ProcessCaps::CAP_SETPCAP != 0;
+    if !privileged {
         // permitted 只减不增（Linux）；配合 PR_SET_KEEPCAPS，setuid 之后仍可
         // 重设 permitted 子集（setpriv 的 “reactivate capabilities” 流程）。
         if caps.permitted & !current.permitted != 0 {

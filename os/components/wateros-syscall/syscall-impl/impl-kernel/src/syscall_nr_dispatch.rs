@@ -110,6 +110,7 @@ pub fn dispatch_syscall_by_nr(syscall_nr : usize, syscall_args : SyscallArgs) ->
         n if n == api_v0::SEMTIMEDOP => sys::sys_semtimedop(syscall_args).0,
         n if n == api_v0::SEMOP => sys::sys_semop(syscall_args).0,
         n if n == api_v0::GET_TIME => sys::sys_gettimeofday(syscall_args).0,
+        n if n == api_v0::SETTIMEOFDAY => sys::sys_settimeofday(syscall_args).0,
         n if n == api_v0::CLOCK_SETTIME => sys::sys_clock_settime(syscall_args).0,
         n if n == api_v0::CLOCK_GETTIME => sys::sys_clock_gettime(syscall_args).0,
         n if n == api_v0::CLOCK_GETRES => sys::sys_clock_getres(syscall_args).0,

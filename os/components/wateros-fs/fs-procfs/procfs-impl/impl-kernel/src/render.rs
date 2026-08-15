@@ -58,7 +58,8 @@ pub(crate) fn format_cpuinfo() -> Vec<u8> {
         if online.contains(task::CpuId::from_raw(cpu)) {
             output.push_str(format!("processor\t: {cpu}\n").as_str());
             output.push_str("hart\t\t: ");
-            output.push_str(cpu.to_string().as_str());
+            output.push_str(cpu.to_string()
+                               .as_str());
             output.push('\n');
             output.push_str("model name\t: WaterOS RISC-V virtual CPU\n");
             output.push_str("isa\t\t: rv64imafdch\n\n");
@@ -69,11 +70,11 @@ pub(crate) fn format_cpuinfo() -> Vec<u8> {
 
 pub(crate) fn format_uptime() -> Vec<u8> {
     let nanos = (*UPTIME_LOOKUP.lock()).map(|lookup| lookup())
-                                         .unwrap_or(0);
+                                       .unwrap_or(0);
     let seconds = nanos / 1_000_000_000;
     let centiseconds = nanos % 1_000_000_000 / 10_000_000;
     let idle_nanos = (*IDLE_TIME_LOOKUP.lock()).map(|lookup| lookup())
-                                                    .unwrap_or(0);
+                                               .unwrap_or(0);
     let idle_seconds = idle_nanos / 1_000_000_000;
     let idle_centiseconds = idle_nanos % 1_000_000_000 / 10_000_000;
     format!("{seconds}.{centiseconds:02} {idle_seconds}.{idle_centiseconds:02}\n").into_bytes()
@@ -93,7 +94,8 @@ pub(crate) fn format_cgroups() -> Vec<u8> {
       net_cls\t9\t1\t1\n\
       perf_event\t10\t1\t1\n\
       net_prio\t11\t1\t1\n\
-      hugetlb\t12\t1\t1\n".to_vec()
+      hugetlb\t12\t1\t1\n"
+                          .to_vec()
 }
 
 // 取路径最后一段作为 comm 展示名。
@@ -140,16 +142,22 @@ pub(crate) fn format_stat(pid : ProcessId) -> FsResult<Vec<u8>> {
     let ppid = process.parent_pid
                       .map(|p| p.raw())
                       .unwrap_or(0);
+    // /proc/<pid>/stat 第 5/6 字段（pgrp/session）：LTP getpgid01 读 init 的
+    // pgrp 与 getpgid(1) 比对，必须填真实值而非 0。
+    let pgrp = process.pgid.raw();
+    let session = process.sid.raw();
     let utime = jiffies;
     let stime = jiffies;
     let leader_state = task::task_snapshot(leader).map(|snap| snap.state);
     let sc = state_char(process.state, leader_state);
-    let line = format!("{} ({}) {} {} 0 0 0 0 0 0 0 0 {} {} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 \
-                        0 0 0 0 0 0\n",
+    let line = format!("{} ({}) {} {} {} {} 0 0 0 0 0 0 0 0 {} {} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 \
+                        0 0 0 0 0 0 0 0 0\n",
                        pid.raw(),
                        comm15,
                        sc,
                        ppid,
+                       pgrp,
+                       session,
                        utime,
                        stime,);
     Ok(line.into_bytes())
@@ -174,7 +182,11 @@ pub(crate) fn format_status(pid : ProcessId) -> FsResult<Vec<u8>> {
     };
     let caps = task::process_caps(pid).unwrap_or_default();
     let line = format!("Name:\t{comm}\nState:\t{state_str} \
-                        ({sc})\nTgid:\t{}\nPid:\t{}\nPPid:\t{ppid}\nUid:\t{}\t{}\t{}\t{}\nGid:\t{}\t{}\t{}\t{}\nCapInh:\t{:08x}{:08x}\nCapPrm:\t{:08x}{:08x}\nCapEff:\t{:08x}{:08x}\nCapBnd:\t{:08x}{:08x}\nCapAmb:\t0000000000000000\nVmPeak:\t{}\tkB\nVmSize:\t{}\tkB\nVmRSS:\t{}\tkB\nVmData:\t{}\tkB\nVmStk:\t128\tkB\n",
+                        ({sc})\nTgid:\t{}\nPid:\t{}\nPPid:\t{ppid}\nUid:\t{}\t{}\t{}\t{}\nGid:\\
+                        t{}\t{}\t{}\t{}\nCapInh:\t{:08x}{:08x}\nCapPrm:\t{:08x}{:08x}\nCapEff:\\
+                        t{:08x}{:08x}\nCapBnd:\t{:08x}{:08x}\nCapAmb:\t0000000000000000\nVmPeak:\\
+                        t{}\tkB\nVmSize:\t{}\tkB\nVmRSS:\t{}\tkB\nVmData:\t{}\tkB\nVmStk:\t128\\
+                        tkB\n",
                        pid.raw(),
                        pid.raw(),
                        cred.real_uid.0,
@@ -274,8 +286,8 @@ pub(crate) fn format_cmdline(pid : ProcessId) -> FsResult<Vec<u8>> {
 // 本方法代码由AI完成
 pub(crate) fn format_meminfo() -> Vec<u8> {
     let stats = mm_frame_alloctor::frame_mem_stats();
-    format!("MemTotal:\t{}\tkB\nMemFree:\t{}\tkB\nMemAvailable:\t{}\tkB\nBuffers:\t0\tkB\n\
-             Cached:\t0\tkB\n",
+    format!("MemTotal:\t{}\tkB\nMemFree:\t{}\tkB\nMemAvailable:\t{}\tkB\nBuffers:\t0\tkB\nCached:\\
+             t0\tkB\n",
             stats.total_bytes() / 1024,
             stats.free_bytes() / 1024,
             stats.free_bytes() / 1024,).into_bytes()
@@ -302,7 +314,7 @@ pub(crate) fn proc_ipv4_hex(address : [u8; 4]) -> u32 { u32::from_le_bytes(addre
 pub(crate) fn proc_socket_state(state : SocketState, protocol : SocketKind) -> u8 {
     match (protocol, state) {
         (SocketKind::Udp, _) => 0x07,
-        (_, SocketState::Listening { .. }) => 0x0a,
+        (_, SocketState::Listening { .. }) => 0x0A,
         (_, SocketState::Connecting) => 0x02,
         (_, SocketState::Connected) => 0x01,
         (_, SocketState::Created | SocketState::Bound { .. } | SocketState::Closed) => 0x07,
@@ -311,14 +323,15 @@ pub(crate) fn proc_socket_state(state : SocketState, protocol : SocketKind) -> u
 
 pub(crate) fn format_proc_net_table(protocol : SocketKind) -> Vec<u8> {
     let mut out = String::from_utf8_lossy(PROC_NET_TABLE).into_owned();
-    for (slot, socket) in network::stack::network_socket_table_snapshot()
-                                  .unwrap_or_default()
-                                  .into_iter()
-                                  .filter(|socket| socket.kind == protocol)
-                                  .enumerate()
+    for (slot, socket) in
+        network::stack::network_socket_table_snapshot().unwrap_or_default()
+                                                       .into_iter()
+                                                       .filter(|socket| socket.kind == protocol)
+                                                       .enumerate()
     {
         let _ = writeln!(out,
-                         "{:4}: {:08X}:{:04X} {:08X}:{:04X} {:02X} {:08X}:{:08X} 00:00000000 00000000     0        0 0 1 0000000000000000 100 0 0 10 0",
+                         "{:4}: {:08X}:{:04X} {:08X}:{:04X} {:02X} {:08X}:{:08X} 00:00000000 \
+                          00000000     0        0 0 1 0000000000000000 100 0 0 10 0",
                          slot,
                          proc_ipv4_hex(socket.local.address),
                          socket.local.port,
@@ -330,5 +343,3 @@ pub(crate) fn format_proc_net_table(protocol : SocketKind) -> Vec<u8> {
     }
     out.into_bytes()
 }
-
-
