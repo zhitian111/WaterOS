@@ -538,6 +538,7 @@ jh7110_bootdir: jh7110_uimage
 	@cp ./kernel-jh7110.ui ./build/jh7110-boot/wateros-jh7110.ui
 	@cp ./scripts/root_image/jh7110-extlinux.conf ./build/jh7110-boot/extlinux/extlinux.conf
 	@cp ./scripts/root_image/jh7110-uEnv.txt ./build/jh7110-boot/uEnv.txt
+	@cp ./scripts/root_image/jh7110-vf2-uEnv.txt ./build/jh7110-boot/vf2_uEnv.txt
 	@if mkimage -A riscv -T script -C none -n "WaterOS VisionFive 2 boot" \
 		-d ./scripts/root_image/boot-visionfive2.cmd ./build/jh7110-boot/boot.scr 2>/dev/null; then \
 		echo "[Makefile] [INFO] boot.scr 生成完成"; \
