@@ -4,9 +4,11 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use network::SocketRef;
+use network::{SocketDomain, SocketRef};
 
 const AF_INET : usize = 2;
+#[cfg(feature = "ipv6")]
+const AF_INET6 : usize = 10;
 const AF_UNIX : usize = 1;
 const SOCK_STREAM : usize = 1;
 const SOCK_DGRAM : usize = 2;
@@ -17,6 +19,9 @@ const SOCK_CLOEXEC : usize = 0o2000000;
 const FD_CLOEXEC : usize = 1;
 const IPPROTO_TCP : usize = 6;
 const IPPROTO_UDP : usize = 17;
+const IPPROTO_ICMP : usize = 1;
+#[cfg(feature = "ipv6")]
+const IPPROTO_ICMPV6 : usize = 58;
 
 // 本方法代码由AI完成
 pub(crate) fn sys_socket(args : SyscallArgs) -> UserRet {
@@ -59,10 +64,12 @@ pub(crate) fn sys_socket(args : SyscallArgs) -> UserRet {
         return UserRet::from_success(fd);
     }
 
-    if domain != AF_INET {
-        return UserRet::from_error(ErrNo::EAFNOSUPPORT);
-    }
-
+    let socket_domain = match domain {
+        AF_INET => SocketDomain::Ipv4,
+        #[cfg(feature = "ipv6")]
+        AF_INET6 => SocketDomain::Ipv6,
+        _ => return UserRet::from_error(ErrNo::EAFNOSUPPORT),
+    };
     let cloexec = typ & SOCK_CLOEXEC != 0;
     let status_flags = if typ & SOCK_NONBLOCK != 0 {
         SOCK_NONBLOCK
@@ -72,8 +79,15 @@ pub(crate) fn sys_socket(args : SyscallArgs) -> UserRet {
     typ &= !(SOCK_NONBLOCK | SOCK_CLOEXEC);
 
     let socket_result = match (typ, protocol) {
-        (SOCK_STREAM, 0 | IPPROTO_TCP) => SocketRef::new_tcp(status_flags),
-        (SOCK_DGRAM, 0 | IPPROTO_UDP) => SocketRef::new_udp(status_flags),
+        (SOCK_STREAM, 0 | IPPROTO_TCP) => SocketRef::new_tcp(socket_domain, status_flags),
+        (SOCK_DGRAM, 0 | IPPROTO_UDP) => SocketRef::new_udp(socket_domain, status_flags),
+        (SOCK_RAW, IPPROTO_ICMP) if socket_domain == SocketDomain::Ipv4 => {
+            SocketRef::new_icmp(socket_domain, status_flags)
+        }
+        #[cfg(feature = "ipv6")]
+        (SOCK_RAW, IPPROTO_ICMPV6) if socket_domain == SocketDomain::Ipv6 => {
+            SocketRef::new_icmp(socket_domain, status_flags)
+        }
         (SOCK_STREAM | SOCK_DGRAM, _) => return UserRet::from_error(ErrNo::EPROTONOSUPPORT),
         (SOCK_RAW, _) => return UserRet::from_error(ErrNo::EPROTONOSUPPORT),
         _ => return UserRet::from_error(ErrNo::EINVAL),

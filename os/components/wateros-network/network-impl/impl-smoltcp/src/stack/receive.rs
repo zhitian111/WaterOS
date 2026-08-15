@@ -2,11 +2,13 @@
 
 use smoltcp::iface::SocketHandle;
 use smoltcp::socket::{tcp, udp};
-use smoltcp::wire::IpAddress;
 
 use super::global::with_stack_mut;
+use super::socket::network_address;
 use super::state::NetworkStack;
-use super::types::{SocketKind, SocketRecvError, SocketRecvFinish};
+use super::types::{
+    NetworkAddress, NetworkEndpoint, SocketKind, SocketRecvError, SocketRecvFinish,
+};
 
 /// 一次尚未消费的接收队列前缀；实际数据由上层 lease 持有。
 pub struct SocketRecvReservation {
@@ -15,17 +17,24 @@ pub struct SocketRecvReservation {
     kind : SocketKind,
     staged_len : usize,
     datagram_len : usize,
-    source_ip : [u8; 4],
+    source_ip : NetworkAddress,
     source_port : u16,
+    destination_ip : NetworkAddress,
     loopback_udp : bool,
 }
 
 impl SocketRecvReservation {
     pub fn staged_len(&self) -> usize { self.staged_len }
 
-    pub fn source(&self) -> ([u8; 4], u16) { (self.source_ip, self.source_port) }
+    pub fn source(&self) -> NetworkEndpoint {
+        NetworkEndpoint { address : self.source_ip,
+                          port : self.source_port,
+                          scope_id : 0 }
+    }
 
     pub fn kind(&self) -> SocketKind { self.kind }
+
+    pub fn destination(&self) -> NetworkAddress { self.destination_ip }
 
     pub fn datagram_len(&self) -> usize { self.datagram_len }
 }
@@ -35,7 +44,7 @@ impl NetworkStack {
                     handle : SocketHandle,
                     buf : &mut [u8])
                     -> Result<SocketRecvReservation, SocketRecvError> {
-        let (kind, id, peer_ip, peer_port) = {
+        let (kind, domain, local_ip, id, peer_ip, peer_port) = {
             let meta = self.metas
                            .get_mut(&handle)
                            .ok_or(SocketRecvError::InvalidSocket)?;
@@ -48,8 +57,10 @@ impl NetworkStack {
             meta.next_recv_reservation = meta.next_recv_reservation
                                              .wrapping_add(1);
             meta.recv_reservation = Some(id);
-            (meta.kind, id, meta.peer_ip, meta.peer_port)
+            (meta.kind, meta.domain, meta.local_ip, id, meta.peer_ip, meta.peer_port)
         };
+        let default_destination = local_ip.or_else(|| self.configured_address(domain))
+                                          .unwrap_or_else(|| NetworkAddress::unspecified(domain));
 
         let prepared = match kind {
             SocketKind::Tcp => {
@@ -86,6 +97,7 @@ impl NetworkStack {
                                         datagram_len : n,
                                         source_ip : peer_ip,
                                         source_port : peer_port,
+                                        destination_ip : default_destination,
                                         loopback_udp : false }
             }
             SocketKind::Udp => {
@@ -104,6 +116,7 @@ impl NetworkStack {
                                             datagram_len : packet.data.len(),
                                             source_ip : packet.source_ip,
                                             source_port : packet.source_port,
+                                            destination_ip : packet.destination_ip,
                                             loopback_udp : true }
                 } else {
                     let socket = self.sockets
@@ -130,11 +143,8 @@ impl NetworkStack {
                     let n = payload.len()
                                    .min(buf.len());
                     buf[..n].copy_from_slice(&payload[..n]);
-                    let source_ip = match metadata.endpoint
-                                                  .addr
-                    {
-                        IpAddress::Ipv4(addr) => addr.octets(),
-                    };
+                    let source_ip = network_address(metadata.endpoint
+                                                            .addr);
                     SocketRecvReservation { handle,
                                             id,
                                             kind,
@@ -143,8 +153,31 @@ impl NetworkStack {
                                             source_ip,
                                             source_port : metadata.endpoint
                                                                   .port,
+                                            destination_ip : default_destination,
                                             loopback_udp : false }
                 }
+            }
+            SocketKind::Icmp => {
+                if let Err(error) = self.ensure_icmp_pending(handle) {
+                    if let Some(meta) = self.metas.get_mut(&handle) {
+                        meta.recv_reservation = None;
+                    }
+                    return Err(error);
+                }
+                let packet = self.icmp_pending
+                                 .get(&handle)
+                                 .ok_or(SocketRecvError::Io)?;
+                let n = packet.data.len().min(buf.len());
+                buf[..n].copy_from_slice(&packet.data[..n]);
+                SocketRecvReservation { handle,
+                                        id,
+                                        kind,
+                                        staged_len : n,
+                                        datagram_len : packet.data.len(),
+                                        source_ip : packet.source_ip,
+                                        source_port : 0,
+                                        destination_ip : default_destination,
+                                        loopback_udp : false }
             }
         };
         Ok(prepared)
@@ -221,6 +254,10 @@ impl NetworkStack {
                                    .recv()
                                    .map(|_| ())
                                    .map_err(|_| SocketRecvError::Io),
+            SocketKind::Icmp => self.icmp_pending
+                                    .remove(&reservation.handle)
+                                    .map(|_| ())
+                                    .ok_or(SocketRecvError::Io),
         };
         if let Some(meta) = self.metas
                                 .get_mut(&reservation.handle)

@@ -12,13 +12,17 @@ use crate::user_copy::{copy_from_user, copy_from_user_struct, copy_to_user, copy
 
 const SOL_IP : usize = 0;
 const IPPROTO_TCP : usize = 6;
+const IPPROTO_IPV6 : usize = 41;
 
 fn getsockopt_error(error : NetworkError, level : usize) -> ErrNo {
     match error {
         NetworkError::InvalidArgument => ErrNo::EINVAL,
         NetworkError::AddressNotAvailable => ErrNo::EADDRNOTAVAIL,
         NetworkError::WrongSocketType => ErrNo::ENOPROTOOPT,
-        NetworkError::Unsupported if matches!(level, SOL_IP | IPPROTO_TCP) => {
+        NetworkError::Unsupported
+            if matches!(level,
+                        SOL_IP | IPPROTO_TCP | IPPROTO_IPV6) =>
+        {
             ErrNo::ENOPROTOOPT
         }
         NetworkError::Unsupported => ErrNo::EOPNOTSUPP,

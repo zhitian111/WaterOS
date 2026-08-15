@@ -19,6 +19,7 @@
     bringup-stats = [ "impl-kernel?/bringup-stats" ]
     default = [ "impl-kernel" ]
     impl-kernel = [ "api-v0", "dep:impl-kernel", "impl-kernel/impl-kernel" ]
+    ipv6 = [ "impl-kernel?/ipv6" ]
     self_test = [ "impl-kernel", "impl-kernel/self_test" ]
     user-copy-diagnostics = [ "impl-kernel?/user-copy-diagnostics" ]
 [profile.dev]

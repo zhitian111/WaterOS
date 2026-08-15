@@ -363,10 +363,14 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidNamespace(_, _) => {
                 Err(FsError::NotAFile)
             }
-            ProcNode::ProcNetTcp => Ok(format_proc_net_table(SocketKind::Tcp)),
-            ProcNode::ProcNetUdp => Ok(format_proc_net_table(SocketKind::Udp)),
-            ProcNode::ProcNetTcp6 |
-            ProcNode::ProcNetUdp6 |
+            ProcNode::ProcNetTcp => Ok(format_proc_net_table(network::SocketDomain::Ipv4,
+                                                              SocketKind::Tcp)),
+            ProcNode::ProcNetUdp => Ok(format_proc_net_table(network::SocketDomain::Ipv4,
+                                                              SocketKind::Udp)),
+            ProcNode::ProcNetTcp6 => Ok(format_proc_net_table(network::SocketDomain::Ipv6,
+                                                               SocketKind::Tcp)),
+            ProcNode::ProcNetUdp6 => Ok(format_proc_net_table(network::SocketDomain::Ipv6,
+                                                               SocketKind::Udp)),
             ProcNode::ProcNetRaw |
             ProcNode::ProcNetRaw6 => Ok(PROC_NET_TABLE.to_vec()),
             ProcNode::ProcNetUnix => Ok(PROC_NET_UNIX_TABLE.to_vec()),
@@ -463,13 +467,13 @@ impl ProcFsView for KernelProcFs {
     fn read_range(&self, rel_path : &str, offset : u64, buf : &mut [u8]) -> FsResult<usize> {
         let node = parse_node(rel_path).ok_or(FsError::NotFound)?;
         let static_data : &[u8] = match node {
-            ProcNode::ProcNetTcp6 |
-            ProcNode::ProcNetUdp6 => PROC_NET_TABLE,
             ProcNode::ProcNetRaw |
             ProcNode::ProcNetRaw6 => PROC_NET_TABLE,
             ProcNode::ProcNetUnix => PROC_NET_UNIX_TABLE,
             ProcNode::ProcNetTcp |
-            ProcNode::ProcNetUdp => {
+            ProcNode::ProcNetUdp |
+            ProcNode::ProcNetTcp6 |
+            ProcNode::ProcNetUdp6 => {
                 let data = self.read(rel_path)?;
                 let start = offset as usize;
                 if start >= data.len() {

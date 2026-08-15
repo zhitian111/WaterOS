@@ -52,6 +52,11 @@ def _validate_token(name: str, value: str) -> None:
         raise QemuConfigError(f"{name} 不能包含空白字符: {value!r}")
 
 
+def _feature_enabled(environment: Mapping[str, str], feature: str) -> bool:
+    features = _value(environment, "WOS_EXTRA_FEATURES").replace(",", " ").split()
+    return feature in features
+
+
 def _supported_display_backends(arch: str) -> set[str]:
     qemu_binary = "qemu-system-riscv64" if arch == "rv" else "qemu-system-loongarch64"
     try:
@@ -146,6 +151,7 @@ def build_qemu_launch(
         if graphics
         else ["-nographic"]
     )
+    ipv6 = _feature_enabled(env, "ipv6")
 
     if arch == "rv":
         drive_options = _value(env, "WOS_QEMU_IMAGE_DRIVE_OPTIONS")
@@ -158,7 +164,10 @@ def build_qemu_launch(
             "-drive", drive_spec,
             "-device", "virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0",
             "-no-reboot", "-device", "virtio-net-device,netdev=net",
-            "-netdev", "user,id=net", "-rtc", "base=utc",
+            "-netdev", ("user,id=net,ipv4=on,net=10.0.2.0/24,host=10.0.2.2,"
+                        "ipv6=on,ipv6-net=fec0::/64,ipv6-host=fec0::2"
+                        if ipv6 else "user,id=net"),
+            "-rtc", "base=utc",
         ]
         if graphics:
             argv.extend([
@@ -172,7 +181,10 @@ def build_qemu_launch(
             *console_args, "-smp", smp,
             "-drive", f"file={sdcard},if=none,format=raw,id=x0",
             "-device", "virtio-blk-pci,drive=x0", "-no-reboot",
-            "-device", "virtio-net-pci,netdev=net0", "-netdev", "user,id=net0",
+            "-device", "virtio-net-pci,netdev=net0", "-netdev",
+            ("user,id=net0,ipv4=on,net=10.0.2.0/24,host=10.0.2.2,"
+             "ipv6=on,ipv6-net=fec0::/64,ipv6-host=fec0::2"
+             if ipv6 else "user,id=net0"),
             "-rtc", "base=utc",
         ]
         if graphics:
@@ -221,6 +233,7 @@ def main() -> int:
   WOS_QEMU_GDB               设为 1 时开启 GDB server
   WOS_QEMU_GDB_WAIT          设为 1 时等待 GDB 连接后启动
   WOS_QEMU_GDB_PORT          GDB 端口，默认为 1234
+  WOS_EXTRA_FEATURES         逗号分隔的内核附加 feature；包含 ipv6 时启用 QEMU IPv6
   WOS_TASKSET_CPUS           绑定的宿主 CPU 列表，例如 0-3
   WOS_QEMU_IMAGE_DRIVE_OPTIONS  追加到 RISC-V 镜像 drive 的选项
 """,

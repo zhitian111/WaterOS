@@ -6,21 +6,8 @@ use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use network::NetworkError;
 
+use super::sockaddr::{endpoint_domain, read_bind_endpoint};
 use crate::socket_fd;
-use crate::user_copy::copy_from_user_struct;
-
-const AF_UNSPEC : u16 = 0;
-const AF_INET : u16 = 2;
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-// 本结构代码由AI完成
-struct SockAddrIn {
-    sin_family : u16,
-    sin_port : u16, // network byte order
-    sin_addr : [u8; 4],
-    sin_zero : [u8; 8],
-}
 
 // 本方法代码由AI完成
 pub(crate) fn sys_bind(args : SyscallArgs) -> UserRet {
@@ -39,20 +26,11 @@ pub(crate) fn sys_bind(args : SyscallArgs) -> UserRet {
         };
     }
 
-    if addrlen < 16 {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
-
-    let addr : SockAddrIn = match copy_from_user_struct(addr_ptr) {
-        Ok(a) => a,
+    let endpoint = match read_bind_endpoint(addr_ptr, addrlen) {
+        Ok(endpoint) => endpoint,
         Err(e) => return UserRet::from_error(e),
     };
-
-    if addr.sin_family != AF_INET && addr.sin_family != AF_UNSPEC {
-        return UserRet::from_error(ErrNo::EAFNOSUPPORT);
-    }
-
-    let port = u16::from_be(addr.sin_port);
+    let port = endpoint.port;
     if port != 0 &&
        port < 1024 &&
        cred::current_credentials().effective_uid
@@ -61,15 +39,20 @@ pub(crate) fn sys_bind(args : SyscallArgs) -> UserRet {
     {
         return UserRet::from_error(ErrNo::EACCES);
     }
-    let local_ip = if addr.sin_addr == [0; 4] {
+    let local_ip = if endpoint.address
+                              .is_unspecified()
+    {
         None
     } else {
-        Some(addr.sin_addr)
+        Some(endpoint.address)
     };
     let socket = match socket_fd::lookup_or_errno(fd) {
         Ok(s) => s,
         Err(e) => return UserRet::from_error(e),
     };
+    if endpoint_domain(endpoint) != socket.domain() {
+        return UserRet::from_error(ErrNo::EAFNOSUPPORT);
+    }
 
     match socket.bind(local_ip, port) {
         Ok(()) => UserRet::from_success(0),

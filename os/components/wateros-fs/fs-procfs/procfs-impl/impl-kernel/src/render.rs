@@ -824,7 +824,7 @@ pub(crate) fn proc_ipv4_hex(address : [u8; 4]) -> u32 { u32::from_le_bytes(addre
 
 pub(crate) fn proc_socket_state(state : SocketState, protocol : SocketKind) -> u8 {
     match (protocol, state) {
-        (SocketKind::Udp, _) => 0x07,
+        (SocketKind::Udp | SocketKind::Icmp, _) => 0x07,
         (_, SocketState::Listening { .. }) => 0x0A,
         (_, SocketState::Connecting) => 0x02,
         (_, SocketState::Connected) => 0x01,
@@ -832,21 +832,40 @@ pub(crate) fn proc_socket_state(state : SocketState, protocol : SocketKind) -> u
     }
 }
 
-pub(crate) fn format_proc_net_table(protocol : SocketKind) -> Vec<u8> {
+fn proc_address_hex(address : network::NetworkAddress) -> String {
+    match address {
+        network::NetworkAddress::Ipv4(address) => format!("{:08X}", proc_ipv4_hex(address)),
+        network::NetworkAddress::Ipv6(address) => {
+            let mut out = String::with_capacity(32);
+            for chunk in address.chunks_exact(4) {
+                let value = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                let _ = write!(out, "{:08X}", value);
+            }
+            out
+        }
+    }
+}
+
+pub(crate) fn format_proc_net_table(domain : network::SocketDomain,
+                                    protocol : SocketKind)
+                                    -> Vec<u8> {
     let mut out = String::from_utf8_lossy(PROC_NET_TABLE).into_owned();
     for (slot, socket) in
         network::stack::network_socket_table_snapshot().unwrap_or_default()
                                                        .into_iter()
-                                                       .filter(|socket| socket.kind == protocol)
+                                                       .filter(|socket| {
+                                                           socket.domain == domain &&
+                                                           socket.kind == protocol
+                                                       })
                                                        .enumerate()
     {
         let _ = writeln!(out,
-                         "{:4}: {:08X}:{:04X} {:08X}:{:04X} {:02X} {:08X}:{:08X} 00:00000000 \
+                         "{:4}: {}:{:04X} {}:{:04X} {:02X} {:08X}:{:08X} 00:00000000 \
                           00000000     0        0 0 1 0000000000000000 100 0 0 10 0",
                          slot,
-                         proc_ipv4_hex(socket.local.address),
+                         proc_address_hex(socket.local.address),
                          socket.local.port,
-                         proc_ipv4_hex(socket.peer.address),
+                         proc_address_hex(socket.peer.address),
                          socket.peer.port,
                          proc_socket_state(socket.state, protocol),
                          socket.tx_queue,

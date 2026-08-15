@@ -6,20 +6,24 @@ use alloc::vec;
 use alloc::vec::Vec;
 use smoltcp::iface::{Interface, SocketHandle, SocketSet};
 
-use super::types::{SocketConnectError, SocketKind, SocketState};
+use super::types::{NetworkAddress, SocketConnectError, SocketDomain, SocketKind, SocketState};
 
 pub(super) struct SocketMeta {
+    pub(super) domain : SocketDomain,
     pub(super) kind : SocketKind,
     pub(super) state : SocketState,
-    /// None 表示绑定到 0.0.0.0，即任意本机地址。
-    pub(super) local_ip : Option<[u8; 4]>,
+    /// None 表示绑定到当前地址族的 wildcard 地址。
+    pub(super) local_ip : Option<NetworkAddress>,
+    /// TCP listener 实际交给 smoltcp 匹配的地址；wildcard listener 的槽位
+    /// 会分别绑定配置地址和 loopback，同时 `local_ip` 仍保持 None。
+    pub(super) listen_ip : Option<NetworkAddress>,
     pub(super) local_port : u16,
     /// TCP 监听槽标记；被 accept 取走后变为普通已连接 socket。
     pub(super) is_listener : bool,
     /// 所属 TCP listener 槽池；一个监听 fd 可对应多个 smoltcp socket。
     pub(super) listener_group : Option<u64>,
     /// 对端地址（connect 发起时或 accept 完成时填入）。
-    pub(super) peer_ip : [u8; 4],
+    pub(super) peer_ip : NetworkAddress,
     pub(super) peer_port : u16,
     /// TCP 三次握手是否至少成功过一次；不能仅凭已填写对端地址判断已连接。
     pub(super) connection_established : bool,
@@ -31,6 +35,12 @@ pub(super) struct SocketMeta {
     pub(super) recv_timeout_ms : Option<u64>,
     /// TCP_NODELAY 是否启用。
     pub(super) tcp_nodelay : bool,
+    /// bind 前设置的地址/端口复用选项；用于补足 smoltcp 未执行的端口冲突检查。
+    pub(super) reuse_addr : bool,
+    pub(super) reuse_port : bool,
+    /// IPv6 packet-info 控制消息类型。0 表示关闭，2 为 RFC 2292 兼容类型，
+    /// 50 为当前 Linux IPV6_PKTINFO 类型。
+    pub(super) ipv6_pktinfo_type : i32,
     /// IPv4 组播成员（`MCAST_JOIN_GROUP` / `IP_ADD_MEMBERSHIP`）。
     pub(super) mcast_groups : BTreeSet<u32>,
     /// `setsockopt(SO_SNDBUF)` 记录值，供 `getsockopt` / iperf 查询。
@@ -40,28 +50,37 @@ pub(super) struct SocketMeta {
     /// 同一时刻仅允许一个 read/recv/recvfrom 持有接收队列前缀。
     pub(super) recv_reservation : Option<u64>,
     pub(super) next_recv_reservation : u64,
+    /// smoltcp ICMP socket 按 Echo identifier 分流；第一次发送时从 ICMP
+    /// 报文头提取并固定，确保同机多个 ping 进程不会互相收包。
+    pub(super) icmp_ident : Option<u16>,
 }
 
 impl SocketMeta {
-    pub(super) fn new(kind : SocketKind) -> Self {
-        Self { kind,
+    pub(super) fn new(domain : SocketDomain, kind : SocketKind) -> Self {
+        Self { domain,
+               kind,
                state : SocketState::Created,
                local_ip : None,
+               listen_ip : None,
                local_port : 0,
                is_listener : false,
                listener_group : None,
-               peer_ip : [0; 4],
+               peer_ip : NetworkAddress::unspecified(domain),
                peer_port : 0,
                connection_established : false,
                connect_error : None,
                connect_deadline_ms : None,
                recv_timeout_ms : None,
                tcp_nodelay : false,
+               reuse_addr : false,
+               reuse_port : false,
+               ipv6_pktinfo_type : 0,
                mcast_groups : BTreeSet::new(),
                snd_buf_size : default_snd_buf_size(kind),
                rcv_buf_size : default_rcv_buf_size(kind),
                recv_reservation : None,
-               next_recv_reservation : 1 }
+               next_recv_reservation : 1,
+               icmp_ident : None }
     }
 }
 
@@ -71,8 +90,16 @@ pub(super) struct TcpListenerGroup {
 
 pub(super) struct LoopbackUdpPacket {
     pub(super) data : Vec<u8>,
-    pub(super) source_ip : [u8; 4],
+    pub(super) source_ip : NetworkAddress,
     pub(super) source_port : u16,
+    pub(super) destination_ip : NetworkAddress,
+}
+
+/// ICMP socket 没有 peek API。收到的报文先移到此处，用户复制成功后才
+/// 删除，因此 MSG_PEEK 和用户指针 fault 都不会误消费数据。
+pub(super) struct PendingIcmpPacket {
+    pub(super) data : Vec<u8>,
+    pub(super) source_ip : NetworkAddress,
 }
 
 #[derive(Default)]
@@ -86,8 +113,9 @@ impl LoopbackUdpQueue {
     /// 排队的数据报及其 FIFO 顺序。
     pub(super) fn try_push(&mut self,
                            data : &[u8],
-                           source_ip : [u8; 4],
-                           source_port : u16)
+                           source_ip : NetworkAddress,
+                           source_port : u16,
+                           destination_ip : NetworkAddress)
                            -> bool {
         let packet_len = data.len();
         if self.packets.len() >= UDP_LOOPBACK_QUEUE_PACKET_LIMIT ||
@@ -101,7 +129,8 @@ impl LoopbackUdpQueue {
         self.packets
             .push_back(LoopbackUdpPacket { data : data.to_vec(),
                                            source_ip,
-                                           source_port });
+                                           source_port,
+                                           destination_ip });
         true
     }
 
@@ -126,7 +155,7 @@ pub(super) struct NetworkStack {
     pub(super) adapter : SmoltcpAdapter,
     /// smoltcp 网络接口，持有 IP 地址、路由表与邻居缓存。
     pub(super) iface : Interface,
-    /// smoltcp 的 TCP/UDP socket 集合。
+    /// smoltcp 的 TCP/UDP/ICMP socket 集合。
     pub(super) sockets : SocketSet<'static>,
     /// WaterOS 为补充 Linux socket 语义维护的元数据。
     pub(super) metas : BTreeMap<SocketHandle, SocketMeta>,
@@ -136,7 +165,9 @@ pub(super) struct NetworkStack {
     pub(super) tcp_close_pending : BTreeSet<SocketHandle>,
     /// 已投递到本机 UDP socket、等待用户态接收的有限队列。
     pub(super) udp_loopback : BTreeMap<SocketHandle, LoopbackUdpQueue>,
-    pub(super) local_ip : [u8; 4],
+    pub(super) icmp_pending : BTreeMap<SocketHandle, PendingIcmpPacket>,
+    pub(super) local_ipv4 : [u8; 4],
+    pub(super) local_ipv6 : Option<[u8; 16]>,
     /// 最近一次交给 smoltcp 的单调毫秒时间，防止无时钟轮询使时间倒退。
     pub(super) last_poll_millis : i64,
     /// 临时端口分配器。
@@ -145,7 +176,11 @@ pub(super) struct NetworkStack {
 }
 
 impl NetworkStack {
-    pub(super) fn new(adapter : SmoltcpAdapter, iface : Interface, local_ip : [u8; 4]) -> Self {
+    pub(super) fn new(adapter : SmoltcpAdapter,
+                      iface : Interface,
+                      local_ipv4 : [u8; 4],
+                      local_ipv6 : Option<[u8; 16]>)
+                      -> Self {
         Self { adapter,
                iface,
                sockets : SocketSet::new(vec![]),
@@ -153,7 +188,9 @@ impl NetworkStack {
                tcp_listener_groups : BTreeMap::new(),
                tcp_close_pending : BTreeSet::new(),
                udp_loopback : BTreeMap::new(),
-               local_ip,
+               icmp_pending : BTreeMap::new(),
+               local_ipv4,
+               local_ipv6,
                last_poll_millis : 0,
                ephemeral_port : 49152,
                next_listener_group : 1 }
@@ -184,6 +221,14 @@ impl NetworkStack {
         }
         port
     }
+
+    pub(super) fn configured_address(&self, domain : SocketDomain) -> Option<NetworkAddress> {
+        match domain {
+            SocketDomain::Ipv4 => Some(NetworkAddress::Ipv4(self.local_ipv4)),
+            SocketDomain::Ipv6 => self.local_ipv6
+                                      .map(NetworkAddress::Ipv6),
+        }
+    }
 }
 
 /// smoltcp 0.12 的 `last_scaled_window()` 没有处理窗口缩放向下取整后，
@@ -193,6 +238,8 @@ pub(super) const TCP_RX_BUFFER_SIZE : usize = u16::MAX as usize;
 pub(super) const TCP_TX_BUFFER_SIZE : usize = u16::MAX as usize;
 pub(super) const UDP_PACKET_DATA_SIZE : usize = 64 * 1024;
 pub(super) const UDP_PACKET_METADATA_COUNT : usize = 64;
+pub(super) const ICMP_PACKET_DATA_SIZE : usize = 64 * 1024;
+pub(super) const ICMP_PACKET_METADATA_COUNT : usize = 16;
 
 /// 临时迁移开关：true 时本机 UDP 也进入 smoltcp，由 SmoltcpAdapter
 /// 回灌本地帧；false 时回退到旧的 udp_loopback 数据报队列。
@@ -204,6 +251,8 @@ pub(super) const UDP_LOOPBACK_QUEUE_PACKET_LIMIT : usize = 256;
 
 /// IPv4 最大 UDP payload：65535 - 20 字节 IPv4 头 - 8 字节 UDP 头。
 pub(super) const UDP_MAX_PAYLOAD_SIZE : usize = 65_507;
+/// IPv6 payload length 包含 UDP 头，因此最大数据为 65535 - 8。
+pub(super) const UDP6_MAX_PAYLOAD_SIZE : usize = 65_527;
 pub(super) const TCP_MSS : u32 = 1460;
 
 /// 每个监听槽都带约 64 KiB 接收、发送缓冲，限制槽数以约束内核内存。
@@ -216,6 +265,7 @@ fn default_snd_buf_size(kind : SocketKind) -> i32 {
     match kind {
         SocketKind::Tcp => TCP_TX_BUFFER_SIZE as i32,
         SocketKind::Udp => UDP_PACKET_DATA_SIZE as i32,
+        SocketKind::Icmp => ICMP_PACKET_DATA_SIZE as i32,
     }
 }
 
@@ -223,5 +273,6 @@ fn default_rcv_buf_size(kind : SocketKind) -> i32 {
     match kind {
         SocketKind::Tcp => TCP_RX_BUFFER_SIZE as i32,
         SocketKind::Udp => UDP_PACKET_DATA_SIZE as i32,
+        SocketKind::Icmp => ICMP_PACKET_DATA_SIZE as i32,
     }
 }

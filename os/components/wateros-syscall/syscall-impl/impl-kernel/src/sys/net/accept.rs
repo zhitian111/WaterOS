@@ -9,21 +9,12 @@ use network::{NetworkError, SocketKind};
 
 use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
-use crate::user_copy::copy_to_user_struct;
+
+use super::sockaddr::write_endpoint;
 
 const SOCK_NONBLOCK : usize = 0o0004000;
 const SOCK_CLOEXEC : usize = 0o2000000;
 const FD_CLOEXEC : usize = 1;
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-// 本结构代码由AI完成
-struct SockAddrIn {
-    sin_family : u16,
-    sin_port : u16,
-    sin_addr : [u8; 4],
-    sin_zero : [u8; 8],
-}
 
 // 本方法代码由AI完成
 pub(crate) fn sys_accept4(args : SyscallArgs) -> UserRet {
@@ -66,7 +57,9 @@ fn accept_inner(fd : usize, addr_ptr : usize, addrlen_ptr : usize, flags : usize
     };
 
     match socket.kind() {
-        Ok(SocketKind::Udp) => return UserRet::from_error(ErrNo::EOPNOTSUPP),
+        Ok(SocketKind::Udp | SocketKind::Icmp) => {
+            return UserRet::from_error(ErrNo::EOPNOTSUPP);
+        }
         Ok(SocketKind::Tcp) => {}
         Err(_) => return UserRet::from_error(ErrNo::ENOTSOCK),
     }
@@ -112,19 +105,10 @@ fn accept_inner(fd : usize, addr_ptr : usize, addrlen_ptr : usize, flags : usize
         }
     }
     // 写回客户端地址（如果有 addr 缓冲区）
-    if addr_ptr != 0 && addrlen_ptr != 0 {
-        let addr = SockAddrIn { sin_family : 2, // AF_INET
-                                sin_port : peer.port.to_be(),
-                                sin_addr : peer.address,
-                                sin_zero : [0; 8] };
-        if let Ok(addrlen_val) = crate::user_copy::copy_from_user_struct::<u32>(addrlen_ptr) {
-            let write_len = core::mem::size_of::<SockAddrIn>().min(addrlen_val as usize);
-            let addr_bytes = unsafe {
-                core::slice::from_raw_parts(&addr as *const SockAddrIn as *const u8,
-                                            write_len)
-            };
-            let _ = crate::user_copy::copy_to_user(addr_ptr, addr_bytes);
-            let _ = copy_to_user_struct(addrlen_ptr, &(write_len as u32));
+    if addr_ptr != 0 {
+        if let Err(error) = write_endpoint(peer, addr_ptr, addrlen_ptr) {
+            let _ = vfs::fd::close_fd(new_fd);
+            return UserRet::from_error(error);
         }
     }
 

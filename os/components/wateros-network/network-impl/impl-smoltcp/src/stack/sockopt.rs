@@ -10,16 +10,28 @@ use super::global::{with_stack, with_stack_mut};
 use super::poll::poll_socket_events;
 use super::state::{NetworkStack, SocketMeta, TCP_MSS, TCP_RX_BUFFER_SIZE, TCP_TX_BUFFER_SIZE};
 use super::tcp::tcp_is_connected;
-use super::types::{NetworkError, SocketConnectError, SocketKind};
+use super::types::{NetworkError, SocketConnectError, SocketDomain, SocketKind};
 
 const SOL_IP : usize = 0;
 const IPPROTO_IP : usize = 0;
 const SOL_SOCKET : usize = 1;
 const IPPROTO_TCP : usize = 6;
+const IPPROTO_IPV6 : usize = 41;
+const IPPROTO_ICMPV6 : usize = 58;
+const SOL_RAW : usize = 255;
+const IPV6_V6ONLY : usize = 26;
+const IPV6_2292PKTINFO : usize = 2;
+const IPV6_RECVPKTINFO : usize = 49;
+const IPV6_PKTINFO : usize = 50;
+const IPV6_CHECKSUM : usize = 7;
+const IPV6_2292HOPLIMIT : usize = 8;
+const IPV6_HOPLIMIT : usize = 52;
+const ICMP6_FILTER : usize = 1;
 const IP_TOS : usize = 1;
 const SO_REUSEADDR : usize = 2;
 const SO_ERROR : usize = 4;
 const SO_DONTROUTE : usize = 5;
+const SO_BROADCAST : usize = 6;
 const SO_SNDBUF : usize = 7;
 const SO_RCVBUF : usize = 8;
 const SO_KEEPALIVE : usize = 9;
@@ -170,6 +182,73 @@ impl NetworkStack {
                    optname : usize,
                    optval : &[u8])
                    -> Result<bool, NetworkError> {
+        if level == IPPROTO_ICMPV6 && optname == ICMP6_FILTER {
+            let meta = self.socket_meta(handle)?;
+            if meta.kind != SocketKind::Icmp || meta.domain != SocketDomain::Ipv6 {
+                return Err(NetworkError::WrongSocketType);
+            }
+            // Echo-only socket 本身已经按 identifier 过滤；接受 Linux 的
+            // ICMP6_FILTER ABI，BusyBox ping6 会把它设为仅放行 Echo Reply。
+            if optval.len() < 32 {
+                return Err(NetworkError::InvalidArgument);
+            }
+            return Ok(false);
+        }
+        if level == SOL_RAW && optname == IPV6_CHECKSUM {
+            let meta = self.socket_meta(handle)?;
+            if meta.kind != SocketKind::Icmp || meta.domain != SocketDomain::Ipv6 {
+                return Err(NetworkError::WrongSocketType);
+            }
+            if sockopt_i32(optval)? != 2 {
+                return Err(NetworkError::InvalidArgument);
+            }
+            // smoltcp 根据 IPv6 pseudo-header 生成校验和。
+            return Ok(false);
+        }
+        if level == IPPROTO_IPV6 && matches!(optname, IPV6_2292HOPLIMIT | IPV6_HOPLIMIT) {
+            let meta = self.socket_meta(handle)?;
+            if meta.kind != SocketKind::Icmp || meta.domain != SocketDomain::Ipv6 {
+                return Err(NetworkError::WrongSocketType);
+            }
+            // BusyBox 用它请求 recvmsg ancillary hop-limit；syscall 层会返回
+            // 对应 cmsg，使 ping6 能显示 ttl/hop-limit。
+            let _enabled = sockopt_bool(optval)?;
+            return Ok(false);
+        }
+        if level == IPPROTO_IPV6 &&
+           matches!(optname, IPV6_2292PKTINFO | IPV6_RECVPKTINFO | IPV6_PKTINFO)
+        {
+            let meta = self.socket_meta(handle)?;
+            if meta.kind != SocketKind::Udp || meta.domain != SocketDomain::Ipv6 {
+                return Err(NetworkError::WrongSocketType);
+            }
+            let enabled = sockopt_bool(optval)?;
+            self.socket_meta_mut(handle)?
+                .ipv6_pktinfo_type = if enabled {
+                if optname == IPV6_2292PKTINFO {
+                    IPV6_2292PKTINFO as i32
+                } else {
+                    IPV6_PKTINFO as i32
+                }
+            } else {
+                0
+            };
+            return Ok(false);
+        }
+        if level == IPPROTO_IPV6 && optname == IPV6_V6ONLY {
+            if self.socket_meta(handle)?
+                   .domain !=
+               SocketDomain::Ipv6
+            {
+                return Err(NetworkError::WrongSocketType);
+            }
+            // 第一版 AF_INET6 socket 固定为 IPv6-only；不接受关闭选项，避免
+            // 对用户态声称支持尚未实现的 IPv4-mapped IPv6。
+            if !sockopt_bool(optval)? {
+                return Err(NetworkError::Unsupported);
+            }
+            return Ok(false);
+        }
         if (level == SOL_IP || level == IPPROTO_IP) && optname == IP_TOS {
             // OpenSSH 会根据会话阶段设置 IP_TOS。smoltcp 暂无逐 socket 的
             // IPv4 TOS 接口，因此校验参数后兼容接受，不改变实际报文优先级。
@@ -200,9 +279,16 @@ impl NetworkStack {
             return Ok(false);
         }
         if level == SOL_SOCKET && matches!(optname, SO_REUSEADDR | SO_REUSEPORT) {
+            let enabled = sockopt_bool(optval)?;
+            let meta = self.socket_meta_mut(handle)?;
+            if optname == SO_REUSEADDR {
+                meta.reuse_addr = enabled;
+            } else {
+                meta.reuse_port = enabled;
+            }
             return Ok(false);
         }
-        if level == SOL_SOCKET && optname == SO_DONTROUTE {
+        if level == SOL_SOCKET && matches!(optname, SO_DONTROUTE | SO_BROADCAST) {
             let _enabled = sockopt_bool(optval)?;
             return Ok(false);
         }
@@ -276,6 +362,12 @@ impl NetworkStack {
                .recv_timeout_ms)
     }
 
+    fn ipv6_pktinfo_type(&self, handle : SocketHandle) -> Result<Option<i32>, NetworkError> {
+        let value = self.socket_meta(handle)?
+                        .ipv6_pktinfo_type;
+        Ok((value != 0).then_some(value))
+    }
+
     fn tcp_info(&mut self, handle : SocketHandle) -> Vec<u8> {
         const TCP_INFO_LEN : usize = 256;
         const TCP_ESTABLISHED : u8 = 1;
@@ -327,6 +419,26 @@ impl NetworkStack {
                    level : usize,
                    optname : usize)
                    -> Result<Vec<u8>, NetworkError> {
+        if level == IPPROTO_IPV6 && optname == IPV6_V6ONLY {
+            if self.socket_meta(handle)?
+                   .domain !=
+               SocketDomain::Ipv6
+            {
+                return Err(NetworkError::WrongSocketType);
+            }
+            return Ok(1i32.to_ne_bytes()
+                          .to_vec());
+        }
+        if level == IPPROTO_IPV6 &&
+           matches!(optname, IPV6_2292PKTINFO | IPV6_RECVPKTINFO | IPV6_PKTINFO)
+        {
+            let meta = self.socket_meta(handle)?;
+            if meta.kind != SocketKind::Udp || meta.domain != SocketDomain::Ipv6 {
+                return Err(NetworkError::WrongSocketType);
+            }
+            return Ok(((meta.ipv6_pktinfo_type != 0) as i32).to_ne_bytes()
+                                                               .to_vec());
+        }
         if level == SOL_SOCKET && optname == SO_ERROR {
             // Linux 的 SO_ERROR 会取出并清除待处理错误；连接仍在进行或已经成功时为 0。
             let error = self.socket_meta_mut(handle)?
@@ -339,6 +451,15 @@ impl NetworkStack {
             };
             return Ok(errno.to_ne_bytes()
                            .to_vec());
+        }
+        if level == SOL_SOCKET && matches!(optname, SO_REUSEADDR | SO_REUSEPORT) {
+            let meta = self.socket_meta(handle)?;
+            let enabled = if optname == SO_REUSEADDR {
+                meta.reuse_addr
+            } else {
+                meta.reuse_port
+            };
+            return Ok((enabled as i32).to_ne_bytes().to_vec());
         }
         if level == SOL_SOCKET && optname == SO_SNDBUF {
             return Ok(self.socket_meta(handle)?
@@ -420,6 +541,12 @@ pub fn socket_setsockopt(handle : SocketHandle,
 pub fn socket_recv_timeout_ms(handle : SocketHandle) -> Result<Option<u64>, NetworkError> {
     with_stack(NetworkError::StackUnavailable,
                |stack| stack.recv_timeout_ms(handle))
+}
+
+/// 查询 recvmsg 应返回的 IPv6 packet-info cmsg 类型。
+pub fn socket_ipv6_pktinfo_type(handle : SocketHandle) -> Result<Option<i32>, NetworkError> {
+    with_stack(NetworkError::StackUnavailable,
+               |stack| stack.ipv6_pktinfo_type(handle))
 }
 
 /// 获取 socket 选项。

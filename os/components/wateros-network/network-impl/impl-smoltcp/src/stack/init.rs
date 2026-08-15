@@ -1,8 +1,10 @@
-//! 网络接口、IPv4 地址与路由初始化。
+//! 网络接口、双栈地址与路由初始化。
 
 use smoltcp::iface::{Config, Interface};
 use smoltcp::time::Instant;
 use smoltcp::wire::{EthernetAddress, HardwareAddress, IpCidr, Ipv4Address};
+#[cfg(feature = "ipv6")]
+use smoltcp::wire::Ipv6Address;
 
 use crate::adapter::SmoltcpAdapter;
 use driver_network::first_network_device;
@@ -16,9 +18,19 @@ pub fn init(network_config : NetworkConfig) -> Result<(), NetworkError> {
     if network_config.prefix_len > 32 {
         return Err(NetworkError::InvalidArgument);
     }
+    #[cfg(feature = "ipv6")]
+    if network_config.ipv6
+                     .is_some_and(|config| config.prefix_len > 128)
+    {
+        return Err(NetworkError::InvalidArgument);
+    }
     let ip = network_config.address;
     let gateway = network_config.gateway;
     let prefix_len = network_config.prefix_len;
+    #[cfg(feature = "ipv6")]
+    let ipv6 = network_config.ipv6;
+    #[cfg(not(feature = "ipv6"))]
+    let ipv6 = None::<api_v0::Ipv6Config>;
     let mut adapter = match first_network_device() {
         Some(device) => SmoltcpAdapter::new(device),
         None => {
@@ -28,6 +40,7 @@ pub fn init(network_config : NetworkConfig) -> Result<(), NetworkError> {
     };
     let mac = adapter.mac_address();
     adapter.set_local_ipv4(ip);
+    adapter.set_local_ipv6(ipv6.map(|config| config.address));
 
     let config = Config::new(HardwareAddress::Ethernet(EthernetAddress(mac)));
     let mut iface = Interface::new(config, &mut adapter, Instant::ZERO);
@@ -39,11 +52,29 @@ pub fn init(network_config : NetworkConfig) -> Result<(), NetworkError> {
              // loopback 地址：iperf / netperf / libc-test 均使用 127.0.0.1
              addrs.push(IpCidr::new(Ipv4Address::new(127, 0, 0, 1).into(), 8))
                   .unwrap();
+             #[cfg(feature = "ipv6")]
+             if let Some(ipv6) = ipv6 {
+                 addrs.push(IpCidr::new(Ipv6Address::from(ipv6.address).into(),
+                                        ipv6.prefix_len))
+                      .unwrap();
+             }
+             #[cfg(feature = "ipv6")]
+             {
+                 // 即使没有配置外部 IPv6 地址，AF_INET6 仍可使用 ::1。
+                 addrs.push(IpCidr::new(Ipv6Address::LOCALHOST.into(), 128))
+                      .unwrap();
+             }
          });
     // 默认路由：所有外部流量经网关
     iface.routes_mut()
          .add_default_ipv4_route(Ipv4Address::new(gateway[0], gateway[1], gateway[2], gateway[3]))
          .unwrap();
+    #[cfg(feature = "ipv6")]
+    if let Some(ipv6) = ipv6 {
+        iface.routes_mut()
+             .add_default_ipv6_route(Ipv6Address::from(ipv6.gateway))
+             .unwrap();
+    }
     // 添加本地子网路由（直接可达，无需网关）和 loopback 路由
     iface.routes_mut()
          .update(|storage| {
@@ -69,7 +100,10 @@ pub fn init(network_config : NetworkConfig) -> Result<(), NetworkError> {
         });
          });
 
-    install_stack(NetworkStack::new(adapter, iface, ip))?;
+    install_stack(NetworkStack::new(adapter,
+                                    iface,
+                                    ip,
+                                    ipv6.map(|config| config.address)))?;
 
     log::info!("[network-stack] initialized ip={}.{}.{}.{}/{} gateway={}.{}.{}.{}",
                ip[0],
@@ -81,5 +115,12 @@ pub fn init(network_config : NetworkConfig) -> Result<(), NetworkError> {
                gateway[1],
                gateway[2],
                gateway[3],);
+    #[cfg(feature = "ipv6")]
+    if let Some(ipv6) = ipv6 {
+        log::info!("[network-stack] initialized ipv6={:?}/{} gateway={:?}",
+                   ipv6.address,
+                   ipv6.prefix_len,
+                   ipv6.gateway);
+    }
     Ok(())
 }

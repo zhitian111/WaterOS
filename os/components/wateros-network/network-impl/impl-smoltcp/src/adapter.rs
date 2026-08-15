@@ -20,6 +20,10 @@ const MAX_RX_DRAIN : usize = 32;
 const ETHERNET_HEADER_LEN : usize = 14;
 const ETHERTYPE_IPV4 : u16 = 0x0800;
 const ETHERTYPE_ARP : u16 = 0x0806;
+const ETHERTYPE_IPV6 : u16 = 0x86DD;
+const IPPROTO_ICMPV6 : u8 = 58;
+const ICMPV6_NEIGHBOR_SOLICIT : u8 = 135;
+const ICMPV6_NEIGHBOR_ADVERT : u8 = 136;
 
 /// 将 [`SharedNetworkDevice`] 包装为 smoltcp 可用的网卡抽象。
 ///
@@ -33,6 +37,7 @@ pub struct SmoltcpAdapter {
     tx_buf : Vec<u8>,
     rx_len : usize,
     local_ipv4 : [u8; 4],
+    local_ipv6 : Option<[u8; 16]>,
     loopback_queue : VecDeque<Vec<u8>>,
     rx_staging : VecDeque<Vec<u8>>,
 }
@@ -45,6 +50,7 @@ pub struct SmoltcpTxToken<'a> {
     buf : &'a mut [u8],
     dev : Option<&'a SharedNetworkDevice>,
     local_ipv4 : [u8; 4],
+    local_ipv6 : Option<[u8; 16]>,
     loopback_queue : &'a mut VecDeque<Vec<u8>>,
 }
 
@@ -52,7 +58,7 @@ impl SmoltcpAdapter {
     /// 用已注册的共享网络设备构造适配器。
     pub fn new(inner : SharedNetworkDevice) -> Self { Self::with_inner(Some(inner)) }
 
-    /// 构造只支持本机回环的适配器；用于无真实网卡时的 127.0.0.1。
+    /// 构造只支持本机回环的适配器；用于无真实网卡时的 127.0.0.1/::1。
     pub fn loopback_only() -> Self { Self::with_inner(None) }
 
     fn with_inner(inner : Option<SharedNetworkDevice>) -> Self {
@@ -61,12 +67,16 @@ impl SmoltcpAdapter {
                tx_buf : vec![0u8; TX_BUF],
                rx_len : 0,
                local_ipv4 : [0; 4],
+               local_ipv6 : None,
                loopback_queue : VecDeque::new(),
                rx_staging : VecDeque::new() }
     }
 
     /// 设置本机 IPv4 地址，用于识别应回灌给协议栈的本地帧。
     pub fn set_local_ipv4(&mut self, ip : [u8; 4]) { self.local_ipv4 = ip; }
+
+    /// 设置本机 IPv6 地址，用于识别应回灌给协议栈的本地帧。
+    pub fn set_local_ipv6(&mut self, ip : Option<[u8; 16]>) { self.local_ipv6 = ip; }
 
     /// 获取 MAC 地址（用于构建 smoltcp 接口配置）。
     pub fn mac_address(&self) -> [u8; 6] {
@@ -77,6 +87,14 @@ impl SmoltcpAdapter {
                    .mac_address()
             })
             .unwrap_or([0x02, 0x00, 0x00, 0x00, 0x00, 0x01])
+    }
+
+    /// 返回驱动报告的 IP MTU（不包含 Ethernet 帧头）。
+    pub(crate) fn ip_mtu(&self) -> usize {
+        self.inner
+            .as_ref()
+            .map(|dev| dev.lock().mtu())
+            .unwrap_or(DEFAULT_MTU)
     }
 
     fn drain_rx_staging(&mut self) {
@@ -142,6 +160,7 @@ impl Device for SmoltcpAdapter {
                    tx_buf,
                    rx_len,
                    local_ipv4,
+                   local_ipv6,
                    loopback_queue,
                    .. } = self;
 
@@ -153,6 +172,7 @@ impl Device for SmoltcpAdapter {
               SmoltcpTxToken { buf : tx_buf.as_mut_slice(),
                                dev : inner.as_ref(),
                                local_ipv4 : *local_ipv4,
+                               local_ipv6 : *local_ipv6,
                                loopback_queue }))
     }
 
@@ -160,21 +180,20 @@ impl Device for SmoltcpAdapter {
         let Self { inner,
                    tx_buf,
                    local_ipv4,
+                   local_ipv6,
                    loopback_queue,
                    .. } = self;
         Some(SmoltcpTxToken { buf : tx_buf.as_mut_slice(),
                               dev : inner.as_ref(),
                               local_ipv4 : *local_ipv4,
+                              local_ipv6 : *local_ipv6,
                               loopback_queue })
     }
 
     fn capabilities(&self) -> DeviceCapabilities {
         let mut caps = DeviceCapabilities::default();
         caps.medium = Medium::Ethernet;
-        let ip_mtu = self.inner
-                         .as_ref()
-                         .map(|dev| dev.lock().mtu())
-                         .unwrap_or(DEFAULT_MTU);
+        let ip_mtu = self.ip_mtu();
         // NetworkDevice::mtu() 使用通常的 IP MTU 语义；smoltcp 在 Ethernet
         // medium 下要求这里填写包含 14 字节 Ethernet 帧头的最大帧长度。
         caps.max_transmission_unit = ip_mtu.saturating_add(ETHERNET_HEADER_LEN);
@@ -190,7 +209,19 @@ impl phy::TxToken for SmoltcpTxToken<'_> {
     fn consume<R, F : FnOnce(&mut [u8]) -> R>(self, len : usize, f : F) -> R {
         let result = f(&mut self.buf[..len]);
         let frame = &self.buf[..len];
-        if should_loopback(frame, self.local_ipv4) {
+        if let Some(response) = local_ipv6_neighbor_advertisement(frame, self.local_ipv6) {
+            if self.loopback_queue
+                   .len() <
+               MAX_LOOPBACK_FRAMES
+            {
+                self.loopback_queue
+                    .push_back(response);
+            } else {
+                log::warn!("[smoltcp-adapter] loopback queue full, dropping local NDP response");
+            }
+            return result;
+        }
+        if should_loopback(frame, self.local_ipv4, self.local_ipv6) {
             if self.loopback_queue
                    .len() <
                MAX_LOOPBACK_FRAMES
@@ -215,14 +246,17 @@ impl phy::TxToken for SmoltcpTxToken<'_> {
     }
 }
 
-fn should_loopback(frame : &[u8], local_ipv4 : [u8; 4]) -> bool {
-    if frame.len() < 14 || local_ipv4 == [0; 4] {
+fn should_loopback(frame : &[u8], local_ipv4 : [u8; 4], local_ipv6 : Option<[u8; 16]>) -> bool {
+    if frame.len() < 14 {
         return false;
     }
 
     let ethertype = u16::from_be_bytes([frame[12], frame[13]]);
     match ethertype {
         ETHERTYPE_IPV4 => {
+            if local_ipv4 == [0; 4] {
+                return false;
+            }
             if frame.len() < 34 || frame[14] >> 4 != 4 {
                 return false;
             }
@@ -234,6 +268,9 @@ fn should_loopback(frame : &[u8], local_ipv4 : [u8; 4]) -> bool {
             is_local_ipv4(dst, local_ipv4)
         }
         ETHERTYPE_ARP => {
+            if local_ipv4 == [0; 4] {
+                return false;
+            }
             if frame.len() < 42 {
                 return false;
             }
@@ -247,8 +284,148 @@ fn should_loopback(frame : &[u8], local_ipv4 : [u8; 4]) -> bool {
             let target = [frame[38], frame[39], frame[40], frame[41]];
             is_local_ipv4(target, local_ipv4)
         }
+        ETHERTYPE_IPV6 => should_loopback_ipv6(frame, local_ipv6),
         _ => false,
     }
 }
 
 fn is_local_ipv4(ip : [u8; 4], local_ipv4 : [u8; 4]) -> bool { ip == local_ipv4 || ip[0] == 127 }
+
+fn should_loopback_ipv6(frame : &[u8], local_ipv6 : Option<[u8; 16]>) -> bool {
+    if frame.len() < 54 || frame[14] >> 4 != 6 {
+        return false;
+    }
+    let mut destination = [0u8; 16];
+    destination.copy_from_slice(&frame[38..54]);
+    is_local_ipv6(destination, local_ipv6)
+}
+
+fn is_local_ipv6(ip : [u8; 16], local_ipv6 : Option<[u8; 16]>) -> bool {
+    ip == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1] || local_ipv6 == Some(ip)
+}
+
+/// smoltcp 不会把 Ethernet 上的 `::1` 当成需要响应 NDP 的链路地址。
+/// 本机 TCP 首次发送仍会先查询邻居，因此由适配层为本机地址合成 NA，
+/// 让后续 IPv6 数据帧进入与 IPv4 相同的本地回灌路径。
+fn local_ipv6_neighbor_advertisement(frame : &[u8],
+                                     local_ipv6 : Option<[u8; 16]>)
+                                     -> Option<Vec<u8>> {
+    if frame.len() < 78 ||
+       u16::from_be_bytes([frame[12], frame[13]]) != ETHERTYPE_IPV6 ||
+       frame[14] >> 4 != 6 ||
+       frame[20] != IPPROTO_ICMPV6 ||
+       frame[54] != ICMPV6_NEIGHBOR_SOLICIT
+    {
+        return None;
+    }
+    let mut target = [0u8; 16];
+    target.copy_from_slice(&frame[62..78]);
+    if !is_local_ipv6(target, local_ipv6) {
+        return None;
+    }
+
+    let mut source = [0u8; 16];
+    source.copy_from_slice(&frame[22..38]);
+    let source_unspecified = source == [0; 16];
+    let destination = if source_unspecified {
+        [0xFF, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+    } else {
+        source
+    };
+    let source_mac : [u8; 6] = frame[6..12].try_into()
+                                           .ok()?;
+    let destination_mac = if source_unspecified {
+        [0x33, 0x33, 0, 0, 0, 1]
+    } else {
+        source_mac
+    };
+
+    const ICMP_LEN : usize = 32;
+    let mut response = vec![0u8; ETHERNET_HEADER_LEN + 40 + ICMP_LEN];
+    response[..6].copy_from_slice(&destination_mac);
+    response[6..12].copy_from_slice(&source_mac);
+    response[12..14].copy_from_slice(&ETHERTYPE_IPV6.to_be_bytes());
+    response[14] = 0x60;
+    response[18..20].copy_from_slice(&(ICMP_LEN as u16).to_be_bytes());
+    response[20] = IPPROTO_ICMPV6;
+    response[21] = 255;
+    response[22..38].copy_from_slice(&target);
+    response[38..54].copy_from_slice(&destination);
+    response[54] = ICMPV6_NEIGHBOR_ADVERT;
+    // Solicited + Override；DAD 使用未指定源地址时不能设置 Solicited。
+    let flags = if source_unspecified {
+        0x2000_0000u32
+    } else {
+        0x6000_0000u32
+    };
+    response[58..62].copy_from_slice(&flags.to_be_bytes());
+    response[62..78].copy_from_slice(&target);
+    response[78] = 2; // Target Link-Layer Address option
+    response[79] = 1; // 8-byte option
+    response[80..86].copy_from_slice(&source_mac);
+    let checksum = icmpv6_checksum(target, destination, &response[54..]);
+    response[56..58].copy_from_slice(&checksum.to_be_bytes());
+    Some(response)
+}
+
+fn icmpv6_checksum(source : [u8; 16], destination : [u8; 16], packet : &[u8]) -> u16 {
+    fn add_words(mut sum : u32, bytes : &[u8]) -> u32 {
+        for chunk in bytes.chunks(2) {
+            let word = if chunk.len() == 2 {
+                u16::from_be_bytes([chunk[0], chunk[1]])
+            } else {
+                u16::from_be_bytes([chunk[0], 0])
+            };
+            sum += u32::from(word);
+        }
+        sum
+    }
+
+    let mut sum = add_words(0, &source);
+    sum = add_words(sum, &destination);
+    sum += (packet.len() as u32 >> 16) + (packet.len() as u32 & 0xFFFF);
+    sum += u32::from(IPPROTO_ICMPV6);
+    sum = add_words(sum, packet);
+    while sum >> 16 != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    !(sum as u16)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        icmpv6_checksum, local_ipv6_neighbor_advertisement, should_loopback, ETHERTYPE_IPV6,
+        ICMPV6_NEIGHBOR_ADVERT, ICMPV6_NEIGHBOR_SOLICIT, IPPROTO_ICMPV6,
+    };
+
+    const LOCAL : [u8; 16] = [0xFE, 0xC0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x15];
+
+    #[test]
+    fn loops_ipv6_unicast_to_local_address() {
+        let mut frame = [0u8; 54];
+        frame[12..14].copy_from_slice(&ETHERTYPE_IPV6.to_be_bytes());
+        frame[14] = 0x60;
+        frame[38..54].copy_from_slice(&LOCAL);
+        assert!(should_loopback(&frame, [10, 0, 2, 15], Some(LOCAL)));
+    }
+
+    #[test]
+    fn synthesizes_neighbor_advertisement_for_local_address() {
+        let mut frame = [0u8; 78];
+        frame[6..12].copy_from_slice(&[2, 0, 0, 0, 0, 1]);
+        frame[12..14].copy_from_slice(&ETHERTYPE_IPV6.to_be_bytes());
+        frame[14] = 0x60;
+        frame[20] = IPPROTO_ICMPV6;
+        frame[22..38].copy_from_slice(&LOCAL);
+        frame[54] = ICMPV6_NEIGHBOR_SOLICIT;
+        frame[62..78].copy_from_slice(&LOCAL);
+
+        let response = local_ipv6_neighbor_advertisement(&frame, Some(LOCAL)).unwrap();
+        assert_eq!(response[54], ICMPV6_NEIGHBOR_ADVERT);
+        assert_eq!(&response[22..38], &LOCAL);
+        assert_eq!(&response[38..54], &LOCAL);
+        assert_eq!(icmpv6_checksum(LOCAL, LOCAL, &response[54..]),
+                   0);
+    }
+}

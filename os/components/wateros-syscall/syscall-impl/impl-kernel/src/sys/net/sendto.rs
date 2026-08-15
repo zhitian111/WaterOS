@@ -4,27 +4,19 @@
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use network::{stack, Ipv4Endpoint, SocketKind, SocketRef, SocketSendError, SocketState};
+use network::{stack, NetworkEndpoint, SocketKind, SocketRef, SocketSendError, SocketState};
 
 use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
-use crate::user_copy::{copy_from_user, copy_from_user_struct};
+use crate::user_copy::copy_from_user;
+
+use super::sockaddr::{endpoint_domain, read_endpoint};
 
 const TCP_BULK_SEND_YIELD_THRESHOLD : usize = 64 * 1024;
 const TCP_MSS_BYTES : usize = 1460;
 const TCP_LOOPBACK_POLL_ROUNDS : usize = 4;
 const MSG_DONTWAIT : usize = 0x40;
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-// 本结构代码由AI完成
-struct SockAddrIn {
-    sin_family : u16,
-    sin_port : u16,
-    sin_addr : [u8; 4],
-    sin_zero : [u8; 8],
-}
 
 // 本方法代码由AI完成
 pub(crate) fn sys_sendto(args : SyscallArgs) -> UserRet {
@@ -35,10 +27,7 @@ pub(crate) fn sys_sendto(args : SyscallArgs) -> UserRet {
     let addr_ptr = args.arg(4);
     let addrlen = args.arg(5);
 
-    if len == 0 {
-        return UserRet::from_success(0);
-    }
-    if buf_ptr == 0 || len > SYSCALL_IO_MAX {
+    if len > SYSCALL_IO_MAX || (len != 0 && buf_ptr == 0) {
         return UserRet::from_error(ErrNo::EINVAL);
     }
 
@@ -47,9 +36,11 @@ pub(crate) fn sys_sendto(args : SyscallArgs) -> UserRet {
             Ok(buf) => buf,
             Err(err) => return UserRet::from_error(err),
         };
-        match copy_from_user(&mut kbuf, buf_ptr) {
-            Ok(n) if n == len => {}
-            _ => return UserRet::from_error(ErrNo::EFAULT),
+        if len != 0 {
+            match copy_from_user(&mut kbuf, buf_ptr) {
+                Ok(n) if n == len => {}
+                _ => return UserRet::from_error(ErrNo::EFAULT),
+            }
         }
         return match crate::unix_sock::sendto_unix(fd, &kbuf, addr_ptr, addrlen) {
             Ok(n) => UserRet::from_success(n),
@@ -62,10 +53,11 @@ pub(crate) fn sys_sendto(args : SyscallArgs) -> UserRet {
         None => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
     // 解析目标地址
-    let (ip, port) = if addr_ptr != 0 && addrlen >= 16 {
-        match copy_from_user_struct::<SockAddrIn>(addr_ptr) {
-            Ok(addr) => (addr.sin_addr, u16::from_be(addr.sin_port)),
-            Err(_) => return UserRet::from_error(ErrNo::EFAULT),
+    let destination = if addr_ptr != 0 {
+        match read_endpoint(addr_ptr, addrlen) {
+            Ok(endpoint) if endpoint_domain(endpoint) == socket.domain() => endpoint,
+            Ok(_) => return UserRet::from_error(ErrNo::EAFNOSUPPORT),
+            Err(error) => return UserRet::from_error(error),
         }
     } else {
         // 没有目标地址 → 作为 TCP send（或已 connect 的 UDP）
@@ -83,15 +75,17 @@ pub(crate) fn sys_sendto(args : SyscallArgs) -> UserRet {
         Ok(buf) => buf,
         Err(err) => return UserRet::from_error(err),
     };
-    match copy_from_user(&mut kbuf, buf_ptr) {
-        Ok(n) if n == len => {}
-        _ => return UserRet::from_error(ErrNo::EFAULT),
+    if len != 0 {
+        match copy_from_user(&mut kbuf, buf_ptr) {
+            Ok(n) if n == len => {}
+            _ => return UserRet::from_error(ErrNo::EFAULT),
+        }
     }
 
     match send_udp_blocking(fd,
                             &socket,
                             &kbuf,
-                            Some((ip, port)),
+                            Some(destination),
                             flags)
     {
         Ok(n) => UserRet::from_success(n),
@@ -108,12 +102,15 @@ fn send_connected_socket(fd : usize,
     match socket.kind()
                 .map_err(|_| ErrNo::ENOTSOCK)?
     {
+        SocketKind::Tcp if len == 0 => Ok(0),
         SocketKind::Tcp => send_tcp_blocking(fd, socket, buf_ptr, len, flags),
-        SocketKind::Udp => {
+        SocketKind::Udp | SocketKind::Icmp => {
             let mut kbuf = try_kbuf(len, SYSCALL_IO_MAX)?;
-            match copy_from_user(&mut kbuf, buf_ptr) {
-                Ok(n) if n == len => {}
-                _ => return Err(ErrNo::EFAULT),
+            if len != 0 {
+                match copy_from_user(&mut kbuf, buf_ptr) {
+                    Ok(n) if n == len => {}
+                    _ => return Err(ErrNo::EFAULT),
+                }
             }
             send_udp_blocking(fd, socket, &kbuf, None, flags)
         }
@@ -130,7 +127,8 @@ fn send_tcp_blocking(fd : usize,
     let task_id = task::current_task_id().unwrap_or(0);
     loop {
         drive_network_stack();
-        let snapshot = socket.poll_snapshot().map_err(|_| ErrNo::ENOTSOCK)?;
+        let snapshot = socket.poll_snapshot()
+                             .map_err(|_| ErrNo::ENOTSOCK)?;
         if snapshot.may_send && snapshot.send_capacity > 0 {
             let send_len = len.min(snapshot.send_capacity);
             let mut kbuf = try_kbuf(send_len, SYSCALL_IO_MAX)?;
@@ -153,9 +151,7 @@ fn send_tcp_blocking(fd : usize,
             }
         }
         if !snapshot.is_connected {
-            if !snapshot.may_send &&
-               !snapshot.may_recv &&
-               snapshot.state == SocketState::Connected
+            if !snapshot.may_send && !snapshot.may_recv && snapshot.state == SocketState::Connected
             {
                 return Ok(len);
             }
@@ -168,7 +164,7 @@ fn send_tcp_blocking(fd : usize,
 pub(super) fn send_udp_blocking(fd : usize,
                                 socket : &SocketRef,
                                 data : &[u8],
-                                destination : Option<([u8; 4], u16)>,
+                                destination : Option<NetworkEndpoint>,
                                 flags : usize)
                                 -> Result<usize, ErrNo> {
     let nonblocking = socket_fd::is_nonblocking(fd) || (flags & MSG_DONTWAIT) != 0;
@@ -176,8 +172,7 @@ pub(super) fn send_udp_blocking(fd : usize,
     loop {
         drive_network_stack();
         let result = match destination {
-            Some((ip, port)) => socket.send_to(data, Ipv4Endpoint { address : ip,
-                                                                    port }),
+            Some(endpoint) => socket.send_to(data, endpoint),
             None => socket.send(data),
         };
         match result {

@@ -1,7 +1,7 @@
 //! 与传输协议无关的 socket 操作与 TCP/UDP 分派。
 
 use smoltcp::iface::SocketHandle;
-use smoltcp::socket::{tcp, udp};
+use smoltcp::socket::{icmp, tcp, udp};
 use smoltcp::wire::{IpAddress, IpListenEndpoint};
 
 use super::global::{with_stack, with_stack_mut};
@@ -9,29 +9,62 @@ use super::poll::{poll, poll_socket_events};
 use super::state::NetworkStack;
 use super::tcp::{tcp_is_accept_ready, tcp_is_connected};
 use super::types::{
-    Ipv4Endpoint, NetworkError, NetworkSocketSnapshot, SocketKind, SocketPollSnapshot,
-    SocketSendError, SocketState,
+    NetworkAddress, NetworkEndpoint, NetworkError, NetworkSocketSnapshot, SocketDomain, SocketKind,
+    SocketPollSnapshot, SocketSendError, SocketState,
 };
 
 /// 与 syscall 阻塞 connect 的兜底时间一致；成功建连后会取消，不影响长连接空闲时间。
 const TCP_CONNECT_TIMEOUT_MS : u64 = 30_000;
 
-fn is_valid_local_addr(addr : Option<[u8; 4]>, configured : [u8; 4]) -> bool {
+fn is_valid_local_addr(addr : Option<NetworkAddress>, configured : Option<NetworkAddress>) -> bool {
     match addr {
         None => true,
-        Some(ip) => ip == configured || ip[0] == 127,
+        Some(ip) => Some(ip) == configured || ip.is_loopback(),
     }
 }
 
+pub(super) fn smoltcp_ip(address : NetworkAddress) -> IpAddress {
+    match address {
+        NetworkAddress::Ipv4(ip) => IpAddress::v4(ip[0], ip[1], ip[2], ip[3]),
+        NetworkAddress::Ipv6(ip) => {
+            #[cfg(feature = "ipv6")]
+            {
+                IpAddress::Ipv6(ip.into())
+            }
+            #[cfg(not(feature = "ipv6"))]
+            {
+                let _ = ip;
+                unreachable!("IPv6 address reached the IPv4-only smoltcp backend")
+            }
+        }
+    }
+}
 
-pub(super) fn listen_endpoint(addr : Option<[u8; 4]>, port : u16) -> IpListenEndpoint {
-    IpListenEndpoint { addr : addr.map(|ip| IpAddress::v4(ip[0], ip[1], ip[2], ip[3])),
+pub(super) fn network_address(address : IpAddress) -> NetworkAddress {
+    match address {
+        IpAddress::Ipv4(ip) => NetworkAddress::Ipv4(ip.octets()),
+        #[cfg(feature = "ipv6")]
+        IpAddress::Ipv6(ip) => NetworkAddress::Ipv6(ip.octets()),
+    }
+}
+
+pub(super) const fn loopback_address(domain : SocketDomain) -> NetworkAddress {
+    match domain {
+        SocketDomain::Ipv4 => NetworkAddress::Ipv4([127, 0, 0, 1]),
+        SocketDomain::Ipv6 => {
+            NetworkAddress::Ipv6([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
+        }
+    }
+}
+
+pub(super) fn listen_endpoint(addr : Option<NetworkAddress>, port : u16) -> IpListenEndpoint {
+    IpListenEndpoint { addr : addr.map(smoltcp_ip),
                        port }
 }
 
-fn normalize_connect_ip(ip : [u8; 4]) -> [u8; 4] {
-    if ip == [0; 4] {
-        [127, 0, 0, 1]
+fn normalize_connect_ip(ip : NetworkAddress) -> NetworkAddress {
+    if ip.is_unspecified() {
+        loopback_address(ip.domain())
     } else {
         ip
     }
@@ -47,12 +80,15 @@ impl NetworkStack {
         let mut seen_listener_groups = alloc::collections::BTreeSet::new();
         let mut snapshots = alloc::vec::Vec::new();
         for handle in handles {
-            let (kind, state, local_ip, local_port, peer_ip, peer_port, listener_group) = {
-                let meta = match self.metas.get(&handle) {
+            let (domain, kind, state, local_ip, local_port, peer_ip, peer_port, listener_group) = {
+                let meta = match self.metas
+                                     .get(&handle)
+                {
                     Some(meta) => meta,
                     None => continue,
                 };
-                (meta.kind,
+                (meta.domain,
+                 meta.kind,
                  meta.state,
                  meta.local_ip,
                  meta.local_port,
@@ -65,33 +101,52 @@ impl NetworkStack {
                     continue;
                 }
             }
-            let address = local_ip.unwrap_or_else(|| {
-                if peer_ip[0] == 127 {
-                    [127, 0, 0, 1]
-                } else if matches!(state, SocketState::Connecting | SocketState::Connected) {
-                    self.local_ip
-                } else {
-                    [0; 4]
-                }
-            });
+            let address =
+                local_ip.unwrap_or_else(|| {
+                            if peer_ip.is_loopback() {
+                                loopback_address(domain)
+                            } else if matches!(state,
+                                               SocketState::Connecting | SocketState::Connected)
+                            {
+                                self.configured_address(domain)
+                                    .unwrap_or_else(|| NetworkAddress::unspecified(domain))
+                            } else {
+                                NetworkAddress::unspecified(domain)
+                            }
+                        });
             let (tx_queue, rx_queue) = match kind {
                 SocketKind::Tcp => {
-                    let socket = self.sockets.get::<tcp::Socket>(handle);
+                    let socket = self.sockets
+                                     .get::<tcp::Socket>(handle);
                     (socket.send_queue(), socket.recv_queue())
                 }
                 SocketKind::Udp => {
-                    let socket = self.sockets.get::<udp::Socket>(handle);
+                    let socket = self.sockets
+                                     .get::<udp::Socket>(handle);
                     (socket.send_queue(), socket.recv_queue())
                 }
+                SocketKind::Icmp => {
+                    let socket = self.sockets
+                                     .get::<icmp::Socket>(handle);
+                    let pending = self.icmp_pending
+                                      .get(&handle)
+                                      .map_or(0, |packet| packet.data.len());
+                    (socket.send_queue(), socket.recv_queue().saturating_add(pending))
+                }
             };
-            snapshots.push(NetworkSocketSnapshot {
-                kind,
-                state,
-                local : Ipv4Endpoint { address, port : local_port },
-                peer : Ipv4Endpoint { address : peer_ip, port : peer_port },
-                tx_queue,
-                rx_queue,
-            });
+            snapshots.push(NetworkSocketSnapshot { domain,
+                                                   kind,
+                                                   state,
+                                                   local : NetworkEndpoint { address,
+                                                                             port:
+                                                                                 local_port,
+                                                                             scope_id : 0 },
+                                                   peer : NetworkEndpoint { address:
+                                                                                peer_ip,
+                                                                            port : peer_port,
+                                                                            scope_id : 0 },
+                                                   tx_queue,
+                                                   rx_queue });
         }
         snapshots
     }
@@ -99,10 +154,15 @@ impl NetworkStack {
     // 绑定与基本状态。
     fn bind(&mut self,
             handle : SocketHandle,
-            local_ip : Option<[u8; 4]>,
+            local_ip : Option<NetworkAddress>,
             port : u16)
             -> Result<(), NetworkError> {
-        if !is_valid_local_addr(local_ip, self.local_ip) {
+        let domain = self.socket_meta(handle)?
+                         .domain;
+        if local_ip.is_some_and(|ip| ip.domain() != domain) ||
+           !is_valid_local_addr(local_ip,
+                                self.configured_address(domain))
+        {
             return Err(NetworkError::AddressNotAvailable);
         }
         // 先只读获取 socket 类型，避免后续与 next_ephemeral_port 的借用冲突
@@ -126,18 +186,36 @@ impl NetworkStack {
             SocketKind::Udp => {
                 // smoltcp 的 UDP bind 拒绝 port=0，必须预分配 ephemeral port
                 let actual_port = if port == 0 {
-                    self.next_ephemeral_port()
+                    self.next_udp_ephemeral_port(handle, domain, local_ip)?
                 } else {
                     port
                 };
+                if self.udp_bind_conflicts(handle, domain, local_ip, actual_port)? {
+                    return Err(NetworkError::AddressInUse);
+                }
+                #[cfg(feature = "ipv6")]
+                let bind_ip = Some(local_ip.or_else(|| self.configured_address(domain))
+                                           .unwrap_or_else(|| loopback_address(domain)));
+                // 纯 IPv4 构建沿用原来的 smoltcp wildcard，让配置地址与
+                // 127.0.0.1 动态共享同一个监听池。
+                #[cfg(not(feature = "ipv6"))]
+                let bind_ip = local_ip;
                 self.sockets
                     .get_mut::<udp::Socket>(handle)
-                    .bind(listen_endpoint(local_ip, actual_port))
+                    .bind(listen_endpoint(bind_ip, actual_port))
                     .map_err(|_| NetworkError::AddressInUse)?;
                 let meta = self.socket_meta_mut(handle)?;
                 meta.state = SocketState::Bound { port : actual_port };
                 meta.local_ip = local_ip;
                 meta.local_port = actual_port;
+            }
+            SocketKind::Icmp => {
+                // raw ICMP bind 只限制源地址；Echo identifier 在第一次 sendto
+                // 时从 ICMP 头中提取并绑定到底层 socket。
+                let meta = self.socket_meta_mut(handle)?;
+                meta.state = SocketState::Bound { port : 0 };
+                meta.local_ip = local_ip;
+                meta.local_port = 0;
             }
         }
         Ok(())
@@ -212,19 +290,41 @@ impl NetworkStack {
                                         connect_error : None,
                                         has_pending_accept : false })
             }
+            SocketKind::Icmp => {
+                let pending_ready = self.icmp_pending.contains_key(&handle);
+                let socket = self.sockets
+                                 .get_mut::<icmp::Socket>(handle);
+                let socket_ready = socket.can_recv();
+                let may_send = socket.can_send();
+                let send_capacity = socket.payload_send_capacity()
+                                          .saturating_sub(socket.send_queue());
+                Ok(SocketPollSnapshot { kind,
+                                        state,
+                                        can_recv : !recv_reserved &&
+                                                   (pending_ready || socket_ready),
+                                        may_recv : true,
+                                        may_send,
+                                        send_capacity,
+                                        is_connected : matches!(state, SocketState::Connected),
+                                        connect_error : None,
+                                        has_pending_accept : false })
+            }
         }
     }
 
     // 连接与发送。
     fn connect(&mut self,
                handle : SocketHandle,
-               ip : [u8; 4],
+               ip : NetworkAddress,
                port : u16)
                -> Result<(), NetworkError> {
-        let (kind, state, local_ip, bound_port) = {
+        let (domain, kind, state, local_ip, bound_port) = {
             let meta = self.socket_meta(handle)?;
-            (meta.kind, meta.state, meta.local_ip, meta.local_port)
+            (meta.domain, meta.kind, meta.state, meta.local_ip, meta.local_port)
         };
+        if ip.domain() != domain {
+            return Err(NetworkError::InvalidArgument);
+        }
         match kind {
             SocketKind::Tcp => {
                 let local_port = match state {
@@ -240,13 +340,13 @@ impl NetworkStack {
                 socket.set_timeout(Some(smoltcp::time::Duration::from_millis(
                     TCP_CONNECT_TIMEOUT_MS,
                 )));
-                if ip[0] == 127 {
+                if ip.is_loopback() {
                     // 回环仍经过 Ethernet MTU 分段；禁用 Nagle 可让同一次
                     // send() 的尾部短段无需等待首段 ACK。
                     socket.set_nagle_enabled(false);
                 }
                 socket.connect(cx,
-                               (IpAddress::v4(ip[0], ip[1], ip[2], ip[3]), port),
+                               (smoltcp_ip(ip), port),
                                listen_endpoint(local_ip, local_port))
                       .map_err(|e| {
                           log::warn!("[network-stack] connect err: {:?}, local_port={}",
@@ -277,6 +377,12 @@ impl NetworkStack {
                     meta.connect_deadline_ms = None;
                 }
             }
+            SocketKind::Icmp => {
+                if let Some(meta) = self.metas.get_mut(&handle) {
+                    meta.state = SocketState::Connected;
+                    meta.connection_established = true;
+                }
+            }
         }
         let meta = self.socket_meta_mut(handle)?;
         meta.peer_ip = ip;
@@ -297,6 +403,12 @@ impl NetworkStack {
                 socket.payload_send_capacity()
                       .saturating_sub(socket.send_queue())
             }
+            SocketKind::Icmp => {
+                let socket = self.sockets
+                                 .get_mut::<icmp::Socket>(handle);
+                socket.payload_send_capacity()
+                      .saturating_sub(socket.send_queue())
+            }
         })
     }
 
@@ -311,10 +423,16 @@ impl NetworkStack {
                                    .send_slice(data)
                                    .map_err(|_| SocketSendError::NotConnected),
             SocketKind::Udp => {
-                if peer_ip == [0; 4] && peer_port == 0 {
+                if peer_ip.is_unspecified() && peer_port == 0 {
                     return Err(SocketSendError::NotConnected);
                 }
                 self.send_udp_to(handle, data, peer_ip, peer_port)
+            }
+            SocketKind::Icmp => {
+                if peer_ip.is_unspecified() {
+                    return Err(SocketSendError::NotConnected);
+                }
+                self.send_icmp_to(handle, data, peer_ip)
             }
         }
     }
@@ -334,6 +452,8 @@ impl NetworkStack {
                 self.metas
                     .remove(&slot);
                 self.udp_loopback
+                    .remove(&slot);
+                self.icmp_pending
                     .remove(&slot);
                 self.tcp_close_pending
                     .remove(&slot);
@@ -373,6 +493,12 @@ impl NetworkStack {
                     .remove(handle);
                 false
             }
+            SocketKind::Icmp => {
+                self.metas.remove(&handle);
+                self.icmp_pending.remove(&handle);
+                self.sockets.remove(handle);
+                false
+            }
         };
         Ok(should_poll)
     }
@@ -389,39 +515,50 @@ impl NetworkStack {
                     .state = SocketState::Closed;
                 Ok(true)
             }
-            SocketKind::Udp => Err(NetworkError::Unsupported),
+            SocketKind::Udp | SocketKind::Icmp => Err(NetworkError::Unsupported),
         }
     }
 
     // 本地与对端地址查询。
-    fn peer_endpoint(&self, handle : SocketHandle) -> Result<Ipv4Endpoint, NetworkError> {
+    fn peer_endpoint(&self, handle : SocketHandle) -> Result<NetworkEndpoint, NetworkError> {
         let meta = self.socket_meta(handle)?;
-        if !meta.connection_established || (meta.peer_ip == [0; 4] && meta.peer_port == 0) {
+        if !meta.connection_established ||
+           (meta.peer_ip
+                .is_unspecified() &&
+            meta.peer_port == 0)
+        {
             return Err(NetworkError::NotConnected);
         }
-        Ok(Ipv4Endpoint { address : meta.peer_ip,
-                          port : meta.peer_port })
+        Ok(NetworkEndpoint { address : meta.peer_ip,
+                             port : meta.peer_port,
+                             scope_id : 0 })
     }
 
     fn peer_is_loopback(&self, handle : SocketHandle) -> Result<bool, NetworkError> {
         self.socket_meta(handle)
-            .map(|meta| meta.peer_ip[0] == 127)
+            .map(|meta| {
+                meta.peer_ip
+                    .is_loopback()
+            })
     }
 
-    fn local_endpoint(&self, handle : SocketHandle) -> Result<Ipv4Endpoint, NetworkError> {
+    fn local_endpoint(&self, handle : SocketHandle) -> Result<NetworkEndpoint, NetworkError> {
         let meta = self.socket_meta(handle)?;
         let address = match meta.local_ip {
             Some(ip) => ip,
             None if matches!(meta.state,
                              SocketState::Connecting | SocketState::Connected) =>
             {
-                if meta.peer_ip[0] == 127 {
-                    [127, 0, 0, 1]
+                if meta.peer_ip
+                       .is_loopback()
+                {
+                    loopback_address(meta.domain)
                 } else {
-                    self.local_ip
+                    self.configured_address(meta.domain)
+                        .unwrap_or_else(|| NetworkAddress::unspecified(meta.domain))
                 }
             }
-            None => [0, 0, 0, 0],
+            None => NetworkAddress::unspecified(meta.domain),
         };
         let port = if meta.local_port != 0 {
             meta.local_port
@@ -431,7 +568,9 @@ impl NetworkStack {
                 _ => 0,
             }
         };
-        Ok(Ipv4Endpoint { address, port })
+        Ok(NetworkEndpoint { address,
+                             port,
+                             scope_id : 0 })
     }
 }
 
@@ -444,16 +583,18 @@ pub fn socket_kind(handle : SocketHandle) -> Result<SocketKind, NetworkError> {
 }
 
 /// 枚举当前 TCP/UDP socket，供 `/proc/net` 等只读管理接口使用。
-pub fn network_socket_table_snapshot()
-                                     -> Result<alloc::vec::Vec<NetworkSocketSnapshot>, NetworkError> {
+pub fn network_socket_table_snapshot(
+    )
+    -> Result<alloc::vec::Vec<NetworkSocketSnapshot>, NetworkError>
+{
     with_stack_mut(NetworkError::StackUnavailable,
                    |stack| Ok(stack.socket_table_snapshot()))
 }
 
-/// 将 socket 绑定到本机地址/端口。None 表示 0.0.0.0 wildcard。
+/// 将 socket 绑定到本机地址/端口。None 表示当前地址族的 wildcard。
 /// TCP 仅记录本地端点；真正监听在 [`socket_listen`] 中执行。
 pub fn socket_bind(handle : SocketHandle,
-                   local_ip : Option<[u8; 4]>,
+                   local_ip : Option<NetworkAddress>,
                    port : u16)
                    -> Result<(), NetworkError> {
     with_stack_mut(NetworkError::StackUnavailable,
@@ -461,7 +602,10 @@ pub fn socket_bind(handle : SocketHandle,
 }
 
 /// 发起 TCP/UDP connect。TCP 非阻塞返回后需 poll 驱动握手完成；UDP 只记录默认 peer。
-pub fn socket_connect(handle : SocketHandle, ip : [u8; 4], port : u16) -> Result<(), NetworkError> {
+pub fn socket_connect(handle : SocketHandle,
+                      ip : NetworkAddress,
+                      port : u16)
+                      -> Result<(), NetworkError> {
     // Linux treats INADDR_ANY as the local host when it is used as a
     // connect destination. smoltcp rejects the unspecified address.
     let ip = normalize_connect_ip(ip);
@@ -508,7 +652,7 @@ pub fn socket_shutdown(handle : SocketHandle) -> Result<(), NetworkError> {
 }
 
 /// 查询 socket 的对端端点（connect 或 accept 后有效）。
-pub fn socket_peer_endpoint(handle : SocketHandle) -> Result<Ipv4Endpoint, NetworkError> {
+pub fn socket_peer_endpoint(handle : SocketHandle) -> Result<NetworkEndpoint, NetworkError> {
     with_stack(NetworkError::StackUnavailable,
                |stack| stack.peer_endpoint(handle))
 }
@@ -521,9 +665,9 @@ pub fn socket_peer_is_loopback(handle : SocketHandle) -> Result<bool, NetworkErr
 
 /// 查询 socket 当前的本地端点。
 ///
-/// 未绑定或绑定到 wildcard 的 socket 返回 `0.0.0.0`；完成 connect 后返回
-/// 实际选择的本机地址，loopback 连接返回 `127.0.0.1`。
-pub fn socket_local_endpoint(handle : SocketHandle) -> Result<Ipv4Endpoint, NetworkError> {
+/// 未绑定或绑定到 wildcard 的 socket 返回对应地址族的未指定地址；完成 connect
+/// 后返回实际选择的本机地址，loopback 连接返回 `127.0.0.1` 或 `::1`。
+pub fn socket_local_endpoint(handle : SocketHandle) -> Result<NetworkEndpoint, NetworkError> {
     with_stack(NetworkError::StackUnavailable,
                |stack| stack.local_endpoint(handle))
 }
@@ -531,12 +675,15 @@ pub fn socket_local_endpoint(handle : SocketHandle) -> Result<Ipv4Endpoint, Netw
 #[cfg(test)]
 mod tests {
     use super::normalize_connect_ip;
+    use super::NetworkAddress;
 
     #[test]
     fn connect_maps_unspecified_destination_to_loopback() {
-        assert_eq!(normalize_connect_ip([0, 0, 0, 0]),
-                   [127, 0, 0, 1]);
-        assert_eq!(normalize_connect_ip([10, 0, 2, 2]),
-                   [10, 0, 2, 2]);
+        assert_eq!(normalize_connect_ip(NetworkAddress::Ipv4([0, 0, 0, 0])),
+                   NetworkAddress::Ipv4([127, 0, 0, 1]));
+        assert_eq!(normalize_connect_ip(NetworkAddress::Ipv4([10, 0, 2, 2])),
+                   NetworkAddress::Ipv4([10, 0, 2, 2]));
+        assert_eq!(normalize_connect_ip(NetworkAddress::Ipv6([0; 16])),
+                   NetworkAddress::Ipv6([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]));
     }
 }

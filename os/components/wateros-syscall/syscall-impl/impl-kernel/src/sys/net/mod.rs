@@ -8,6 +8,7 @@ pub(crate) mod recvfrom;
 pub(crate) mod sendmsg;
 pub(crate) mod sendto;
 pub(crate) mod shutdown;
+mod sockaddr;
 pub(crate) mod socket;
 pub(crate) mod socketpair;
 pub(crate) mod sockname;

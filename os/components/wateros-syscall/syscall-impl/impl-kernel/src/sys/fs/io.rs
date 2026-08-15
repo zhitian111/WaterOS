@@ -461,7 +461,7 @@ fn write_fd(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
     if let Some(socket) = socket_fd::lookup(fd) {
         return match socket.kind() {
             Ok(SocketKind::Tcp) => write_tcp_socket_blocking(fd, buf),
-            Ok(SocketKind::Udp) => write_udp_socket_blocking(fd, buf),
+            Ok(SocketKind::Udp | SocketKind::Icmp) => write_udp_socket_blocking(fd, buf),
             Err(_) => Err(ErrNo::ENOTSOCK),
         };
     }

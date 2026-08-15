@@ -46,6 +46,7 @@
         "platform/api-v0",
         "socket-net",
     ]
+    ipv6 = [ "socket-net", "network/ipv6" ]
     socket-net = [ "dep:network" ]
     user-copy-diagnostics = [  ]
 

@@ -151,6 +151,29 @@ class QemuRunTests(unittest.TestCase):
             self.assertIn("-nographic", launch.argv)
             self.assertNotIn("virtio-gpu-device", launch.argv)
 
+    def test_ipv6_netdev_options_are_feature_gated(self) -> None:
+        for arch, netdev_id in (("rv", "net"), ("la", "net0")):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
+                base_env = {"WOS_SDCARD": "/images/root.img"}
+                ipv4_launch = build_qemu_launch(
+                    arch, "pre", base_env, root=Path(directory)
+                )
+                ipv4_netdev = ipv4_launch.argv[ipv4_launch.argv.index("-netdev") + 1]
+                self.assertEqual(ipv4_netdev, f"user,id={netdev_id}")
+
+                ipv6_launch = build_qemu_launch(
+                    arch,
+                    "pre",
+                    {**base_env, "WOS_EXTRA_FEATURES": "stall-debug,ipv6"},
+                    root=Path(directory),
+                )
+                ipv6_netdev = ipv6_launch.argv[ipv6_launch.argv.index("-netdev") + 1]
+                self.assertEqual(
+                    ipv6_netdev,
+                    f"user,id={netdev_id},ipv4=on,net=10.0.2.0/24,host=10.0.2.2,"
+                    "ipv6=on,ipv6-net=fec0::/64,ipv6-host=fec0::2",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

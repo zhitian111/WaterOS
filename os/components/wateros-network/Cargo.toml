@@ -21,4 +21,5 @@ vfs-api = { path = "../wateros-vfs/vfs-api/api-v0", package = "wateros-vfs-api-v
 default = ["api-v0", "impl-smoltcp", "vfs-handles"]
 api-v0 = []
 impl-smoltcp = ["dep:impl-smoltcp"]
+ipv6 = ["impl-smoltcp?/ipv6"]
 vfs-handles = ["impl-smoltcp", "dep:spin", "dep:vfs-api"]
