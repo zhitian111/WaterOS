@@ -22,3 +22,9 @@ VMA 注册/合并/缺页路径。
 - cagent 与 buildstorm 启动段正常；
 - 完整 RV `-smp 8` BuildStorm 尚未在无外部 QEMU 干扰窗口内跑完，**仍需最终验证**；
 - 若验证通过，再决定是否长期保留或回退到修复 lazy VMA 根因。
+
+## 追加修复
+
+`lazy_file_vma_index` 增加线性回退：当二分查找因 VMA 列表短暂失序而漏查时，
+线性扫描仍能命中真实 lazy VMA，避免把可处理的缺页误报为 SIGSEGV。该改动是
+纯防御性增强，不改变 Linux 语义。
