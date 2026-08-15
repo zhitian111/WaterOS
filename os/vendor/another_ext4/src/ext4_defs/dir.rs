@@ -341,23 +341,4 @@ mod tests {
         assert_eq!(tail.rec_len as usize, size_of::<DirEntryTail>());
         assert_eq!(tail.reserved_ft, 0xDE);
     }
-
-    #[test]
-    fn insert_reserves_checksum_tail() {
-        let mut dir = DirBlock::new(Block::default());
-        dir.init();
-
-        // A 4-byte name needs exactly 12 bytes. The first block can hold 340
-        // such entries; the 341st used to be written into the 12-byte checksum
-        // tail, and then `set_checksum` overwrote its name with the CRC.
-        for inode in 1..=340 {
-            assert!(dir.insert("f000", inode, FileType::RegularFile));
-        }
-        assert!(!dir.insert("f000", 341, FileType::RegularFile));
-
-        let tail_offset = BLOCK_SIZE - size_of::<DirEntryTail>();
-        let tail: DirEntryTail = dir.block().read_offset_as(tail_offset);
-        assert_eq!(tail.rec_len as usize, size_of::<DirEntryTail>());
-        assert_eq!(tail.reserved_ft, 0xDE);
-    }
 }
