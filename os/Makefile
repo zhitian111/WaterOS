@@ -93,6 +93,9 @@ GDB_BUILD_ID ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknow
 HEAP_ALLOCATOR_FEATURE ?= heap-tlsf
 operator_env = WATEROS_OPERATOR_SHELL="$(GUEST_SHELL)" WATEROS_OPERATOR_SCRIPT="$(SCRIPT)"
 cargo_env = $(if $(filter 1,$(GDB_BUILD)),WATEROS_DEBUG_BUILD_ID="$(GDB_BUILD_ID)" WATEROS_DEBUG_FRAME_POINTERS=1 RUSTFLAGS="$(strip $(RUSTFLAGS) $(GDB_FRAME_FLAGS))",)
+# Loongson 2K1000 经 U-Boot 在高 cached 段（VSEG=9）执行，不能使用
+# LoongArch small code model 的 32 位 PC 相对寻址；此处固定为 large。
+la2k_rustflags = $(strip $(RUSTFLAGS) -C code-model=large)
 cargo_build = $(operator_env) $(cargo_env) cargo build
 
 kernel_rv_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
@@ -486,14 +489,14 @@ jh7110_check:
 
 la2k_check:
 	$(call INFO, "开始对 loongson2k1000la 平台进行 cargo check ...")
-	@$(operator_env) $(cargo_env) cargo check --no-default-features \
+	@$(operator_env) RUSTFLAGS="$(la2k_rustflags)" cargo check --no-default-features \
 		--features loongson2k1000la,pre --target loongarch64-unknown-none
 	$(call INFO, "对 loongson2k1000la 平台的 cargo check 完成！")
 
 # Loongson 2K1000LA（PMON/uImage）构建与 uImage 生成
 kernel-la2k:
 	$(call INFO, "开始构建 loongson2k1000la 内核...")
-	@$(operator_env) $(cargo_env) cargo build $(CARGO_PROFILE_ARG) --no-default-features \
+	@$(operator_env) RUSTFLAGS="$(la2k_rustflags)" cargo build $(CARGO_PROFILE_ARG) --no-default-features \
 		--features loongson2k1000la,pre --target loongarch64-unknown-none
 	@cp ./target/loongarch64-unknown-none/release/wateros ./kernel-la2k
 	$(call INFO, "loongson2k1000la 内核构建完成！")
