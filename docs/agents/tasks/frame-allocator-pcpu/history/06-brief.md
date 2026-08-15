@@ -44,3 +44,20 @@ slab RV 中位数:     565.32
 
 首轮显示 `552.05`，优于 frame batch 和 slab 中位数；仍需多轮确认。
 
+## 组合优化 RV 三轮
+
+```text
+/tmp/wateros-frame-pcpu-rv-smp8-16g-all-r1.log: 578.57
+/tmp/wateros-frame-pcpu-rv-smp8-16g-all-r2.log: 553.75
+/tmp/wateros-frame-pcpu-rv-smp8-16g-all-r3.log: 562.63
+```
+
+RV 中位数：`562.63`，低于 slab RV 中位数 `565.32`。
+
+## 组合优化 LA 首轮
+
+```text
+/tmp/wateros-frame-pcpu-la-smp12-16g-all-r1.log: 537.87
+```
+
+低于 slab LA 中位数 `539.30`，仍需补足 LA 三轮中位数。
