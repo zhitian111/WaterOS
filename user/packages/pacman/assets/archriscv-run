@@ -12,6 +12,16 @@ esac
 test -d "$root" || { echo "Arch RISC-V root is not installed: $root" >&2; exit 1; }
 test -x "$root$program" || { echo "program is not installed: $root$program" >&2; exit 1; }
 
+# `chroot(2)` hides the host `/dev`, so a plain `/opt/archriscv/dev -> /dev`
+# symlink would resolve back to itself inside the new root.  Bind the host
+# devfs onto the isolated root's `/dev` instead, giving glibc/git/neovim the
+# same `/dev/null`, `/dev/zero` and `/dev/urandom` nodes as the outer root.
+dev="$root/dev"
+mkdir -p "$dev"
+if [ ! -c "$dev/null" ]; then
+    mount --bind /dev "$dev"
+fi
+
 # A glibc program can load modules through absolute paths (for example Lua's
 # /usr/lib/lua/5.1/lpeg.so).  The loader's --library-path does not rewrite
 # those paths, so the process must run with the isolated root as its root.

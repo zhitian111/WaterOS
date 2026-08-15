@@ -590,8 +590,9 @@ archriscv-run /usr/bin/nvim
 
 后一命令通过 `chroot(2)` 在隔离根中执行程序；因此 glibc 动态库、Lua 等通过绝对路径
 `dlopen()` 的模块，以及包内脚本都会从 `/opt/archriscv` 解析，而不会混用 WaterOS 的 musl
-根目录。该命令要求内核已支持 `chroot(2)`。可通过 `WATER_ARCHRISCV_ROOT=/other/root` 覆盖
-隔离根路径。
+根目录。由于 `chroot` 会遮住宿主 `/dev`，`archriscv-run` 会先把宿主 `/dev` bind 到
+`/opt/archriscv/dev`，而不是使用自指的 `/dev` 符号链接。该命令要求内核已支持
+`chroot(2)` 与 bind mount。可通过 `WATER_ARCHRISCV_ROOT=/other/root` 覆盖隔离根路径。
 
 ## Arch Linux 的 RISC-V musl 工具链
 

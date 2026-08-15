@@ -5,6 +5,7 @@ set -eu
 root=${WATER_ARCHRISCV_ROOT:-/opt/archriscv}
 dbpath="$root/var/lib/pacman"
 cachedir="$root/var/cache/pacman/pkg"
-mkdir -p "$dbpath/local" "$dbpath/sync" "$cachedir"
+dev="$root/dev"
+mkdir -p "$dbpath/local" "$dbpath/sync" "$cachedir" "$dev"
 
 exec /usr/bin/pacman --root "$root" --dbpath "$dbpath" --cachedir "$cachedir" "$@"
