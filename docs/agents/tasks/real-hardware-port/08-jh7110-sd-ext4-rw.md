@@ -98,3 +98,16 @@ git diff --check
 - 顺带修复 `root_image.py` 路径正则：允许 BusyBox 的 `[` applet（`/usr/bin/[`）。
 
 剩余真机部分不变：SD 物理控制器枚举/读写时序必须上板验证。
+
+### 08b 真机验收（2026-08-15，VisionFive 2 实测）
+
+- **板上全链路**：DW MMC 枚举 SD → `/dev/vda` + GPT 分区 `/dev/vda1..4` →
+  fs 探测 `/dev/vda4` → ext4 RW 挂载 → root-layout 写 `/etc/passwd` 等 →
+  `/sbin/init` → rcS → getty → `root` 登录 → busybox shell 运行
+  `echo`/`uname`/`ls`/`vi` 等用户任务。
+- **持久化闭环**：shell 内创建 `/home/zhitian` 与脚本，断电重启后仍在；
+  拔卡宿主机 `debugfs` 读回脚本内容一致。
+- **离线一致性**：`sudo e2fsck -fn /dev/sda4`（rootfs 分区）clean，
+  无错误/脏页。
+- 遗留（性能/功能后续）：SD 当前为 1-bit/10MHz PIO；IDMAC + 4-bit/50MHz、
+  块设备用户态句柄、`/dev` 完整暴露等已拆后续任务。
