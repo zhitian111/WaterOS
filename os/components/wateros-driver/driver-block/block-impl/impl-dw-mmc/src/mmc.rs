@@ -88,7 +88,6 @@ const FIFOTH : usize = 0x04C;
 const INTMASK : usize = 0x024;
 
 const CTRL_RESET_ALL : u32 = 0b111;
-const CTRL_FIFO_RESET : u32 = 1 << 1;
 /// DW MSHC CTRL 的 DMA/IDMAC 使能位（与 U-Boot `DWMCI_DMA_EN`/`DWMCI_IDMAC_EN`
 /// 一致）：PIO 模式必须清除，否则数据被路由到 IDMAC 而非 FIFO。
 const CTRL_DMA_ENABLE : u32 = 1 << 5;
@@ -191,23 +190,6 @@ impl<R : RegisterIo> DwMmc<R> {
             if self.registers
                    .read32(CTRL)? &
                CTRL_RESET_ALL ==
-               0
-            {
-                return Ok(());
-            }
-        }
-        Err(MmcError::Timeout)
-    }
-
-    /// 仅复位 FIFO（对齐 U-Boot `DWMCI_CTRL_FIFO_RESET`），连续读之间避免
-    /// 上次数据残留造成 FRUN 溢出。
-    fn reset_fifo(&mut self) -> Result<(), MmcError> {
-        self.registers
-            .write32(CTRL, CTRL_FIFO_RESET)?;
-        for _ in 0..self.poll_limit {
-            if self.registers
-                   .read32(CTRL)? &
-               CTRL_FIFO_RESET ==
                0
             {
                 return Ok(());
@@ -392,7 +374,7 @@ impl<R : RegisterIo> DwMmc<R> {
             return Err(MmcError::InvalidParameter);
         }
         self.wait_not_busy()?;
-        self.reset_fifo()?;
+        self.reset()?;
         self.registers
             .write32(RINTSTS, INT_ALL)?;
         self.registers
