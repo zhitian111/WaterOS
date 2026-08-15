@@ -167,6 +167,10 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
             }
         }
     }
+    // Linux：KEEPCAPS 标志在 exec 后失效。
+    if let Some(pid) = task::current_process_task_snapshot().map(|snapshot| snapshot.pid) {
+        let _ = task::set_process_keep_caps(pid, false);
+    }
     cred::on_exec(current_tid);
     if let Err(e) = vfs::cwd::set_task_exe_path(current_tid, executable_path.as_str()) {
         log::warn!("[execve] set_task_exe_path failed (continuing): {:?}",

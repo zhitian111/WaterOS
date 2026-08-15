@@ -59,9 +59,33 @@ fn current_gid_triplet() -> (IdTriplet, bool) {
 }
 
 fn apply_uid_triplet(ids : IdTriplet) {
+    let old_euid = cred::current_credentials().effective_uid
+                                                 .0;
     cred::set_resuid(Some(Uid(ids.real)),
                      Some(Uid(ids.effective)),
                      Some(Uid(ids.saved)));
+    let new_euid = ids.effective;
+    if old_euid == new_euid {
+        return;
+    }
+    // Linux setxuid 的 capability 转换规则：
+    // - euid 0 -> 非0：清 effective；未设 KEEPCAPS 时连 permitted 一起清。
+    // - euid 非0 -> 0：effective 恢复为 permitted。
+    let Some(pid) = task::current_process_task_snapshot().map(|snapshot| snapshot.pid) else {
+        return;
+    };
+    let Some(mut caps) = task::process_caps(pid) else {
+        return;
+    };
+    if old_euid == 0 {
+        caps.effective = 0;
+        if !task::process_keep_caps(pid).unwrap_or(false) {
+            caps.permitted = 0;
+        }
+    } else if new_euid == 0 {
+        caps.effective = caps.permitted;
+    }
+    let _ = task::set_process_caps(pid, caps);
 }
 
 fn apply_gid_triplet(ids : IdTriplet) {

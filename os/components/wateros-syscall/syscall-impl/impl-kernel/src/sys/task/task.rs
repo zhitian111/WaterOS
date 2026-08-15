@@ -249,21 +249,21 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
             None => UserRet::from_error(ErrNo::ESRCH),
         },
         PR_SET_KEEPCAPS => {
-            // Linux: arg2 只能是 0/1；WaterOS 凭证模型在 setuid 时本就保留全部
-            // root 能力，KEEPCAPS 标志无实际效果，接受即可（setpriv 等工具依赖）。
+            // Linux: arg2 只能是 0/1；setuid 从 0 降到非 0 时按此标志决定
+            // 是否保留 permitted 集合（见 cred::apply_uid_triplet）。
             if args.arg(1) > 1 {
                 UserRet::from_error(ErrNo::EINVAL)
-            } else {
+            } else if task::set_process_keep_caps(current_pid, args.arg(1) != 0).is_ok() {
                 UserRet::from_success(0)
+            } else {
+                UserRet::from_error(ErrNo::ESRCH)
             }
         }
-        PR_GET_KEEPCAPS => {
-            if args.arg(1) | args.arg(2) | args.arg(3) | args.arg(4) != 0 {
-                UserRet::from_error(ErrNo::EINVAL)
-            } else {
-                UserRet::from_success(0)
-            }
-        }
+        PR_GET_KEEPCAPS => match task::process_keep_caps(current_pid) {
+            Some(true) => UserRet::from_success(1),
+            Some(false) => UserRet::from_success(0),
+            None => UserRet::from_error(ErrNo::ESRCH),
+        },
         PR_GET_TID_ADDRESS => {
             let addr_ptr = args.arg(1);
             if addr_ptr == 0 {

@@ -1,6 +1,15 @@
 
 # cred/caps 完善与待测试
 
+## 第二轮（真 KEEPCAPS，2026-08-15）
+
+✅ 已实现真 KEEPCAPS 语义（替代"永不清"）：
+- `ProcessControlBlock.keep_caps`（fork 继承、exec 清）；`PR_SET/GET_KEEPCAPS` 真实存取。
+- setuid 0→非0：清 effective；无 KEEPCAPS 连 permitted 一起清；非0→0：effective=permitted。
+- setpriv 兼容性已推演（KEEPCAPS=1 保留 permitted → reactivate 恢复 effective → setresgid 用 CAP_SETGID）。
+
+待回归：`setpriv --reuid=man --regid=man --clear-groups true`（rc=0）、`su nobody -s /bin/sh -c id`（uid=65534）、`runuser -u man -- id`。
+
 ## 第一轮测试结果（2026-08-15）
 
 ✅ 通过：setpriv rc=0；`mount` 提权（setuid 位生效）；`runuser -u man` 切到 uid=6；
