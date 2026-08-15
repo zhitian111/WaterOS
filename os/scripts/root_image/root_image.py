@@ -23,6 +23,9 @@ DEFAULT_BLOCK_SIZE = 4096
 DEFAULT_UUID = "574f5300-0000-4000-8000-000000000001"
 DEFAULT_LABEL = "WATEROS_ROOT"
 DEFAULT_DISK_ID = "0x574f5301"
+DEFAULT_BOOT_SIZE_MIB = 64
+VF2_LOADER1_SECTORS = 2 * 1024 * 1024 // SECTOR_SIZE
+VF2_LOADER2_SECTORS = 4 * 1024 * 1024 // SECTOR_SIZE
 MBR_SIGNATURE = b"\x55\xaa"
 GPT_SIGNATURE = b"EFI PART"
 LINUX_PARTITION_TYPE = 0x83
@@ -340,6 +343,101 @@ def make_partition_table(image: Path, image_bytes: int, start_sector: int, table
     return partition[0]
 
 
+def make_partition_table_vf2(image: Path, image_bytes: int, boot_size_mib: int,
+                             table: str = "gpt") -> list[Partition]:
+    """VisionFive 2 四分区布局：P1/P2 固件占位（2M/4M）、P3 FAT boot、P4 ext4 rootfs。
+
+    出厂 U-Boot 默认 bootpart=3 / rootpart=4，distro 路径从 P3 sysboot
+    /extlinux/extlinux.conf，因此分区编号必须与官方镜像保持一致。
+    """
+    total_sectors = image_bytes // SECTOR_SIZE
+    start = DEFAULT_START_SECTOR
+    loader1_start = start
+    loader2_start = loader1_start + VF2_LOADER1_SECTORS
+    boot_start = loader2_start + VF2_LOADER2_SECTORS
+    boot_sectors = boot_size_mib * 1024 * 1024 // SECTOR_SIZE
+    root_start = boot_start + boot_sectors
+    root_sectors = total_sectors - root_start - (34 if table == "gpt" else 0)
+    root_sectors -= root_sectors % (DEFAULT_BLOCK_SIZE // SECTOR_SIZE)
+    if boot_sectors <= 0 or root_sectors <= 0:
+        raise ImageError("image is too small for VF2 boot + rootfs layout")
+    if table == "mbr":
+        specification = (
+            "label: dos\n" f"label-id: {DEFAULT_DISK_ID}\n" "unit: sectors\n\n"
+            f"{loader1_start},{VF2_LOADER1_SECTORS},0c\n"
+            f"{loader2_start},{VF2_LOADER2_SECTORS},0c\n"
+            f"{boot_start},{boot_sectors},0c\n"
+            f"{root_start},{root_sectors},83\n"
+        )
+    elif table == "gpt":
+        specification = (
+            "label: gpt\n" f"first-lba: {start}\n" "unit: sectors\n\n"
+            f"{loader1_start},{VF2_LOADER1_SECTORS},L\n"
+            f"{loader2_start},{VF2_LOADER2_SECTORS},L\n"
+            f"{boot_start},{boot_sectors},EBD0A0A2-B9E5-4433-87C0-68B6B72699C7\n"
+            f"{root_start},{root_sectors},L\n"
+        )
+    else:
+        raise ImageError(f"unsupported partition table: {table}")
+    run(["sfdisk", "--quiet", str(image)], input_text=specification)
+    partitions = read_partitions(image)
+    if len(partitions) != 4:
+        raise ImageError("partitioning tool did not create the VF2 four-partition layout")
+    return partitions
+
+
+def build_boot_partition(image: Path, partition: Partition, boot_dir: Path) -> None:
+    """用 `mkfs.vfat` + mtools 把 `boot_dir` 写进 FAT 启动分区。"""
+    if not boot_dir.is_dir():
+        raise ImageError(f"boot directory does not exist: {boot_dir}")
+    blocks = partition.byte_length // SECTOR_SIZE
+    if blocks <= 0:
+        raise ImageError("boot partition is too small")
+    with tempfile.TemporaryDirectory(prefix="wateros-boot-") as temporary:
+        boot_fs = Path(temporary) / "boot.fat"
+        try:
+            run(["mkfs.vfat", "-n", "WATEROS", "-C", str(boot_fs), str(blocks)])
+        except FileNotFoundError as error:
+            raise ImageError("required host tool not found: mkfs.vfat") from error
+        for item in sorted(boot_dir.rglob("*")):
+            if not item.is_file():
+                continue
+            relative = item.relative_to(boot_dir).as_posix()
+            parent = PurePosixPath(relative).parent
+            if parent != PurePosixPath("."):
+                # 已存在的目录 mmd 会报错，忽略；真正的写入失败由 mcopy 暴露。
+                try:
+                    run(["mmd", "-i", str(boot_fs), f"::/{parent.as_posix()}"])
+                except ImageError:
+                    pass
+            run(["mcopy", "-i", str(boot_fs), str(item), f"::/{relative}"])
+        with boot_fs.open("rb") as source, image.open("r+b") as output:
+            output.seek(partition.byte_offset)
+            remaining = partition.byte_length
+            while remaining:
+                chunk = source.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    raise ImageError("short read while writing boot partition")
+                output.write(chunk)
+                remaining -= len(chunk)
+
+
+def verify_boot_partition(image: Path, partition: Partition, boot_dir: Path) -> None:
+    """抽验 FAT 启动分区：每个文件存在且与源内容一致。"""
+    files = sorted(item for item in boot_dir.rglob("*") if item.is_file())
+    if not files:
+        raise ImageError("boot directory contains no files")
+    with tempfile.TemporaryDirectory(prefix="wateros-boot-verify-") as temporary:
+        boot_fs = Path(temporary) / "boot.fat"
+        copy_partition(image, partition, boot_fs)
+        for item in files:
+            relative = item.relative_to(boot_dir).as_posix()
+            extracted = Path(temporary) / "check.bin"
+            run(["mcopy", "-i", str(boot_fs), "-n", f"::{relative}", str(extracted)])
+            if extracted.read_bytes() != item.read_bytes():
+                raise ImageError(f"boot file content differs from source: {relative}")
+
+
 def build_image(args: argparse.Namespace) -> list[str]:
     image = args.output.resolve()
     if image.exists() and not args.force:
@@ -366,10 +464,22 @@ def build_image(args: argparse.Namespace) -> list[str]:
             temporary_image = Path(raw_path)
             with temporary_image.open("wb") as output:
                 output.truncate(image_bytes)
-            partition = make_partition_table(temporary_image, image_bytes, args.start_sector,
-                                             getattr(args, "partition_table", "mbr"))
-            if partition.partition_type != LINUX_PARTITION_TYPE:
-                raise ImageError("root partition has unexpected MBR type")
+            boot_dir = getattr(args, "boot_dir", None)
+            table = getattr(args, "partition_table", "mbr")
+            if boot_dir is not None:
+                partitions = make_partition_table_vf2(
+                    temporary_image, image_bytes, getattr(args, "boot_size_mib", DEFAULT_BOOT_SIZE_MIB), table
+                )
+                boot_partition = next((p for p in partitions if p.number == 3), None)
+                root_partition = next((p for p in partitions if p.number == 4), None)
+                if boot_partition is None or root_partition is None:
+                    raise ImageError("VF2 layout requires four partitions (P3 boot, P4 rootfs)")
+                build_boot_partition(temporary_image, boot_partition, boot_dir.resolve())
+                partition = root_partition
+            else:
+                partition = make_partition_table(temporary_image, image_bytes, args.start_sector, table)
+                if partition.partition_type != LINUX_PARTITION_TYPE:
+                    raise ImageError("root partition has unexpected MBR type")
             if partition.byte_length % DEFAULT_BLOCK_SIZE != 0:
                 raise ImageError("partition size is not aligned to ext4 block size")
             blocks = partition.byte_length // DEFAULT_BLOCK_SIZE
@@ -396,7 +506,8 @@ def build_image(args: argparse.Namespace) -> list[str]:
             expected_files = None if copy_tree is not None else manifest_file_contents(
                 args.manifest.resolve()
             )
-            verify_image(temporary_image, required_paths, expected_files)
+            verify_image(temporary_image, required_paths, expected_files,
+                         boot_dir=boot_dir)
             os.replace(temporary_image, image)
             temporary_image = None
             return required_paths
@@ -422,12 +533,22 @@ def debugfs_command(partition_image: Path, command: str) -> str:
 
 
 def verify_image(
-    image: Path, required_paths: Iterable[str], expected_files: dict[str, bytes] | None = None
+    image: Path, required_paths: Iterable[str],
+    expected_files: dict[str, bytes] | None = None,
+    boot_dir: Path | None = None,
 ) -> Partition:
     partitions = read_partitions(image)
-    if len(partitions) != 1:
-        raise ImageError(f"expected one root partition, found {len(partitions)}")
-    partition = partitions[0]
+    if boot_dir is not None:
+        if len(partitions) != 4:
+            raise ImageError(f"expected VF2 four-partition layout, found {len(partitions)}")
+        boot_partition = partitions[2]
+        root_partition = partitions[3]
+    else:
+        if len(partitions) != 1:
+            raise ImageError(f"expected one root partition, found {len(partitions)}")
+        boot_partition = None
+        root_partition = partitions[0]
+    partition = root_partition
     if partition.partition_type != LINUX_PARTITION_TYPE:
         raise ImageError(f"root partition type is 0x{partition.partition_type:02x}, expected 0x83")
     if partition.start_sector % DEFAULT_START_SECTOR != 0:
@@ -461,6 +582,8 @@ def verify_image(
                 raise ImageError(f"cannot extract required root file: {guest}")
             if dumped.read_bytes() != expected:
                 raise ImageError(f"root file content differs from manifest: {guest}")
+    if boot_partition is not None:
+        verify_boot_partition(image, boot_partition, boot_dir)
     return partition
 
 
@@ -519,6 +642,9 @@ def parser() -> argparse.ArgumentParser:
                        help="root directory for relative manifest source files")
     build.add_argument("--copy-tree", type=Path,
                        help="copy an existing staging tree as the rootfs (instead of a manifest)")
+    build.add_argument("--boot-dir", type=Path,
+                       help="VisionFive 2 layout: P1/P2 placeholders, P3 FAT boot (this dir), P4 ext4 rootfs")
+    build.add_argument("--boot-size-mib", type=int, default=DEFAULT_BOOT_SIZE_MIB)
     build.add_argument("--force", action="store_true")
     verify = subcommands.add_parser("verify", help="verify partition, ext4 and manifest paths")
     verify.add_argument("--image", type=Path, required=True)
@@ -527,6 +653,8 @@ def parser() -> argparse.ArgumentParser:
                         help="root directory for relative manifest source files")
     verify.add_argument("--copy-tree", type=Path,
                         help="expected paths come from this staging tree instead of a manifest")
+    verify.add_argument("--boot-dir", type=Path,
+                        help="expected boot files come from this directory")
     return result
 
 
@@ -541,7 +669,8 @@ def main(argv: list[str] | None = None) -> int:
                 expected = manifest_file_contents(manifest,
                                                   args.source_root.resolve()
                                                   if args.source_root else None)
-            partition = verify_image(args.output.resolve(), required, expected)
+            partition = verify_image(args.output.resolve(), required, expected,
+                                     getattr(args, "boot_dir", None))
             print(
                 f"built {args.output}: start={partition.start_sector} "
                 f"sectors={partition.sectors} bytes={args.output.stat().st_size}"
@@ -556,7 +685,8 @@ def main(argv: list[str] | None = None) -> int:
                 expected = manifest_file_contents(manifest,
                                                   args.source_root.resolve()
                                                   if args.source_root else None)
-            partition = verify_image(args.image.resolve(), required, expected)
+            partition = verify_image(args.image.resolve(), required, expected,
+                                     getattr(args, "boot_dir", None))
             print(
                 f"verified {args.image}: start={partition.start_sector} "
                 f"sectors={partition.sectors}"

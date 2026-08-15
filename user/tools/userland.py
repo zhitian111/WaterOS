@@ -600,6 +600,9 @@ def parse_arguments() -> argparse.Namespace:
     image_parser.add_argument("--partition-table", choices=("gpt", "mbr"), default="gpt")
     image_parser.add_argument("--disk-size-mb", type=int, default=0,
                               help="disk image size in MiB (default: --image-size-mb)")
+    image_parser.add_argument("--boot-dir", type=Path,
+                              help="VisionFive 2 layout: P3 FAT boot from this dir, P4 ext4 rootfs")
+    image_parser.add_argument("--boot-size-mb", type=int, default=64)
     overlay_parser = commands.add_parser("overlay", help="copy and augment an EXT4 image")
     add_build_arguments(overlay_parser)
     overlay_parser.add_argument("--base-image", type=Path, required=True)
@@ -647,7 +650,8 @@ def main() -> int:
                 disk_output = output.with_suffix(".img")
                 disk_size = args.disk_size_mb or args.image_size_mb
                 image_tool.create_disk_image(staging, disk_output, architecture.name,
-                                             disk_size, args.partition_table)
+                                             disk_size, args.partition_table,
+                                             args.boot_dir, args.boot_size_mb)
             return 0
         if args.command == "overlay":
             staging = build_packages(architecture, package_names, args.jobs)

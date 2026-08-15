@@ -71,6 +71,12 @@ build/images/wateros-rv.ext4.sha256
 由 `os/scripts/root_image/root_image.py` 构建并校验（分区表 + `e2fsck -fn`），
 rootfs 分区内容与 staging 树一致；raw `.ext4` 仍保留供 QEMU 使用。
 
+VisionFive 2 需要传 `BOOT_DIR`（任务 14 的 `jh7110_bootdir` 素材目录，含
+uImage、`extlinux/extlinux.conf`、`uEnv.txt`、可选 DTB）：此时整盘镜像采用
+官方镜像同款分区编号（P1/P2 固件占位、P3 FAT 启动分区、P4 ext4 rootfs），
+出厂 U-Boot 的 `bootpart=3`/`rootpart=4` 默认值无需改动即可自动启动。
+`BOOT_SIZE_MB` 控制 P3 容量，默认 64。
+
 ## Make 参数
 
 运行 `make help` 可以查看当前入口和默认值。
@@ -84,6 +90,8 @@ rootfs 分区内容与 staging 树一致；raw `.ext4` 仍保留供 QEMU 使用�
 | `DISK`          | `0`                                | 置 `1` 额外产出带分区表的整盘镜像 `.img` |
 | `PARTITION_TABLE`| `gpt`                             | 整盘镜像分区表：`gpt` 或 `mbr`     |
 | `DISK_SIZE_MB`  | 空（沿用 `IMAGE_SIZE_MB`）          | 整盘镜像容量，单位 MiB             |
+| `BOOT_DIR`      | 空                                | 传入后启用 VisionFive 2 布局：P3 FAT 启动分区内容（P4 rootfs） |
+| `BOOT_SIZE_MB`  | `64`                              | VisionFive 2 P3 启动分区容量，单位 MiB |
 | `BLOCK_SIZE`    | `4096`                             | EXT4 块大小                       |
 | `INODE_SIZE`    | `256`                              | EXT4 inode 大小                   |
 | `JOBS`          | 宿主 CPU 数                        | 并行编译任务数                    |

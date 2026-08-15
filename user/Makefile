@@ -12,6 +12,8 @@ OUTPUT ?=
 JOBS ?=
 TOOLCHAIN_ARCHIVE ?=
 FORCE ?=0
+BOOT_DIR ?=
+BOOT_SIZE_MB ?= 64
 # 整盘镜像（带 GPT/MBR 分区表）开关与参数。
 DISK ?= 0
 PARTITION_TABLE ?= gpt
@@ -64,6 +66,7 @@ help:
 	@echo "  make image  ARCH=rv PACKAGE=pacman IMAGE_SIZE_MB=512  # pacman local package install (RV)"
 	@echo "  make image  ARCH=rv PACKAGE=base-layout,busybox,operator-tools"
 	@echo "  make overlay ARCH=rv PACKAGE=operator BASE_IMAGE=../os/sdcard-rv.img"
+	@echo "  make disk   ARCH=rv PACKAGE=minimal BOOT_DIR=../os/build/jh7110-boot  # VF2 整盘（P3 FAT boot + P4 rootfs）"
 	@echo "  make inspect ARCH=rv"
 	@echo "  make test"
 	@echo
@@ -103,7 +106,9 @@ image:
 		--block-size $(BLOCK_SIZE) --inode-size $(INODE_SIZE) \
 		$(if $(strip $(OUTPUT)),--output $(OUTPUT),) \
 		$(if $(filter 1,$(DISK)),--disk --partition-table $(PARTITION_TABLE) \
-			$(if $(strip $(DISK_SIZE_MB)),--disk-size-mb $(DISK_SIZE_MB),),)
+			$(if $(strip $(DISK_SIZE_MB)),--disk-size-mb $(DISK_SIZE_MB),) \
+			$(if $(strip $(BOOT_DIR)),--boot-dir $(BOOT_DIR) \
+				--boot-size-mb $(BOOT_SIZE_MB),),)
 
 disk:
 	$(MAKE) image DISK=1
