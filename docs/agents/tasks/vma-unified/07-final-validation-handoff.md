@@ -8,10 +8,9 @@
 
 - 静态验收已通过：`make rv_check`、`make la_check`、`make kernel-rv-final`、
   `make kernel-la-final`、`git diff --check`。
-- RV 单核、RV 8 核、LA 单核完整 BuildStorm 已通过。
-- LA 12 核当前受宿主机内存压力阻塞，详见
-  `07-LA12-RESOURCE-BLOCKER.md`。
-- 在 LA 12 通过前不生成最终 `history/07-brief.md`，也不标记本任务完成。
+- RV 单核、RV 8 核、LA 单核、LA 12 核完整 BuildStorm 均已通过。
+- LA 12 核最终性能命令使用 `-m 36G`，`elapsed_s=513.19`，`run=OK`。
+- 最终结果见 `history/07-brief.md`。
 
 ## 实施方案
 
