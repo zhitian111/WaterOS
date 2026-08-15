@@ -132,7 +132,7 @@ pub fn ensure_busybox_path_links() {
 fn ensure_etc_passwd(sess : &mut (impl vfs::api::RootRwSession + ?Sized)) {
     use vfs::api::SingleRootReadView;
 
-    const PASSWD : &str = "root:x:0:0:root:/root:/bin/sh\ndaemon:x:1:1:daemon:/usr/sbin:/bin/\
+    const PASSWD : &str = "root::0:0:root:/root:/bin/sh\ndaemon:x:1:1:daemon:/usr/sbin:/bin/\
                            false\nnobody:x:65534:65534:nobody:/nonexistent:/bin/false\n";
     const GROUP : &str = "root:x:0:\ndaemon:x:1:\nnobody:x:65534:\nnogroup:x:65534:\n";
     const NSSWITCH : &str =
