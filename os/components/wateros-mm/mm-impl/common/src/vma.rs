@@ -335,5 +335,12 @@ impl LazyVmaSet {
 
     fn rebuild_order(&mut self) {
         self.inner.sort_by_key(|vma| vma.start);
+        #[cfg(debug_assertions)]
+        {
+            for pair in self.inner.windows(2) {
+                assert!(pair[0].end.0 <= pair[1].start.0,
+                        "lazy VMA registry must remain ordered and non-overlapping");
+            }
+        }
     }
 }
