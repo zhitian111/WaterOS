@@ -23,7 +23,9 @@ use api_v0::mmap::{DemandPageLoader, PageFaultAccess};
 use api_v0::perm::PagePerm;
 
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result, frame_inc_ref, frame_ref_count};
-pub(crate) use impl_common::{DeviceVma, LazyFileVma, SharedAnonVma, SharedFileVma};
+pub(crate) use impl_common::{
+    DeviceVma, LazyFileVma, LazyVmaSet, SharedAnonVma, SharedFileVma,
+};
 
 /// LoongArch64 PTE 标志位。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -235,7 +237,7 @@ pub struct LoongArch64AddressSpace {
     /// 用户栈保留区，可由合法读/写缺页按需补页。
     pub(crate) user_stack_bottom : VirtAddr,
     pub(crate) user_stack_top : VirtAddr,
-    pub(crate) lazy_file_vmas : Vec<LazyFileVma>,
+    pub(crate) lazy_file_vmas : LazyVmaSet,
     pub(crate) shared_anon_vmas : Vec<SharedAnonVma>,
     pub(crate) shared_file_vmas : Vec<SharedFileVma>,
     /// 不属于通用帧分配器的外部设备映射。
@@ -268,7 +270,7 @@ impl LoongArch64AddressSpace {
                   mmap_base : VirtAddr(0),
                   user_stack_bottom : VirtAddr(0),
                   user_stack_top : VirtAddr(0),
-                  lazy_file_vmas : Vec::new(),
+                  lazy_file_vmas : LazyVmaSet::new(),
                   shared_anon_vmas : Vec::new(),
                   shared_file_vmas : Vec::new(),
                   device_vmas : Vec::new() })
@@ -287,7 +289,7 @@ impl LoongArch64AddressSpace {
                   mmap_base : VirtAddr(0),
                   user_stack_bottom : VirtAddr(0),
                   user_stack_top : VirtAddr(0),
-                  lazy_file_vmas : Vec::new(),
+                  lazy_file_vmas : LazyVmaSet::new(),
                   shared_anon_vmas : Vec::new(),
                   shared_file_vmas : Vec::new(),
                   device_vmas : Vec::new() })
@@ -344,33 +346,11 @@ impl LoongArch64AddressSpace {
     }
 
     pub(crate) fn lazy_vma_overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
-        if start.0 >= end.0 {
-            return false;
-        }
-        // `lazy_file_vmas` is sorted and non-overlapping, so every VMA before
-        // this partition ends to the left of the query.  Only the first
-        // remaining VMA can decide whether an overlap exists.
-        let index = self.lazy_file_vmas
-                        .partition_point(|vma| vma.end.0 <= start.0);
-        self.lazy_file_vmas
-            .get(index)
-            .is_some_and(|vma| vma.start.0 < end.0)
+        self.lazy_file_vmas.overlaps(start, end)
     }
 
     fn lazy_vma_overlap_end(&self, start : VirtAddr, end : VirtAddr) -> Option<VirtAddr> {
-        let mut low = 0usize;
-        let mut high = self.lazy_file_vmas.len();
-        while low < high {
-            let mid = low + (high - low) / 2;
-            if self.lazy_file_vmas[mid].end.0 <= start.0 {
-                low = mid + 1;
-            } else {
-                high = mid;
-            }
-        }
-        let vma = self.lazy_file_vmas.get(low)?;
-        vma.overlaps(start, end)
-            .then_some(vma.end)
+        self.lazy_file_vmas.overlap_end(start, end)
     }
 
     #[allow(dead_code)]
@@ -386,43 +366,7 @@ impl LoongArch64AddressSpace {
                                            end : VirtAddr,
                                            perm : PagePerm)
                                            -> MmResult<()> {
-        let mut next = Vec::new();
-        for vma in self.lazy_file_vmas
-                       .drain(..)
-        {
-            if !vma.overlaps(start, end) {
-                next.push(vma);
-                continue;
-            }
-            if start.0 > vma.start.0 {
-                next.push(LazyFileVma { start : vma.start,
-                                        end : start,
-                                        perm : vma.perm,
-                                        file_offset : vma.file_offset,
-                                        file_size : vma.file_size,
-                                        loader : vma.loader
-                                                    .duplicate_box()? });
-            }
-            let mid_start = VirtAddr(core::cmp::max(start.0, vma.start.0));
-            let mid_end = VirtAddr(core::cmp::min(end.0, vma.end.0));
-            next.push(LazyFileVma { start : mid_start,
-                                    end : mid_end,
-                                    perm : vma.perm | perm,
-                                    file_offset : vma.file_offset + (mid_start.0 - vma.start.0),
-                                    file_size : vma.file_size,
-                                    loader : vma.loader
-                                                .duplicate_box()? });
-            if end.0 < vma.end.0 {
-                next.push(LazyFileVma { start : end,
-                                        end : vma.end,
-                                        perm : vma.perm,
-                                        file_offset : vma.file_offset + (end.0 - vma.start.0),
-                                        file_size : vma.file_size,
-                                        loader : vma.loader });
-            }
-        }
-        self.lazy_file_vmas = next;
-        Ok(())
+        self.lazy_file_vmas.merge_perm(start, end, perm)
     }
 
     pub(crate) fn shared_anon_vma_overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
@@ -742,14 +686,14 @@ impl LoongArch64AddressSpace {
         self.ensure_lazy_refill_paths(start, end)?;
         let position = self.lazy_file_vmas
                            .partition_point(|vma| vma.start.0 < start.0);
-        self.lazy_file_vmas
-            .insert(position,
-                    LazyFileVma { start,
-                                  end,
-                                  perm,
-                                  file_offset,
-                                  file_size,
-                                  loader });
+        self.lazy_file_vmas.insert(position,
+                                   LazyFileVma { start,
+                                                 end,
+                                                 perm,
+                                                 file_offset,
+                                                 file_size,
+                                                 loader });
+        self.lazy_file_vmas.sort();
         Ok(())
     }
 
@@ -784,37 +728,7 @@ impl LoongArch64AddressSpace {
                                         start : VirtAddr,
                                         end : VirtAddr)
                                         -> MmResult<()> {
-        let mut next = Vec::new();
-        for vma in self.lazy_file_vmas
-                       .drain(..)
-        {
-            if !vma.overlaps(start, end) {
-                next.push(vma);
-                continue;
-            }
-            if start.0 > vma.start.0 {
-                next.push(LazyFileVma { start : vma.start,
-                                        end : start,
-                                        perm : vma.perm,
-                                        file_offset : vma.file_offset,
-                                        file_size : vma.file_size,
-                                        loader : vma.loader
-                                                    .duplicate_box()? });
-            }
-            if end.0 < vma.end.0 {
-                let delta = end.0
-                               .saturating_sub(vma.start.0);
-                next.push(LazyFileVma { start : end,
-                                        end : vma.end,
-                                        perm : vma.perm,
-                                        file_offset : vma.file_offset
-                                                         .saturating_add(delta),
-                                        file_size : vma.file_size,
-                                        loader : vma.loader });
-            }
-        }
-        self.lazy_file_vmas = next;
-        Ok(())
+        self.lazy_file_vmas.remove_range(start, end)
     }
 
     pub(crate) fn protect_lazy_file_vmas(&mut self,
@@ -822,55 +736,7 @@ impl LoongArch64AddressSpace {
                                          end : VirtAddr,
                                          perm : PagePerm)
                                          -> MmResult<()> {
-        if start.0 >= end.0 {
-            return Ok(());
-        }
-        let first = self.lazy_file_vmas
-                        .partition_point(|vma| vma.end.0 <= start.0);
-        let last = self.lazy_file_vmas
-                       .partition_point(|vma| vma.start.0 < end.0);
-        if first >= last {
-            return Ok(());
-        }
-
-        let first_vma = &self.lazy_file_vmas[first];
-        let split_left = (start.0 > first_vma.start.0).then(|| {
-            Ok::<_, MmError>(LazyFileVma { start : first_vma.start,
-                                           end : start,
-                                           perm : first_vma.perm,
-                                           file_offset : first_vma.file_offset,
-                                           file_size : first_vma.file_size,
-                                           loader : first_vma.loader.duplicate_box()? })
-        }).transpose()?;
-        let last_vma = &self.lazy_file_vmas[last - 1];
-        let split_right = (end.0 < last_vma.end.0).then(|| {
-            Ok::<_, MmError>(LazyFileVma { start : end,
-                                           end : last_vma.end,
-                                           perm : last_vma.perm,
-                                           file_offset : last_vma.file_offset +
-                                                         (end.0 - last_vma.start.0),
-                                           file_size : last_vma.file_size,
-                                           loader : last_vma.loader.duplicate_box()? })
-        }).transpose()?;
-
-        if split_left.is_some() {
-            let first_vma = &mut self.lazy_file_vmas[first];
-            first_vma.file_offset += start.0 - first_vma.start.0;
-            first_vma.start = start;
-        }
-        if split_right.is_some() {
-            self.lazy_file_vmas[last - 1].end = end;
-        }
-        for vma in &mut self.lazy_file_vmas[first..last] {
-            vma.perm = perm;
-        }
-        if let Some(right) = split_right {
-            self.lazy_file_vmas.insert(last, right);
-        }
-        if let Some(left) = split_left {
-            self.lazy_file_vmas.insert(first, left);
-        }
-        Ok(())
+        self.lazy_file_vmas.protect_range(start, end, perm)
     }
 
     /// 沿 VPN 三级索引向下 walk，必要时分配中间页表；返回目标叶子 PTE 槽位。
@@ -935,10 +801,12 @@ impl LoongArch64AddressSpace {
     pub fn fork_cow(&mut self) -> MmResult<LoongArch64AddressSpace> {
         log::trace!("[mm-fork] LoongArch64AddressSpace::fork begin root_ppn={}",
                     self.root.0);
-        let child_lazy_file_vmas = self.lazy_file_vmas
-                                       .iter()
-                                       .map(LazyFileVma::duplicate)
-                                       .collect::<MmResult<Vec<_>>>()?;
+        let child_lazy_file_vmas = LazyVmaSet::from_vec(
+            self.lazy_file_vmas
+                .iter()
+                .map(LazyFileVma::duplicate)
+                .collect::<MmResult<Vec<_>>>()?,
+        );
         let child_shared_file_vmas = self.shared_file_vmas
                                          .iter()
                                          .map(SharedFileVma::duplicate)
@@ -1066,13 +934,14 @@ impl LoongArch64AddressSpace {
     {
         let page = fault_addr.floor_page()
                              .start_addr();
-        let Some(index) = self.lazy_file_vmas
-                              .iter()
-                              .position(|vma| vma.contains_page(page))
+        let Some(index) = self.lazy_file_vmas.lookup(page)
         else {
             return Ok(false);
         };
-        let perm = self.lazy_file_vmas[index].perm;
+        let vma = self.lazy_file_vmas
+                       .get(index)
+                       .ok_or(MmError::InvalidAddress)?;
+        let perm = vma.perm;
         let allowed = match access {
             PageFaultAccess::Read => perm.readable(),
             PageFaultAccess::Write => perm.writable(),
@@ -1089,12 +958,16 @@ impl LoongArch64AddressSpace {
             return Ok(true);
         }
         let file_offset = {
-            let vma = &self.lazy_file_vmas[index];
+            let vma = self.lazy_file_vmas
+                           .get(index)
+                           .ok_or(MmError::InvalidAddress)?;
             vma.file_offset + (page.0 - vma.start.0)
         };
         if !perm.writable() {
-            if let Some(ppn) = self.lazy_file_vmas[index].loader
-                                                            .load_shared_page(file_offset)?
+            let vma = self.lazy_file_vmas
+                           .get_mut(index)
+                           .ok_or(MmError::InvalidAddress)?;
+            if let Some(ppn) = vma.loader.load_shared_page(file_offset)?
             {
                 if let Err(error) = self.map_page_to_ppn(page.floor_page(), ppn, perm) {
                     let _ = frame_dealloc_result(ppn);
@@ -1109,8 +982,10 @@ impl LoongArch64AddressSpace {
         let pa = ppn.0 * PAGE_SIZE;
         let dst = unsafe { core::slice::from_raw_parts_mut(pa as *mut u8, PAGE_SIZE) };
         dst.fill(0);
-        if let Err(e) = self.lazy_file_vmas[index].loader
-                                                  .load_page(file_offset, dst)
+        let vma = self.lazy_file_vmas
+                       .get_mut(index)
+                       .ok_or(MmError::InvalidAddress)?;
+        if let Err(e) = vma.loader.load_page(file_offset, dst)
         {
             let _ = allocator.dealloc_frame(ppn);
             return Err(e);
@@ -1183,7 +1058,7 @@ impl LoongArch64AddressSpace {
         self.destroy_page_tables();
         // Keep only the UserAddressSpaceCell tombstone needed by stale raw
         // handles; mappings and their demand-page loaders are dead now.
-        drop(core::mem::take(&mut self.lazy_file_vmas));
+        drop(self.lazy_file_vmas.take());
         drop(core::mem::take(&mut self.shared_anon_vmas));
         drop(core::mem::take(&mut self.shared_file_vmas));
         drop(core::mem::take(&mut self.device_vmas));
