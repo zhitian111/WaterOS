@@ -33,13 +33,13 @@ _start:
     andi $r4, $r4, 0x1ff
     b __wateros_arch_boot
 
-    .section .data.high_base
-    .globl __wateros_kernel_high_base
-    .balign 8
-__wateros_kernel_high_base:
-    .dword 0x9000000000000000
-
     .section .text.entry.platform
+    .globl __wateros_get_kernel_high_base
+    .type __wateros_get_kernel_high_base, @function
+__wateros_get_kernel_high_base:
+    li.d $a0, 0x9000000000000000
+    jr $ra
+
     .globl wateros_kernel_main
     .type wateros_kernel_main, @function
 wateros_kernel_main:
