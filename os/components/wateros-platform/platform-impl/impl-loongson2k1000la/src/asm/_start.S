@@ -1,11 +1,22 @@
 # 2K1000LA PMON/uImage 入口：PMON 加载 uImage 后跳转到 _start。
 # arch boot ABI: $r4 = 逻辑 CPU id（读 CSR 0x20/CPUNUM）；$r5/$r6/$r7 = 透传参数
 # （PMON 不携带 UEFI argc/argv/envp，内核忽略）。
-# TODO(real-hardware): 对照实际 PMON 加载地址（0x9000000090000000 窗口）验证。
+# U-Boot 2022.04 上 load/entry 落在 0x9000000098000000 窗口，避开
+# 物理 0x90000000 处的 U-Boot lock-cache 保留区。
     .section .text.entry.platform
     .globl _start
     .align 2
 _start:
+    /* 早期 MMIO 串口探针：在进入 Rust 前先写一个 'W'，用于区分
+     * “U-Boot 未跳转”与“WaterOS 进入后在初始化早期挂死”。 */
+    li.d $t0, 0x800000001fe20000
+1:
+    ld.bu $t1, $t0, 5
+    andi $t1, $t1, 0x20
+    beqz $t1, 1b
+    ori $t1, $zero, 0x57
+    st.b $t1, $t0, 0
+
     move $r7, $r6
     move $r6, $r5
     move $r5, $r4
