@@ -22,7 +22,10 @@ const IPC_RMID : usize = 0;
 const IPC_SET : usize = 1;
 const IPC_STAT : usize = 2;
 const IPC_INFO : usize = 3;
-const SEM_INFO : usize = 4;
+// Linux UAPI 的信号量扩展命令号。
+const SEM_STAT : usize = 18;
+const SEM_INFO : usize = 19;
+const SEM_STAT_ANY : usize = 20;
 const IPC_64 : usize = 0x100;
 
 const GETPID : usize = 11;
@@ -538,6 +541,18 @@ pub(crate) fn sys_semctl(args : SyscallArgs) -> UserRet {
             if argument == 0 {
                 return UserRet::from_error(ErrNo::EFAULT);
             }
+            let registry = SEMAPHORES.lock();
+            let set_count = registry.by_id.len().min(i32::MAX as usize) as i32;
+            let semaphore_count = registry.by_id
+                                          .values()
+                                          .map(|set| set.values.len())
+                                          .sum::<usize>()
+                                          .min(i32::MAX as usize) as i32;
+            let max_id = registry.by_id
+                                 .keys()
+                                 .next_back()
+                                 .copied()
+                                 .unwrap_or(0);
             let info = Seminfo { semmap : 0,
                                  semmni : 32000,
                                  semmns : 32000,
@@ -545,11 +560,16 @@ pub(crate) fn sys_semctl(args : SyscallArgs) -> UserRet {
                                  semmsl : SEMMSL as i32,
                                  semopm : SEMOPM as i32,
                                  semume : 0,
-                                 semusz : 0,
+                                 semusz : if command == SEM_INFO { set_count } else { 0 },
                                  semvmx : SEMVMX,
-                                 semaem : SEMAEM };
+                                 semaem : if command == SEM_INFO {
+                                     semaphore_count
+                                 } else {
+                                     SEMAEM
+                                 } };
+            drop(registry);
             return match crate::user_copy::copy_to_user_struct(argument, &info) {
-                Ok(()) => UserRet::from_success(0),
+                Ok(()) => UserRet::from_success(max_id.max(0) as usize),
                 Err(e) => UserRet::from_error(e),
             };
         }
@@ -574,7 +594,7 @@ pub(crate) fn sys_semctl(args : SyscallArgs) -> UserRet {
                     .retain(|(_, semid, _), _| *semid != id);
             UserRet::from_success(0)
         }
-        IPC_STAT => {
+        IPC_STAT | SEM_STAT | SEM_STAT_ANY => {
             if argument == 0 {
                 return UserRet::from_error(ErrNo::EFAULT);
             }
@@ -586,13 +606,17 @@ pub(crate) fn sys_semctl(args : SyscallArgs) -> UserRet {
                     Some(set) => set,
                     None => return UserRet::from_error(ErrNo::EINVAL),
                 };
-                if !has_access(set, false, uid, gid) {
+                if command != SEM_STAT_ANY && !has_access(set, false, uid, gid) {
                     return UserRet::from_error(ErrNo::EACCES);
                 }
                 set_snapshot(set)
             };
             match copy_to_user_struct(argument, &snapshot) {
-                Ok(()) => UserRet::from_success(0),
+                Ok(()) => UserRet::from_success(if command == IPC_STAT {
+                                                    0
+                                                } else {
+                                                    id.max(0) as usize
+                                                }),
                 Err(error) => UserRet::from_error(error),
             }
         }

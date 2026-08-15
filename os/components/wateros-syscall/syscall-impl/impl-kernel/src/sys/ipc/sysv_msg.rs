@@ -21,7 +21,10 @@ const IPC_RMID : usize = 0;
 const IPC_SET : usize = 1;
 const IPC_STAT : usize = 2;
 const IPC_INFO : usize = 3;
-const MSG_INFO : usize = 4;
+// Linux UAPI 的消息队列扩展命令不与通用 IPC 命令连续。
+const MSG_STAT : usize = 11;
+const MSG_INFO : usize = 12;
+const MSG_STAT_ANY : usize = 13;
 const IPC_64 : usize = 0x100;
 const MSG_NOERROR : usize = 0o10000;
 const MSG_EXCEPT : usize = 0o20000;
@@ -39,8 +42,11 @@ struct Msginfo {
     msgmnb : i32,
     msgmni : i32,
     msgssz : i32,
-    msgseg : i32,
+    msgtql : i32,
+    msgseg : u16,
 }
+
+const _ : () = assert!(core::mem::size_of::<Msginfo>() == 32);
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -542,14 +548,34 @@ pub(crate) fn sys_msgctl(args : SyscallArgs) -> UserRet {
             if pointer == 0 {
                 return UserRet::from_error(ErrNo::EFAULT);
             }
-            let info = Msginfo { msgpool : 0,
-                                 msgmap : 0,
+            let registry = MESSAGE_REGISTRY.lock();
+            let queue_count = registry.by_id.len().min(i32::MAX as usize) as i32;
+            let message_count = registry.by_id
+                                        .values()
+                                        .map(|queue| queue.messages.len())
+                                        .sum::<usize>()
+                                        .min(i32::MAX as usize) as i32;
+            let message_bytes = registry.by_id
+                                        .values()
+                                        .map(|queue| queue.bytes)
+                                        .sum::<usize>()
+                                        .min(i32::MAX as usize) as i32;
+            let max_id = registry.by_id
+                                 .keys()
+                                 .next_back()
+                                 .copied()
+                                 .unwrap_or(0);
+            let info = Msginfo { msgpool : if command == MSG_INFO { queue_count } else { 0 },
+                                 msgmap : if command == MSG_INFO { message_count } else { 0 },
                                  msgmax : MSGMAX as i32,
                                  msgmnb : MSGMNB as i32,
                                  msgmni : 32000,
                                  msgssz : 8,
-                                 msgseg : 32768 };
-            crate::user_copy::copy_to_user_struct(pointer, &info).map(|_| 0)
+                                 msgtql : if command == MSG_INFO { message_bytes } else { 16384 },
+                                 msgseg : u16::MAX };
+            drop(registry);
+            crate::user_copy::copy_to_user_struct(pointer, &info)
+                .map(|_| max_id.max(0) as usize)
         }
         IPC_RMID => {
             let mut registry = MESSAGE_REGISTRY.lock();
@@ -570,7 +596,7 @@ pub(crate) fn sys_msgctl(args : SyscallArgs) -> UserRet {
             }
             Ok(0)
         }
-        IPC_STAT => {
+        IPC_STAT | MSG_STAT | MSG_STAT_ANY => {
             if pointer == 0 {
                 return UserRet::from_error(ErrNo::EFAULT);
             }
@@ -580,14 +606,15 @@ pub(crate) fn sys_msgctl(args : SyscallArgs) -> UserRet {
                                     .get(&id)
                                     .ok_or(ErrNo::EINVAL);
                 queue.and_then(|queue| {
-                         if !has_access(queue, false, uid, gid) {
+                         if command != MSG_STAT_ANY && !has_access(queue, false, uid, gid) {
                              return Err(ErrNo::EACCES);
                          }
                          Ok(queue_snapshot(queue))
                      })
             };
             snapshot.and_then(|snapshot| {
-                        crate::user_copy::copy_to_user_struct(pointer, &snapshot).map(|_| 0)
+                        crate::user_copy::copy_to_user_struct(pointer, &snapshot)
+                            .map(|_| if command == IPC_STAT { 0 } else { id.max(0) as usize })
                     })
         }
         IPC_SET => {
