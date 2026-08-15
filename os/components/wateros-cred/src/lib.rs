@@ -41,6 +41,12 @@ pub fn on_exec(tid: TaskId) {
 #[cfg(feature = "impl-root")]
 /// 任务 reap 后删除侧表条目。
 pub fn drop_task_cred(tid: TaskId) {
+    // 当前任务在 scheduler 完成最终切换之前仍可能经过退出、信号或抢占收尾，
+    // 这些路径会查询 current credentials。凭证应作为 zombie 状态的一部分保留，
+    // 由父进程 reap（或非当前任务的 rollback/exec 清理）最终释放。
+    if task::current_task_id() == Some(tid) {
+        return;
+    }
     active_impl::drop_task_cred(tid);
 }
 

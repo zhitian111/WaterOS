@@ -150,8 +150,7 @@ fn drop_exited_task_resources(exited : &task::ExitedTask) {
                        .map(|frame| frame.user_aspace_ptr())
                        .unwrap_or(0);
     drop_task_runtime_resources_with_aspace(exited.id, aspace);
-    // 凭证必须至少保留到任务不再是 current。正常退出路径会在最终切换前
-    // 删除它；这里再做一次幂等清理，覆盖被强制回收或旧状态遗留的任务。
+    // 凭证作为 zombie 状态的一部分保留到 reap；这里做最终幂等清理。
     cred::drop_task_cred(exited.id);
 }
 
@@ -182,7 +181,7 @@ pub(crate) fn drop_task_runtime_resources_with_aspace(task_id : task::TaskId, as
     crate::unix_sock::drop_task(task_id);
     // 不在这里删除凭证。这个函数也由“当前线程正在退出”的路径调用，
     // 后续退出收尾（信号、vfork、记账）仍可能查询 current credentials。
-    // 凭证由 exit_current 的最后一步或 reap/rollback 路径回收。
+    // 凭证由 reap/rollback 路径回收。
 }
 
 pub(crate) fn reap_exited_member_threads_runtime_resources(pid : task::ProcessId) {

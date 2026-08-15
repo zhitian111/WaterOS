@@ -85,7 +85,6 @@ pub(crate) fn sys_exit(exit_code : isize) -> isize {
 }
 
 pub(crate) fn exit_current_with_wait_code(exit_code : isize) -> isize {
-    let exiting_task_id = task::current_task_id();
     let mut process_task = None;
     let mut process_was_exiting = false;
     if let Some(task_id) = task::current_task_id() {
@@ -123,11 +122,8 @@ pub(crate) fn exit_current_with_wait_code(exit_code : isize) -> isize {
     }
     crate::sys::misc::bringup_stats::record_sys_exit();
     super::vfork::complete_current();
-    // 放在所有可能读取 current credentials 的退出收尾之后。下一步立即
-    // 从 scheduler 退出当前任务，不再给用户态或普通 syscall 路径运行机会。
-    if let Some(task_id) = exiting_task_id {
-        cred::drop_task_cred(task_id);
-    }
+    // credential 与 Linux zombie 一样保留到 reap。即使紧接着调用
+    // exit_current，在 scheduler 真正切走前本任务仍是 current，不能提前删除。
     task::exit_current(exit_code)
 }
 
@@ -137,7 +133,6 @@ pub(crate) fn sys_exit_group(exit_code : isize) -> isize {
 }
 
 pub(crate) fn exit_group_with_wait_code(exit_code : isize) -> isize {
-    let exiting_task_id = task::current_task_id();
     let mut process_task = None;
     if let Some(task_id) = task::current_task_id() {
         super::wait::wake_clear_child_tid_for_task(task_id);
@@ -188,9 +183,6 @@ pub(crate) fn exit_group_with_wait_code(exit_code : isize) -> isize {
         task::wake_parent_child_waiters(pid);
     }
     super::vfork::complete_current();
-    if let Some(task_id) = exiting_task_id {
-        cred::drop_task_cred(task_id);
-    }
     task::exit_current(exit_code)
 }
 
