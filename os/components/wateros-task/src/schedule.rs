@@ -84,6 +84,12 @@ pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {
 /// 返回当前正在运行任务的任务号。
 pub fn current_task_id() -> Option<TaskId> { scheduler::current_task_id() }
 
+/// 当前 CPU 是否仍处于引导上下文（尚未切入第一批任务）。
+///
+/// 引导上下文运行在启动栈上，调度器只把它预置为 idle 占位；此时不能经
+/// waitqueue 阻塞，需要睡眠的调用方应退化为自旋/轮询等待。
+pub fn in_boot_context() -> bool { scheduler::current_in_boot_context() }
+
 /// 返回当前正在运行任务的稳定快照。
 pub fn current_task_snapshot() -> Option<TaskSnapshot> { scheduler::current_task_snapshot() }
 

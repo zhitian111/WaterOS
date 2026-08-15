@@ -345,6 +345,17 @@ pub fn run_first_task() -> ! {
     panic!("run_first_task_on_current_cpu must not return");
 }
 
+/// 当前 CPU 是否仍处于引导上下文（尚未经 [`run_first_task`] 切出）。
+///
+/// 引导上下文在调度器中仅被预置为 idle 占位，运行在启动栈上；它不能经
+/// waitqueue 阻塞（`schedule_wait` 会把它当成普通任务入队并切走启动栈）。
+/// 需要睡眠的调用方应在此返回 `true` 时退化为自旋/轮询等待。
+pub fn current_in_boot_context() -> bool {
+    let cpu_id = cpu::current_cpu_id();
+    let _guard = InterruptGuard::new();
+    with_scheduler(|scheduler| scheduler.boot_context_active(cpu_id))
+}
+
 // =============================================================================
 //  2. 任务创建（spawn / fork / clone / exec）
 // =============================================================================

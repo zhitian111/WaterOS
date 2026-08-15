@@ -711,6 +711,7 @@ dependencies = [
  "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor",
  "wateros-runtime-logging",
+ "wateros-task",
 ]
 
 [[package]]
