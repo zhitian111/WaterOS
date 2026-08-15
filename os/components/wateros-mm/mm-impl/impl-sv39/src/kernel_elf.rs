@@ -87,7 +87,12 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
 }
 
 const EM_RISCV : u16 = 243;
+const ET_EXEC : u16 = 2;
+const ET_DYN : u16 = 3;
 const PT_INTERP : u32 = 3;
+/// PIE 主程序不能装载到零地址：除空指针保护外，一些 libc/procps 也会拒绝
+/// 位于低地址的全局对象。动态链接器使用另一固定区域，不与这里重叠。
+const USER_PIE_BASE : usize = 0x0040_0000;
 const RISCV64_INTERP_BASE : usize = 0x0000_0000_7000_0000;
 /// 用户栈固定顶与大小（2 MiB；libc-bench regex 回溯需更大栈）。
 pub(crate) const ELF_STACK_TOP : usize = 0x0000_0000_7FFF_A000;
@@ -95,6 +100,14 @@ pub(crate) const ELF_STACK_SIZE : usize = 2 * 1024 * 1024;
 const USER_STACK_PREMAP_PAGES : usize = 16;
 const PREFERRED_MMAP_BASE : usize = 0x1000_0000;
 const USER_HEAP_MMAP_GAP : usize = 64 * 1024 * 1024;
+
+fn executable_load_bias(e_type : u16) -> Result<usize, LoadElfError> {
+    match e_type {
+        ET_EXEC => Ok(0),
+        ET_DYN => Ok(USER_PIE_BASE),
+        _ => Err(LoadElfError::Parse),
+    }
+}
 
 unsafe extern "C" {
     static __alltraps: u8;
@@ -720,6 +733,8 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
     if rd_u16(&ehdr, 18).ok_or(LoadElfError::TooSmall)? != EM_RISCV {
         return Err(LoadElfError::BadMachine);
     }
+    let e_type = rd_u16(&ehdr, 16).ok_or(LoadElfError::TooSmall)?;
+    let load_bias = executable_load_bias(e_type)?;
     let e_entry = rd_u64(&ehdr, 0x18).ok_or(LoadElfError::TooSmall)? as usize;
     let e_phoff = rd_u64(&ehdr, 0x20).ok_or(LoadElfError::TooSmall)? as usize;
     let e_phentsize = rd_u16(&ehdr, 0x36).ok_or(LoadElfError::TooSmall)? as usize;
@@ -750,11 +765,15 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
                                                                 &phdrs,
                                                                 e_phentsize,
                                                                 e_phnum,
-                                                                0)?;
+                                                                load_bias)?;
 
-    if e_entry == 0 || e_entry < min_vaddr || e_entry >= max_vaddr {
-        runtime::logging::warn!("[elf-load] bad e_entry={:#x} image=[{:#x},{:#x})",
-                                e_entry,
+    let program_entry = load_bias.checked_add(e_entry)
+                                 .ok_or(LoadElfError::Parse)?;
+
+    if e_entry == 0 || program_entry < min_vaddr || program_entry >= max_vaddr {
+        runtime::logging::warn!("[elf-load] bad entry={:#x} bias={:#x} image=[{:#x},{:#x})",
+                                program_entry,
+                                load_bias,
                                 min_vaddr,
                                 max_vaddr);
         return Err(LoadElfError::Parse);
@@ -783,16 +802,16 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
                             VirtAddr(ELF_STACK_TOP + PAGE_SIZE));
 
     // 使用 path-based 验证
-    verify_mapped_entry_from_path(&mut aspace,
-                                  path,
-                                  e_entry,
-                                  &phdrs,
-                                  e_phentsize,
-                                  e_phnum)?;
+    verify_mapped_entry_from_path_at(&mut aspace,
+                                     path,
+                                     program_entry,
+                                     &phdrs,
+                                     e_phentsize,
+                                     e_phnum,
+                                     load_bias)?;
 
     // 处理动态链接器
-    let program_entry = e_entry;
-    let mut entry_pc = e_entry;
+    let mut entry_pc = program_entry;
     let mut interp_base = 0usize;
     let interp_path = read_interp_path_from_phdrs(path, &phdrs, e_phentsize, e_phnum)?;
     if let Some(interp_path) = interp_path {
