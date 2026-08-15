@@ -105,6 +105,11 @@ pub fn pty_endpoint_for_handle(handle : &(dyn api_v0::VfsIoHandle + '_))
           })
 }
 
+/// 特殊设备节点的合成 inode（与 devfs `stat` 路径一致），供打开句柄的
+/// `fstat` 与之对齐，避免 coreutils 等把 stat/fstat 的 inode 不一致误判为
+/// “源文件被替换”。
+pub fn devfs_node_inode(path : &str) -> u64 { char_dev_handle::path_inode(path) }
+
 pub fn test() {
     ipc::pipe::test();
     driver_character_api_v0::test();

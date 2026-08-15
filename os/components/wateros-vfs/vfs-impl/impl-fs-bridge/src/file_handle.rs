@@ -202,7 +202,11 @@ impl VfsIoHandle for BufferedFileHandle {
         reservation.commit(buf.len(), buf.len())?;
         self.dirty = true;
         const O_SYNC : u32 = 0o4_010_000;
-        if self.description.status_flags() & O_SYNC != 0 {
+        if self.description
+               .status_flags() &
+           O_SYNC !=
+           0
+        {
             self.sync_dirty()?;
         }
         Ok(buf.len())
@@ -268,7 +272,11 @@ impl VfsIoHandle for BufferedFileHandle {
         drop(data);
         self.dirty = true;
         const O_SYNC : u32 = 0o4_010_000;
-        if self.description.status_flags() & O_SYNC != 0 {
+        if self.description
+               .status_flags() &
+           O_SYNC !=
+           0
+        {
             self.sync_dirty()?;
         }
         Ok(buf.len())
@@ -419,17 +427,27 @@ impl FsBridge {
         }
         match abs.as_str() {
             "/dev/null" => {
-                return Ok(Box::new(impl_fd_session::NullDeviceHandle::new(open_accmode(flags))));
+                return Ok(Box::new(impl_fd_session::NullDeviceHandle::new(
+                    open_accmode(flags),
+                    impl_fd_session::devfs_node_inode("/dev/null"),
+                )));
             }
             "/dev/zero" => {
-                return Ok(Box::new(impl_fd_session::ZeroDeviceHandle::new(open_accmode(flags))));
+                return Ok(Box::new(impl_fd_session::ZeroDeviceHandle::new(
+                    open_accmode(flags),
+                    impl_fd_session::devfs_node_inode("/dev/zero"),
+                )));
             }
             "/dev/random" | "/dev/urandom" => {
-                return Ok(Box::new(impl_fd_session::UrandomDeviceHandle::new(open_accmode(flags))));
+                return Ok(Box::new(impl_fd_session::UrandomDeviceHandle::new(
+                    open_accmode(flags),
+                    impl_fd_session::devfs_node_inode(abs.as_str()),
+                )));
             }
             "/dev/cpu_dma_latency" => {
                 return Ok(Box::new(impl_fd_session::CpuDmaLatencyDeviceHandle::new(
                     open_accmode(flags),
+                    impl_fd_session::devfs_node_inode("/dev/cpu_dma_latency"),
                 )));
             }
             _ => {}
@@ -454,7 +472,8 @@ impl FsBridge {
                 return impl_fd_session::open_named_pipe(meta, flags);
             }
             if meta.node_type == VfsNodeType::Special && meta.mode & S_IFMT == S_IFCHR {
-                return Ok(Box::new(impl_fd_session::NullDeviceHandle::new(open_accmode(flags))));
+                return Ok(Box::new(impl_fd_session::NullDeviceHandle::new(open_accmode(flags),
+                                                                          meta.inode)));
             }
             if meta.node_type == VfsNodeType::Directory && !flags.contains(VfsOpenFlags::WRITE) {
                 return super::dir_handle::DirectoryHandle::open(self, abs);

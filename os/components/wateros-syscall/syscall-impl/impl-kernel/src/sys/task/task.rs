@@ -14,6 +14,8 @@ const PR_SET_PDEATHSIG : usize = 1;
 const PR_GET_PDEATHSIG : usize = 2;
 const PR_SET_DUMPABLE : usize = 4;
 const PR_GET_DUMPABLE : usize = 3;
+const PR_SET_KEEPCAPS : usize = 8;
+const PR_GET_KEEPCAPS : usize = 7;
 const PR_GET_TID_ADDRESS : usize = 18;
 const PR_SET_SECCOMP : usize = 22;
 const PR_SET_NAME : usize = 15;
@@ -87,9 +89,9 @@ pub(crate) fn exit_current_with_wait_code(exit_code : isize) -> isize {
     if let Some(task_id) = task::current_task_id() {
         if let Some(snapshot) = task::process_task_snapshot(task_id) {
             process_was_exiting = task::process_snapshot(snapshot.pid).is_some_and(|process| {
-                                      matches!(process.state,
+                                                                          matches!(process.state,
                                                task::ProcessState::Exiting(_))
-                                  });
+                                                                      });
             process_task = Some(snapshot);
         }
         super::wait::wake_clear_child_tid_for_task(task_id);
@@ -245,6 +247,22 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
             Some(false) => UserRet::from_success(0),
             None => UserRet::from_error(ErrNo::ESRCH),
         },
+        PR_SET_KEEPCAPS => {
+            // Linux: arg2 只能是 0/1；WaterOS 凭证模型在 setuid 时本就保留全部
+            // root 能力，KEEPCAPS 标志无实际效果，接受即可（setpriv 等工具依赖）。
+            if args.arg(1) > 1 {
+                UserRet::from_error(ErrNo::EINVAL)
+            } else {
+                UserRet::from_success(0)
+            }
+        }
+        PR_GET_KEEPCAPS => {
+            if args.arg(1) | args.arg(2) | args.arg(3) | args.arg(4) != 0 {
+                UserRet::from_error(ErrNo::EINVAL)
+            } else {
+                UserRet::from_success(0)
+            }
+        }
         PR_GET_TID_ADDRESS => {
             let addr_ptr = args.arg(1);
             if addr_ptr == 0 {

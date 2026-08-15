@@ -554,12 +554,18 @@ fn stdio_replacement_handle() -> Box<dyn VfsIoHandle> {
                 log::warn!("[vfs][fd] /dev/null unavailable for stdio replacement: {:?}; \
                             fallback to zero handle",
                            err);
-                Box::new(impl_fd_session::ZeroDeviceHandle::new(2))
+                Box::new(impl_fd_session::ZeroDeviceHandle::new(
+                    2,
+                    impl_fd_session::devfs_node_inode("/dev/null"),
+                ))
             }
         }
     }
     #[cfg(not(feature = "bridge-fs-api"))]
     {
-        Box::new(impl_fd_session::ZeroDeviceHandle::new(2))
+        Box::new(impl_fd_session::ZeroDeviceHandle::new(
+            2,
+            impl_fd_session::devfs_node_inode("/dev/null"),
+        ))
     }
 }

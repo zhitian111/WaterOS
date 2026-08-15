@@ -44,7 +44,7 @@ fn char_metadata(mode: u16, inode: u64) -> VfsMetadata {
 }
 
 // 本方法代码由AI完成
-fn path_inode(path: &str) -> u64 {
+pub(crate) fn path_inode(path: &str) -> u64 {
     let mut hash = 0xCBF2_9CE4_8422_2325u64;
     for byte in path.as_bytes() {
         hash ^= u64::from(*byte);
