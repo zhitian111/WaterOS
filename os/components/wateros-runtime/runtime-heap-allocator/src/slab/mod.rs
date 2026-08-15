@@ -19,6 +19,7 @@ use config::task::MAX_CPUS;
 
 use cpu_slab::CpuSlab;
 use size_class::SizeClass;
+use slab_page::{SlabPageHeader, SLAB_MAGIC};
 
 /// slab 页来源：返回页对齐的内核可访问基址（WaterOS 恒等映射下为 `PPN * PAGE_SIZE`）。
 pub trait HeapFrameSource : Send + Sync {
@@ -100,15 +101,31 @@ impl SlabAllocator {
         let Some(class) = SizeClass::from_layout(layout) else {
             return false;
         };
-        let Some(slot) = self.cpus
-                             .get(cpu)
-        else {
+        // SAFETY: 调用方保证 ptr 来自 slab；此处只读 header 判断归属。
+        let hdr = unsafe { SlabPageHeader::from_obj(ptr) };
+        if hdr.magic != SLAB_MAGIC || hdr.size_class() != class.index() {
             return false;
-        };
-        // SAFETY: 与 GlobalAlloc::dealloc 相同约束；本方法验证 header 后才会释放。
-        let state = unsafe { &mut *slot.0.get() };
-        // SAFETY: 同上；指针必须来自该 CPU 的 slab。
-        unsafe { state.dealloc(ptr, class.index()) }
+        }
+        if hdr.owner_cpu == cpu.raw() as u16 {
+            let Some(slot) = self.cpus
+                                 .get(cpu)
+            else {
+                return false;
+            };
+            // SAFETY: 与 GlobalAlloc::dealloc 相同约束；owner CPU 独占本地槽位。
+            let state = unsafe { &mut *slot.0.get() };
+            unsafe { state.dealloc_local(ptr, class.index()) }
+        } else {
+            let owner = CpuId::from_raw(hdr.owner_cpu as usize);
+            let Some(owner_slot) = self.cpus
+                                       .get(owner)
+            else {
+                return false;
+            };
+            // SAFETY: remote_push 只修改 owner CPU 的 Mutex 保护队列，不触碰本地 cache。
+            unsafe { (&*owner_slot.0.get()).remote_push(ptr) };
+            true
+        }
     }
 }
 
