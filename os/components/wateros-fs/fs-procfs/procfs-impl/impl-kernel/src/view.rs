@@ -1,4 +1,37 @@
 use super::*;
+use core::sync::atomic::{AtomicU64, Ordering};
+
+/// `/proc/sys/kernel/random/uuid` 的每次读取序号。
+///
+/// WaterOS 目前没有可复用的内核熵池 API；这里把调度 tick 与单调序号经过
+/// SplitMix64 扩散，保证同一次启动中的每次读取都产生不同、格式和版本位正确的
+/// UUID。它适合接口兼容与临时标识，不承诺密码学随机性。
+static UUID_SEQUENCE : AtomicU64 = AtomicU64::new(1);
+
+fn mix_uuid_word(mut value : u64) -> u64 {
+    value = value.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
+}
+
+fn random_uuid() -> Vec<u8> {
+    let sequence = UUID_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let tick = task::current_tick();
+    let high = mix_uuid_word(sequence ^ tick.rotate_left(17));
+    let low = mix_uuid_word(sequence.rotate_left(31) ^ tick ^ 0x5741_5445_524f_5300);
+    let mut bytes = [0u8; 16];
+    bytes[..8].copy_from_slice(&high.to_be_bytes());
+    bytes[8..].copy_from_slice(&low.to_be_bytes());
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // RFC 4122 version 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
+    format!("{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-\
+             {:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}\n",
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15]).into_bytes()
+}
 
 /// 内核 procfs 只读视图（零大小；无实例状态）。
 // 本结构代码由AI完成
@@ -110,7 +143,11 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidNsDir(pid) |
             ProcNode::PidTaskRoot(pid) => process_visible(pid),
             ProcNode::PidNamespace(pid, _) => process_visible(pid),
-            ProcNode::PidTaskDir(pid, _) | ProcNode::PidTaskComm(pid, _) => process_visible(pid),
+            ProcNode::PidTaskDir(pid, _) |
+            ProcNode::PidTaskComm(pid, _) |
+            ProcNode::PidTaskStat(pid, _) |
+            ProcNode::PidTaskStatus(pid, _) |
+            ProcNode::PidTaskWchan(pid, _) => process_visible(pid),
             ProcNode::PidFd(pid, fd) => {
                 task::leader_task_for_process(pid)
                     .map(|leader| fds_for(leader).contains(&fd))
@@ -236,7 +273,10 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidCgroup(pid) |
             ProcNode::PidWchan(pid) |
             ProcNode::PidFdInfo(pid, _) |
-            ProcNode::PidTaskComm(pid, _) => {
+            ProcNode::PidTaskComm(pid, _) |
+            ProcNode::PidTaskStat(pid, _) |
+            ProcNode::PidTaskStatus(pid, _) |
+            ProcNode::PidTaskWchan(pid, _) => {
                 if !process_visible(pid) {
                     return Err(FsError::NotFound);
                 }
@@ -363,11 +403,9 @@ impl ProcFsView for KernelProcFs {
             ProcNode::SysNetCoreSomaxconn => Ok(b"4096\n".to_vec()),
             ProcNode::SysNetIpv4PortRange => Ok(b"32768\t60999\n".to_vec()),
             ProcNode::SysNetIpv4TcpSyncookies => Ok(b"1\n".to_vec()),
-            // 第一版没有熵池 UUID 生成器；boot_id 在单次启动内稳定，uuid 节点
-            // 则按 Linux 约定每次读取均应变化。当前两者先发布合法格式，明确
-            // 保持只读，后续接入 RNG 后替换。
+            // boot_id 在单次启动内保持稳定；random/uuid 每次读取生成新值。
             ProcNode::SysKernelRandomBootId => Ok(b"57415445-524f-532d-424f-4f5449440001\n".to_vec()),
-            ProcNode::SysKernelRandomUuid => Ok(b"57415445-524f-532d-5555-494400000001\n".to_vec()),
+            ProcNode::SysKernelRandomUuid => Ok(random_uuid()),
             ProcNode::SysKernelRandomizeVaSpace => Ok(b"0\n".to_vec()),
             ProcNode::PidStat(pid) => format_stat(pid),
             ProcNode::PidStatus(pid) => format_status(pid),
@@ -390,6 +428,9 @@ impl ProcFsView for KernelProcFs {
             ProcNode::PidWchan(pid) => format_wchan(pid),
             ProcNode::PidFdInfo(pid, fd) => format_fdinfo(pid, fd),
             ProcNode::PidTaskComm(pid, task_id) => format_task_comm(pid, task_id),
+            ProcNode::PidTaskStat(pid, task_id) => format_task_stat(pid, task_id),
+            ProcNode::PidTaskStatus(pid, task_id) => format_task_status(pid, task_id),
+            ProcNode::PidTaskWchan(pid, task_id) => format_task_wchan(pid, task_id),
             ProcNode::SelfLink | ProcNode::ThreadSelfLink => Err(FsError::NotAFile),
         }
     }
@@ -693,6 +734,12 @@ impl ProcFsView for KernelProcFs {
                     return Err(FsError::NotFound);
                 }
                 Ok(vec![FsDirEntry { name : String::from("comm"),
+                                     node_type : FsNodeType::File },
+                        FsDirEntry { name : String::from("stat"),
+                                     node_type : FsNodeType::File },
+                        FsDirEntry { name : String::from("status"),
+                                     node_type : FsNodeType::File },
+                        FsDirEntry { name : String::from("wchan"),
                                      node_type : FsNodeType::File }])
             }
             _ => Err(FsError::NotAFile),

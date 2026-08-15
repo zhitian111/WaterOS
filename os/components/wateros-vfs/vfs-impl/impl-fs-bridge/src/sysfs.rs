@@ -85,6 +85,7 @@ fn is_dir(path: &str) -> bool {
         "/" | "/devices" | "/devices/system" | "/devices/system/cpu" |
         "/devices/system/node" | "/devices/system/node/node0" |
         "/class" | "/class/net" | "/class/net/lo" | "/class/net/eth0" |
+        "/class/block" |
         "/block" | "/block/vda" | "/block/vda/queue" |
         "/dev" | "/dev/block" | "/dev/char" | "/kernel" | "/firmware" => true,
         _ => {
@@ -103,7 +104,7 @@ fn is_dir(path: &str) -> bool {
 }
 
 fn is_symlink(path: &str) -> bool {
-    if path == "/dev/block/252:0" {
+    if path == "/dev/block/252:0" || path == "/class/block/vda" {
         return true;
     }
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
@@ -254,7 +255,8 @@ fn directory_entries(path: &str) -> Option<Vec<FsDirEntry>> {
             }
             Some(entries)
         }
-        "/class" => Some(vec![dir("net")]),
+        "/class" => Some(vec![dir("net"), dir("block")]),
+        "/class/block" => Some(vec![symlink("vda")]),
         "/class/net" => Some(vec![dir("lo"), dir("eth0")]),
         "/class/net/lo" | "/class/net/eth0" => Some(vec![file("address"), file("operstate"),
                                                              file("mtu"), file("type"), file("ifindex")]),
@@ -337,7 +339,8 @@ impl ProcFsView for KernelSysFs {
         let path = normalize(rel_path);
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
         let target = match parts.as_slice() {
-            ["dev", "block", "252:0"] => "../../block/vda",
+            ["dev", "block", "252:0"] |
+            ["class", "block", "vda"] => "../../block/vda",
             ["devices", "system", "cpu", cpu, "node0"]
                 if parse_cpu_component(cpu).is_some_and(is_online_cpu) => "../../node/node0",
             ["devices", "system", "node", "node0", cpu]

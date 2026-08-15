@@ -167,6 +167,9 @@ pub(crate) enum ProcNode {
     PidTaskRoot(ProcessId),
     PidTaskDir(ProcessId, TaskId),
     PidTaskComm(ProcessId, TaskId),
+    PidTaskStat(ProcessId, TaskId),
+    PidTaskStatus(ProcessId, TaskId),
+    PidTaskWchan(ProcessId, TaskId),
 }
 
 // 为 proc 节点分配稳定 inode 号（pid 子树按 pid 编码）。
@@ -274,7 +277,16 @@ pub(crate) fn proc_inode(node : ProcNode) -> u64 {
             0x3000_0000_0000_0000 | ((pid.raw() as u64) << 32) | (tid as u64)
         }
         ProcNode::PidTaskComm(pid, tid) => {
-            0x3000_0000_0000_0000 | (1u64 << 60) | ((pid.raw() as u64) << 32) | (tid as u64)
+            0x3100_0000_0000_0000 | ((pid.raw() as u64) << 32) | (tid as u64)
+        }
+        ProcNode::PidTaskStat(pid, tid) => {
+            0x3200_0000_0000_0000 | ((pid.raw() as u64) << 32) | (tid as u64)
+        }
+        ProcNode::PidTaskStatus(pid, tid) => {
+            0x3300_0000_0000_0000 | ((pid.raw() as u64) << 32) | (tid as u64)
+        }
+        ProcNode::PidTaskWchan(pid, tid) => {
+            0x3400_0000_0000_0000 | ((pid.raw() as u64) << 32) | (tid as u64)
         }
         ProcNode::PidFd(pid, fd) => 0x2000_0000_0000_0000 | ((pid.raw() as u64) << 32) | fd as u64,
         ProcNode::PidFdInfo(pid, fd) => 0x2100_0000_0000_0000 | ((pid.raw() as u64) << 32) | fd as u64,
@@ -457,6 +469,18 @@ pub(crate) fn parse_node(path : &str) -> Option<ProcNode> {
         [pid_name, "task", tid_name, "comm"] => {
             let pid = parse_pid(pid_name)?;
             Some(ProcNode::PidTaskComm(pid, parse_thread_task(pid, tid_name)?))
+        }
+        [pid_name, "task", tid_name, "stat"] => {
+            let pid = parse_pid(pid_name)?;
+            Some(ProcNode::PidTaskStat(pid, parse_thread_task(pid, tid_name)?))
+        }
+        [pid_name, "task", tid_name, "status"] => {
+            let pid = parse_pid(pid_name)?;
+            Some(ProcNode::PidTaskStatus(pid, parse_thread_task(pid, tid_name)?))
+        }
+        [pid_name, "task", tid_name, "wchan"] => {
+            let pid = parse_pid(pid_name)?;
+            Some(ProcNode::PidTaskWchan(pid, parse_thread_task(pid, tid_name)?))
         }
         _ => None,
     }

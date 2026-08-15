@@ -287,18 +287,24 @@ pub(crate) fn state_char(process : ProcessState, leader_state : Option<TaskState
 // 本方法代码由AI完成
 pub(crate) fn format_stat(pid : ProcessId) -> FsResult<Vec<u8>> {
     let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
-    let leader = process.leader_task_id;
+    format_task_stat(pid, process.leader_task_id)
+}
+
+/// 生成 `/proc/<tgid>/task/<tid>/stat`。进程级关系与地址空间字段来自
+/// process，运行时间、状态、调度参数和 CPU 则来自目标线程自身。
+pub(crate) fn format_task_stat(pid : ProcessId, task_id : TaskId) -> FsResult<Vec<u8>> {
+    let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
+    let process_task = task::process_task_snapshot(task_id).filter(|entry| entry.pid == pid)
+                                                           .ok_or(FsError::NotFound)?;
+    let tid = process_task.tid.raw();
+    let target_snapshot = task::task_snapshot(task_id);
     // Linux utime/stime are in USER_HZ jiffies; tick_count tracks scheduler ticks (~100/s).
-    let jiffies = task::task_snapshot(leader).map(|snap| {
-                                                 snap.stats
-                                                     .tick_count
-                                                 as u64
-                                             })
-                                             .unwrap_or(0)
-                                             .max(1);
+    let jiffies = target_snapshot.map(|snap| snap.stats.tick_count as u64)
+                                 .unwrap_or(0)
+                                 .max(1);
     // Linux 的 stat 第 2 列以括号包围，且传统工具只假定 comm 最多 15 个
     // 字节。先去掉换行和括号，避免一个异常 argv 把后续列错位。
-    let comm = comm_for(pid);
+    let comm = thread_comm_str(task_id).unwrap_or_else(|| comm_for(pid));
     let comm = comm.replace(['\n', '\r', '(', ')'], "_");
     let comm15: String = comm.chars().take(15).collect();
     let ppid = process.parent_pid
@@ -308,19 +314,17 @@ pub(crate) fn format_stat(pid : ProcessId) -> FsResult<Vec<u8>> {
     // pgrp 与 getpgid(1) 比对，必须填真实值而非 0。
     let pgrp = process.pgid.raw();
     let session = process.sid.raw();
-    let leader_snapshot = task::task_snapshot(leader);
     let utime = jiffies;
     // 调度器尚未区分 user/system tick；与全局 /proc/stat 一致，统一计入 user。
     let stime = 0;
-    let leader_state = leader_snapshot.map(|snap| snap.state);
-    let sc = state_char(process.state, leader_state);
+    let sc = state_char(process.state, target_snapshot.map(|snap| snap.state));
     let mem = process_memory_kb(pid)?;
-    let nice = leader_snapshot.map_or(0, |snapshot| snapshot.nice as i128);
+    let nice = target_snapshot.map_or(0, |snapshot| snapshot.nice as i128);
     let priority = 20i128.saturating_add(nice);
-    let processor = leader_snapshot
+    let processor = target_snapshot
         .and_then(|snapshot| snapshot.running_cpu_id.or(snapshot.last_cpu_id))
         .map_or(0, |cpu| cpu.raw()) as i128;
-    let (rt_priority, policy) = leader_snapshot.map_or((0, 0), |snapshot| {
+    let (rt_priority, policy) = target_snapshot.map_or((0, 0), |snapshot| {
         let policy = match snapshot.policy {
             task::SchedPolicy::Other => 0,
             task::SchedPolicy::Fifo => 1,
@@ -349,7 +353,7 @@ pub(crate) fn format_stat(pid : ProcessId) -> FsResult<Vec<u8>> {
         0, 0, 0, // delayacct, guest_time, cguest_time
         0, 0, 0, 0, 0, 0, 0, 0, // data/brk/argv/env/exit_code
     ];
-    let mut line = format!("{} ({}) {} {} {} {}", pid.raw(), comm15, sc, ppid, pgrp, session);
+    let mut line = format!("{} ({}) {} {} {} {}", tid, comm15, sc, ppid, pgrp, session);
     for field in fields {
         let _ = write!(line, " {field}");
     }
@@ -360,15 +364,23 @@ pub(crate) fn format_stat(pid : ProcessId) -> FsResult<Vec<u8>> {
 // 本方法代码由AI完成
 pub(crate) fn format_status(pid : ProcessId) -> FsResult<Vec<u8>> {
     let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
-    let leader = process.leader_task_id;
-    let cred = cred::credentials_for(leader);
-    let comm = comm_for(pid);
+    format_task_status(pid, process.leader_task_id)
+}
+
+/// 生成线程级 status；`Tgid` 保持进程号，`Pid/NSpid` 使用目标线程号。
+pub(crate) fn format_task_status(pid : ProcessId, task_id : TaskId) -> FsResult<Vec<u8>> {
+    let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
+    let process_task = task::process_task_snapshot(task_id).filter(|entry| entry.pid == pid)
+                                                           .ok_or(FsError::NotFound)?;
+    let tid = process_task.tid.raw();
+    let cred = cred::try_credentials_for(task_id).ok_or(FsError::NotFound)?;
+    let comm = thread_comm_str(task_id).unwrap_or_else(|| comm_for(pid));
     let mem = process_memory_kb(pid)?;
     let ppid = process.parent_pid
                       .map(|p| p.raw())
                       .unwrap_or(0);
-    let leader_state = task::task_snapshot(leader).map(|snap| snap.state);
-    let sc = state_char(process.state, leader_state);
+    let target_snapshot = task::task_snapshot(task_id);
+    let sc = state_char(process.state, target_snapshot.map(|snap| snap.state));
     let state_str = match sc {
         'S' => "sleeping",
         'Z' => "zombie",
@@ -383,8 +395,7 @@ pub(crate) fn format_status(pid : ProcessId) -> FsResult<Vec<u8>> {
                          let _ = write!(out, "{} ", gid.0);
                          out
                      });
-    let leader_snapshot = task::task_snapshot(leader);
-    let affinity = leader_snapshot.map_or(task::CpuMask::ALL, |snapshot| snapshot.affinity);
+    let affinity = target_snapshot.map_or(task::CpuMask::ALL, |snapshot| snapshot.affinity);
     let cpu_bits = affinity.bits();
     let cpu_hex = if cpu_bits >> 32 == 0 {
         format!("{:08x}", cpu_bits as u32)
@@ -416,7 +427,7 @@ pub(crate) fn format_status(pid : ProcessId) -> FsResult<Vec<u8>> {
     }
     let line = format!("Name:\t{comm}\nState:\t{sc} ({state_str})\nTgid:\t{}\nNgid:\t0\nPid:\t{}\nPPid:\t{ppid}\nTracerPid:\t0\nUid:\t{}\t{}\t{}\t{}\nGid:\t{}\t{}\t{}\t{}\nFDSize:\t1024\nGroups:\t{groups}\nNStgid:\t{}\nNSpid:\t{}\nNSpgid:\t{}\nNSsid:\t{}\nVmPeak:\t{}\tkB\nVmSize:\t{}\tkB\nVmLck:\t0\tkB\nVmPin:\t0\tkB\nVmHWM:\t{}\tkB\nVmRSS:\t{}\tkB\nRssAnon:\t{}\tkB\nRssFile:\t{}\tkB\nRssShmem:\t0\tkB\nVmData:\t0\tkB\nVmStk:\t{}\tkB\nVmExe:\t{}\tkB\nVmLib:\t0\tkB\nVmPTE:\t0\tkB\nVmSwap:\t0\tkB\nThreads:\t{}\nSigQ:\t0/1024\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000000000000\nSigCgt:\t0000000000000000\nCapInh:\t{:08x}{:08x}\nCapPrm:\t{:08x}{:08x}\nCapEff:\t{:08x}{:08x}\nCapBnd:\t{:08x}{:08x}\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSpeculation_Store_Bypass:\tnot vulnerable\nCpus_allowed:\t{cpu_hex}\nCpus_allowed_list:\t{cpu_list}\nMems_allowed:\t00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t{}\nnonvoluntary_ctxt_switches:\t0\n",
                        pid.raw(),
-                       pid.raw(),
+                       tid,
                        cred.real_uid.0,
                        cred.effective_uid.0,
                        cred.saved_uid.0,
@@ -426,7 +437,7 @@ pub(crate) fn format_status(pid : ProcessId) -> FsResult<Vec<u8>> {
                        cred.saved_gid.0,
                        cred.fs_gid.0,
                        pid.raw(),
-                       pid.raw(),
+                       tid,
                        process.pgid.raw(),
                        process.sid.raw(),
                        mem.size_kb,
@@ -446,7 +457,7 @@ pub(crate) fn format_status(pid : ProcessId) -> FsResult<Vec<u8>> {
                        caps.effective,
                        0u32,
                        caps.bounding,
-                       leader_snapshot.map_or(0, |snapshot| snapshot.stats.schedule_count),);
+                       target_snapshot.map_or(0, |snapshot| snapshot.stats.schedule_count),);
     Ok(line.into_bytes())
 }
 
@@ -624,7 +635,13 @@ pub(crate) fn format_mountinfo(pid : ProcessId) -> FsResult<Vec<u8>> {
 
 pub(crate) fn format_wchan(pid : ProcessId) -> FsResult<Vec<u8>> {
     let leader = task::leader_task_for_process(pid).ok_or(FsError::NotFound)?;
-    let name = match task::task_snapshot(leader).map(|snapshot| snapshot.state) {
+    format_task_wchan(pid, leader)
+}
+
+pub(crate) fn format_task_wchan(pid : ProcessId, task_id : TaskId) -> FsResult<Vec<u8>> {
+    task::process_task_snapshot(task_id).filter(|entry| entry.pid == pid)
+                                         .ok_or(FsError::NotFound)?;
+    let name = match task::task_snapshot(task_id).map(|snapshot| snapshot.state) {
         Some(TaskState::Sleeping { .. }) => "hrtimer_nanosleep",
         Some(TaskState::Blocking(TaskWaitTarget::WaitQueue(_))) => "wait_queue",
         Some(TaskState::Blocking(TaskWaitTarget::TaskExit(_))) => "wait_task",
