@@ -22,6 +22,13 @@ pub(super) struct ShmSegment {
     pub(super) mode: usize,
     pub(super) owner_uid : u32,
     pub(super) owner_gid : u32,
+    pub(super) creator_uid : u32,
+    pub(super) creator_gid : u32,
+    pub(super) creator_pid : i32,
+    pub(super) last_pid : i32,
+    pub(super) attach_time : i64,
+    pub(super) detach_time : i64,
+    pub(super) change_time : i64,
     pub(super) pages: Vec<PhysPageNum>,
     /// 已完成或正在进行 MM 映射的 attachment 计数。
     pub(super) nattch: usize,

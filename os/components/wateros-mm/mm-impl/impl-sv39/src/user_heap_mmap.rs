@@ -238,10 +238,14 @@ impl Sv39AddressSpace {
         if !shared && !private {
             return Err(MmError::InvalidAddress);
         }
+        let fixed = req.flags.contains(MapFlags::FIXED);
+        let fixed_noreplace = req.flags.contains(MapFlags::FIXED_NOREPLACE);
+        if fixed && fixed_noreplace {
+            return Err(MmError::InvalidAddress);
+        }
         let base = match req.addr_hint {
             Some(hint)
-                if req.flags
-                      .contains(MapFlags::FIXED) =>
+                if fixed || fixed_noreplace =>
             {
                 hint
             }
@@ -250,10 +254,11 @@ impl Sv39AddressSpace {
         };
         let end = mmap_map_end(base, req.len)?;
         self.validate_user_mapping_range(base, end)?;
+        if fixed_noreplace && self.user_mapping_range_occupied(base, end)? {
+            return Err(MmError::InvalidAddress);
+        }
         let perm = req.prot | PagePerm::U;
-        if req.flags
-              .contains(MapFlags::FIXED)
-        {
+        if fixed {
             self.unmap_mmap_range(allocator, base, end)?;
             self.remove_lazy_file_vmas(base, end)?;
             self.remove_shared_anon_vmas(base, end);
@@ -556,6 +561,35 @@ impl MmapOps for Sv39AddressSpace {
                                          .start_addr(),
                                      end.ceil_page()
                                         .start_addr());
+        self.remove_shared_file_vmas(page_start, page_end)?;
+        self.remove_device_vmas(page_start, page_end);
+        fence_user_ptes();
+        Ok(())
+    }
+
+    fn munmap_external(&mut self, addr : VirtAddr, len : usize) -> MmResult<()> {
+        if len == 0 {
+            return Err(MmError::InvalidAddress);
+        }
+        let end = VirtAddr(addr.0
+                               .checked_add(len)
+                               .ok_or(MmError::InvalidAddress)?);
+        if end.0 > crate::pagetable::USER_VA_LIMIT ||
+           self.range_overlaps_kernel_reserved(addr, end)
+        {
+            return Err(MmError::InvalidAddress);
+        }
+        let page_start = addr.floor_page().start_addr();
+        let page_end = end.ceil_page().start_addr();
+        let mut vpn = page_start.floor_page();
+        let vpn_end = page_end.floor_page();
+        while vpn.0 < vpn_end.0 {
+            // 外部对象仍持有 PPN；这里故意丢弃返回值而不调用 frame_dealloc。
+            let _ = self.unmap_page_to_ppn(vpn)?;
+            vpn = VirtPageNum(vpn.0 + 1);
+        }
+        self.remove_lazy_file_vmas(page_start, page_end)?;
+        self.remove_shared_anon_vmas(page_start, page_end);
         self.remove_shared_file_vmas(page_start, page_end)?;
         self.remove_device_vmas(page_start, page_end);
         fence_user_ptes();

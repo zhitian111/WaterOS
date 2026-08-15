@@ -58,7 +58,28 @@ pub struct ShmSegmentInfo {
     /// 创建者的有效 uid/gid，用于 `shmat` 权限判断。
     pub owner_uid : u32,
     pub owner_gid : u32,
+    /// 创建者身份不会随 `IPC_SET` 改变。
+    pub creator_uid : u32,
+    pub creator_gid : u32,
+    /// 已完成或正在提交的附加数量。
+    pub nattch : usize,
+    pub marked_removed : bool,
+    pub creator_pid : i32,
+    pub last_pid : i32,
+    pub attach_time : i64,
+    pub detach_time : i64,
+    pub change_time : i64,
     pub pages: Vec<PhysPageNum>,
+}
+
+/// `DATA:` `shmctl(SHM_INFO)` 所需的全局只读统计。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShmRegistryStats {
+    pub segment_count : usize,
+    pub total_pages : usize,
+    pub attached_count : usize,
+    /// 当前实现以 shmid 直接作为可枚举索引，因此返回最大的在用 ID。
+    pub max_id : usize,
 }
 
 /// `DATA:` 一次任务附加的 MM 交接信息。

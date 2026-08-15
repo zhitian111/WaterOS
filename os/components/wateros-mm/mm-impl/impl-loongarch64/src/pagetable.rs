@@ -429,6 +429,30 @@ impl LoongArch64AddressSpace {
         Ok(())
     }
 
+    /// 判断固定地址区间是否已经属于任意用户映射。
+    pub(crate) fn user_mapping_range_occupied(&self,
+                                               start : VirtAddr,
+                                               end : VirtAddr)
+                                               -> MmResult<bool> {
+        if start.0 < self.user_brk_current_end.0 && end.0 > self.user_brk_start.0 {
+            return Ok(true);
+        }
+        if self.lazy_vma_overlaps(start, end) || self.shared_anon_vma_overlaps(start, end) ||
+           self.device_vma_overlaps(start, end)
+        {
+            return Ok(true);
+        }
+        let mut vpn = start.floor_page();
+        let end_vpn = end.ceil_page();
+        while vpn.0 < end_vpn.0 {
+            if self.translate_addr(vpn.start_addr())?.is_some() {
+                return Ok(true);
+            }
+            vpn = VirtPageNum(vpn.0 + 1);
+        }
+        Ok(false)
+    }
+
     pub(crate) fn lazy_vma_overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
         if start.0 >= end.0 {
             return false;

@@ -60,9 +60,19 @@ impl ShmRegistry {
                          owner_uid : u32,
                          owner_gid : u32)
                          -> ShmResult<ShmId> {
-        if size == 0 || size > MAX_SHM_SEGMENT_SIZE {
-            return Err(ShmError::Invalid);
-        }
+        self.create_or_get_with_metadata(key, size, flags, owner_uid, owner_gid, 0, 0)
+    }
+
+    /// `shmget` 完整入口；记录创建进程和创建时间供 `IPC_STAT` 使用。
+    pub fn create_or_get_with_metadata(&mut self,
+                                       key : usize,
+                                       size : usize,
+                                       flags : usize,
+                                       owner_uid : u32,
+                                       owner_gid : u32,
+                                       creator_pid : i32,
+                                       change_time : i64)
+                                       -> ShmResult<ShmId> {
         if key != IPC_PRIVATE {
             if let Some(shmid) = self
                 .key_index
@@ -72,11 +82,17 @@ impl ShmRegistry {
                 if flags & IPC_CREAT != 0 && flags & IPC_EXCL != 0 {
                     return Err(ShmError::Exists);
                 }
+                if size != 0 && size > self.segments[&shmid].size {
+                    return Err(ShmError::Invalid);
+                }
                 return Ok(shmid);
             }
             if flags & IPC_CREAT == 0 {
                 return Err(ShmError::NoEntry);
             }
+        }
+        if size == 0 || size > MAX_SHM_SEGMENT_SIZE {
+            return Err(ShmError::Invalid);
         }
 
         let shmid = self.alloc_id()?;
@@ -87,6 +103,13 @@ impl ShmRegistry {
             mode: flags & 0o777,
             owner_uid,
             owner_gid,
+            creator_uid : owner_uid,
+            creator_gid : owner_gid,
+            creator_pid,
+            last_pid : creator_pid,
+            attach_time : 0,
+            detach_time : 0,
+            change_time,
             pages,
             nattch: 0,
             marked_removed: false,
@@ -113,6 +136,15 @@ impl ShmRegistry {
             mode: segment.mode,
             owner_uid : segment.owner_uid,
             owner_gid : segment.owner_gid,
+            creator_uid : segment.creator_uid,
+            creator_gid : segment.creator_gid,
+            nattch : segment.nattch,
+            marked_removed : segment.marked_removed,
+            creator_pid : segment.creator_pid,
+            last_pid : segment.last_pid,
+            attach_time : segment.attach_time,
+            detach_time : segment.detach_time,
+            change_time : segment.change_time,
             pages: segment
                 .pages
                 .clone(),
@@ -162,14 +194,28 @@ impl ShmRegistry {
         base: usize,
         readonly: bool,
     ) -> ShmResult<ShmAttachInfo> {
+        self.finish_attach_with_metadata(reservation, task_id, base, readonly, 0, 0)
+    }
+
+    /// 提交映射并记录 Linux `shm_atime/shm_lpid`。
+    pub fn finish_attach_with_metadata(&mut self,
+                                       reservation : &ShmAttachReservation,
+                                       task_id : TaskId,
+                                       base : usize,
+                                       readonly : bool,
+                                       operator_pid : i32,
+                                       attach_time : i64)
+                                       -> ShmResult<ShmAttachInfo> {
         if !self.has_attach_reservation(reservation) {
             return Err(ShmError::Invalid);
         }
         let shmid = reservation.shmid;
         let segment = self
             .segments
-            .get(&shmid)
+            .get_mut(&shmid)
             .ok_or(ShmError::Invalid)?;
+        segment.last_pid = operator_pid;
+        segment.attach_time = attach_time;
         let info = ShmAttachInfo {
             shmid,
             base,
@@ -244,6 +290,16 @@ impl ShmRegistry {
 
     /// `FLOW:` `shmdt`：先删除 attachment 并递减 `nattch`，返回页信息给调用方解除页表映射。
     pub fn detach(&mut self, task_id: TaskId, base: usize) -> ShmResult<ShmAttachInfo> {
+        self.detach_with_metadata(task_id, base, 0, 0)
+    }
+
+    /// 解除映射并记录 Linux `shm_dtime/shm_lpid`。
+    pub fn detach_with_metadata(&mut self,
+                                task_id : TaskId,
+                                base : usize,
+                                operator_pid : i32,
+                                detach_time : i64)
+                                -> ShmResult<ShmAttachInfo> {
         let list = self
             .attachments
             .get_mut(&task_id)
@@ -257,7 +313,37 @@ impl ShmRegistry {
             self.attachments
                 .remove(&task_id);
         }
+        if let Some(segment) = self.segments.get_mut(&attach.shmid) {
+            segment.last_pid = operator_pid;
+            segment.detach_time = detach_time;
+        }
         self.detach_attachment(attach)
+    }
+
+    /// 修改所有者和权限低 9 位；调用方负责 Linux 权限校验。
+    pub fn update_permissions(&mut self,
+                              shmid : ShmId,
+                              owner_uid : u32,
+                              owner_gid : u32,
+                              mode : usize,
+                              change_time : i64)
+                              -> ShmResult<()> {
+        let segment = self.segments.get_mut(&shmid).ok_or(ShmError::Invalid)?;
+        segment.owner_uid = owner_uid;
+        segment.owner_gid = owner_gid;
+        segment.mode = (segment.mode & !0o777) | (mode & 0o777);
+        segment.change_time = change_time;
+        Ok(())
+    }
+
+    /// 返回 `SHM_INFO` 需要的全局统计；不暴露可变 registry 内部结构。
+    pub fn stats(&self) -> ShmRegistryStats {
+        ShmRegistryStats {
+            segment_count : self.segments.len(),
+            total_pages : self.segments.values().map(|segment| segment.pages.len()).sum(),
+            attached_count : self.segments.values().map(|segment| segment.nattch).sum(),
+            max_id : self.segments.keys().next_back().copied().unwrap_or(0),
+        }
     }
 
     /// `FLOW:` `IPC_RMID` 立即去除 key 可见性；最后一个 attachment 消失时才释放帧。
@@ -424,8 +510,18 @@ impl ShmRegistry {
                 self.key_index
                     .remove(&segment.key);
             }
+            let page_count = segment.pages.len();
+            let mut failed = 0usize;
             for page in segment.pages {
-                let _ = frame_dealloc_result(page);
+                if frame_dealloc_result(page).is_err() {
+                    failed += 1;
+                }
+            }
+            if failed != 0 {
+                log::warn!("[shm] segment release encountered already-free frames shmid={} failed={}/{}",
+                           shmid,
+                           failed,
+                           page_count);
             }
         }
     }
