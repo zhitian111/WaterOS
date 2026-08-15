@@ -85,9 +85,12 @@ const RINTSTS : usize = 0x044;
 const STATUS : usize = 0x048;
 const FIFOTH : usize = 0x04C;
 const INTMASK : usize = 0x024;
-const VERID : usize = 0x06C;
 
 const CTRL_RESET_ALL : u32 = 0b111;
+/// DW MSHC CTRL 的 DMA/IDMAC 使能位（与 U-Boot `DWMCI_DMA_EN`/`DWMCI_IDMAC_EN`
+/// 一致）：PIO 模式必须清除，否则数据被路由到 IDMAC 而非 FIFO。
+const CTRL_DMA_ENABLE : u32 = 1 << 5;
+const CTRL_IDMAC_ENABLE : u32 = 1 << 25;
 const CMD_START : u32 = 1 << 31;
 const CMD_USE_HOLD : u32 = 1 << 29;
 const CMD_UPDATE_CLOCK : u32 = 1 << 21;
@@ -147,8 +150,9 @@ pub const fn bus_width_value(bus_width : u8) -> Result<u32, MmcError> {
 
 impl<R : RegisterIo> DwMmc<R> {
     pub fn probe(mut registers : R, poll_limit : usize) -> Result<Self, MmcError> {
-        let version = registers.read32(VERID)? & 0xFFFF;
-        let fifo_offset = if version >= 0x240A { 0x200 } else { 0x100 };
+        // FIFO 数据寄存器固定 0x200（与同板 U-Boot `DWMCI_DATA` 一致）。
+        // 按 VERID 猜测 0x100 会在真机读数据时取错偏移 → FIFO 溢出。
+        let fifo_offset = 0x200;
         Ok(Self { registers,
                   fifo_offset,
                   poll_limit : poll_limit.max(1) })
@@ -237,6 +241,11 @@ impl<R : RegisterIo> DwMmc<R> {
         }
         let ctype = bus_width_value(bus_width)?;
         self.reset()?;
+        // 强制 PIO：清除固件可能遗留的 DMA/IDMAC 使能位。
+        let ctrl = self.registers
+                       .read32(CTRL)?;
+        self.registers
+            .write32(CTRL, ctrl & !(CTRL_DMA_ENABLE | CTRL_IDMAC_ENABLE))?;
         self.registers
             .write32(PWREN, 1)?;
         self.registers
@@ -424,7 +433,6 @@ mod tests {
             let fifo = (0..128).map(|word| 0xA500_0000 | word)
                                .collect();
             let mut values = vec![0; 0x204 / 4];
-            values[VERID / 4] = 0x240A;
             values[RESP0 / 4] = 0x1234;
             Self { values,
                    fifo,
@@ -589,11 +597,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_wrong_block_size_and_detects_old_fifo_layout() {
+    fn rejects_wrong_block_size_and_pins_fifo_to_0x200() {
         let mut mock = MockRegisters::successful();
-        mock.values[VERID / 4] = 0x2390;
         let mut host = DwMmc::probe(mock, 1).unwrap();
-        assert_eq!(host.fifo_offset, 0x100);
+        assert_eq!(host.fifo_offset, 0x200);
         assert_eq!(host.read_single_block(0, &mut [0; 4]),
                    Err(MmcError::InvalidParameter));
     }
