@@ -394,10 +394,10 @@ pub(crate) fn sys_clock_settime(args : SyscallArgs) -> UserRet {
     if clock_id != CLOCK_REALTIME {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    if cred::current_credentials().effective_uid
-                                  .0 !=
-       0
-    {
+    let caps = task::current_process_task_snapshot().map(|snapshot| snapshot.pid)
+                                                    .and_then(task::process_caps)
+                                                    .unwrap_or_default();
+    if caps.effective & task::ProcessCaps::CAP_SYS_TIME == 0 {
         return UserRet::from_error(ErrNo::EPERM);
     }
     if tp_ptr == 0 {
