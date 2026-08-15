@@ -355,6 +355,13 @@ mod riscv64_opensbi_entry {
         platform::arch::init();
         let memory_end = platform::physical_ram_end_exclusive();
         init_after_boot(dtb_pa, memory_end, cpu_id);
+        // AP 进入 ap_main 后需要板级拓扑（PLIC 等）才能完成 per-CPU 初始化，
+        // 因此放行 AP（AP_BOOT_READY）前先由 BSP 完成机器发现。两平台实现的
+        // init_after_boot 均幂等（AtomicBool 守卫，失败重置），后续
+        // init_services_after_boot 的调用自动成为 no-op。
+        if let Err(err) = driver::machine().init_after_boot() {
+            warn!("[boot] early machine init failed: {:?}", err);
+        }
         AP_BOOT_READY.store(true, Ordering::Release);
 
         let requested_aps = start_secondary_harts(cpu_id, dtb_pa);
