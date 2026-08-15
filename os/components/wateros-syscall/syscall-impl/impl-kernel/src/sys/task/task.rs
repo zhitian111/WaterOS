@@ -25,6 +25,7 @@ const PR_GET_NO_NEW_PRIVS : usize = 39;
 const PR_CAPBSET_READ : usize = 23;
 const PR_CAPBSET_DROP : usize = 24;
 const PR_SET_TIMING : usize = 14;
+const PR_GET_SECUREBITS : usize = 27;
 const PR_SET_SECUREBITS : usize = 28;
 const PR_SET_TIMERSLACK : usize = 29;
 const PR_GET_TIMERSLACK : usize = 30;
@@ -344,7 +345,27 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
             }
         }
         PR_CAP_AMBIENT | PR_GET_SPECULATION_CTRL => UserRet::from_error(ErrNo::EINVAL),
-        PR_SET_SECUREBITS => UserRet::from_error(ErrNo::EPERM),
+        PR_GET_SECUREBITS => {
+            // Linux 对 PR_GET_SECUREBITS 忽略 arg2..arg5；capsh 调用时只传
+            // option 一个参数（其余寄存器为垃圾值），若校验会误报 EINVAL。
+            // WaterOS 未实现 securebits 语义（KEEPCAPS 恒开），固定报 0。
+            UserRet::from_success(0)
+        }
+        PR_SET_SECUREBITS => {
+            if args.arg(2) | args.arg(3) | args.arg(4) != 0 {
+                return UserRet::from_error(ErrNo::EINVAL);
+            }
+            // Linux 需要 CAP_SETPCAP；WaterOS 不存储 securebits，root 接受即可
+            // （setpriv --securebits 流程依赖此成功）。
+            if cred::current_credentials().effective_uid
+                                          .0 ==
+               0
+            {
+                UserRet::from_success(0)
+            } else {
+                UserRet::from_error(ErrNo::EPERM)
+            }
+        }
         PR_SET_TIMERSLACK => {
             let Some(task_id) = task::current_task_id() else {
                 return UserRet::from_error(ErrNo::ESRCH);

@@ -21,6 +21,7 @@ pub(crate) enum ProcNode {
     SysKernelDir,
     SysKernelPidMax,
     SysKernelTainted,
+    SysKernelCapLastCap,
     PidDir(ProcessId),
     PidStat(ProcessId),
     PidStatus(ProcessId),
@@ -59,11 +60,12 @@ pub(crate) fn proc_inode(node : ProcNode) -> u64 {
         ProcNode::SysKernelDir => 10,
         ProcNode::SysKernelPidMax => 4,
         ProcNode::SysKernelTainted => 5,
+        ProcNode::SysKernelCapLastCap => 19,
         ProcNode::PidDir(pid) => 0x1000_0000 | ((pid.raw() as u64) << 4),
         ProcNode::PidStat(pid) => 0x1000_0001 | ((pid.raw() as u64) << 4),
         ProcNode::PidStatus(pid) => 0x1000_0002 | ((pid.raw() as u64) << 4),
         ProcNode::PidComm(pid) => 0x1000_0009 | ((pid.raw() as u64) << 4),
-        ProcNode::PidTimerSlack(pid) => 0x1000_000a | ((pid.raw() as u64) << 4),
+        ProcNode::PidTimerSlack(pid) => 0x1000_000A | ((pid.raw() as u64) << 4),
         ProcNode::PidSmaps(pid) => 0x1000_0003 | ((pid.raw() as u64) << 4),
         ProcNode::PidMaps(pid) => 0x1000_0005 | ((pid.raw() as u64) << 4),
         ProcNode::PidCmdline(pid) => 0x1000_0004 | ((pid.raw() as u64) << 4),
@@ -76,9 +78,7 @@ pub(crate) fn proc_inode(node : ProcNode) -> u64 {
         ProcNode::PidTaskComm(pid, tid) => {
             0x3000_0000_0000_0000 | (1u64 << 60) | ((pid.raw() as u64) << 32) | (tid as u64)
         }
-        ProcNode::PidFd(pid, fd) => {
-            0x2000_0000_0000_0000 | ((pid.raw() as u64) << 32) | fd as u64
-        }
+        ProcNode::PidFd(pid, fd) => 0x2000_0000_0000_0000 | ((pid.raw() as u64) << 32) | fd as u64,
     }
 }
 
@@ -133,9 +133,11 @@ pub(crate) fn parse_pid(name : &str) -> Option<ProcessId> {
 }
 
 pub(crate) fn parse_thread_task(pid : ProcessId, name : &str) -> Option<TaskId> {
-    let tid = name.parse::<usize>().ok()?;
+    let tid = name.parse::<usize>()
+                  .ok()?;
     let task_id = task::task_id_for_thread(ThreadId::from_raw(tid))?;
-    task::task_ids_for_process(pid)?.contains(&task_id).then_some(task_id)
+    task::task_ids_for_process(pid)?.contains(&task_id)
+                                    .then_some(task_id)
 }
 
 // 将相对 `/proc` 的路径映射为内部节点；未知路径返回 None。
@@ -166,6 +168,7 @@ pub(crate) fn parse_node(path : &str) -> Option<ProcNode> {
         ["sys", "kernel"] => Some(ProcNode::SysKernelDir),
         ["sys", "kernel", "pid_max"] => Some(ProcNode::SysKernelPidMax),
         ["sys", "kernel", "tainted"] => Some(ProcNode::SysKernelTainted),
+        ["sys", "kernel", "cap_last_cap"] => Some(ProcNode::SysKernelCapLastCap),
         [pid_name] => Some(ProcNode::PidDir(parse_pid(pid_name)?)),
         [pid_name, "stat"] => Some(ProcNode::PidStat(parse_pid(pid_name)?)),
         [pid_name, "status"] => Some(ProcNode::PidStatus(parse_pid(pid_name)?)),
@@ -178,9 +181,7 @@ pub(crate) fn parse_node(path : &str) -> Option<ProcNode> {
         [pid_name, "exe"] => Some(ProcNode::PidExe(parse_pid(pid_name)?)),
         [pid_name, "fd"] => Some(ProcNode::PidFdDir(parse_pid(pid_name)?)),
         [pid_name, "task"] => Some(ProcNode::PidTaskRoot(parse_pid(pid_name)?)),
-        [pid_name, "fd", fd] => {
-            Some(ProcNode::PidFd(parse_pid(pid_name)?, fd.parse().ok()?))
-        }
+        [pid_name, "fd", fd] => Some(ProcNode::PidFd(parse_pid(pid_name)?, fd.parse().ok()?)),
         [pid_name, "task", tid_name] => {
             let pid = parse_pid(pid_name)?;
             Some(ProcNode::PidTaskDir(pid, parse_thread_task(pid, tid_name)?))

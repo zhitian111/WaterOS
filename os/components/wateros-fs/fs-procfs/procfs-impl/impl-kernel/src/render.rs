@@ -172,8 +172,9 @@ pub(crate) fn format_status(pid : ProcessId) -> FsResult<Vec<u8>> {
         'Z' => "Z (zombie)",
         _ => "R (running)",
     };
+    let caps = task::process_caps(pid).unwrap_or_default();
     let line = format!("Name:\t{comm}\nState:\t{state_str} \
-                        ({sc})\nTgid:\t{}\nPid:\t{}\nPPid:\t{ppid}\nUid:\t{}\t{}\t{}\t{}\nGid:\t{}\t{}\t{}\t{}\nVmPeak:\t{}\tkB\nVmSize:\t{}\tkB\nVmRSS:\t{}\tkB\nVmData:\t{}\tkB\nVmStk:\t128\tkB\n",
+                        ({sc})\nTgid:\t{}\nPid:\t{}\nPPid:\t{ppid}\nUid:\t{}\t{}\t{}\t{}\nGid:\t{}\t{}\t{}\t{}\nCapInh:\t{:08x}{:08x}\nCapPrm:\t{:08x}{:08x}\nCapEff:\t{:08x}{:08x}\nCapBnd:\t{:08x}{:08x}\nCapAmb:\t0000000000000000\nVmPeak:\t{}\tkB\nVmSize:\t{}\tkB\nVmRSS:\t{}\tkB\nVmData:\t{}\tkB\nVmStk:\t128\tkB\n",
                        pid.raw(),
                        pid.raw(),
                        cred.real_uid.0,
@@ -184,6 +185,14 @@ pub(crate) fn format_status(pid : ProcessId) -> FsResult<Vec<u8>> {
                        cred.effective_gid.0,
                        cred.saved_gid.0,
                        cred.fs_gid.0,
+                       0u32,
+                       caps.inheritable,
+                       0u32,
+                       caps.permitted,
+                       0u32,
+                       caps.effective,
+                       0u32,
+                       caps.bounding,
                        mem.size_kb,
                        mem.size_kb,
                        mem.rss_kb,

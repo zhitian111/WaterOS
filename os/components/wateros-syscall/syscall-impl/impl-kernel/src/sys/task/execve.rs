@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use cred::api::{Gid, ProcessCredentials};
+use cred::api::{Gid, ProcessCredentials, Uid};
 use mm::api::executable::ExecResolveError;
 use mm::api::kernel_bringup::{
     LoadElfError, LoadProgramError, PrepareUserStackError, RootVolumeReadError,
@@ -86,7 +86,9 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
         }
     };
 
-    if let Some(qemu_path) = qemu_system_invocation(executable_path.as_str(), &final_argv_refs) {
+    if let Some(qemu_path) = qemu_system_invocation(executable_path.as_str(),
+                                                    &final_argv_refs)
+    {
         log_qemu_host_capability(&new_elf,
                                  qemu_path,
                                  new_sp,
@@ -145,7 +147,26 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
         }
     }
 
-    // TODO(cred-exec-setuid): 可执行文件 S_ISUID/S_ISGID 应在 cred::on_exec 内更新凭证。
+    // S_ISUID/S_ISGID：exec 时把有效 uid/gid 换成文件属主（su/sudo/mount 等
+    // setuid-root 程序依赖）。Linux 同步更新 saved；WaterOS 简化模型只动
+    // effective/saved（real 保持不变）。
+    if let Ok(meta) = vfs::active_impl::backend().metadata(executable_path.as_str()) {
+        let mode = u32::from(meta.mode);
+        if mode & 0o4000 != 0 {
+            let file_uid = Uid(meta.uid);
+            cred::set_resuid(None, Some(file_uid), Some(file_uid));
+        }
+        if mode & 0o2000 != 0 {
+            let file_gid = Gid(meta.gid);
+            cred::set_resgid(None, Some(file_gid), Some(file_gid));
+        }
+        // 提权到 root 时同步能力（WaterOS 简化模型：root 具备 ROOT caps）。
+        if mode & 0o4000 != 0 && meta.uid == 0 {
+            if let Some(pid) = task::current_process_task_snapshot().map(|snapshot| snapshot.pid) {
+                let _ = task::set_process_caps(pid, task::ProcessCaps::ROOT);
+            }
+        }
+    }
     cred::on_exec(current_tid);
     if let Err(e) = vfs::cwd::set_task_exe_path(current_tid, executable_path.as_str()) {
         log::warn!("[execve] set_task_exe_path failed (continuing): {:?}",
@@ -181,22 +202,21 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
 }
 
 fn preflight_executable_path(path : &str) -> Result<String, ErrNo> {
-    let resolved = super::super::fs::path_at::resolve_path_at(
-        super::super::fs::path_at::AT_FDCWD,
-        path,
-    )?;
+    let resolved = super::super::fs::path_at::resolve_path_at(super::super::fs::path_at::AT_FDCWD,
+                                                              path)?;
+    // 先展开中间符号链接（/bin -> usr/bin、/bin/sh -> dash）再检查父目录
+    // 权限；否则非 root 进程 exec 经 symlink 的路径时，会把 /bin 这类链接
+    // 误报为 ENOTDIR（su 切用户后 exec /bin/sh 即触发；root 因检查短路
+    // 一直未暴露）。
+    let resolved =
+        super::super::fs::path_at::resolve_symlinks(resolved.as_str(), FinalSymlink::Follow)?;
     let credentials = cred::current_credentials();
     check_parent_search(resolved.as_str(), &credentials)?;
-    let resolved = super::super::fs::path_at::resolve_symlinks(
-        resolved.as_str(),
-        FinalSymlink::Follow,
-    )?;
-    let metadata = vfs::active_impl::backend()
-        .metadata(resolved.as_str())
-        .map_err(|error| match error {
-            VfsError::NotAFile => ErrNo::ENOTDIR,
-            other => vfs_error_to_errno(other),
-        })?;
+    let metadata = vfs::active_impl::backend().metadata(resolved.as_str())
+                                              .map_err(|error| match error {
+                                                  VfsError::NotAFile => ErrNo::ENOTDIR,
+                                                  other => vfs_error_to_errno(other),
+                                              })?;
     if metadata.node_type != VfsNodeType::File ||
        !may_execute(metadata.mode,
                     metadata.uid,
@@ -208,25 +228,28 @@ fn preflight_executable_path(path : &str) -> Result<String, ErrNo> {
     Ok(resolved)
 }
 
-fn check_parent_search(path : &str,
-                       credentials : &ProcessCredentials)
-                       -> Result<(), ErrNo> {
-    if credentials.effective_uid.0 == 0 {
+fn check_parent_search(path : &str, credentials : &ProcessCredentials) -> Result<(), ErrNo> {
+    if credentials.effective_uid
+                  .0 ==
+       0
+    {
         return Ok(());
     }
     let components : Vec<&str> = path.trim_start_matches('/')
-                                      .split('/')
-                                      .filter(|component| !component.is_empty())
-                                      .collect();
+                                     .split('/')
+                                     .filter(|component| !component.is_empty())
+                                     .collect();
     let mut current = String::from("/");
-    for component in components.iter().take(components.len().saturating_sub(1)) {
+    for component in components.iter()
+                               .take(components.len()
+                                               .saturating_sub(1))
+    {
         if current != "/" {
             current.push('/');
         }
         current.push_str(component);
-        let metadata = vfs::active_impl::backend()
-            .metadata(current.as_str())
-            .map_err(vfs_error_to_errno)?;
+        let metadata = vfs::active_impl::backend().metadata(current.as_str())
+                                                  .map_err(vfs_error_to_errno)?;
         if metadata.node_type != VfsNodeType::Directory {
             return Err(ErrNo::ENOTDIR);
         }
@@ -247,10 +270,16 @@ fn may_execute(mode : u16,
                credentials : &ProcessCredentials)
                -> bool {
     let mode = u32::from(mode);
-    if credentials.effective_uid.0 == 0 {
+    if credentials.effective_uid
+                  .0 ==
+       0
+    {
         return mode & 0o111 != 0;
     }
-    let bit = if credentials.effective_uid.0 == owner_uid {
+    let bit = if credentials.effective_uid
+                            .0 ==
+                 owner_uid
+    {
         0o100
     } else if credentials.effective_gid == Gid(owner_gid) ||
               credentials.supplementary_groups
@@ -273,9 +302,7 @@ fn is_qemu_system_executable(path : &str) -> bool {
 
 /// Return the nested QEMU path for both direct execution and the image-bundled
 /// `ld-linux --library-path ... qemu-system-*` form used by online BuildStorm.
-fn qemu_system_invocation<'a>(executable_path : &'a str,
-                              argv : &'a [&'a str])
-                              -> Option<&'a str> {
+fn qemu_system_invocation<'a>(executable_path : &'a str, argv : &'a [&'a str]) -> Option<&'a str> {
     if is_qemu_system_executable(executable_path) {
         return Some(executable_path);
     }
@@ -298,17 +325,22 @@ fn log_qemu_host_capability(elf : &mm::api::kernel_bringup::LoadedElf,
                                   .and_then(|words| words.checked_add(envc))
                                   .and_then(|words| words.checked_add(1));
     let Some(auxv_addr) = words_before_auxv.and_then(|words| words.checked_mul(word))
-                                               .and_then(|bytes| sp.checked_add(bytes))
+                                           .and_then(|bytes| sp.checked_add(bytes))
     else {
-        log::error!("[execve][qemu-host-cap] arch={} path={} aspace={:#x} sp={:#x} auxv_addr=overflow",
-                    current_arch_name(), path, elf.user_aspace_ptr, sp);
+        log::error!("[execve][qemu-host-cap] arch={} path={} aspace={:#x} sp={:#x} \
+                     auxv_addr=overflow",
+                    current_arch_name(),
+                    path,
+                    elf.user_aspace_ptr,
+                    sp);
         return;
     };
 
     let ops = ActiveUserMemoryOps::new(elf.user_aspace_ptr);
     match read_auxv_hwcap(&ops, auxv_addr) {
         Ok(Some(hwcap)) => {
-            log::error!("[execve][qemu-host-cap] arch={} path={} aspace={:#x} sp={:#x} auxv={:#x} at_hwcap={:#x} bit2={}",
+            log::error!("[execve][qemu-host-cap] arch={} path={} aspace={:#x} sp={:#x} \
+                         auxv={:#x} at_hwcap={:#x} bit2={}",
                         current_arch_name(),
                         path,
                         elf.user_aspace_ptr,
@@ -318,12 +350,22 @@ fn log_qemu_host_capability(elf : &mm::api::kernel_bringup::LoadedElf,
                         hwcap & (1 << 2) != 0);
         }
         Ok(None) => {
-            log::error!("[execve][qemu-host-cap] arch={} path={} aspace={:#x} sp={:#x} auxv={:#x} at_hwcap=missing",
-                        current_arch_name(), path, elf.user_aspace_ptr, sp, auxv_addr);
+            log::error!("[execve][qemu-host-cap] arch={} path={} aspace={:#x} sp={:#x} \
+                         auxv={:#x} at_hwcap=missing",
+                        current_arch_name(),
+                        path,
+                        elf.user_aspace_ptr,
+                        sp,
+                        auxv_addr);
         }
         Err(()) => {
-            log::error!("[execve][qemu-host-cap] arch={} path={} aspace={:#x} sp={:#x} auxv={:#x} at_hwcap=unreadable",
-                        current_arch_name(), path, elf.user_aspace_ptr, sp, auxv_addr);
+            log::error!("[execve][qemu-host-cap] arch={} path={} aspace={:#x} sp={:#x} \
+                         auxv={:#x} at_hwcap=unreadable",
+                        current_arch_name(),
+                        path,
+                        elf.user_aspace_ptr,
+                        sp,
+                        auxv_addr);
         }
     }
 }
@@ -332,13 +374,15 @@ fn read_auxv_hwcap<Ops : UserMemoryOps>(ops : &Ops,
                                         auxv_addr : usize)
                                         -> Result<Option<usize>, ()> {
     let word = core::mem::size_of::<usize>();
-    let pair_size = word.checked_mul(2).ok_or(())?;
+    let pair_size = word.checked_mul(2)
+                        .ok_or(())?;
     for pair_index in 0..AUXV_DIAGNOSTIC_MAX_PAIRS {
         let pair_addr = pair_index.checked_mul(pair_size)
                                   .and_then(|offset| auxv_addr.checked_add(offset))
                                   .ok_or(())?;
         let mut pair = [0u8; core::mem::size_of::<usize>() * 2];
-        let copied = ops.copy_from_user(&mut pair, mm::api::addr::VirtAddr(pair_addr))
+        let copied = ops.copy_from_user(&mut pair,
+                                        mm::api::addr::VirtAddr(pair_addr))
                         .map_err(|_| ())?;
         if copied != pair.len() {
             return Err(());
@@ -365,7 +409,8 @@ mod tests {
 
     #[test]
     fn detects_direct_and_dynamic_loader_qemu_invocations() {
-        assert_eq!(qemu_system_invocation("/opt/qemu/bin/qemu-system-loongarch64", &[]),
+        assert_eq!(qemu_system_invocation("/opt/qemu/bin/qemu-system-loongarch64",
+                                          &[]),
                    Some("/opt/qemu/bin/qemu-system-loongarch64"));
 
         let loader_argv = ["/opt/qemu/lib/ld-linux-loongarch-lp64d.so.1",
@@ -376,7 +421,8 @@ mod tests {
                            "virt"];
         assert_eq!(qemu_system_invocation(loader_argv[0], &loader_argv),
                    Some("/opt/qemu/bin/qemu-system-loongarch64"));
-        assert_eq!(qemu_system_invocation("/bin/sh", &["sh", "test.sh"]), None);
+        assert_eq!(qemu_system_invocation("/bin/sh", &["sh", "test.sh"]),
+                   None);
     }
 }
 

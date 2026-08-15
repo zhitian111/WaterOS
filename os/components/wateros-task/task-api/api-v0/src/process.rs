@@ -43,6 +43,9 @@ pub struct ProcessCaps {
     pub effective : u32,
     pub permitted : u32,
     pub inheritable : u32,
+    /// 能力天花板（bounding set）：capset / exec 赋予的能力都不能超出。
+    /// WaterOS 只支持低 32 位 capability（cap 0..31）。
+    pub bounding : u32,
 }
 
 impl ProcessCaps {
@@ -50,6 +53,9 @@ impl ProcessCaps {
     pub const CAP_SETGID : u32 = 1 << 6;
     pub const CAP_SETUID : u32 = 1 << 7;
     pub const CAP_SETPCAP : u32 = 1 << 8;
+
+    /// WaterOS 支持的最高 capability 编号（只支持低 32 位）。
+    pub const CAP_LAST_CAP : u32 = 31;
 
     // 必须包含 SETUID/SETGID：setpriv 在 PR_SET_KEEPCAPS + setresuid 后仍需
     // effective 集合持有 CAP_SETGID 才能 setresgid（libcap-ng bump_cap 只会把
@@ -62,7 +68,8 @@ impl ProcessCaps {
                                                Self::CAP_SETGID |
                                                Self::CAP_SETUID |
                                                Self::CAP_SETPCAP,
-                                   inheritable : 0 };
+                                   inheritable : 0,
+                                   bounding : 0xFFFF_FFFF };
 }
 
 

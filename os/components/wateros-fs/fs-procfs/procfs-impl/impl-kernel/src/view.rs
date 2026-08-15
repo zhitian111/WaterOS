@@ -30,7 +30,8 @@ impl ProcFsView for KernelProcFs {
             ProcNode::ProcNetRaw |
             ProcNode::ProcNetRaw6 |
             ProcNode::ProcNetUnix => true,
-            ProcNode::SysKernelPidMax | ProcNode::SysKernelTainted => true,
+            ProcNode::SysKernelPidMax | ProcNode::SysKernelTainted |
+            ProcNode::SysKernelCapLastCap => true,
             ProcNode::PidDir(pid) |
             ProcNode::PidStat(pid) |
             ProcNode::PidStatus(pid) |
@@ -82,7 +83,8 @@ impl ProcFsView for KernelProcFs {
             ProcNode::ProcNetRaw6 |
             ProcNode::ProcNetUnix |
             ProcNode::SysKernelPidMax |
-            ProcNode::SysKernelTainted => Ok(FsMetadata { node_type : FsNodeType::File,
+            ProcNode::SysKernelTainted |
+            ProcNode::SysKernelCapLastCap => Ok(FsMetadata { node_type : FsNodeType::File,
                                                           size : self.read(rel_path)?
                                                              .len()
                                                                  as u64,
@@ -156,6 +158,9 @@ impl ProcFsView for KernelProcFs {
             ProcNode::Mounts => Ok(format_mounts()),
             ProcNode::SysKernelPidMax => Ok(b"32768\n".to_vec()),
             ProcNode::SysKernelTainted => Ok(b"0\n".to_vec()),
+            // 与 task::ProcessCaps::CAP_LAST_CAP（WaterOS 只支持低 32 位
+            // capability）保持一致；libcap 靠此探测 cap_last_cap。
+            ProcNode::SysKernelCapLastCap => Ok(b"31\n".to_vec()),
             ProcNode::PidStat(pid) => format_stat(pid),
             ProcNode::PidStatus(pid) => format_status(pid),
             ProcNode::PidComm(pid) => format_pid_comm(pid),
@@ -188,6 +193,7 @@ impl ProcFsView for KernelProcFs {
             }
             ProcNode::SysKernelPidMax => b"32768\n",
             ProcNode::SysKernelTainted => b"0\n",
+            ProcNode::SysKernelCapLastCap => b"31\n",
             _ => return ProcFsView::read_range(self, rel_path, offset, buf),
         };
         let start = offset as usize;
@@ -252,6 +258,8 @@ impl ProcFsView for KernelProcFs {
                 Ok(vec![FsDirEntry { name : String::from("pid_max"),
                                      node_type : FsNodeType::File },
                         FsDirEntry { name : String::from("tainted"),
+                                     node_type : FsNodeType::File },
+                        FsDirEntry { name : String::from("cap_last_cap"),
                                      node_type : FsNodeType::File }])
             }
             ProcNode::NetDir => Ok(vec![
