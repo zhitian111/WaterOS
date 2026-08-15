@@ -10,20 +10,51 @@ pub(crate) mod slab_page;
 
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
+#[cfg(feature = "impl-slab")]
+use alloc::boxed::Box;
 
 use base::cpu::{CpuId, CpuLocal};
+use base::sync::BootOnceCell;
 use config::task::MAX_CPUS;
 
 use cpu_slab::CpuSlab;
 use size_class::SizeClass;
 
 /// slab 页来源：返回页对齐的内核可访问基址（WaterOS 恒等映射下为 `PPN * PAGE_SIZE`）。
-pub(crate) trait HeapFrameSource : Sync {
+pub trait HeapFrameSource : Send + Sync {
     /// 分配一页并返回其内核基址；失败返回 `None`。
     fn alloc_frame(&self) -> Option<usize>;
 
     /// 归还先前由 [`Self::alloc_frame`] 返回的页。
     fn dealloc_frame(&self, frame : usize);
+}
+
+static FRAME_SOURCE : BootOnceCell<&'static dyn HeapFrameSource> = BootOnceCell::new();
+static SLAB : BootOnceCell<&'static SlabAllocator> = BootOnceCell::new();
+
+/// 注册真实 frame source；只能在 BSP 初始化 frame allocator 后调用一次。
+pub fn register_frame_source(source : &'static dyn HeapFrameSource) -> Result<(), ()> {
+    FRAME_SOURCE.init(source).map_err(|_| ())
+}
+
+/// 激活 slab 后端。`impl-slab` feature 关闭时为空操作，内核继续只用 boot backend。
+pub fn activate_slab() -> Result<(), ()> {
+    #[cfg(feature = "impl-slab")]
+    {
+        let frames = FRAME_SOURCE.get().copied().ok_or(())?;
+        let slab_ref : &'static SlabAllocator = Box::leak(Box::new(SlabAllocator::new(frames)));
+        SLAB.init(slab_ref).map_err(|_| ())?;
+    }
+    Ok(())
+}
+
+pub(crate) fn alloc_on(cpu : CpuId, layout : Layout) -> Option<*mut u8> {
+    SLAB.get()?.alloc_on(cpu, layout)
+}
+
+pub(crate) fn dealloc_on(cpu : CpuId, ptr : *mut u8, layout : Layout) -> bool {
+    SLAB.get()
+        .map_or(false, |slab| slab.dealloc_on(cpu, ptr, layout))
 }
 
 /// 每个 CPU 持有自己的 slab 状态；`CpuLocal` 只保证槽位边界，跨核互斥由调用方
@@ -77,7 +108,7 @@ impl SlabAllocator {
         // SAFETY: 与 GlobalAlloc::dealloc 相同约束；本方法验证 header 后才会释放。
         let state = unsafe { &mut *slot.0.get() };
         // SAFETY: 同上；指针必须来自该 CPU 的 slab。
-        unsafe { state.dealloc(ptr, class.index(), self.frames) }
+        unsafe { state.dealloc(ptr, class.index()) }
     }
 }
 

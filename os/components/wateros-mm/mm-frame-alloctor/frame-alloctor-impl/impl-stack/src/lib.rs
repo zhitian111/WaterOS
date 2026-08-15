@@ -75,10 +75,11 @@ fn with_frame_allocator<R>(f : impl FnOnce(&mut StackFrameAllocator) -> R) -> R 
 /// 注意：该实现未做“重复释放/未分配校验”，属于早期阶段可接受的简化。
 ///
 /// 空闲帧来自两段语义：尚未动过的连续高段 `[start_ppn,
-/// next_novel)`（惰性下推）， 以及显式回收栈 `recycled`。不在 `init` 时把整段
-/// PPN 推入 `Vec`，避免大内存下撑爆内核 heap。
+/// next_novel)`（惰性下推）， 以及显式回收链表（复用空闲页首字作为 next 指针）。
+/// 回收链表不使用 `Vec`，避免 `dealloc_frame` 在 slab 激活后触发递归堆分配。
 pub struct StackFrameAllocator {
-    recycled : Vec<PhysPageNum>,
+    recycled_head : Option<PhysPageNum>,
+    recycled_count : usize,
     allocated : Vec<bool>,
     /// 每帧共享引用计数。`u32` 已远高于实际单页映射数量，同时避免大内存机器
     /// 为每个尚未使用的物理页消耗一个 64 位字。
@@ -95,7 +96,8 @@ pub struct StackFrameAllocator {
 impl StackFrameAllocator {
     /// 构造空分配器；须再调用 [`Self::init`] 方可从 PPN 区间取帧。
     pub fn new() -> Self {
-        Self { recycled : Vec::new(),
+        Self { recycled_head : None,
+               recycled_count : 0,
                allocated : Vec::new(),
                ref_counts : Vec::new(),
                start_ppn : 0,
@@ -119,8 +121,8 @@ impl StackFrameAllocator {
                               end_ppn : PhysPageNum,
                               reserved_start_ppn : PhysPageNum,
                               reserved_end_ppn : PhysPageNum) {
-        self.recycled
-            .clear();
+        self.recycled_head = None;
+        self.recycled_count = 0;
         self.start_ppn = start_ppn.0;
         self.end_ppn = end_ppn.0;
         self.reserved_start_ppn = reserved_start_ppn.0.clamp(self.start_ppn, self.end_ppn);
@@ -169,7 +171,7 @@ impl StackFrameAllocator {
                                .saturating_sub(self.start_ppn)
                                .saturating_sub(reserved_frames);
         let novel_free = self.novel_free_frames();
-        let free_frames = self.recycled.len().saturating_add(novel_free);
+        let free_frames = self.recycled_count.saturating_add(novel_free);
         FrameMemStats {
             total_frames,
             free_frames: free_frames.min(total_frames),
@@ -182,7 +184,10 @@ impl PhysicalFrameAllocator for StackFrameAllocator {
     type FrameId = PhysPageNum;
 
     fn alloc_frame(&mut self) -> FrameAllocResult<Self::FrameId> {
-        while let Some(p) = self.recycled.pop() {
+        while let Some(p) = self.recycled_head {
+            // SAFETY: 空闲页首字在入链时由 dealloc_frame 写入 next 指针。
+            self.recycled_head = unsafe { read_recycled_next(p) };
+            self.recycled_count = self.recycled_count.saturating_sub(1);
             let Some(idx) = self.index(p) else {
                 log::warn!("[frame-allocator] drop invalid recycled ppn={:#x} range=[{:#x},{:#x})",
                            p.0,
@@ -241,9 +246,35 @@ impl PhysicalFrameAllocator for StackFrameAllocator {
         }
         self.ref_counts[idx] = 0;
         self.allocated[idx] = false;
-        self.recycled
-            .push(frame);
+        // SAFETY: 帧池恒等映射；空闲页首字可写，作为回收链表 next 指针。
+        unsafe { write_recycled_next(frame, self.recycled_head) };
+        self.recycled_head = Some(frame);
+        self.recycled_count = self.recycled_count.saturating_add(1);
         Ok(())
+    }
+}
+
+/// 读取回收链表 next 指针；`usize::MAX` 表示链表尾。
+///
+/// # Safety
+/// `ppn` 必须是已标记为空闲且属于帧池的页面。
+unsafe fn read_recycled_next(ppn : PhysPageNum) -> Option<PhysPageNum> {
+    let raw = unsafe { core::ptr::read_volatile((ppn.0 * PAGE_SIZE) as *const usize) };
+    if raw == usize::MAX {
+        None
+    } else {
+        Some(PhysPageNum(raw))
+    }
+}
+
+/// 写入回收链表 next 指针；`None` 写 `usize::MAX` 表示链表尾。
+///
+/// # Safety
+/// `ppn` 必须是刚被释放、尚未重新分配且属于帧池的页面。
+unsafe fn write_recycled_next(ppn : PhysPageNum, next : Option<PhysPageNum>) {
+    let raw = next.map_or(usize::MAX, |n| n.0);
+    unsafe {
+        core::ptr::write_volatile((ppn.0 * PAGE_SIZE) as *mut usize, raw);
     }
 }
 

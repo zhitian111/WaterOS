@@ -45,8 +45,13 @@ impl SizeClass {
 
     /// 一页 slab 能容纳的对象数（扣除页首 header）。
     pub(crate) fn objects_per_slab(self) -> usize {
-        (SLAB_PAGE_SIZE - SLAB_HEADER_SIZE) / self.size()
+        let offset = align_up(SLAB_HEADER_SIZE, self.size());
+        (SLAB_PAGE_SIZE - offset) / self.size()
     }
+}
+
+fn align_up(value : usize, align : usize) -> usize {
+    (value + align - 1) & !(align - 1)
 }
 
 #[cfg(test)]

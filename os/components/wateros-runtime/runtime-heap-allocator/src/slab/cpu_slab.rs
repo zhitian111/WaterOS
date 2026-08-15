@@ -23,9 +23,8 @@ impl CpuSlab {
 
     pub(crate) unsafe fn dealloc(&mut self,
                                  ptr : *mut u8,
-                                 class_idx : usize,
-                                 frames : &dyn HeapFrameSource)
+                                 class_idx : usize)
                                  -> bool {
-        unsafe { self.caches[class_idx].dealloc(ptr, class_idx, frames) }
+        unsafe { self.caches[class_idx].dealloc(ptr, class_idx) }
     }
 }

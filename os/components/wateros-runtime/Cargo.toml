@@ -29,6 +29,7 @@
     impl-loongarch64 = [ "heap-allocator/impl-loongarch64" ]
     default = [ "impl-riscv64" ]
     heap-linked-list = [ "heap-allocator/impl-linked-list-allocator" ]
+    heap-slab = [ "heap-allocator/impl-slab", "heap-allocator/impl-tlsf" ]
     heap-stress = [ "heap-allocator/stress-on-init" ]
     heap-tlsf = [ "heap-allocator/impl-tlsf" ]
     impl-debug = [ "logging/impl-debug" ]

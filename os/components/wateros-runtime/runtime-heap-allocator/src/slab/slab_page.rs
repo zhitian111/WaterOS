@@ -15,7 +15,9 @@ pub(crate) struct SlabPageHeader {
     total_objects : u16,
     free_objects : u16,
     first_free : *mut u8,
-    _pad : [u8; 45],
+    pub(crate) next_partial : *mut SlabPageHeader,
+    pub(crate) in_partial : bool,
+    _pad : [u8; 36],
 }
 
 impl SlabPageHeader {
@@ -42,10 +44,11 @@ impl SlabPageHeader {
                               -> &'static mut Self {
         let class = SizeClass::from_index(size_class);
         let obj_size = class.size();
+        let object_offset = align_up(SLAB_HEADER_SIZE, obj_size);
         let count = class.objects_per_slab();
         let mut first_free : *mut u8 = ptr::null_mut();
         // SAFETY: page_base 页对齐且 page 大小足够容纳 header + 对象。
-        let mut cur = unsafe { page_base.add(SLAB_HEADER_SIZE) };
+        let mut cur = unsafe { page_base.add(object_offset) };
         for _ in 0..count {
             // SAFETY: cur 是本次 slab 内尚未初始化的对象地址。
             unsafe { write_next(cur, first_free) };
@@ -62,7 +65,9 @@ impl SlabPageHeader {
             total_objects : count as u16,
             free_objects : count as u16,
             first_free,
-            _pad : [0; 45],
+            next_partial : ptr::null_mut(),
+            in_partial : false,
+            _pad : [0; 36],
         }) };
         unsafe { &mut *hdr }
     }
@@ -107,4 +112,8 @@ pub(crate) unsafe fn read_next(obj : *mut u8) -> *mut u8 {
 /// `obj` 必须可写且属于对应 slab。
 pub(crate) unsafe fn write_next(obj : *mut u8, next : *mut u8) {
     unsafe { (obj as *mut *mut u8).write(next) };
+}
+
+fn align_up(value : usize, align : usize) -> usize {
+    (value + align - 1) & !(align - 1)
 }
