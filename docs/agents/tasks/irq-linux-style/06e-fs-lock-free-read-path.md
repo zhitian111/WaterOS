@@ -27,6 +27,16 @@ IRQ 模式用户态冻结的完整根因链（见 `history/06d-block-irq-task-sl
      写入的可见性、多请求在途时的描述符回收正确性。
 3. 全部通过后再开 `BLOCK_IRQ_MODE_ENABLED`，以 cagent 全量 + buildstorm 验收。
 
+## 已确认的持锁跨读路径（审计结果）
+
+- `vfs-impl/impl-fs-bridge/src/stable_node.rs::open_stable_node`：
+  `fs.write().open_node(rel)` 持 `SharedRwFs` **写锁**期间执行
+  `impl-another-ext4::operations::open_node → lookup`（ext4 目录项读 → 块读）。
+  GDB 现场即卡在该写锁自旋。修复方向：lookup 用读锁、`open_nodes` 计数用短
+  写锁临界区，或把块读整体移出锁。
+- 其余路径（page-cache miss 读 T07-a、`LocalRwFs` 读锁 T07-c）需逐一核对是否
+  仍存在「持锁 → 块读 → 睡眠」。
+
 ## 涉及文件
 
 - `os/components/wateros-fs/fs-impl/impl-another-ext4/`（元数据读路径）
