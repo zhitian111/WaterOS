@@ -17,6 +17,15 @@ _start:
     ori $t1, $zero, 0x57
     st.b $t1, $t0, 0
 
+    /* 进入内核后先切到直接地址翻译模式（CRMD.DA=1, PG=0）。
+     * U-Boot 跳转前处于 PG=1/DA=0；若不切，高 cached 段的数据访问会走
+     * TLB 并触发 refill。 */
+    csrrd $t0, 0x0
+    li.d $t1, -17
+    and $t0, $t0, $t1
+    ori $t0, $t0, 0x8
+    csrwr $t0, 0x0
+
     move $r7, $r6
     move $r6, $r5
     move $r5, $r4
