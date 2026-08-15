@@ -94,7 +94,10 @@ mod cache;
 mod elf;
 #[path = "mapping.rs"]
 mod mapping;
+#[path = "vma.rs"]
+mod vma;
 pub use cache::{load_or_get_readonly_elf_page, load_or_get_readonly_mmap_page,
                 test_readonly_elf_page_cache, test_readonly_mmap_page_cache};
 pub use elf::*;
 pub use mapping::*;
+pub use vma::*;
