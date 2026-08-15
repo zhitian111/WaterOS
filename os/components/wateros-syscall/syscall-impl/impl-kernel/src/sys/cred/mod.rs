@@ -16,15 +16,39 @@ use cred::api::{Gid, Uid, SUPPLEMENTARY_GROUP_COUNT};
 use groups::{plan_getgroups, valid_setgroups_size, GetGroupsPlan};
 use setid::{plan_set_id, plan_set_re_id, plan_set_res_id, IdTriplet};
 
+const CAP_SETGID : u32 = 1 << 6;
+const CAP_SETUID : u32 = 1 << 7;
+
+/// 当前进程 effective capability 掩码。
+///
+/// 用于替代部分“仅 euid==0”的特权判定：非 root 但 effective 集合持有
+/// CAP_SETUID / CAP_SETGID 的进程（如 setpriv 在 PR_SET_KEEPCAPS +
+/// setresuid 之后）仍可切换 uid/gid（Linux 语义）。
+fn current_effective_caps() -> u32 {
+    task::current_process_task_snapshot().and_then(|snapshot| task::process_caps(snapshot.pid))
+                                         .map(|caps| caps.effective)
+                                         .unwrap_or(0)
+}
+
+/// uid 系列 set*id 特权：euid==0 或 effective 含 CAP_SETUID。
+fn uid_privileged() -> bool {
+    let cred = cred::current_credentials();
+    cred.effective_uid.0 == 0 || (current_effective_caps() & CAP_SETUID) != 0
+}
+
+/// gid 系列 set*id / setgroups 特权：euid==0 或 effective 含 CAP_SETGID。
+fn gid_privileged() -> bool {
+    let cred = cred::current_credentials();
+    cred.effective_uid.0 == 0 || (current_effective_caps() & CAP_SETGID) != 0
+}
+
 fn current_uid_triplet() -> (IdTriplet, bool) {
     let current = cred::current_credentials();
     (IdTriplet { real : current.real_uid.0,
                  effective : current.effective_uid
                                     .0,
                  saved : current.saved_uid.0 },
-     current.effective_uid
-            .0 ==
-     0)
+     uid_privileged())
 }
 
 fn current_gid_triplet() -> (IdTriplet, bool) {
@@ -33,9 +57,7 @@ fn current_gid_triplet() -> (IdTriplet, bool) {
                  effective : current.effective_gid
                                     .0,
                  saved : current.saved_gid.0 },
-     current.effective_uid
-            .0 ==
-     0)
+     gid_privileged())
 }
 
 fn apply_uid_triplet(ids : IdTriplet) {
@@ -107,8 +129,9 @@ pub(crate) fn sys_setgroups(args : SyscallArgs) -> UserRet {
     if !valid_setgroups_size(size, SUPPLEMENTARY_GROUP_COUNT) {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    let cred = cred::current_credentials();
-    if cred.effective_uid.0 != 0 {
+    // root 或 effective 集合持有 CAP_SETGID（setpriv --clear-groups 在
+    // setresgid 之后以非 root euid 调用）。
+    if !gid_privileged() {
         return UserRet::from_error(ErrNo::EPERM);
     }
     let count = size;
@@ -253,7 +276,9 @@ pub(crate) fn sys_getresuid(args : SyscallArgs) -> UserRet {
     let suid_ptr = args.arg(2);
     let cred = cred::current_credentials();
     match write_id_triplet([ruid_ptr, euid_ptr, suid_ptr],
-                           [cred.real_uid.0, cred.effective_uid.0, cred.saved_uid.0])
+                           [cred.real_uid.0,
+                            cred.effective_uid.0,
+                            cred.saved_uid.0])
     {
         Ok(()) => UserRet::from_success(0),
         Err(error) => UserRet::from_error(error),
@@ -265,7 +290,9 @@ pub(crate) fn sys_getresgid(args : SyscallArgs) -> UserRet {
     let sgid_ptr = args.arg(2);
     let cred = cred::current_credentials();
     match write_id_triplet([rgid_ptr, egid_ptr, sgid_ptr],
-                           [cred.real_gid.0, cred.effective_gid.0, cred.saved_gid.0])
+                           [cred.real_gid.0,
+                            cred.effective_gid.0,
+                            cred.saved_gid.0])
     {
         Ok(()) => UserRet::from_success(0),
         Err(error) => UserRet::from_error(error),

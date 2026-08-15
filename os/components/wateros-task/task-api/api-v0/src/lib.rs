@@ -17,9 +17,9 @@ mod wait;
 pub use base::cpu::{CpuId, CpuMask};
 pub use kernel::{KernelStack, KernelTaskEntry, TaskBootstrap};
 pub use process::{
-    AddressSpaceRef, CloneFlags, ProcessError, ProcessId, ProcessResult, ProcessSnapshot,
-    ProcessState, ProcessTaskRole, ProcessTaskSnapshot, ProcessTaskState, ResourceLimit,
-    TaskClearTid, ThreadId,
+    AddressSpaceRef, CloneFlags, ProcessCaps, ProcessError, ProcessId, ProcessResult,
+    ProcessSnapshot, ProcessState, ProcessTaskRole, ProcessTaskSnapshot, ProcessTaskState,
+    ResourceLimit, TaskClearTid, ThreadId,
 };
 pub use sched::{
     Nice, Priority, SchedError, SchedPolicy, VRunTime, BUCKET_COUNT, NICE_MAX, NICE_MIN,

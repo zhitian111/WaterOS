@@ -33,6 +33,28 @@ impl ThreadId {
     pub const fn raw(self) -> usize { self.0 }
 }
 
+/// 进程级 POSIX capability 三集合（effective / permitted / inheritable）。
+///
+/// WaterOS 的最小能力模型：root 进程初始为 `CAP_CHOWN | CAP_SETPCAP`；
+/// 非 root 只能把 requested 集合限制在当前 permitted 的子集内（配合
+/// `PR_SET_KEEPCAPS` 在 setuid 后仍可重设 permitted 子集，如 setpriv）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProcessCaps {
+    pub effective : u32,
+    pub permitted : u32,
+    pub inheritable : u32,
+}
+
+impl ProcessCaps {
+    // CAP_CHOWN | CAP_SETGID | CAP_SETUID | CAP_SETPCAP。
+    // 必须包含 SETUID/SETGID：setpriv 在 PR_SET_KEEPCAPS + setresuid 后仍需
+    // effective 集合持有 CAP_SETGID 才能 setresgid（libcap-ng bump_cap 只会把
+    // permitted 中的 cap 提升到 effective）。
+    pub const ROOT : Self = Self { effective : (1 << 0) | (1 << 6) | (1 << 7) | (1 << 8),
+                                   permitted : (1 << 0) | (1 << 6) | (1 << 7) | (1 << 8),
+                                   inheritable : 0 };
+}
+
 
 /// Linux `clone(2)` 常用 flags 的语义子集。
 #[repr(transparent)]

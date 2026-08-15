@@ -17,7 +17,8 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use api_v0::{
-    ProcessId, ProcessResult, ProcessSnapshot, ProcessTaskSnapshot, TaskClearTid, TaskId, ThreadId,
+    ProcessCaps, ProcessId, ProcessResult, ProcessSnapshot, ProcessTaskSnapshot, TaskClearTid,
+    TaskId, ThreadId,
 };
 use arch::interrupt::ArchInterruptState;
 use base::sync::MultiprocessorSafeCell;
@@ -257,6 +258,16 @@ pub fn process_child_subreaper(pid : ProcessId) -> Option<bool> {
 /// 设置 child subreaper 标志。
 pub fn set_process_child_subreaper(pid : ProcessId, enabled : bool) -> ProcessResult<()> {
     with_process_registry(|registry| registry.set_process_child_subreaper(pid, enabled))
+}
+
+/// 查询进程 capability 三集合。
+pub fn process_caps(pid : ProcessId) -> Option<ProcessCaps> {
+    with_process_registry(|registry| registry.process_caps(pid))
+}
+
+/// 设置进程 capability 三集合。
+pub fn set_process_caps(pid : ProcessId, caps : ProcessCaps) -> ProcessResult<()> {
+    with_process_registry(|registry| registry.set_process_caps(pid, caps))
 }
 
 /// 列出 registry 中全部进程 pid。

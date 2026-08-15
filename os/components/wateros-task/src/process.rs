@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 
 use crate::{
-    active_impl, scheduler, ExitedTask, ProcessId, ProcessSnapshot, ProcessState,
+    active_impl, scheduler, ExitedTask, ProcessCaps, ProcessId, ProcessSnapshot, ProcessState,
     ProcessResult, ProcessTaskSnapshot, ResourceLimit, TaskClearTid, TaskId, TaskState,
     TaskWaitTarget, ThreadId,
 };
@@ -267,6 +267,14 @@ pub fn process_child_subreaper(pid : ProcessId) -> Option<bool> {
 /// 设置 child subreaper 标志。
 pub fn set_process_child_subreaper(pid : ProcessId, enabled : bool) -> ProcessResult<()> {
     active_impl::set_process_child_subreaper(pid, enabled)
+}
+
+/// 查询进程 capability 三集合。
+pub fn process_caps(pid : ProcessId) -> Option<ProcessCaps> { active_impl::process_caps(pid) }
+
+/// 设置进程 capability 三集合。
+pub fn set_process_caps(pid : ProcessId, caps : ProcessCaps) -> ProcessResult<()> {
+    active_impl::set_process_caps(pid, caps)
 }
 
 /// 判断当前进程是否仍有子进程。

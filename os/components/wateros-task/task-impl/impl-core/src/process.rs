@@ -7,9 +7,9 @@ use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 
 use api_v0::{
-    AddressSpaceRef, CloneFlags, ProcessError, ProcessId, ProcessResult, ProcessSnapshot,
-    ProcessState, ProcessTaskRole, ProcessTaskSnapshot, ProcessTaskState, ResourceLimit,
-    TaskClearTid, TaskExitCode, TaskId, ThreadId,
+    AddressSpaceRef, CloneFlags, ProcessCaps, ProcessError, ProcessId, ProcessResult,
+    ProcessSnapshot, ProcessState, ProcessTaskRole, ProcessTaskSnapshot, ProcessTaskState,
+    ResourceLimit, TaskClearTid, TaskExitCode, TaskId, ThreadId,
 };
 
 #[derive(Clone, Debug)]
@@ -87,6 +87,8 @@ pub struct ProcessControlBlock {
     dumpable : bool,
     //子进程代管标记。Linux PR_SET_CHILD_SUBREAPER 机制
     child_subreaper : bool,
+    /// POSIX capability 三集合（capset 维护；fork 继承）。
+    caps : ProcessCaps,
     //SIGSTOP/SIGTSTP/SIGTTIN/SIGTTOU 等待通知标记。
     stop_wait_pending : bool,
     //SIGCONT 等待通知标记。
@@ -292,6 +294,7 @@ impl ProcessRegistry {
                                             sid : initial_sid,
                                             dumpable : true,
                                             child_subreaper : false,
+                                            caps : ProcessCaps::ROOT,
                                             stop_wait_pending : false,
                                             continued_wait_pending : false,
                                             umask : 0o022 };
@@ -330,7 +333,9 @@ impl ProcessRegistry {
         let parent = self.processes
                          .get(&source_pid)
                          .ok_or(ProcessError::ProcessNotFound)?;
-        if !self.processes.contains_key(&child_parent_pid) {
+        if !self.processes
+                .contains_key(&child_parent_pid)
+        {
             return Err(ProcessError::ProcessNotFound);
         }
         let parent_rlimits = parent.rlimits
@@ -339,6 +344,7 @@ impl ProcessRegistry {
         let parent_sid = parent.sid;
         let parent_dumpable = parent.dumpable;
         let parent_umask = parent.umask;
+        let parent_caps = parent.caps;
         let parent_comm = parent.tasks
                                 .get(&source_task_id)
                                 .ok_or(ProcessError::TaskNotFound)?
@@ -352,6 +358,7 @@ impl ProcessRegistry {
             process.sid = parent_sid;
             process.dumpable = parent_dumpable;
             process.umask = parent_umask;
+            process.caps = parent_caps;
             process.parent_death_source = Some(ParentDeathSource::Task(source_task_id));
             if let Some(task) = process.tasks
                                        .get_mut(&child_task_id)
@@ -1052,6 +1059,19 @@ impl ProcessRegistry {
         Ok(())
     }
 
+    pub fn process_caps(&self, pid : ProcessId) -> Option<ProcessCaps> {
+        self.processes
+            .get(&pid)
+            .map(|process| process.caps)
+    }
+
+    pub fn set_process_caps(&mut self, pid : ProcessId, caps : ProcessCaps) -> ProcessResult<()> {
+        let process = self.process_mut(pid)
+                          .ok_or(ProcessError::ProcessNotFound)?;
+        process.caps = caps;
+        Ok(())
+    }
+
     /// 收集指定父进程的所有子进程 PID。
     pub fn collect_child_pids(&self, parent_pid : ProcessId) -> Vec<ProcessId> {
         self.processes
@@ -1391,36 +1411,67 @@ mod tests {
     #[test]
     fn exit_group_notifies_once_then_subreaper_death_notifies_again() {
         let mut registry = ProcessRegistry::new();
-        let init = registry.create_process_for_task(1, None, None).unwrap();
-        let subreaper = registry.create_process_for_task(10, Some(init), None).unwrap();
-        registry.set_process_child_subreaper(subreaper, true).unwrap();
-        let parent = registry.create_process_for_task(20, Some(subreaper), None).unwrap();
-        registry.add_task_to_process(parent, 20, 21, CloneFlags::CLONE_THREAD, 0, None).unwrap();
-        let child = registry.create_process_like_fork(parent, 21, 30, None).unwrap();
-        registry.set_parent_death_signal(child, 12).unwrap();
+        let init = registry.create_process_for_task(1, None, None)
+                           .unwrap();
+        let subreaper = registry.create_process_for_task(10, Some(init), None)
+                                .unwrap();
+        registry.set_process_child_subreaper(subreaper, true)
+                .unwrap();
+        let parent = registry.create_process_for_task(20, Some(subreaper), None)
+                             .unwrap();
+        registry.add_task_to_process(parent,
+                                     20,
+                                     21,
+                                     CloneFlags::CLONE_THREAD,
+                                     0,
+                                     None)
+                .unwrap();
+        let child = registry.create_process_like_fork(parent, 21, 30, None)
+                            .unwrap();
+        registry.set_parent_death_signal(child, 12)
+                .unwrap();
 
-        let notifications = registry.mark_process_exited(parent, 0).unwrap();
+        let notifications = registry.mark_process_exited(parent, 0)
+                                    .unwrap();
         assert_eq!(notifications,
-                   alloc::vec![super::ParentDeathNotification { pid : child, signal : 12 }]);
-        assert!(registry.mark_process_exited(parent, 0).unwrap().is_empty());
-        assert_eq!(registry.process_snapshot(child).unwrap().parent_pid, Some(subreaper));
+                   alloc::vec![super::ParentDeathNotification { pid : child,
+                                                                signal : 12 }]);
+        assert!(registry.mark_process_exited(parent, 0)
+                        .unwrap()
+                        .is_empty());
+        assert_eq!(registry.process_snapshot(child)
+                           .unwrap()
+                           .parent_pid,
+                   Some(subreaper));
 
-        let notifications = registry.mark_process_exited(subreaper, 0).unwrap();
+        let notifications = registry.mark_process_exited(subreaper, 0)
+                                    .unwrap();
         assert_eq!(notifications,
-                   alloc::vec![super::ParentDeathNotification { pid : child, signal : 12 }]);
-        assert_eq!(registry.process_snapshot(child).unwrap().parent_pid, Some(init));
+                   alloc::vec![super::ParentDeathNotification { pid : child,
+                                                                signal : 12 }]);
+        assert_eq!(registry.process_snapshot(child)
+                           .unwrap()
+                           .parent_pid,
+                   Some(init));
     }
 
     #[test]
     fn ordinary_last_thread_exit_reparents_children() {
         let mut registry = ProcessRegistry::new();
-        let init = registry.create_process_for_task(1, None, None).unwrap();
-        let parent = registry.create_process_for_task(10, Some(init), None).unwrap();
-        let child = registry.create_process_like_fork(parent, 10, 11, None).unwrap();
+        let init = registry.create_process_for_task(1, None, None)
+                           .unwrap();
+        let parent = registry.create_process_for_task(10, Some(init), None)
+                             .unwrap();
+        let child = registry.create_process_like_fork(parent, 10, 11, None)
+                            .unwrap();
 
-        let result = registry.mark_task_exited(10, 0).unwrap();
+        let result = registry.mark_task_exited(10, 0)
+                             .unwrap();
         assert!(result.process_completed);
-        assert_eq!(registry.process_snapshot(child).unwrap().parent_pid, Some(init));
+        assert_eq!(registry.process_snapshot(child)
+                           .unwrap()
+                           .parent_pid,
+                   Some(init));
     }
 
     #[test]
