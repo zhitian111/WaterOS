@@ -31,3 +31,13 @@ block IRQ 链路已从「IRQ 触发/死锁」推进到「IRQ 完成路径正常�
 IRQ 模式开启时 cagent 卡在 `paged_handle seek` 循环（bash 反复 seek/重读脚本），
 但 block 数据正确。下一步专项审计 `impl-page-cache` 的 `install_page` 锁外读 +
 回查装填在 IRQ 异步完成下的空/旧页竞态，或做「同步 vs IRQ 同页字节」对比。
+
+## 追加结论（2026-08-15 深挖后）
+
+- 短读诊断未触发：`install_page` 的 `read_range` 每次返回完整长度，页面无空页。
+- cagent 从「seek 卡死」推进到 `Simple LLM Server listening`（脚本解析完成），
+  说明 block IRQ 完成链路**功能正确、不是死锁**，只是**非常慢**。
+- 慢因：当前单请求在途（`in_flight` 原子门闩）把大量块读完全串行，且每次块读
+  走 IRQ + waitqueue 睡眠/唤醒往返；同步路径是锁内紧自旋，微秒级完成。
+- 结论：性能收益必须回到**多请求在途（async slots）**，而它此前被 virtio
+  描述符回收损坏（重复 token / used 条目未消费）挡住，是下一个主攻点。
