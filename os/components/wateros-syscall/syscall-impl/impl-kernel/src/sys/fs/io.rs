@@ -456,8 +456,10 @@ fn write_fd(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
 }
 
 /// master 输入产生的 Ctrl-C/Ctrl-Z 等事件在 PTY 锁外投递。
-fn dispatch_pty_control_events(fd: usize) {
-    let Ok(Some(endpoint)) = vfs::fd::current_pty_endpoint(fd) else { return; };
+fn dispatch_pty_control_events(fd : usize) {
+    let Ok(Some(endpoint)) = vfs::fd::current_pty_endpoint(fd) else {
+        return;
+    };
     for event in tty::take_control_events(endpoint.id()) {
         crate::sys::ipc::signal::send_kernel_signal_to_process_group(
             task::ProcessId::from_raw(event.process_group), event.signal);
@@ -490,28 +492,32 @@ fn check_tty_foreground(fd : usize, writing : bool) -> Result<(), ErrNo> {
     if !vfs::fd::current_fd_is_tty_char(fd).unwrap_or(false) {
         return Ok(());
     }
-    let pty = vfs::fd::current_pty_endpoint(fd).ok().flatten();
+    let pty = vfs::fd::current_pty_endpoint(fd).ok()
+                                               .flatten();
     // PTY master 是终端模拟器的数据端，不是受前台进程组限制的控制终端端点。
-    if pty.as_ref().is_some_and(|endpoint| {
-        endpoint.endpoint() == tty::TerminalEndpoint::PtyMaster
-    }) {
+    if pty.as_ref()
+          .is_some_and(|endpoint| endpoint.endpoint() == tty::TerminalEndpoint::PtyMaster)
+    {
         return Ok(());
     }
-    let stops_background = pty.as_ref().map_or_else(tty::output_stops_background,
-                                                     tty::PtyEndpointHandle::output_stops_background);
+    let stops_background = pty.as_ref()
+                              .map_or_else(tty::output_stops_background,
+                                           tty::PtyEndpointHandle::output_stops_background);
     if writing && !stops_background {
         return Ok(());
     }
-    let foreground = pty.as_ref().map_or_else(tty::foreground_pgid,
-                                               tty::PtyEndpointHandle::foreground_pgid);
+    let foreground = pty.as_ref()
+                        .map_or_else(tty::foreground_pgid,
+                                     tty::PtyEndpointHandle::foreground_pgid);
     if foreground == 0 {
         return Ok(());
     }
     let Some(process) = task::current_process_snapshot() else {
         return Ok(());
     };
-    let controlling_sid = pty.as_ref().map_or_else(tty::controlling_sid,
-                                                    tty::PtyEndpointHandle::controlling_sid);
+    let controlling_sid = pty.as_ref()
+                             .map_or_else(tty::controlling_sid,
+                                          tty::PtyEndpointHandle::controlling_sid);
     // 只有把该 terminal 作为控制终端的会话才受前后台作业控制约束。
     // 通过 fd 传递拿到别的会话 PTY 时，不能误向当前进程组发送 SIGTTIN/SIGTTOU。
     if controlling_sid == 0 || controlling_sid != process.sid.raw() {
@@ -535,7 +541,8 @@ fn write_tcp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
     loop {
         let socket = socket_fd::lookup(fd).ok_or(ErrNo::ENOTSOCK)?;
         drive_network_stack();
-        let snapshot = socket.poll_snapshot().map_err(|_| ErrNo::ENOTSOCK)?;
+        let snapshot = socket.poll_snapshot()
+                             .map_err(|_| ErrNo::ENOTSOCK)?;
         if snapshot.may_send && snapshot.send_capacity > 0 {
             let send_len = buf.len()
                               .min(snapshot.send_capacity);
@@ -591,9 +598,7 @@ fn write_udp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
     }
 }
 
-fn offset_from_arg(raw : usize) -> Result<u64, ErrNo> {
-    offset_from_bits(raw as u64)
-}
+fn offset_from_arg(raw : usize) -> Result<u64, ErrNo> { offset_from_bits(raw as u64) }
 
 /// Linux asm-generic 的 `preadv*`/`pwritev*` 把 `loff_t` 拆成两个
 /// 32 位槽位，低位在前、高位在后。显式截成 `u32` 也可正确处理调用方
@@ -730,16 +735,16 @@ pub(crate) fn sys_pwrite64(args : SyscallArgs) -> UserRet {
         _ => return UserRet::from_error(ErrNo::EFAULT),
     }
     let append = match vfs::fd::with_current_io(fd, |handle| {
-        Ok(handle.open_status_flags() & O_APPEND != 0)
-    }) {
+              Ok(handle.open_status_flags() & O_APPEND != 0)
+          }) {
         Ok(value) => value,
         Err(err) => return UserRet::from_error(vfs_io_at_error_to_errno(err)),
     };
     let write_offset = if append {
         match vfs::fd::with_current_io(fd, |handle| {
-            handle.metadata()
-                  .map(|meta| meta.size)
-        }) {
+                  handle.metadata()
+                        .map(|meta| meta.size)
+              }) {
             Ok(size) => size,
             Err(err) => return UserRet::from_error(vfs_io_at_error_to_errno(err)),
         }
@@ -853,7 +858,10 @@ pub(crate) fn sys_preadv2(args : SyscallArgs) -> UserRet {
         Ok(offset) => offset,
         Err(error) => return UserRet::from_error(error),
     };
-    preadv_at(args.arg(0), args.arg(1), args.arg(2), offset)
+    preadv_at(args.arg(0),
+              args.arg(1),
+              args.arg(2),
+              offset)
 }
 
 // 本方法代码由AI完成
@@ -911,7 +919,10 @@ pub(crate) fn sys_pwritev2(args : SyscallArgs) -> UserRet {
         Ok(offset) => offset,
         Err(error) => return UserRet::from_error(error),
     };
-    pwritev_at(args.arg(0), args.arg(1), args.arg(2), offset)
+    pwritev_at(args.arg(0),
+               args.arg(1),
+               args.arg(2),
+               offset)
 }
 
 pub(crate) fn sys_lseek(args : SyscallArgs) -> UserRet {
@@ -935,9 +946,15 @@ pub(crate) fn sys_lseek(args : SyscallArgs) -> UserRet {
     match result {
         Ok(pos) => UserRet::from_success(pos as usize),
         Err(e) => {
-            let errno = match vfs_error_to_errno(e) {
-                ErrNo::EINVAL => ErrNo::ESPIPE,
-                other => other,
+            // Linux 语义：对不可 seek 的句柄（pipe/socket/fifo、解压流等）
+            // 调用 lseek 必须返回 ESPIPE，调用方（如 dpkg 跳过 tar padding）
+            // 依赖该 errno 回退为流式读取；若返回 EOPNOTSUPP 会被误判为硬错误。
+            let errno = match e {
+                VfsError::Unsupported => ErrNo::ESPIPE,
+                other => match vfs_error_to_errno(other) {
+                    ErrNo::EINVAL => ErrNo::ESPIPE,
+                    errno => errno,
+                },
             };
             UserRet::from_error(errno)
         }

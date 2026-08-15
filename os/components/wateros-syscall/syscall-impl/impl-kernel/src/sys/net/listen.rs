@@ -27,7 +27,7 @@ pub(crate) fn sys_listen(args : SyscallArgs) -> UserRet {
     match socket.listen(backlog) {
         Ok(()) => UserRet::from_success(0),
         Err(e) => {
-            log::warn!("[syscall] listen failed fd={} err={}",
+            log::warn!("[syscall] listen failed fd={} err={:?}",
                        fd,
                        e);
             match e {

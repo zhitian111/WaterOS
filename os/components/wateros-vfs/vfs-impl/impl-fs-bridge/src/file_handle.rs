@@ -4,8 +4,8 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use alloc::sync::Arc;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -126,7 +126,8 @@ impl BufferedFileHandle {
         }
         let data = self.data.lock();
         let mut snapshot = Vec::new();
-        snapshot.try_reserve_exact(data.len()).map_err(|_| VfsError::NoMemory)?;
+        snapshot.try_reserve_exact(data.len())
+                .map_err(|_| VfsError::NoMemory)?;
         snapshot.extend_from_slice(data.as_slice());
         drop(data);
         replace_file_contents(self.path.as_str(), snapshot.as_slice())?;
@@ -138,10 +139,11 @@ impl BufferedFileHandle {
 
 impl VfsIoHandle for BufferedFileHandle {
     fn prepare_read(&mut self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
-        let reservation = ReservationGuard::begin(self.description.clone())?;
+        let reservation = ReservationGuard::begin(self.description
+                                                      .clone())?;
         Ok(Box::new(BufferedPreparedRead { reservation,
-                                          data : self.data.clone(),
-                                          max_len }))
+                                           data : self.data.clone(),
+                                           max_len }))
     }
 
     // 本方法代码由AI完成
@@ -149,7 +151,8 @@ impl VfsIoHandle for BufferedFileHandle {
         if buf.is_empty() {
             return Ok(0);
         }
-        let mut reservation = ReservationGuard::begin(self.description.clone())?;
+        let mut reservation = ReservationGuard::begin(self.description
+                                                          .clone())?;
         let offset = reservation.offset();
         let off = usize::try_from(offset).map_err(|_| VfsError::Io)?;
         let data = self.data.lock();
@@ -174,9 +177,16 @@ impl VfsIoHandle for BufferedFileHandle {
             return Ok(0);
         }
         const O_APPEND : u32 = 0o2000;
-        let mut reservation = ReservationGuard::begin(self.description.clone())?;
-        if self.description.status_flags() & O_APPEND != 0 {
-            let end = self.data.lock().len() as u64;
+        let mut reservation = ReservationGuard::begin(self.description
+                                                          .clone())?;
+        if self.description
+               .status_flags() &
+           O_APPEND !=
+           0
+        {
+            let end = self.data
+                          .lock()
+                          .len() as u64;
             reservation.retarget(end)?;
         }
         let off = usize::try_from(reservation.offset()).map_err(|_| VfsError::Io)?;
@@ -191,6 +201,10 @@ impl VfsIoHandle for BufferedFileHandle {
         drop(data);
         reservation.commit(buf.len(), buf.len())?;
         self.dirty = true;
+        const O_SYNC : u32 = 0o4_010_000;
+        if self.description.status_flags() & O_SYNC != 0 {
+            self.sync_dirty()?;
+        }
         Ok(buf.len())
     }
 
@@ -203,7 +217,9 @@ impl VfsIoHandle for BufferedFileHandle {
             Ok(meta) => meta,
             Err(_) => self.meta.clone(),
         };
-        m.size = self.data.lock().len() as u64;
+        m.size = self.data
+                     .lock()
+                     .len() as u64;
         Ok(m)
     }
 
@@ -249,7 +265,12 @@ impl VfsIoHandle for BufferedFileHandle {
         }
         data[off..end].copy_from_slice(buf);
         self.meta.size = data.len() as u64;
+        drop(data);
         self.dirty = true;
+        const O_SYNC : u32 = 0o4_010_000;
+        if self.description.status_flags() & O_SYNC != 0 {
+            self.sync_dirty()?;
+        }
         Ok(buf.len())
     }
 
@@ -258,50 +279,74 @@ impl VfsIoHandle for BufferedFileHandle {
         if !self.writable {
             return Err(VfsError::Unsupported);
         }
-        let mut reservation = ReservationGuard::begin(self.description.clone())?;
+        let mut reservation = ReservationGuard::begin(self.description
+                                                          .clone())?;
         let len = usize::try_from(len).map_err(|_| VfsError::InvalidPath)?;
-        self.data.lock().resize(len, 0);
+        self.data
+            .lock()
+            .resize(len, 0);
         self.meta.size = len as u64;
-        reservation.commit_at(reservation.offset().min(self.meta.size))?;
+        reservation.commit_at(reservation.offset()
+                                         .min(self.meta.size))?;
         self.dirty = true;
         Ok(())
     }
 
     // 本方法代码由AI完成
     fn seek(&mut self, offset : i64, whence : VfsSeekWhence) -> VfsResult<u64> {
-        let new_off = match whence {
-            VfsSeekWhence::Set => {
-                if offset < 0 {
-                    return Err(VfsError::InvalidPath);
+        log::info!("[buffered_handle] seek path={} whence={whence:?} offset={offset} cur={}",
+                   self.path,
+                   self.description
+                       .offset(),);
+        let result = (|| {
+            let new_off = match whence {
+                VfsSeekWhence::Set => {
+                    if offset < 0 {
+                        return Err(VfsError::InvalidPath);
+                    }
+                    offset as u64
                 }
-                offset as u64
-            }
-            VfsSeekWhence::Cur => {
-                return self.description.add_signed_offset_if_idle(offset);
-            }
-            VfsSeekWhence::End => {
-                let base = self.data.lock().len() as u64;
-                if offset < 0 {
-                    base.checked_sub((-offset) as u64)
-                        .ok_or(VfsError::InvalidPath)?
-                } else {
-                    base.checked_add(offset as u64)
-                        .ok_or(VfsError::InvalidPath)?
+                VfsSeekWhence::Cur => {
+                    return self.description
+                               .add_signed_offset_if_idle(offset);
                 }
-            }
-        };
-        self.description.set_offset_if_idle(new_off)
+                VfsSeekWhence::End => {
+                    let base = self.data
+                                   .lock()
+                                   .len() as u64;
+                    if offset < 0 {
+                        base.checked_sub((-offset) as u64)
+                            .ok_or(VfsError::InvalidPath)?
+                    } else {
+                        base.checked_add(offset as u64)
+                            .ok_or(VfsError::InvalidPath)?
+                    }
+                }
+            };
+            self.description
+                .set_offset_if_idle(new_off)
+        })();
+        log::info!("[buffered_handle] seek done path={} result={result:?}",
+                   self.path,);
+        result
     }
 
     // 本方法代码由AI完成
     fn flush(&mut self) -> VfsResult<()> { self.sync_dirty() }
 
-    fn open_status_flags(&self) -> u32 { self.description.status_flags() }
+    fn open_status_flags(&self) -> u32 {
+        self.description
+            .status_flags()
+    }
 
     fn set_open_status_flags(&mut self, flags : u32) -> VfsResult<()> {
         const O_APPEND : u32 = 0o2000;
         const O_NONBLOCK : u32 = 0o4000;
-        self.description.set_status_flags(flags & (O_APPEND | O_NONBLOCK));
+        // asm-generic O_SYNC includes the O_DSYNC bit, so this mask preserves
+        // either open-time synchronous-write mode.
+        const O_SYNC : u32 = 0o4_010_000;
+        self.description
+            .set_status_flags(flags & (O_APPEND | O_NONBLOCK | O_SYNC));
         Ok(())
     }
 
@@ -332,8 +377,9 @@ struct BufferedPreparedRead {
 }
 
 impl VfsPreparedRead for BufferedPreparedRead {
-    fn acquire(self : Box<Self>) -> VfsResult<Box<dyn VfsReadLease>> {
-        let start = usize::try_from(self.reservation.offset()).map_err(|_| VfsError::Io)?;
+    fn acquire(self: Box<Self>) -> VfsResult<Box<dyn VfsReadLease>> {
+        let start = usize::try_from(self.reservation
+                                        .offset()).map_err(|_| VfsError::Io)?;
         let data = self.data.lock();
         let len = data.len()
                       .saturating_sub(start)
@@ -388,11 +434,11 @@ impl FsBridge {
             }
             _ => {}
         }
-        if let Some(opened) = impl_fd_session::open_special_device(
-            abs.as_str(),
-            open_accmode(flags),
-            flags.contains(VfsOpenFlags::NONBLOCK),
-        ) {
+        if let Some(opened) =
+            impl_fd_session::open_special_device(abs.as_str(),
+                                                 open_accmode(flags),
+                                                 flags.contains(VfsOpenFlags::NONBLOCK))
+        {
             return opened;
         }
         if let Ok(dev) = fs::devfs::active_impl::lookup_character_device(abs.as_str()) {

@@ -4,8 +4,8 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use alloc::collections::BTreeSet;
 use alloc::collections::BTreeMap;
+use alloc::collections::BTreeSet;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
@@ -66,8 +66,8 @@ pub struct SharedIoHandle {
 
 impl SharedIoHandle {
     pub fn new(handle : Box<dyn VfsIoHandle>) -> Self {
-        let terminal_id = crate::pty_endpoint_for_handle(handle.as_ref())
-                               .map(|endpoint| endpoint.id());
+        let terminal_id =
+            crate::pty_endpoint_for_handle(handle.as_ref()).map(|endpoint| endpoint.id());
         let snapshot = handle.duplicate()
                              .ok()
                              .map(OpenFileDescription::new);
@@ -198,8 +198,9 @@ impl PerTaskFdRegistry {
                         .copied()?;
         let table = self.tables
                         .get(&owner)?;
-        (table.len() >= VFS_FIRST_DYNAMIC_FD && self.ref_counts.contains_key(&owner))
-            .then_some(owner)
+        (table.len() >= VFS_FIRST_DYNAMIC_FD &&
+         self.ref_counts
+             .contains_key(&owner)).then_some(owner)
     }
 
     // 本方法代码由AI完成
@@ -227,8 +228,8 @@ impl PerTaskFdRegistry {
         if old_len < new_len {
             table.resize_with(new_len, || None);
             let free = self.free_fds
-                            .entry(owner)
-                            .or_default();
+                           .entry(owner)
+                           .or_default();
             for fd in old_len..new_len {
                 free.insert(fd);
             }
@@ -257,10 +258,7 @@ impl PerTaskFdRegistry {
             .insert(fd);
     }
 
-    fn alloc_slot_for_owner(&mut self,
-                            owner : task::TaskId,
-                            handle : SharedIoHandle)
-                            -> usize {
+    fn alloc_slot_for_owner(&mut self, owner : task::TaskId, handle : SharedIoHandle) -> usize {
         self.alloc_slot_for_owner_from(owner, 0, handle)
     }
 
@@ -271,8 +269,8 @@ impl PerTaskFdRegistry {
                                  -> usize {
         let candidate = {
             let free = self.free_fds
-                            .entry(owner)
-                            .or_default();
+                           .entry(owner)
+                           .or_default();
             free.range(minfd..)
                 .next()
                 .copied()
@@ -295,8 +293,8 @@ impl PerTaskFdRegistry {
             if old_len < minfd {
                 table.resize_with(minfd, || None);
                 let free = self.free_fds
-                                .entry(owner)
-                                .or_default();
+                               .entry(owner)
+                               .or_default();
                 for fd in old_len..minfd {
                     free.insert(fd);
                 }
@@ -952,18 +950,20 @@ impl PerTaskFdRegistry {
         self.fd_flags
             .insert(child, parent_flags);
         let table = self.tables
-                         .get(&child)
-                         .expect("child fd table");
+                        .get(&child)
+                        .expect("child fd table");
         let open_count = table.iter()
                               .filter(|slot| slot.is_some())
                               .count();
         self.open_counts
             .insert(child, open_count);
         let free = self.free_fds
-                        .entry(child)
-                        .or_default();
+                       .entry(child)
+                       .or_default();
         free.clear();
-        for (fd, slot) in table.iter().enumerate() {
+        for (fd, slot) in table.iter()
+                               .enumerate()
+        {
             if slot.is_none() {
                 free.insert(fd);
             }
@@ -1155,12 +1155,11 @@ fn default_serial_device() -> Option<SharedCharacterDevice> {
 }
 
 /// 为 `/dev/tty` 创建一个指向系统控制台的双向字符设备句柄。
-#[cfg(feature = "user-graphics")]
-pub(crate) fn open_console_tty(accmode: u32) -> Option<Box<dyn VfsIoHandle>> {
+pub(crate) fn open_console_tty(accmode : u32) -> Option<Box<dyn VfsIoHandle>> {
     default_serial_device().map(|device| {
-        Box::new(CharDevHandle::from_devfs_path(device, "/dev/tty", accmode))
-            as Box<dyn VfsIoHandle>
-    })
+                               Box::new(CharDevHandle::from_devfs_path(device, "/dev/tty", accmode))
+                               as Box<dyn VfsIoHandle>
+                           })
 }
 
 /// 最多从物理控制台读取一个字节并送入共享 TTY。
