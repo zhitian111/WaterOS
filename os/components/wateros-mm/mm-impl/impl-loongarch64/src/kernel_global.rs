@@ -38,12 +38,27 @@ static KERNEL_ASPACE : BootOnceCell<KernelAddressSpaceCell> = BootOnceCell::new(
 /// 装载等路径读取。
 static PHYS_RAM_END_EXCL : AtomicUsize = AtomicUsize::new(0);
 
-/// QEMU virt LoongArch64 RAM 基址（与 link.ld 一致）。
-const LOONGARCH64_RAM_BASE : usize = 0x9000_0000;
 const LOONGARCH64_LOW_MMIO_START : usize = 0x1000_0000;
 const LOONGARCH64_LOW_MMIO_END : usize = 0x3000_0000;
 const LOONGARCH64_PCI_MMIO_START : usize = 0x4000_0000;
 const LOONGARCH64_PCI_MMIO_END : usize = 0x8000_0000;
+/// 高 cached/uncached 段窗口只保留高 16 位；低 48 位才是物理地址。
+const LOONGARCH64_PHYS_ADDR_MASK : usize = 0x0000_ffff_ffff_ffff;
+const LOONGARCH64_WINDOW_BASE_MASK : usize = 0xffff_0000_0000_0000;
+
+#[inline]
+fn phys_page_for_va(va : usize) -> PhysPageNum {
+    PhysPageNum((va & LOONGARCH64_PHYS_ADDR_MASK) / PAGE_SIZE)
+}
+
+#[inline]
+fn kernel_va_window_base() -> usize {
+    let kernel_start_addr : usize;
+    unsafe {
+        core::arch::asm!("la {}, kernel_start", out(reg) kernel_start_addr);
+    }
+    kernel_start_addr & LOONGARCH64_WINDOW_BASE_MASK
+}
 
 #[inline]
 pub(crate) fn phys_ram_end_exclusive() -> usize {
@@ -76,16 +91,22 @@ pub fn kernel_satp() -> usize { api_v0::kernel_satp::get() }
 /// `ram_end_exclusive` 为物理 RAM 上界（不包含），应与 DTB `/memory` 或
 /// bring-up 约定一致。
 pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
-    assert!(ram_end_exclusive > LOONGARCH64_RAM_BASE,
+    let ram_base_low = platform::memory::kernel_layout().ram.start;
+    assert!(ram_end_exclusive > ram_base_low,
             "kernel_mm: ram_end_exclusive must be above RAM base");
     PHYS_RAM_END_EXCL.store(ram_end_exclusive, Ordering::Release);
 
+    let window_base = kernel_va_window_base();
+    let kernel_ram_start = window_base | ram_base_low;
+    let kernel_ram_end = window_base | ram_end_exclusive;
+
     // 初始化帧分配器
-    let kernel_end_addr : usize;
+    let kernel_end_va : usize;
     unsafe {
-        core::arch::asm!("la {}, kernel_end", out(reg) kernel_end_addr);
+        core::arch::asm!("la {}, kernel_end", out(reg) kernel_end_va);
     }
-    let start_ppn = (kernel_end_addr + PAGE_SIZE - 1) / PAGE_SIZE;
+    let kernel_end_pa = kernel_end_va & LOONGARCH64_PHYS_ADDR_MASK;
+    let start_ppn = (kernel_end_pa + PAGE_SIZE - 1) / PAGE_SIZE;
     let end_ppn = ram_end_exclusive / PAGE_SIZE;
     frame_alloctor::init_frame_allocator(PhysPageNum(start_ppn),
                                          PhysPageNum(end_ppn));
@@ -93,11 +114,29 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
     let mut aspace = LoongArch64AddressSpace::new_kernel()
         .expect("kernel_mm: LoongArch64AddressSpace::new_kernel failed");
 
-    let map_identity = |aspace : &mut LoongArch64AddressSpace,
-                        start : usize,
-                        end : usize,
-                        perm : PagePerm,
-                        what : &str| {
+    let map_ram_identity = |aspace : &mut LoongArch64AddressSpace,
+                            start : usize,
+                            end : usize,
+                            perm : PagePerm,
+                            what : &str| {
+        let lo = VirtAddr(start).floor_page();
+        let hi = VirtAddr(end).ceil_page();
+        for vpn_raw in lo.0..hi.0 {
+            let vpn = VirtPageNum(vpn_raw);
+            let ppn = phys_page_for_va(vpn.start_addr().0);
+            aspace.map_page_to_ppn(vpn, ppn, perm)
+                  .unwrap_or_else(|e| {
+                      panic!("kernel_mm: identity map {} [{:#x},{:#x}): {:?}",
+                             what, start, end, e)
+                  });
+        }
+    };
+
+    let map_mmio_identity = |aspace : &mut LoongArch64AddressSpace,
+                             start : usize,
+                             end : usize,
+                             perm : PagePerm,
+                             what : &str| {
         let lo = VirtAddr(start).floor_page();
         let hi = VirtAddr(end).ceil_page();
         for vpn_raw in lo.0..hi.0 {
@@ -111,36 +150,36 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
         }
     };
 
-    map_identity(&mut aspace,
-                 LOONGARCH64_RAM_BASE,
-                 ram_end_exclusive,
-                 PagePerm::R | PagePerm::W | PagePerm::X,
-                 "RAM");
+    map_ram_identity(&mut aspace,
+                     kernel_ram_start,
+                     kernel_ram_end,
+                     PagePerm::R | PagePerm::W | PagePerm::X,
+                     "RAM");
 
     // 访问 UART、PLIC/MSI、PCI ECAM 等低地址 MMIO 必须映射；与 `-m` 无关。
-    map_identity(&mut aspace,
-                 LOONGARCH64_LOW_MMIO_START,
-                 LOONGARCH64_LOW_MMIO_END,
-                 PagePerm::R | PagePerm::W,
-                 "low MMIO");
+    map_mmio_identity(&mut aspace,
+                      LOONGARCH64_LOW_MMIO_START,
+                      LOONGARCH64_LOW_MMIO_END,
+                      PagePerm::R | PagePerm::W,
+                      "low MMIO");
 
     // VirtIO PCI transport 会在该窗口内分配 BAR，启用 PGDL 后也要恒等映射。
-    map_identity(&mut aspace,
-                 LOONGARCH64_PCI_MMIO_START,
-                 LOONGARCH64_PCI_MMIO_END,
-                 PagePerm::R | PagePerm::W,
-                 "PCI MMIO");
+    map_mmio_identity(&mut aspace,
+                      LOONGARCH64_PCI_MMIO_START,
+                      LOONGARCH64_PCI_MMIO_END,
+                      PagePerm::R | PagePerm::W,
+                      "PCI MMIO");
 
     // 选一枚帧池内真实 RAM 帧，用已建立的 RAM 恒等映射做 PGDL 切换后的访存探针。
     // 避免额外低地址 VA 受 LoongArch64 PGDL/PGDH 选择规则影响。
     let probe_ppn = frame_alloc_result().expect("kernel_mm: frame oom for probe");
-    let probe_va = VirtAddr(probe_ppn.0 * PAGE_SIZE + 0x2A0);
+    let probe_va = VirtAddr(window_base | (probe_ppn.0 * PAGE_SIZE + 0x2A0));
 
     let pgdl_target = aspace.satp_value();
     runtime::logging::trace!("[kernel-mm] identity map RAM [{:#x},{:#x}) MMIO [{:#x},{:#x}) pgdl \
                               target={:#x}",
-                             LOONGARCH64_RAM_BASE,
-                             ram_end_exclusive,
+                             kernel_ram_start,
+                             kernel_ram_end,
                              LOONGARCH64_LOW_MMIO_START,
                              LOONGARCH64_LOW_MMIO_END,
                              pgdl_target);
