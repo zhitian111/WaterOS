@@ -6,6 +6,8 @@ use super::size_class::{SizeClass, SLAB_HEADER_SIZE, SLAB_PAGE_SIZE};
 
 pub(crate) const SLAB_MAGIC : u32 = 0x534C_4142; // "SLAB"
 
+const _ : () = assert!(core::mem::size_of::<SlabPageHeader>() == SLAB_HEADER_SIZE);
+
 /// 页首 header：位于页基址，反查对象归属时读取。
 #[repr(C)]
 pub(crate) struct SlabPageHeader {
@@ -44,7 +46,7 @@ impl SlabPageHeader {
                               -> &'static mut Self {
         let class = SizeClass::from_index(size_class);
         let obj_size = class.size();
-        let object_offset = align_up(SLAB_HEADER_SIZE, obj_size);
+        let object_offset = class.object_offset();
         let count = class.objects_per_slab();
         let mut first_free : *mut u8 = ptr::null_mut();
         // SAFETY: page_base 页对齐且 page 大小足够容纳 header + 对象。
@@ -112,8 +114,4 @@ pub(crate) unsafe fn read_next(obj : *mut u8) -> *mut u8 {
 /// `obj` 必须可写且属于对应 slab。
 pub(crate) unsafe fn write_next(obj : *mut u8, next : *mut u8) {
     unsafe { (obj as *mut *mut u8).write(next) };
-}
-
-fn align_up(value : usize, align : usize) -> usize {
-    (value + align - 1) & !(align - 1)
 }

@@ -5,8 +5,8 @@ use core::alloc::Layout;
 /// slab 单页大小（与 WaterOS frame allocator 页大小一致）。
 pub(crate) const SLAB_PAGE_SIZE : usize = 4096;
 
-/// 页首 header 预留字节数，保证对象起始地址 64 字节对齐。
-pub(crate) const SLAB_HEADER_SIZE : usize = 64;
+/// 页首 header 实际 `repr(C)` 大小（含对齐 padding）。
+pub(crate) const SLAB_HEADER_SIZE : usize = 72;
 
 /// 走 slab 的最大对象大小；超过则交给大对象路径。
 pub(crate) const SLAB_MAX_SIZE : usize = 2048;
@@ -43,9 +43,25 @@ impl SizeClass {
 
     pub(crate) fn size(self) -> usize { SIZE_CLASS_SIZES[self.0] }
 
+    /// 返回该 size class 可能要求的最大 2 次幂对齐。
+    pub(crate) fn object_align(self) -> usize {
+        let size = self.size();
+        if size.is_power_of_two() {
+            size
+        } else {
+            size.next_power_of_two() /
+            2
+        }
+    }
+
+    /// 返回第一个对象相对页基址的偏移，保证满足该类最大对齐要求。
+    pub(crate) fn object_offset(self) -> usize {
+        align_up(SLAB_HEADER_SIZE, self.object_align())
+    }
+
     /// 一页 slab 能容纳的对象数（扣除页首 header）。
     pub(crate) fn objects_per_slab(self) -> usize {
-        let offset = align_up(SLAB_HEADER_SIZE, self.size());
+        let offset = self.object_offset();
         (SLAB_PAGE_SIZE - offset) / self.size()
     }
 }

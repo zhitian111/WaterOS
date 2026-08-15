@@ -9,25 +9,20 @@ use super::HeapFrameSource;
 
 pub(crate) struct CpuSlab {
     caches : [SlabCache; SIZE_CLASS_COUNT],
-    remote_head : AtomicPtr<u8>,
 }
 
 impl CpuSlab {
     pub(crate) fn new() -> Self {
-        Self { caches : core::array::from_fn(|_| SlabCache::new()),
-               remote_head : AtomicPtr::new(core::ptr::null_mut()) }
+        Self { caches : core::array::from_fn(|_| SlabCache::new()) }
     }
 
     pub(crate) unsafe fn alloc(&mut self,
                                frames : &dyn HeapFrameSource,
                                class_idx : usize,
-                               owner_cpu : u16)
+                               owner_cpu : u16,
+                               remote_head : &AtomicPtr<u8>)
                                -> Option<*mut u8> {
-        if !self.remote_head.load(Ordering::Relaxed)
-                             .is_null()
-        {
-            self.drain_remote();
-        }
+        self.drain_remote(remote_head);
         unsafe { self.caches[class_idx].alloc(frames, class_idx, owner_cpu) }
     }
 
@@ -39,12 +34,12 @@ impl CpuSlab {
     }
 
     /// 把对象压入本 CPU 的 remote-free 队列；owner CPU 下一次 alloc 时 drain。
-    pub(crate) fn remote_push(&self, ptr : *mut u8) {
-        let mut head = self.remote_head.load(Ordering::Relaxed);
+    pub(crate) fn remote_push(remote_head : &AtomicPtr<u8>, ptr : *mut u8) {
+        let mut head = remote_head.load(Ordering::Relaxed);
         loop {
             // SAFETY: ptr 是刚释放的 slab 对象，首字可安全写入 next 指针。
             unsafe { write_next(ptr, head) };
-            match self.remote_head
+            match remote_head
                       .compare_exchange_weak(head,
                                              ptr,
                                              Ordering::AcqRel,
@@ -57,8 +52,8 @@ impl CpuSlab {
     }
 
     /// 把本 CPU remote 队列中的对象放回对应 size class 的本地 cache。
-    fn drain_remote(&mut self) {
-        let head = self.remote_head.swap(core::ptr::null_mut(), Ordering::AcqRel);
+    fn drain_remote(&mut self, remote_head : &AtomicPtr<u8>) {
+        let head = remote_head.swap(core::ptr::null_mut(), Ordering::AcqRel);
         let mut cur = head;
         while !cur.is_null() {
             // SAFETY: remote 队列只包含 slab 对象。

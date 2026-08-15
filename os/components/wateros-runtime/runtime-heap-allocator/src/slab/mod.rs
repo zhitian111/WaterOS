@@ -10,7 +10,7 @@ pub(crate) mod slab_page;
 
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 #[cfg(feature = "impl-slab")]
 use alloc::boxed::Box;
 
@@ -124,10 +124,20 @@ struct CpuLocalSlab(UnsafeCell<CpuSlab>);
 // SAFETY: 每个槽位只允许 owner CPU 在关中断后独占访问，跨 CPU 不读写同一槽位。
 unsafe impl Sync for CpuLocalSlab {}
 
+struct RemoteFreeHead(AtomicPtr<u8>);
+
+// SAFETY: AtomicPtr 队列通过 CAS 同步，允许跨 CPU push/swap。
+unsafe impl Sync for RemoteFreeHead {}
+
+impl RemoteFreeHead {
+    fn new() -> Self { Self(AtomicPtr::new(core::ptr::null_mut())) }
+}
+
 /// 支持固定数量 CPU 的 slab 后端。
 pub(crate) struct SlabAllocator {
     frames : &'static dyn HeapFrameSource,
     cpus : CpuLocal<CpuLocalSlab, MAX_CPUS>,
+    remote_heads : CpuLocal<RemoteFreeHead, MAX_CPUS>,
 }
 
 impl SlabAllocator {
@@ -137,6 +147,7 @@ impl SlabAllocator {
             cpus : CpuLocal::new(core::array::from_fn(|_| {
                 CpuLocalSlab(UnsafeCell::new(CpuSlab::new()))
             })),
+            remote_heads : CpuLocal::new(core::array::from_fn(|_| RemoteFreeHead::new())),
         }
     }
 
@@ -145,10 +156,15 @@ impl SlabAllocator {
         let class = SizeClass::from_layout(layout)?;
         let slot = self.cpus
                        .get(cpu)?;
+        let remote_head = self.remote_heads
+                             .get(cpu)?;
         // SAFETY: 调用方保证 `cpu` 为当前 CPU 且已满足 ALLOC_SYNC；本地槽位无并发。
         let state = unsafe { &mut *slot.0.get() };
         // SAFETY: 与 GlobalAlloc::alloc 相同约束；本方法不归还指针所有权。
-        unsafe { state.alloc(self.frames, class.index(), cpu.raw() as u16) }
+        unsafe { state.alloc(self.frames,
+                             class.index(),
+                             cpu.raw() as u16,
+                             &remote_head.0) }
     }
 
     /// 在 `cpu` 的本地 slab 上释放；指针不属于该 CPU/size class 时返回 `false`。
@@ -176,13 +192,12 @@ impl SlabAllocator {
             unsafe { state.dealloc_local(ptr, class.index()) }
         } else {
             let owner = CpuId::from_raw(hdr.owner_cpu as usize);
-            let Some(owner_slot) = self.cpus
-                                       .get(owner)
+            let Some(owner_remote_head) = self.remote_heads
+                                               .get(owner)
             else {
                 return false;
             };
-            // SAFETY: remote_push 只修改 owner CPU 的 Mutex 保护队列，不触碰本地 cache。
-            unsafe { (&*owner_slot.0.get()).remote_push(ptr) };
+            CpuSlab::remote_push(&owner_remote_head.0, ptr);
             true
         }
     }
