@@ -225,8 +225,13 @@ fn run_self_tests() {
     runtime::logging::info!("[self-test] unified kernel self_test complete");
 }
 
-#[cfg(feature = "qemu-riscv64-opensbi")]
-mod qemu_riscv64_opensbi {
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "jh7110-visionfive2"))]
+mod riscv64_opensbi_entry {
+    //! RISC-V64 OpenSBI 引导入口（QEMU virt 与 VisionFive 2 共用）。
+    //!
+    //! 两个平台都以 a0=hart id、a1=DTB 物理地址进入（OpenSBI/U-Boot 约定），
+    //! AP 启动都走 SBI HSM；差异（UART/内存/DTB 来源）由 `platform-impl`
+    //! 的 active_impl 提供，入口本身无需分叉。
     use crate::{bringup_user_and_optional_services, init_after_boot, init_services_after_boot,
                 init_when_boot};
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

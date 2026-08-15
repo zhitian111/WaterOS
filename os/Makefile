@@ -16,7 +16,7 @@ BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 .PHONY: rv_pre_run-gdb rv_final_run-gdb rv_final_run_log-gdb rv_final_debug_run-gdb
 .PHONY: rv_qemu_run rv_qemu_run_snapshot
 .PHONY: rv_qemu_run_with_log
-.PHONY: la_check la2k_check jh7110_check kernel-la2k la2k_uimage la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
+.PHONY: la_check la2k_check jh7110_check kernel-la2k la2k_uimage kernel-jh7110 jh7110_uimage jh7110_bootdir la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
 .PHONY: kernel-la kernel-la-best kernel-la-pre kernel-la-final la_pre_run la_final_run la_final_run_log
 .PHONY: la_pre_run-gdb la_final_run-gdb la_final_run_log-gdb
 .PHONY: la_qemu_run la_qemu_run_snapshot
@@ -508,6 +508,41 @@ la2k_uimage: kernel-la2k
 			--load 0x90000000 --entry 0x90000000 \
 			--name "WaterOS 2K1000LA"; \
 	fi
+
+# VisionFive 2 / JH7110（U-Boot/uImage）构建与打包
+kernel-jh7110:
+	$(call INFO, "开始构建 jh7110-visionfive2 内核...")
+	@$(operator_env) $(cargo_env) cargo build $(CARGO_PROFILE_ARG) --no-default-features \
+		--features jh7110-visionfive2,pre --target riscv64gc-unknown-none-elf
+	@cp ./target/riscv64gc-unknown-none-elf/release/wateros ./kernel-jh7110
+	$(call INFO, "jh7110-visionfive2 内核构建完成！")
+
+jh7110_uimage: kernel-jh7110
+	@riscv64-linux-gnu-objcopy -O binary --strip-all --remove-section=.kernel.heap \
+		./kernel-jh7110 ./kernel-jh7110.bin
+	@if mkimage -A riscv -O linux -T kernel -C none \
+		-a 0x40200000 -e 0x40200000 \
+		-n "WaterOS VisionFive 2" -d ./kernel-jh7110.bin ./kernel-jh7110.ui 2>/dev/null; then \
+		echo "[Makefile] [INFO] uImage（mkimage）生成完成：kernel-jh7110.ui"; \
+	else \
+		python3 ./scripts/root_image/mk_uimage.py \
+			--input ./kernel-jh7110.bin --output ./kernel-jh7110.ui \
+			--load 0x40200000 --entry 0x40200000 --arch riscv \
+			--name "WaterOS VisionFive 2"; \
+	fi
+
+jh7110_bootdir: jh7110_uimage
+	@mkdir -p ./build/jh7110-boot/extlinux
+	@cp ./kernel-jh7110.ui ./build/jh7110-boot/wateros-jh7110.ui
+	@cp ./scripts/root_image/jh7110-extlinux.conf ./build/jh7110-boot/extlinux/extlinux.conf
+	@cp ./scripts/root_image/jh7110-uEnv.txt ./build/jh7110-boot/uEnv.txt
+	@if mkimage -A riscv -T script -C none -n "WaterOS VisionFive 2 boot" \
+		-d ./scripts/root_image/boot-visionfive2.cmd ./build/jh7110-boot/boot.scr 2>/dev/null; then \
+		echo "[Makefile] [INFO] boot.scr 生成完成"; \
+	else \
+		echo "[Makefile] [WARN] mkimage 不可用，boot.scr 未生成（可手动 bootm）"; \
+	fi
+	$(call INFO, "启动素材目录：./build/jh7110-boot/（如需板级 DTB，放入 jh7110-starfive-visionfive-2-v1.3b.dtb）")
 
 # rv_link_app_asm:
 # 	$(call INFO, "开始生成批处理系统的 asm 文件...")

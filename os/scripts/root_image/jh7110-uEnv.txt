@@ -1,0 +1,2 @@
+kernel_addr_r=0x40200000
+fdt_addr_r=0x46000000

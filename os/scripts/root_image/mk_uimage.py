@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Minimal legacy U-Boot/PMON uImage writer.
 
-Some mkimage builds lack LoongArch in their architecture table; this writes the
-same 64-byte legacy image header + payload without depending on u-boot-tools.
+Some mkimage builds lack LoongArch/RISC-V in their architecture table; this
+writes the same 64-byte legacy image header + payload without depending on
+u-boot-tools.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from pathlib import Path
 
 IH_MAGIC = 0x27051956
 IH_OS_LINUX = 5
-IH_ARCH_LOONGARCH = 24
+IH_ARCH = {"loongarch": 24, "riscv": 22}
 IH_TYPE_KERNEL = 2
 IH_COMP_NONE = 0
 HEADER_SIZE = 64
@@ -26,6 +27,8 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--load", required=True, help="load address (hex)")
     parser.add_argument("--entry", required=True, help="entry address (hex)")
+    parser.add_argument("--arch", choices=("loongarch", "riscv"),
+                        default="loongarch", help="target architecture")
     parser.add_argument("--name", default="WaterOS", help="image name (<=32 bytes)")
     args = parser.parse_args()
 
@@ -48,7 +51,7 @@ def main() -> int:
                 entry,
                 dcrc,
             )
-            + struct.pack(">BBBB", IH_OS_LINUX, IH_ARCH_LOONGARCH, IH_TYPE_KERNEL, IH_COMP_NONE)
+            + struct.pack(">BBBB", IH_OS_LINUX, IH_ARCH[args.arch], IH_TYPE_KERNEL, IH_COMP_NONE)
             + name
         )
 
