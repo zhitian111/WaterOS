@@ -521,10 +521,7 @@ mod qemu_loongarch64_virt {
 mod loongson2k1000la {
     use crate::{bringup_user_and_optional_services, init_after_boot, init_services_after_boot,
                 init_when_boot};
-    use core::sync::atomic::{AtomicBool, Ordering};
     use runtime::logging::*;
-
-    static BSP_CLAIMED : AtomicBool = AtomicBool::new(false);
 
     fn mask_boot_interrupts() {
         platform::interrupt::disable_global_interrupt().expect("disable global interrupt");
@@ -555,9 +552,6 @@ mod loongson2k1000la {
         let _ = platform::active_impl::console::console_write_raw_buffer(b"M0\r\n");
         mask_boot_interrupts();
         let _ = platform::active_impl::console::console_write_raw_buffer(b"M1\r\n");
-        if BSP_CLAIMED.swap(true, Ordering::AcqRel) {
-            panic!("[boot] 2K1000 SMP AP entry not supported yet");
-        }
 
         let _ = platform::active_impl::console::console_write_raw_buffer(b"M2\r\n");
         runtime::init_console();
