@@ -21,6 +21,7 @@ Makefile 负责校验参数、选择 Cargo features、确定内核和镜像，�
 脚本。只有以下情况适合直接进入 `scripts/`：
 
 - 分析 PC、等待时间或 syscall 热点；
+- 静态盘点 ELF 及其递归动态库依赖的 Linux syscall 候选；
 - 执行与某项优化绑定的最小验收；
 - 分阶段运行比赛 workload；
 - 维护 feature 配置树；
@@ -40,6 +41,7 @@ Makefile 的目标、参数传播和扩展方式见 [`../makefile.md`](../makefi
 | 功能、性能与 LTP 测试 | `os/scripts/testing/` | [`os/scripts/README.md#testing功能与性能测试`](../../../os/scripts/README.md#testing功能与性能测试) |
 | PC 与等待热点 | `os/scripts/pc-hot/` | [`../pc-hot.md`](../pc-hot.md) |
 | syscall 画像 | `os/scripts/syscall-profile/` | [`syscall-profile/README.md`](../../../os/scripts/syscall-profile/README.md) |
+| ELF 与 syscall 静态审计 | `os/scripts/analysis/` | [`../elf-syscalls.md`](../elf-syscalls.md) |
 | 工具链和测试环境安装 | `os/scripts/setup/` | [`os/scripts/README.md#setupmaintenance-与-competition`](../../../os/scripts/README.md#setupmaintenance-与-competition) |
 | 清理、统计和仓库导出 | `os/scripts/maintenance/` | 同上 |
 | 比赛平台辅助 | `os/scripts/competition/` | 同上 |

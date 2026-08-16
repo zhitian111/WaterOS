@@ -58,8 +58,18 @@ pub fn debug_probe_user_virt(handle : usize, va : VirtAddr) -> MmResult<UserVirt
     user_aspace::with_user_aspace_mut(handle, |aspace| {
         let pa = aspace.translate_addr(va)?;
         let perm = aspace.leaf_page_perm(va.floor_page())?;
+        let page = va.floor_page().start_addr();
+        let lazy_perm = aspace.lazy_file_vmas
+                               .iter()
+                               .find(|vma| vma.contains_page(page))
+                               .map(|vma| vma.perm);
         Ok(UserVirtProbe { pa,
                            perm,
+                           lazy_perm,
+                           in_brk : va.0 >= aspace.user_brk_start.0 &&
+                                     va.0 < aspace.user_brk_current_end.0,
+                           in_stack : va.0 >= aspace.user_stack_bottom.0 &&
+                                       va.0 < aspace.user_stack_top.0,
                            aspace_satp : aspace.satp_value() })
     })
 }
@@ -69,6 +79,9 @@ pub fn debug_probe_user_virt(handle : usize, va : VirtAddr) -> MmResult<UserVirt
 pub struct UserVirtProbe {
     pub pa : Option<PhysAddr>,
     pub perm : Option<PagePerm>,
+    pub lazy_perm : Option<PagePerm>,
+    pub in_brk : bool,
+    pub in_stack : bool,
     pub aspace_satp : usize,
 }
 

@@ -56,8 +56,8 @@ fn rename_at_impl(old_dirfd : isize,
                   flags : u32)
                   -> UserRet {
     if flags & !(RENAME_NOREPLACE | RENAME_EXCHANGE | RENAME_WHITEOUT) != 0 {
-        log::warn!("[syscall] renameat2(nr=276) unsupported flags={:#x}",
-                   flags,);
+        // Linux 对未知 flags 返回 EINVAL。stress-ng 会高频传 ~0 探测该路径，
+        // 这里不再打 warn 以免刷屏。
         return UserRet::from_error(ErrNo::EINVAL);
     }
     if flags & RENAME_EXCHANGE != 0 && flags & (RENAME_NOREPLACE | RENAME_WHITEOUT) != 0 {
@@ -109,6 +109,12 @@ fn rename_at_impl(old_dirfd : isize,
         Err(e) => return UserRet::from_error(e),
     };
     if old_resolved == new_resolved {
+        // Linux 语义（fs/namei.c do_renameat2）：old==new 时普通 rename 是
+        // no-op 返回 0；但带 RENAME_NOREPLACE 时因 newpath 已存在须返回
+        // EEXIST（stress-ng rename stressor 会做 renameat2(X,X,NOREPLACE)）。
+        if flags & RENAME_NOREPLACE != 0 {
+            return UserRet::from_error(ErrNo::EEXIST);
+        }
         return UserRet::from_success(0);
     }
     if path_is_beneath(new_resolved.as_str(),

@@ -6,7 +6,7 @@ use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use vfs::api::{
     VfsError, VfsFramebufferInfo, VfsFramebufferRegion, VfsInputDeviceInfo,
-    VfsSpecialDeviceInfo,
+    VfsNamespaceKind, VfsOpenFlags, VfsOpenOps, VfsSpecialDeviceInfo,
 };
 
 use crate::sys::time::rtc::sys_rtc_ioctl;
@@ -38,6 +38,23 @@ const FBIOPUTCMAP : u32 = 0x4605;
 const FBIOPAN_DISPLAY : u32 = 0x4606;
 /// WaterOS framebuffer 扩展：提交一个 `WosFramebufferRegion` 脏矩形。
 const WOSFBIO_FLUSH_RECT : u32 = 0x4010_5701;
+
+// `include/uapi/linux/nsfs.h`.  These are `_IO(0xb7, nr)` requests, so the
+// result of NS_GET_NSTYPE and the returned fd of NS_GET_USERNS are conveyed in
+// the ioctl return value rather than through `argp`.
+const NS_GET_USERNS : u32 = 0xb701;
+const NS_GET_PARENT : u32 = 0xb702;
+const NS_GET_NSTYPE : u32 = 0xb703;
+const NS_GET_OWNER_UID : u32 = 0xb704;
+
+const CLONE_NEWTIME : usize = 0x0000_0080;
+const CLONE_NEWNS : usize = 0x0002_0000;
+const CLONE_NEWCGROUP : usize = 0x0200_0000;
+const CLONE_NEWUTS : usize = 0x0400_0000;
+const CLONE_NEWIPC : usize = 0x0800_0000;
+const CLONE_NEWUSER : usize = 0x1000_0000;
+const CLONE_NEWPID : usize = 0x2000_0000;
+const CLONE_NEWNET : usize = 0x4000_0000;
 
 const EVDEV_IOCTL_TYPE : u32 = b'E' as u32;
 const EVIOCGVERSION_NR : u32 = 0x01;
@@ -552,6 +569,13 @@ pub(crate) fn sys_ioctl(args: SyscallArgs) -> UserRet {
         None => {}
     }
 
+    let namespace = vfs::fd::with_current_io(fd, |handle| Ok(handle.namespace_kind()))
+        .ok()
+        .flatten();
+    if let Some(kind) = namespace {
+        return namespace_ioctl(kind, request, argp);
+    }
+
     if vfs::fd::current_fd_is_rtc(fd).unwrap_or(false) {
         return sys_rtc_ioctl(request, argp);
     }
@@ -573,6 +597,52 @@ pub(crate) fn sys_ioctl(args: SyscallArgs) -> UserRet {
             global_ioctl_fallback(fd, request, argp)
         }
         Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+    }
+}
+
+fn namespace_ioctl(kind: VfsNamespaceKind, request: u32, argp: usize) -> UserRet {
+    match request {
+        NS_GET_NSTYPE => {
+            let clone_flag = match kind {
+                VfsNamespaceKind::Cgroup => CLONE_NEWCGROUP,
+                VfsNamespaceKind::Ipc => CLONE_NEWIPC,
+                VfsNamespaceKind::Mount => CLONE_NEWNS,
+                VfsNamespaceKind::Network => CLONE_NEWNET,
+                VfsNamespaceKind::Pid => CLONE_NEWPID,
+                VfsNamespaceKind::Time => CLONE_NEWTIME,
+                VfsNamespaceKind::User => CLONE_NEWUSER,
+                VfsNamespaceKind::Uts => CLONE_NEWUTS,
+            };
+            UserRet::from_success(clone_flag)
+        }
+        NS_GET_USERNS => {
+            // WaterOS 首版所有 namespace 都由同一初始 user namespace
+            // 持有。返回一个新的 namespace fd，保留 Linux ioctl 的 fd
+            // 生命周期，而不是复用调用者传入的 descriptor number。
+            let handle = match vfs::active_impl::backend()
+                .open("/proc/self/ns/user", VfsOpenFlags::read())
+            {
+                Ok(handle) => handle,
+                Err(error) => return UserRet::from_error(vfs_error_to_errno(error)),
+            };
+            match vfs::fd::alloc_fd(handle) {
+                Ok(new_fd) => UserRet::from_success(new_fd),
+                Err(error) => UserRet::from_error(vfs_error_to_errno(error)),
+            }
+        }
+        NS_GET_PARENT => {
+            // 初始 namespace 没有用户可见父 namespace。
+            UserRet::from_error(ErrNo::EPERM)
+        }
+        NS_GET_OWNER_UID if kind == VfsNamespaceKind::User => {
+            if argp == 0 {
+                return UserRet::from_error(ErrNo::EFAULT);
+            }
+            copy_to_user_struct(argp, &0u32)
+                .map_or_else(UserRet::from_error, |_| UserRet::from_success(0))
+        }
+        NS_GET_OWNER_UID => UserRet::from_error(ErrNo::ENOTTY),
+        _ => ioctl_enotty(request, None, argp),
     }
 }
 

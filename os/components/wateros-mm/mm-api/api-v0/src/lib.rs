@@ -27,6 +27,7 @@ pub mod kernel_satp;
 pub mod mempolicy;
 pub mod mmap;
 pub mod user_aspace_lifecycle;
+pub mod user_mapping;
 
 pub use frame_allocator::PhysicalFrameAllocator;
 

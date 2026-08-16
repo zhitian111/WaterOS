@@ -71,10 +71,25 @@ pub fn ensure_proc_mount_point() -> VfsResult<()> {
     mkdir_path(path, 0o755)
 }
 
+/// 在 ext4 根卷上创建 `/sys` 挂载点目录（已存在则忽略）。
+pub fn ensure_sys_mount_point() -> VfsResult<()> {
+    let path = "/sys";
+    let bridge = FsBridge;
+    if bridge.exists(path)? {
+        return Ok(());
+    }
+    mkdir_path(path, 0o755)
+}
+
 /// 将 procfs 挂到 `mount_point`（须先 [`ensure_proc_mount_point`]）。
 // 本方法代码由AI完成
 pub fn mount_procfs_at(mount_point : &str) -> VfsResult<()> {
     mount_table::mount_aux_proc_at(mount_point)
+}
+
+/// 挂载 sysfs 到 `mount_point`。
+pub fn mount_sysfs_at(mount_point : &str) -> VfsResult<()> {
+    mount_table::mount_aux_sys_at(mount_point)
 }
 
 // 本方法代码由AI完成
@@ -109,7 +124,7 @@ pub use mount_table::{
 
 pub use mount_table::{
     assert_path_writable, is_mount_point, is_proc_mounted_at, list_proc_mount_lines,
-    mount_aux_proc_at, mount_bootstrap_proc_at,
+    mount_aux_proc_at, mount_aux_sys_at, mount_bootstrap_proc_at, mount_bootstrap_sys_at,
 };
 
 /// 删除绝对路径（经挂载表路由）。
@@ -217,6 +232,9 @@ pub fn read_symlink_path(path : &str) -> VfsResult<Vec<u8>> {
     }
     match resolve_route(abs.as_str())? {
         FsRoute::PseudoProc { rel, .. } => proc_view()
+            .read_symlink(rel.as_str())
+            .map_err(map_fs_err),
+        FsRoute::PseudoSys { rel, .. } => sys_view()
             .read_symlink(rel.as_str())
             .map_err(map_fs_err),
         FsRoute::PseudoSecurity { .. } => Err(VfsError::NotAFile),
@@ -359,7 +377,7 @@ pub fn getxattr_path(path : &str, name : &str, buf : &mut [u8]) -> VfsResult<usi
     if char_dev_exists(normalized.as_str()) {
         return Err(VfsError::Unsupported);
     }
-    let (fs, rel) = fs_and_rel_rw(path)?;
+    let (fs, rel) = fs_and_rel_rw_query(path)?;
     let sess = MountedRwSession::new(fs);
     sess.getxattr(rel.as_str(), name, buf)
         .map_err(map_xattr_get_err)
@@ -372,7 +390,7 @@ pub fn listxattr_path(path : &str, buf : &mut [u8]) -> VfsResult<usize> {
     if char_dev_exists(normalized.as_str()) {
         return Err(VfsError::Unsupported);
     }
-    let (fs, rel) = fs_and_rel_rw(path)?;
+    let (fs, rel) = fs_and_rel_rw_query(path)?;
     let sess = MountedRwSession::new(fs);
     sess.listxattr(rel.as_str(), buf)
 }
@@ -528,4 +546,3 @@ fn unused_rename_temp_path(target : &str) -> VfsResult<String> {
 pub struct MountedRwSession {
     pub(crate) inner : SharedRwFs,
 }
-

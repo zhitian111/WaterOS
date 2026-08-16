@@ -201,6 +201,20 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
         };
     }
 
+    if fstype == "sysfs" {
+        if vfs::is_mount_point(mount_point.as_str()) {
+            return UserRet::from_error(ErrNo::EBUSY);
+        }
+        if let Err(e) = vfs::ensure_sys_mount_point() {
+            return UserRet::from_error(vfs_error_to_errno(e));
+        }
+        return match vfs::mount_sysfs_at(mount_point.as_str()) {
+            Ok(()) => UserRet::from_success(0),
+            Err(VfsError::Exists) => UserRet::from_error(ErrNo::EBUSY),
+            Err(e) => UserRet::from_error(vfs_error_to_errno(e)),
+        };
+    }
+
     if fstype == "securityfs" {
         return match vfs::mount_securityfs_at(mount_point.as_str()) {
             Ok(()) => UserRet::from_success(0),

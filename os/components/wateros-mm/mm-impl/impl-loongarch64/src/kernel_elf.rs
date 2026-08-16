@@ -26,16 +26,16 @@ use frame_alloctor::frame_alloc_result;
 #[cfg(not(feature = "vfs-root-read"))]
 use fs::api::{FsError, SharedFs};
 use impl_common::{
-    entry_file_offset, finalize_elf_read, rd_u16, rd_u32, rd_u64, ElfSegmentLoadParams,
-    VmaBacking, PT_LOAD,
+    entry_file_offset, finalize_elf_read, rd_u16, rd_u32, rd_u64, ElfSegmentLoadParams, VmaBacking,
+    PT_LOAD,
 };
 
 use crate::pagetable::{zero_phys_page, LoongArch64AddressSpace};
 
 #[cfg(feature = "vfs-root-read")]
-use vfs::api::{SingleRootReadView, VfsError, VfsIoHandle, VfsOpenFlags, VfsOpenOps};
-#[cfg(feature = "vfs-root-read")]
 use spin::Mutex;
+#[cfg(feature = "vfs-root-read")]
+use vfs::api::{SingleRootReadView, VfsError, VfsIoHandle, VfsOpenFlags, VfsOpenOps};
 
 #[cfg(not(feature = "vfs-root-read"))]
 #[inline]
@@ -88,7 +88,11 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
 }
 
 const EM_LOONGARCH : u16 = 258;
+const ET_EXEC : u16 = 2;
+const ET_DYN : u16 = 3;
 const PT_INTERP : u32 = 3;
+/// 为 PIE 主程序保留非零装载基址，避免低地址全局对象与空指针保护冲突。
+const USER_PIE_BASE : usize = 0x0040_0000;
 const LOONGARCH64_USER_STACK_TOP : usize = 0x0000_007F_FFFF_A000;
 const LOONGARCH64_INTERP_BASE : usize = 0x0000_0000_7000_0000;
 const USER_STACK_SIZE : usize = 2 * 1024 * 1024;
@@ -100,6 +104,14 @@ const LOONGARCH_INSN_SYSCALL : u32 = 0x002B_0000;
 const LOONGARCH_INSN_RET : u32 = 0x4C00_0020;
 const LOONGARCH_INSN_SLLI_W_A0_A0_0 : u32 = 0x0040_8084;
 const LOONGARCH_MUSL_SCHED_STUB_MARKER : u32 = 0x02BF_6804; // li.w a0, -ENOSYS
+
+fn executable_load_bias(e_type : u16) -> Result<usize, LoadElfError> {
+    match e_type {
+        ET_EXEC => Ok(0),
+        ET_DYN => Ok(USER_PIE_BASE),
+        _ => Err(LoadElfError::Parse),
+    }
+}
 
 struct MuslSchedStubPatch {
     offset : usize,
@@ -431,9 +443,11 @@ impl ElfPathSegmentLoader {
            -> Result<Self, LoadElfError> {
         let vma_file_origin = p_offset.saturating_sub(vbase.saturating_sub(vma_start));
         #[cfg(feature = "vfs-root-read")]
-        let handle = vfs::active_impl::backend()
-                         .open(path, VfsOpenFlags::read())
-                         .map_err(|error| LoadElfError::RootVolume(map_vfs_to_root_vol(error)))?;
+        let handle =
+            vfs::active_impl::backend().open(path, VfsOpenFlags::read())
+                                       .map_err(|error| {
+                                           LoadElfError::RootVolume(map_vfs_to_root_vol(error))
+                                       })?;
         Ok(Self { path : String::from(path),
                   params : ElfSegmentLoadParams { vbase,
                                                   p_offset,
@@ -454,7 +468,8 @@ fn read_handle_exact(handle : &Arc<Mutex<Box<dyn VfsIoHandle>>>,
     let mut filled = 0usize;
     while filled < buf.len() {
         let n = handle.lock()
-                      .read_at(offset + filled as u64, &mut buf[filled..])
+                      .read_at(offset + filled as u64,
+                               &mut buf[filled..])
                       .map_err(|_| MmError::AccessViolation)?;
         if n == 0 {
             return Err(MmError::AccessViolation);
@@ -470,22 +485,27 @@ impl DemandPageLoader for ElfPathSegmentLoader {
                                       .clone(),
                            params:
                                self.params.clone(),
-                           shareable : self.shareable,
+                           shareable:
+                               self.shareable,
                            #[cfg(feature = "vfs-root-read")]
-                           handle : self.handle.clone() }))
+                           handle:
+                               self.handle.clone() }))
     }
 
     fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()> {
-        self.params.fill_page(file_offset, dst, |pos, buf| {
-            #[cfg(feature = "vfs-root-read")]
-            {
-                read_handle_exact(&self.handle, pos as u64, buf)
-            }
-            #[cfg(not(feature = "vfs-root-read"))]
-            {
-                read_path_exact(&self.path, pos as u64, buf).map_err(|_| MmError::AccessViolation)
-            }
-        })
+        self.params
+            .fill_page(file_offset, dst, |pos, buf| {
+                #[cfg(feature = "vfs-root-read")]
+                {
+                    read_handle_exact(&self.handle, pos as u64, buf)
+                }
+                #[cfg(not(feature = "vfs-root-read"))]
+                {
+                    read_path_exact(&self.path, pos as u64, buf).map_err(|_| {
+                                                                    MmError::AccessViolation
+                                                                })
+                }
+            })
     }
 
     fn load_shared_page(&mut self,
@@ -496,20 +516,25 @@ impl DemandPageLoader for ElfPathSegmentLoader {
             if !self.shareable {
                 return Ok(None);
             }
-            let Some(identity) = self.handle.lock().file_content_identity() else {
+            let Some(identity) = self.handle
+                                     .lock()
+                                     .file_content_identity()
+            else {
                 return Ok(None);
             };
             let key_params = self.params.clone();
             let load_params = key_params.clone();
             let handle = self.handle.clone();
-            let ppn = impl_common::load_or_get_readonly_elf_page(&identity,
+            let ppn = impl_common::load_or_get_readonly_elf_page(
+                                                                 &identity,
                                                                  &key_params,
                                                                  file_offset,
                                                                  move |dst| {
-                load_params.fill_page(file_offset, dst, |pos, buf| {
+                                                                     load_params.fill_page(file_offset, dst, |pos, buf| {
                     read_handle_exact(&handle, pos as u64, buf)
                 })
-            })?;
+                                                                 },
+            )?;
             Ok(Some(ppn))
         }
         #[cfg(not(feature = "vfs-root-read"))]
@@ -1122,6 +1147,8 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
                                  EM_LOONGARCH);
         return Err(LoadElfError::BadMachine);
     }
+    let e_type = rd_u16(&ehdr, 16).ok_or(LoadElfError::TooSmall)?;
+    let load_bias = executable_load_bias(e_type)?;
     let e_entry = rd_u64(&ehdr, 0x18).ok_or(LoadElfError::TooSmall)? as usize;
     let e_phoff = rd_u64(&ehdr, 0x20).ok_or(LoadElfError::TooSmall)? as usize;
     let e_phentsize = rd_u16(&ehdr, 0x36).ok_or(LoadElfError::TooSmall)? as usize;
@@ -1151,54 +1178,19 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
     // 若映射在此处，destroy_table 无法释放这些页表帧（subtree 无 U 位），
     // 导致每次 exec 泄漏 ~2MB 页表帧 → OOM。
 
-    let mut min_vaddr = usize::MAX;
-    let mut max_vaddr = 0usize;
-    for i in 0..e_phnum {
-        let ph = i * e_phentsize;
-        if ph + e_phentsize > phdrs.len() {
-            return Err(LoadElfError::Parse);
-        }
-        let p_type = rd_u32(&phdrs, ph).ok_or(LoadElfError::Parse)?;
-        if p_type != PT_LOAD {
-            runtime::logging::trace!("[elf-load] phdr i={} p_type={} (skip non-LOAD)",
-                                     i,
-                                     p_type);
-            continue;
-        }
-        let p_flags = rd_u32(&phdrs, ph + 4).ok_or(LoadElfError::Parse)?;
-        let p_offset = rd_u64(&phdrs, ph + 8).ok_or(LoadElfError::Parse)?;
-        let p_vaddr = rd_u64(&phdrs, ph + 16).ok_or(LoadElfError::Parse)?;
-        let p_filesz = rd_u64(&phdrs, ph + 32).ok_or(LoadElfError::Parse)?;
-        let p_memsz = rd_u64(&phdrs, ph + 40).ok_or(LoadElfError::Parse)?;
-        let perm = perm_from_pf(p_flags);
-        runtime::logging::trace!("[elf-load] PT_LOAD i={} vaddr={:#x} memsz={:#x} filesz={:#x} \
-                                  off={:#x} perm={:?}",
-                                 i,
-                                 p_vaddr,
-                                 p_memsz,
-                                 p_filesz,
-                                 p_offset,
-                                 perm);
-        map_segment_from_path(&mut aspace,
-                              path,
-                              p_vaddr,
-                              p_offset,
-                              p_filesz,
-                              p_memsz,
-                              perm)?;
-        let base = p_vaddr as usize;
-        let end = base.checked_add(p_memsz as usize)
-                      .ok_or(LoadElfError::Parse)?;
-        min_vaddr = cmp::min(min_vaddr, base);
-        max_vaddr = cmp::max(max_vaddr, end);
-    }
-    if min_vaddr == usize::MAX {
-        runtime::logging::trace!("[elf-load] abort: Parse no PT_LOAD segments");
-        return Err(LoadElfError::Parse);
-    }
-    if e_entry == 0 || e_entry < min_vaddr || e_entry >= max_vaddr {
-        runtime::logging::warn!("[elf-load] abort: Parse bad e_entry={:#x} image=[{:#x},{:#x})",
-                                e_entry,
+    let (min_vaddr, max_vaddr) = map_load_segments_from_path_at(&mut aspace,
+                                                                path,
+                                                                &phdrs,
+                                                                e_phentsize,
+                                                                e_phnum,
+                                                                load_bias)?;
+    let program_entry = load_bias.checked_add(e_entry)
+                                 .ok_or(LoadElfError::Parse)?;
+    if e_entry == 0 || program_entry < min_vaddr || program_entry >= max_vaddr {
+        runtime::logging::warn!("[elf-load] abort: Parse bad entry={:#x} bias={:#x} \
+                                 image=[{:#x},{:#x})",
+                                program_entry,
+                                load_bias,
                                 min_vaddr,
                                 max_vaddr);
         return Err(LoadElfError::Parse);
@@ -1220,13 +1212,12 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
     let stack_bottom = ELF_STACK_TOP - ELF_STACK_SIZE;
     let heap_start = VirtAddr(max_vaddr).ceil_page()
                                         .start_addr();
-    let gap = 256usize * PAGE_SIZE;
-    let brk_max = VirtAddr(stack_bottom.saturating_sub(gap));
-    if brk_max.0 <= heap_start.0 {
+    let mmap_base = initial_mmap_base(heap_start);
+    let brk_max = mmap_base;
+    if brk_max.0 <= heap_start.0 || mmap_base.0 >= stack_bottom {
         runtime::logging::trace!("[elf-load] abort: image/stack gap too small for brk arena");
         return Err(LoadElfError::Parse);
     }
-    let mmap_base = initial_mmap_base(heap_start);
     aspace.init_user_layout(heap_start,
                             heap_start,
                             brk_max,
@@ -1234,15 +1225,15 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
                             VirtAddr(stack_bottom),
                             VirtAddr(ELF_STACK_TOP + PAGE_SIZE));
 
-    verify_mapped_entry_from_path(&mut aspace,
-                                  path,
-                                  e_entry,
-                                  &phdrs,
-                                  e_phentsize,
-                                  e_phnum)?;
+    verify_mapped_entry_from_path_at(&mut aspace,
+                                     path,
+                                     program_entry,
+                                     &phdrs,
+                                     e_phentsize,
+                                     e_phnum,
+                                     load_bias)?;
 
-    let mut entry_pc = e_entry;
-    let program_entry = e_entry;
+    let mut entry_pc = program_entry;
     let mut interp_base = 0usize;
     if let Some(interp_path) = read_interp_path(path, &phdrs, e_phentsize, e_phnum)? {
         let interp = read_elf_header_info(interp_path.as_str())?;
@@ -1443,13 +1434,12 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
     let stack_bottom = ELF_STACK_TOP - ELF_STACK_SIZE;
     let heap_start = VirtAddr(max_vaddr).ceil_page()
                                         .start_addr();
-    let gap = 256usize * PAGE_SIZE;
-    let brk_max = VirtAddr(stack_bottom.saturating_sub(gap));
-    if brk_max.0 <= heap_start.0 {
+    let mmap_base = initial_mmap_base(heap_start);
+    let brk_max = mmap_base;
+    if brk_max.0 <= heap_start.0 || mmap_base.0 >= stack_bottom {
         runtime::logging::trace!("[elf-load] abort: image/stack gap too small for brk arena");
         return Err(LoadElfError::Parse);
     }
-    let mmap_base = initial_mmap_base(heap_start);
     aspace.init_user_layout(heap_start,
                             heap_start,
                             brk_max,

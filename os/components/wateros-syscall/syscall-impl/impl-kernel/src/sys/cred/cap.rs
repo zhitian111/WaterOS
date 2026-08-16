@@ -5,6 +5,7 @@ use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use task::ProcessCaps;
 use task::ProcessId;
+use task::ThreadId;
 
 use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
 
@@ -27,13 +28,21 @@ struct CapUserData {
     inheritable : u32,
 }
 
-fn cap_target_exists(pid : i32) -> bool {
+fn cap_target_process(pid : i32) -> Option<ProcessId> {
     if pid == 0 {
-        return task::current_task_id().is_some();
+        return task::current_process_task_snapshot().map(|snapshot| snapshot.pid);
     }
     let raw = pid as usize;
-    task::process_task_snapshot(raw).is_some() ||
-    task::process_snapshot(ProcessId::from_raw(raw)).is_some()
+    let process_pid = ProcessId::from_raw(raw);
+    if task::process_snapshot(process_pid).is_some() {
+        return Some(process_pid);
+    }
+    let task_id = task::task_id_for_thread(ThreadId::from_raw(raw))?;
+    task::process_task_snapshot(task_id).map(|snapshot| snapshot.pid)
+}
+
+fn cap_target_exists(pid : i32) -> bool {
+    cap_target_process(pid).is_some()
 }
 
 fn cap_version_ok(version : u32) -> bool {
@@ -60,11 +69,7 @@ fn cap_data_words(version : u32) -> usize {
 
 /// 读取目标进程的 capability 三集合；`pid == 0` 表示当前进程。
 fn process_caps_of(pid : i32) -> CapUserData {
-    let target = if pid == 0 {
-        task::current_process_task_snapshot().map(|snapshot| snapshot.pid)
-    } else {
-        Some(ProcessId::from_raw(pid as usize))
-    };
+    let target = cap_target_process(pid);
     match target.and_then(|process_pid| task::process_caps(process_pid)) {
         Some(caps) => CapUserData { effective : caps.effective,
                                     permitted : caps.permitted,
@@ -75,18 +80,47 @@ fn process_caps_of(pid : i32) -> CapUserData {
     }
 }
 
+/// 当前进程的 capability 状态（含 bounding）；缺失时按 root 兜底。
+fn current_process_caps() -> ProcessCaps {
+    task::current_process_task_snapshot().map(|snapshot| snapshot.pid)
+                                         .and_then(|pid| task::process_caps(pid))
+                                         .unwrap_or(ProcessCaps::ROOT)
+}
+
 pub(crate) fn cap_bset_read(cap : usize) -> UserRet {
-    if cap >= 64 {
+    // WaterOS 只支持低 32 位 capability；超出范围按 Linux 语义返回 EINVAL
+    // （libcap 的 cap_last_cap() 二分探测依赖这一点）。
+    if cap >= 32 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    UserRet::from_success(1)
+    let in_set = ((current_process_caps().bounding >> cap) & 1) as usize;
+    UserRet::from_success(in_set)
 }
 
 pub(crate) fn cap_bset_drop(cap : usize) -> UserRet {
-    if cap >= 64 {
+    if cap >= 32 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    UserRet::from_error(ErrNo::EPERM)
+    let Some(current_pid) = task::current_process_task_snapshot().map(|snapshot| snapshot.pid)
+    else {
+        return UserRet::from_error(ErrNo::ESRCH);
+    };
+    let caps = task::process_caps(current_pid).unwrap_or(ProcessCaps::ROOT);
+    let cred = cred::current_credentials();
+    // Linux cap_bset_drop：需要 euid==0 或 effective 持有 CAP_SETPCAP。
+    if cred.effective_uid.0 != 0 && caps.effective & ProcessCaps::CAP_SETPCAP == 0 {
+        return UserRet::from_error(ErrNo::EPERM);
+    }
+    // 从 bounding 去掉后，同步把各集合中该 cap 剪掉（Linux 会 prune）。
+    let bit = 1u32 << cap;
+    let stored = ProcessCaps { effective : caps.effective & !bit,
+                               permitted : caps.permitted & !bit,
+                               inheritable : caps.inheritable & !bit,
+                               bounding : caps.bounding & !bit };
+    if task::set_process_caps(current_pid, stored).is_err() {
+        return UserRet::from_error(ErrNo::EPERM);
+    }
+    UserRet::from_success(0)
 }
 
 pub(crate) fn sys_capget(args : SyscallArgs) -> UserRet {
@@ -98,7 +132,7 @@ pub(crate) fn sys_capget(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFAULT);
     }
 
-    let mut hdr : CapUserHeader = match copy_from_user_struct(hdr_ptr) {
+    let hdr : CapUserHeader = match copy_from_user_struct(hdr_ptr) {
         Ok(h) => h,
         Err(e) => return UserRet::from_error(e),
     };
@@ -121,17 +155,8 @@ pub(crate) fn sys_capget(args : SyscallArgs) -> UserRet {
         return UserRet::from_success(0);
     }
 
-    let reported_pid = if hdr.pid == 0 {
-        task::current_task_id().unwrap_or(0) as i32
-    } else {
-        hdr.pid
-    };
-
-    hdr.pid = reported_pid;
-    if copy_to_user_struct(hdr_ptr, &hdr).is_err() {
-        return UserRet::from_error(ErrNo::EFAULT);
-    }
-
+    // 合法版本的 capget 不重写 header。尤其 pid=0 必须保持为 0；内部 TaskId
+    // 不是 Linux PID，把它写回会让随后复用 header 的 capset 错设其它目标。
     let caps = process_caps_of(hdr.pid);
     if copy_to_user_struct(data_ptr, &caps).is_err() {
         return UserRet::from_error(ErrNo::EFAULT);
@@ -177,8 +202,8 @@ pub(crate) fn sys_capset(args : SyscallArgs) -> UserRet {
     let current_pid =
         task::current_process_task_snapshot().map(|snapshot| snapshot.pid)
                                              .unwrap_or(ProcessId::from_raw(usize::MAX));
-    // 仅允许进程设置自己的 capability（pid == 0 或等于当前进程）。
-    if hdr.pid != 0 && ProcessId::from_raw(hdr.pid as usize) != current_pid {
+    // Linux 允许用同一线程组中的 TID 指定当前进程；统一映射后再判断归属。
+    if cap_target_process(hdr.pid) != Some(current_pid) {
         return UserRet::from_error(ErrNo::EPERM);
     }
 
@@ -203,10 +228,16 @@ pub(crate) fn sys_capset(args : SyscallArgs) -> UserRet {
         }
     }
 
-    let cred = cred::current_credentials();
-    let is_root = cred.effective_uid.0 == 0;
     let current = task::process_caps(current_pid).unwrap_or(ProcessCaps::ROOT);
-    if !is_root {
+    // 所有集合都不能超出 bounding set（Linux 对 root 同样生效）。
+    if caps.permitted & !current.bounding != 0 || caps.inheritable & !current.bounding != 0 {
+        return UserRet::from_error(ErrNo::EPERM);
+    }
+    // Linux cap_capset：特权与否看 effective 是否持有 CAP_SETPCAP，不是
+    // euid==0。root 默认有 CAP_SETPCAP 可任意设置；但可先 capset 去掉
+    // SETPCAP 再进入受限场景（LTP capset03 就是这样测的）。
+    let privileged = current.effective & ProcessCaps::CAP_SETPCAP != 0;
+    if !privileged {
         // permitted 只减不增（Linux）；配合 PR_SET_KEEPCAPS，setuid 之后仍可
         // 重设 permitted 子集（setpriv 的 “reactivate capabilities” 流程）。
         if caps.permitted & !current.permitted != 0 {
@@ -221,7 +252,8 @@ pub(crate) fn sys_capset(args : SyscallArgs) -> UserRet {
 
     let stored = ProcessCaps { effective : caps.effective,
                                permitted : caps.permitted,
-                               inheritable : caps.inheritable };
+                               inheritable : caps.inheritable,
+                               bounding : current.bounding };
     if task::set_process_caps(current_pid, stored).is_err() {
         return UserRet::from_error(ErrNo::EPERM);
     }

@@ -178,6 +178,9 @@ pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
     api_v0::user_aspace_lifecycle::register_drop_user_aspace_hook(crate::kernel_mm_impl::drop_user_aspace);
     api_v0::user_aspace_lifecycle::register_aspace_cpu_hooks(crate::user_aspace::mark_active,
                                                               crate::user_aspace::mark_inactive);
+    api_v0::user_mapping::register_snapshot_user_mappings_hook(
+        crate::user_aspace::snapshot_user_mappings,
+    );
 }
 
 /// 返回 DTB 实际 blob 覆盖的页区间；无效/不在 RAM 中时不建立保留区。

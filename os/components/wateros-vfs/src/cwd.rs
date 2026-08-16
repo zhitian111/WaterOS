@@ -152,6 +152,23 @@ where
     Ok(())
 }
 
+/// 记录任务 exec/spawn 时的环境向量，供 `/proc/<pid>/environ` 使用。
+pub fn set_task_env<I>(task_id: task::TaskId, env: I) -> VfsResult<()>
+where
+    I: IntoIterator,
+    I::Item: AsRef<str>,
+{
+    let env: Vec<String> = env.into_iter().map(|s| String::from(s.as_ref())).collect();
+    registry().exclusive_access().set_env(task_id, env);
+    Ok(())
+}
+
+/// 保存实际写入初始用户栈的 auxv 原始字节。
+pub fn set_task_auxv(task_id: task::TaskId, auxv: Vec<u8>) -> VfsResult<()> {
+    registry().exclusive_access().set_auxv(task_id, auxv);
+    Ok(())
+}
+
 /// 读取指定任务的 argv。
 pub fn task_argv(task_id: task::TaskId) -> VfsResult<Vec<String>> {
     let mut reg = registry().exclusive_access();
@@ -179,11 +196,51 @@ pub fn lookup_argv_for_task(task_id: task::TaskId) -> Option<Vec<String>> {
     reg.get_argv(task_id).map(|v| v.to_vec())
 }
 
+/// 读取指定任务的环境向量（procfs 回调用）。
+pub fn lookup_env_for_task(task_id: task::TaskId) -> Option<Vec<String>> {
+    let mut reg = registry().exclusive_access();
+    reg.ensure_task_cwd(task_id);
+    reg.get_env(task_id).map(|v| v.to_vec())
+}
+
+pub fn lookup_auxv_for_task(task_id: task::TaskId) -> Option<Vec<u8>> {
+    let mut reg = registry().exclusive_access();
+    reg.ensure_task_cwd(task_id);
+    reg.get_auxv(task_id).map(|v| v.to_vec())
+}
+
+/// 累加当前进程的一次字符 I/O；线程通过共享 owner 聚合到同一进程。
+pub fn account_task_io(task_id: task::TaskId, read: bool, bytes: u64) {
+    registry().exclusive_access().account_io(task_id, read, bytes);
+}
+
+/// 返回 `[rchar, wchar, syscr, syscw]`，供 procfs 回调使用。
+pub fn lookup_io_for_task(task_id: task::TaskId) -> Option<[u64; 4]> {
+    let mut reg = registry().exclusive_access();
+    reg.ensure_task_cwd(task_id);
+    let io = reg.get_io_counters(task_id);
+    Some([io.rchar, io.wchar, io.syscr, io.syscw])
+}
+
 /// 读取指定任务 exe 路径（procfs 回调用）。
 pub fn lookup_exe_for_task(task_id: task::TaskId) -> Option<String> {
     let mut reg = registry().exclusive_access();
     reg.ensure_task_cwd(task_id);
     reg.get_exe_path(task_id).map(String::from)
+}
+
+/// 读取指定任务的逻辑 cwd（procfs 回调用）。
+pub fn lookup_cwd_for_task(task_id: task::TaskId) -> Option<String> {
+    let mut reg = registry().exclusive_access();
+    reg.ensure_task_cwd(task_id);
+    Some(String::from(reg.get_cwd(task_id)))
+}
+
+/// 读取指定任务的进程根目录（procfs 回调用）。
+pub fn lookup_root_for_task(task_id: task::TaskId) -> Option<String> {
+    let mut reg = registry().exclusive_access();
+    reg.ensure_task_cwd(task_id);
+    Some(String::from(reg.get_root(task_id)))
 }
 
 /// 读取当前任务的可执行文件路径。

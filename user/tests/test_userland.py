@@ -141,17 +141,24 @@ class ConfigurationTests(unittest.TestCase):
         )
         self.assertIn("WATEROS_MINECRAFT_SERVER_OK", smoke)
         self.assertIn("sync-chunk-writes=true", smoke)
+        self.assertIn("Minecraft smoke still running", smoke)
         launcher = (package / "scripts/minecraft-server").read_text(
             encoding="utf-8"
         )
         self.assertIn('case "$(uname -m)"', launcher)
         self.assertIn("riscv64|riscv*", launcher)
         self.assertIn("TieredStopAtLevel=1", launcher)
+        self.assertIn("ACTIVE_PROCESSORS=4", launcher)
+        self.assertIn("generate-structures=false", launcher)
+        self.assertIn("simulation-distance=2", launcher)
+        self.assertIn("view-distance=2", launcher)
+        self.assertIn('if [ ! -e "$PROPERTIES_FILE" ]', launcher)
         self.assertNotIn("-Xint", launcher)
         preflight = (package / "scripts/wos-minecraft-preflight").read_text(
             encoding="utf-8"
         )
         self.assertIn("WATEROS_MINECRAFT_PREFLIGHT_OK", preflight)
+        self.assertIn("Minecraft preflight still running", preflight)
         self.assertIn("eula=false", preflight)
         self.assertIn("TieredStopAtLevel=1", preflight)
         diagnostic = (package / "scripts/wos-minecraft-jit-diagnostic").read_text(

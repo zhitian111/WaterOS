@@ -8,9 +8,11 @@
 /// 降低此值可释放更多物理内存给用户态。不能设太低：`StackFrameAllocator` 的
 /// `ref_counts` 与 `allocated` Vec 随平台公布的物理页数增长，也从内核堆分配。
 /// 全量 native Rust build 已观测到约 121MB 活跃分配；128MB 池会因分配器元数据
-/// 和碎片余量不足而向用户态返回 `ENOMEM`。两架构统一使用 256MB，避免基础容量
-/// 契约随 ISA 分叉。
-pub const KERNEL_HEAP_SIZE_BIT_WIDTH : usize = 28;
+/// 和碎片余量不足而向用户态返回 `ENOMEM`。2026-08-15：stress-ng `--forkheavy`
+/// 等内存/进程类压力在 256MB 池下触发 `[heap] OOM`（used≈248MB，分配 1MB 失败）
+/// 并 panic（final=8G RAM 场景）。提升到 512MB 以覆盖内存类压力测试；注意 LA
+/// pre 仅 1G RAM 时 512MB 堆会挤占用户内存（当前策略：final 能跑优先）。
+pub const KERNEL_HEAP_SIZE_BIT_WIDTH : usize = 29;
 /// 内核堆字节容量，即 `1 << KERNEL_HEAP_SIZE_BIT_WIDTH`。
 pub const KERNEL_HEAP_SIZE : usize = 1 << KERNEL_HEAP_SIZE_BIT_WIDTH;
 

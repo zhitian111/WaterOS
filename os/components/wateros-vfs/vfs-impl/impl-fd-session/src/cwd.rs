@@ -10,6 +10,15 @@ use alloc::vec::Vec;
 /// 与 syscall 路径拷贝上限一致。
 pub const PATH_MAX: usize = 256;
 
+/// Linux `/proc/<pid>/io` 中可由 syscall 层准确归属的字符 I/O 计数。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ProcessIoCounters {
+    pub rchar : u64,
+    pub wchar : u64,
+    pub syscr : u64,
+    pub syscw : u64,
+}
+
 /// 全局 per-task cwd 表。
 // 本结构代码由AI完成
 pub struct PerTaskCwdRegistry {
@@ -17,6 +26,9 @@ pub struct PerTaskCwdRegistry {
     root_tables: BTreeMap<task::TaskId, String>,
     exe_paths: BTreeMap<task::TaskId, String>,
     argv_vectors: BTreeMap<task::TaskId, Vec<String>>,
+    env_vectors: BTreeMap<task::TaskId, Vec<String>>,
+    auxv_vectors: BTreeMap<task::TaskId, Vec<u8>>,
+    io_counters: BTreeMap<task::TaskId, ProcessIoCounters>,
     owners: BTreeMap<task::TaskId, task::TaskId>,
     ref_counts: BTreeMap<task::TaskId, usize>,
 }
@@ -28,6 +40,9 @@ impl PerTaskCwdRegistry {
             root_tables: BTreeMap::new(),
             exe_paths: BTreeMap::new(),
             argv_vectors: BTreeMap::new(),
+            env_vectors: BTreeMap::new(),
+            auxv_vectors: BTreeMap::new(),
+            io_counters: BTreeMap::new(),
             owners: BTreeMap::new(),
             ref_counts: BTreeMap::new(),
         }
@@ -102,7 +117,7 @@ impl PerTaskCwdRegistry {
         self.root_tables.insert(owner, root);
     }
 
-    /// 任务退出或 unshare 后释放 cwd / exe / argv 槽位。
+    /// 任务退出或 unshare 后释放 cwd / exe / argv / env 槽位。
 // 本方法代码由AI完成
     pub fn drop_task(&mut self, task_id: task::TaskId) {
         let Some(owner) = self.release_owner(task_id) else {
@@ -113,12 +128,18 @@ impl PerTaskCwdRegistry {
             self.root_tables.remove(&owner);
             self.exe_paths.remove(&owner);
             self.argv_vectors.remove(&owner);
+            self.env_vectors.remove(&owner);
+            self.auxv_vectors.remove(&owner);
+            self.io_counters.remove(&owner);
         }
         if task_id != owner {
             self.cwd_tables.remove(&task_id);
             self.root_tables.remove(&task_id);
             self.exe_paths.remove(&task_id);
             self.argv_vectors.remove(&task_id);
+            self.env_vectors.remove(&task_id);
+            self.auxv_vectors.remove(&task_id);
+            self.io_counters.remove(&task_id);
         }
     }
 
@@ -128,6 +149,8 @@ impl PerTaskCwdRegistry {
         let parent_root = self.get_root(parent).to_string();
         let parent_exe = self.get_exe_path(parent).map(ToString::to_string);
         let parent_argv = self.get_argv(parent).map(|v| v.to_vec());
+        let parent_env = self.get_env(parent).map(|v| v.to_vec());
+        let parent_auxv = self.get_auxv(parent).map(|v| v.to_vec());
         if self.owners.contains_key(&child) {
             self.drop_task(child);
         }
@@ -143,6 +166,12 @@ impl PerTaskCwdRegistry {
         }
         if let Some(argv) = parent_argv {
             self.argv_vectors.insert(child_owner, argv);
+        }
+        if let Some(env) = parent_env {
+            self.env_vectors.insert(child_owner, env);
+        }
+        if let Some(auxv) = parent_auxv {
+            self.auxv_vectors.insert(child_owner, auxv);
         }
     }
 
@@ -184,5 +213,45 @@ impl PerTaskCwdRegistry {
         self.argv_vectors
             .get(&owner)
             .map(Vec::as_slice)
+    }
+
+    /// 保存 exec 时的环境向量；同一线程组共享该槽位。
+    pub fn set_env(&mut self, task_id: task::TaskId, env: Vec<String>) {
+        let owner = self.ensure_owner(task_id);
+        self.env_vectors.insert(owner, env);
+    }
+
+    /// 读取最近一次成功 exec/spawn 时的环境向量。
+    pub fn get_env(&self, task_id: task::TaskId) -> Option<&[String]> {
+        let owner = self.effective_owner(task_id);
+        self.env_vectors.get(&owner).map(Vec::as_slice)
+    }
+
+    pub fn set_auxv(&mut self, task_id: task::TaskId, auxv: Vec<u8>) {
+        let owner = self.ensure_owner(task_id);
+        self.auxv_vectors.insert(owner, auxv);
+    }
+
+    pub fn get_auxv(&self, task_id: task::TaskId) -> Option<&[u8]> {
+        let owner = self.effective_owner(task_id);
+        self.auxv_vectors.get(&owner).map(Vec::as_slice)
+    }
+
+    /// 记录一次已成功返回用户态的 read-like 或 write-like syscall。
+    pub fn account_io(&mut self, task_id: task::TaskId, read: bool, bytes: u64) {
+        let owner = self.ensure_owner(task_id);
+        let counters = self.io_counters.entry(owner).or_default();
+        if read {
+            counters.syscr = counters.syscr.saturating_add(1);
+            counters.rchar = counters.rchar.saturating_add(bytes);
+        } else {
+            counters.syscw = counters.syscw.saturating_add(1);
+            counters.wchar = counters.wchar.saturating_add(bytes);
+        }
+    }
+
+    pub fn get_io_counters(&self, task_id: task::TaskId) -> ProcessIoCounters {
+        let owner = self.effective_owner(task_id);
+        self.io_counters.get(&owner).copied().unwrap_or_default()
     }
 }

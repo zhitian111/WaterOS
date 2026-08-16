@@ -17,6 +17,8 @@ pub(crate) fn plan_getgroups(raw_size : usize, group_count : usize) -> Option<Ge
     Some(GetGroupsPlan::Copy(group_count))
 }
 
+// LTP setgroups03 后改为 NGROUPS_MAX+先拷贝的校验顺序；保留供参考/测试。
+#[allow(dead_code)]
 pub(crate) fn valid_setgroups_size(size : usize, maximum : usize) -> bool { size <= maximum }
 
 #[cfg(test)]

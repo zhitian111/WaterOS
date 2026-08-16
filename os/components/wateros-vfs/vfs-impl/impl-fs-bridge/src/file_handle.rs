@@ -417,6 +417,9 @@ impl FsBridge {
             FsRoute::PseudoProc { rel, identity } => {
                 return super::proc_handle::open_proc(rel, abs.clone(), flags, identity);
             }
+            FsRoute::PseudoSys { rel, identity } => {
+                return super::proc_handle::open_sys(rel, abs.clone(), flags, identity);
+            }
             FsRoute::PseudoSecurity { rel, .. }
                 if rel == "/" && flags.contains(VfsOpenFlags::DIRECTORY) =>
             {

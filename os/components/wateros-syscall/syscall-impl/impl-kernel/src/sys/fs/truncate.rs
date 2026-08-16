@@ -11,14 +11,14 @@ use vfs::active_impl;
 use vfs::api::{SingleRootReadView, VfsError, VfsNodeType};
 
 use super::path_at::{resolve_path_at, resolve_symlinks, AT_FDCWD};
-use vfs::api::FinalSymlink;
 use crate::user_copy::copy_user_path_cstr;
 use crate::vfs_util::vfs_error_to_errno;
+use vfs::api::FinalSymlink;
 
-const RLIMIT_FSIZE: usize = 1;
+pub(crate) const RLIMIT_FSIZE : usize = 1;
 
 // 本方法代码由AI完成
-pub(crate) fn sys_truncate(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_truncate(args : SyscallArgs) -> UserRet {
     let path_ptr = args.arg(0);
     let raw_len = args.arg(1);
 
@@ -33,7 +33,9 @@ pub(crate) fn sys_truncate(args: SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFBIG);
     }
 
-    let path = match copy_user_path_cstr(path_ptr, crate::user_copy::USER_PATH_MAX) {
+    let path = match copy_user_path_cstr(path_ptr,
+                                         crate::user_copy::USER_PATH_MAX)
+    {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
     };
@@ -77,7 +79,7 @@ pub(crate) fn sys_truncate(args: SyscallArgs) -> UserRet {
     }
 }
 
-fn exceeds_fsize_rlimit(len: u64) -> bool {
+fn exceeds_fsize_rlimit(len : u64) -> bool {
     let Some(pid) = task::current_process_task_snapshot().map(|snapshot| snapshot.pid) else {
         return false;
     };
@@ -87,7 +89,7 @@ fn exceeds_fsize_rlimit(len: u64) -> bool {
     len > limit.cur
 }
 
-fn can_write_file(meta: &vfs::api::VfsMetadata, cred: &ProcessCredentials) -> bool {
+fn can_write_file(meta : &vfs::api::VfsMetadata, cred : &ProcessCredentials) -> bool {
     if cred.effective_uid.0 == 0 {
         return true;
     }
@@ -101,25 +103,23 @@ fn can_write_file(meta: &vfs::api::VfsMetadata, cred: &ProcessCredentials) -> bo
     mode & 0o002 != 0
 }
 
-fn cred_has_group(cred: &ProcessCredentials, gid: Gid) -> bool {
-    cred.effective_gid == gid
-        || cred
-            .supplementary_groups
-            .iter()
-            .take(cred.supplementary_group_len)
-            .any(|group| *group == gid)
+fn cred_has_group(cred : &ProcessCredentials, gid : Gid) -> bool {
+    cred.effective_gid == gid ||
+    cred.supplementary_groups
+        .iter()
+        .take(cred.supplementary_group_len)
+        .any(|group| *group == gid)
 }
 
-fn check_parent_search(path: &str, cred: &ProcessCredentials) -> Result<(), ErrNo> {
+fn check_parent_search(path : &str, cred : &ProcessCredentials) -> Result<(), ErrNo> {
     if cred.effective_uid.0 == 0 {
         return Ok(());
     }
 
-    let parts: alloc::vec::Vec<&str> = path
-        .trim_start_matches('/')
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .collect();
+    let parts : alloc::vec::Vec<&str> = path.trim_start_matches('/')
+                                            .split('/')
+                                            .filter(|part| !part.is_empty())
+                                            .collect();
     if parts.len() <= 1 {
         return Ok(());
     }
@@ -130,9 +130,8 @@ fn check_parent_search(path: &str, cred: &ProcessCredentials) -> Result<(), ErrN
             current.push('/');
         }
         current.push_str(part);
-        let meta = active_impl::backend()
-            .metadata(current.as_str())
-            .map_err(vfs_error_to_errno)?;
+        let meta = active_impl::backend().metadata(current.as_str())
+                                         .map_err(vfs_error_to_errno)?;
         if meta.node_type != VfsNodeType::Directory {
             return Err(ErrNo::ENOTDIR);
         }
@@ -150,7 +149,7 @@ fn check_parent_search(path: &str, cred: &ProcessCredentials) -> Result<(), ErrN
     }
     Ok(())
 }
-pub(crate) fn sys_ftruncate(args: SyscallArgs) -> UserRet {
+pub(crate) fn sys_ftruncate(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let len = args.arg(1);
 
@@ -160,8 +159,8 @@ pub(crate) fn sys_ftruncate(args: SyscallArgs) -> UserRet {
 
     let result = loop {
         let result = vfs::fd::with_current_io(fd, |handle| {
-            const O_ACCMODE: u32 = 3;
-            const O_RDONLY: u32 = 0;
+            const O_ACCMODE : u32 = 3;
+            const O_RDONLY : u32 = 0;
             if handle.open_accmode() & O_ACCMODE == O_RDONLY {
                 return Err(vfs::api::VfsError::Unsupported);
             }

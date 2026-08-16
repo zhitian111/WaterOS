@@ -25,6 +25,7 @@ const PR_GET_NO_NEW_PRIVS : usize = 39;
 const PR_CAPBSET_READ : usize = 23;
 const PR_CAPBSET_DROP : usize = 24;
 const PR_SET_TIMING : usize = 14;
+const PR_GET_SECUREBITS : usize = 27;
 const PR_SET_SECUREBITS : usize = 28;
 const PR_SET_TIMERSLACK : usize = 29;
 const PR_GET_TIMERSLACK : usize = 30;
@@ -121,6 +122,8 @@ pub(crate) fn exit_current_with_wait_code(exit_code : isize) -> isize {
     }
     crate::sys::misc::bringup_stats::record_sys_exit();
     super::vfork::complete_current();
+    // credential 与 Linux zombie 一样保留到 reap。即使紧接着调用
+    // exit_current，在 scheduler 真正切走前本任务仍是 current，不能提前删除。
     task::exit_current(exit_code)
 }
 
@@ -248,21 +251,21 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
             None => UserRet::from_error(ErrNo::ESRCH),
         },
         PR_SET_KEEPCAPS => {
-            // Linux: arg2 只能是 0/1；WaterOS 凭证模型在 setuid 时本就保留全部
-            // root 能力，KEEPCAPS 标志无实际效果，接受即可（setpriv 等工具依赖）。
+            // Linux: arg2 只能是 0/1；setuid 从 0 降到非 0 时按此标志决定
+            // 是否保留 permitted 集合（见 cred::apply_uid_triplet）。
             if args.arg(1) > 1 {
                 UserRet::from_error(ErrNo::EINVAL)
-            } else {
+            } else if task::set_process_keep_caps(current_pid, args.arg(1) != 0).is_ok() {
                 UserRet::from_success(0)
+            } else {
+                UserRet::from_error(ErrNo::ESRCH)
             }
         }
-        PR_GET_KEEPCAPS => {
-            if args.arg(1) | args.arg(2) | args.arg(3) | args.arg(4) != 0 {
-                UserRet::from_error(ErrNo::EINVAL)
-            } else {
-                UserRet::from_success(0)
-            }
-        }
+        PR_GET_KEEPCAPS => match task::process_keep_caps(current_pid) {
+            Some(true) => UserRet::from_success(1),
+            Some(false) => UserRet::from_success(0),
+            None => UserRet::from_error(ErrNo::ESRCH),
+        },
         PR_GET_TID_ADDRESS => {
             let addr_ptr = args.arg(1);
             if addr_ptr == 0 {
@@ -344,7 +347,27 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
             }
         }
         PR_CAP_AMBIENT | PR_GET_SPECULATION_CTRL => UserRet::from_error(ErrNo::EINVAL),
-        PR_SET_SECUREBITS => UserRet::from_error(ErrNo::EPERM),
+        PR_GET_SECUREBITS => {
+            // Linux 对 PR_GET_SECUREBITS 忽略 arg2..arg5；capsh 调用时只传
+            // option 一个参数（其余寄存器为垃圾值），若校验会误报 EINVAL。
+            // WaterOS 未实现 securebits 语义（KEEPCAPS 恒开），固定报 0。
+            UserRet::from_success(0)
+        }
+        PR_SET_SECUREBITS => {
+            if args.arg(2) | args.arg(3) | args.arg(4) != 0 {
+                return UserRet::from_error(ErrNo::EINVAL);
+            }
+            // Linux 需要 CAP_SETPCAP；WaterOS 不存储 securebits，root 接受即可
+            // （setpriv --securebits 流程依赖此成功）。
+            if cred::current_credentials().effective_uid
+                                          .0 ==
+               0
+            {
+                UserRet::from_success(0)
+            } else {
+                UserRet::from_error(ErrNo::EPERM)
+            }
+        }
         PR_SET_TIMERSLACK => {
             let Some(task_id) = task::current_task_id() else {
                 return UserRet::from_error(ErrNo::ESRCH);

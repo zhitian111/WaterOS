@@ -11,6 +11,7 @@ use alloc::vec::Vec;
 use api_v0::{
     SingleRootReadView, VfsDirEntry, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType,
     VfsOpenDescriptionState, VfsPreparedRead, VfsResult,
+    VfsSeekWhence,
 };
 
 use crate::FsBridge;
@@ -128,6 +129,21 @@ impl VfsIoHandle for DirectoryHandle {
 
     // 本方法代码由AI完成
     fn write(&mut self, _buf : &[u8]) -> VfsResult<usize> { Err(VfsError::NotAFile) }
+
+    /// 目录偏移是下一条 dirent 的 cookie。glibc `rewinddir()` 通过
+    /// `lseek(fd, 0, SEEK_SET)` 复位，因此目录句柄必须和普通文件一样在
+    /// duplicate/fork 间共享游标。`SEEK_END` 对目录没有稳定语义。
+    fn seek(&mut self, offset : i64, whence : VfsSeekWhence) -> VfsResult<u64> {
+        match whence {
+            VfsSeekWhence::Set if offset >= 0 => {
+                let value = offset as u64;
+                self.description.set_offset(value);
+                Ok(value)
+            }
+            VfsSeekWhence::Cur => self.description.add_signed_offset(offset),
+            VfsSeekWhence::Set | VfsSeekWhence::End => Err(VfsError::InvalidPath),
+        }
+    }
 
     // Directory fsync commits directory-entry and inode metadata through the
     // filesystem that owns this opened path.

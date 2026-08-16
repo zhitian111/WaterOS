@@ -160,10 +160,9 @@ fn is_sleepable_clock(clock_id : usize) -> bool {
 fn clock_id_to_ns(clock_id : usize) -> Result<u128, ErrNo> {
     match clock_id {
         CLOCK_REALTIME | CLOCK_REALTIME_COARSE => realtime_ns().map_err(|_| ErrNo::EIO),
-        CLOCK_MONOTONIC |
-        CLOCK_MONOTONIC_RAW |
-        CLOCK_MONOTONIC_COARSE |
-        CLOCK_BOOTTIME => monotonic_now_ns(),
+        CLOCK_MONOTONIC | CLOCK_MONOTONIC_RAW | CLOCK_MONOTONIC_COARSE | CLOCK_BOOTTIME => {
+            monotonic_now_ns()
+        }
         CLOCK_PROCESS_CPUTIME_ID | CLOCK_THREAD_CPUTIME_ID => {
             let snapshot = task::current_task_snapshot().ok_or(ErrNo::ESRCH)?;
             Ok((snapshot.stats
@@ -395,10 +394,10 @@ pub(crate) fn sys_clock_settime(args : SyscallArgs) -> UserRet {
     if clock_id != CLOCK_REALTIME {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    if cred::current_credentials().effective_uid
-                                  .0 !=
-       0
-    {
+    let caps = task::current_process_task_snapshot().map(|snapshot| snapshot.pid)
+                                                    .and_then(task::process_caps)
+                                                    .unwrap_or_default();
+    if caps.effective & task::ProcessCaps::CAP_SYS_TIME == 0 {
         return UserRet::from_error(ErrNo::EPERM);
     }
     if tp_ptr == 0 {
@@ -412,6 +411,37 @@ pub(crate) fn sys_clock_settime(args : SyscallArgs) -> UserRet {
         Ok(ns) => ns,
         Err(e) => return UserRet::from_error(e),
     };
+    if set_realtime_ns(target_ns).is_err() {
+        return UserRet::from_error(ErrNo::EIO);
+    }
+    UserRet::from_success(0)
+}
+
+/// `settimeofday(2)`：设置实时时钟；需要 effective 持有 CAP_SYS_TIME。
+/// timezone 参数（arg1）已废弃，忽略。
+pub(crate) fn sys_settimeofday(args : SyscallArgs) -> UserRet {
+    let tv_ptr = args.arg(0);
+    if tv_ptr == 0 {
+        // Linux：tv == NULL 时成功（仅清 offset）。
+        return UserRet::from_success(0);
+    }
+    // Linux：权限看 effective 是否持有 CAP_SYS_TIME（与 euid 无关）。
+    // WaterOS root 默认 effective 含 CAP_SYS_TIME；LTP settimeofday02 用
+    // TST_CAP_DROP 移除后应返回 EPERM。
+    let caps = task::current_process_task_snapshot().map(|snapshot| snapshot.pid)
+                                                    .and_then(|pid| task::process_caps(pid))
+                                                    .unwrap_or(task::ProcessCaps::ROOT);
+    if caps.effective & task::ProcessCaps::CAP_SYS_TIME == 0 {
+        return UserRet::from_error(ErrNo::EPERM);
+    }
+    let tv = match copy_from_user_struct::<UserTimeVal>(tv_ptr) {
+        Ok(tv) => tv,
+        Err(e) => return UserRet::from_error(e),
+    };
+    if tv.sec < 0 || tv.usec < 0 || tv.usec >= 1_000_000 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    let target_ns = (tv.sec as u128) * 1_000_000_000 + (tv.usec as u128) * 1_000;
     if set_realtime_ns(target_ns).is_err() {
         return UserRet::from_error(ErrNo::EIO);
     }
@@ -440,7 +470,9 @@ pub(crate) fn sys_clock_nanosleep(args : SyscallArgs) -> UserRet {
     let flags = args.arg(1);
     let req_ptr = args.arg(2);
     let rem_ptr = args.arg(3);
-    if matches!(clock_id, CLOCK_PROCESS_CPUTIME_ID | CLOCK_THREAD_CPUTIME_ID) {
+    if matches!(clock_id,
+                CLOCK_PROCESS_CPUTIME_ID | CLOCK_THREAD_CPUTIME_ID)
+    {
         return UserRet::from_error(ErrNo::EOPNOTSUPP);
     }
     if !is_sleepable_clock(clock_id) {

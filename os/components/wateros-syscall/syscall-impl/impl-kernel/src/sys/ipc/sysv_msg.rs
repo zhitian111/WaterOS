@@ -20,12 +20,33 @@ const IPC_NOWAIT : usize = 0o4000;
 const IPC_RMID : usize = 0;
 const IPC_SET : usize = 1;
 const IPC_STAT : usize = 2;
+const IPC_INFO : usize = 3;
+// Linux UAPI 的消息队列扩展命令不与通用 IPC 命令连续。
+const MSG_STAT : usize = 11;
+const MSG_INFO : usize = 12;
+const MSG_STAT_ANY : usize = 13;
 const IPC_64 : usize = 0x100;
 const MSG_NOERROR : usize = 0o10000;
 const MSG_EXCEPT : usize = 0o20000;
 const MSG_COPY : usize = 0o40000;
 const MSGMAX : usize = 8 * 1024;
 const MSGMNB : usize = 16 * 1024;
+
+/// Linux `struct msginfo`（msgctl IPC_INFO 输出）。
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Msginfo {
+    msgpool : i32,
+    msgmap : i32,
+    msgmax : i32,
+    msgmnb : i32,
+    msgmni : i32,
+    msgssz : i32,
+    msgtql : i32,
+    msgseg : u16,
+}
+
+const _ : () = assert!(core::mem::size_of::<Msginfo>() == 32);
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -105,8 +126,12 @@ impl MessageRegistry {
         let start = self.next_id.max(1);
         loop {
             let id = self.next_id.max(1);
-            self.next_id = self.next_id.checked_add(1).unwrap_or(1);
-            if !self.by_id.contains_key(&id) {
+            self.next_id = self.next_id
+                               .checked_add(1)
+                               .unwrap_or(1);
+            if !self.by_id
+                    .contains_key(&id)
+            {
                 return Ok(id);
             }
             if self.next_id == start {
@@ -117,7 +142,9 @@ impl MessageRegistry {
 
     fn alloc_sequence(&mut self) -> u64 {
         let sequence = self.next_sequence;
-        self.next_sequence = self.next_sequence.wrapping_add(1).max(1);
+        self.next_sequence = self.next_sequence
+                                 .wrapping_add(1)
+                                 .max(1);
         sequence
     }
 }
@@ -125,20 +152,26 @@ impl MessageRegistry {
 static MESSAGE_REGISTRY : Mutex<MessageRegistry> = Mutex::new(MessageRegistry::new());
 
 fn now_seconds() -> i64 {
-    platform::wall_clock::realtime_ns()
-        .map(|ns| (ns / 1_000_000_000).min(i64::MAX as u128) as i64)
-        .unwrap_or(0)
+    platform::wall_clock::realtime_ns().map(|ns| (ns / 1_000_000_000).min(i64::MAX as u128) as i64)
+                                       .unwrap_or(0)
 }
 
 fn identity() -> (u32, u32) {
     let credentials = cred::current_credentials();
-    (credentials.effective_uid.0, credentials.effective_gid.0)
+    (credentials.effective_uid
+                .0,
+     credentials.effective_gid
+                .0)
 }
 
 fn process_id() -> i32 {
-    task::current_process_snapshot()
-        .map(|process| process.pid.raw().min(i32::MAX as usize) as i32)
-        .unwrap_or(0)
+    task::current_process_snapshot().map(|process| {
+                                        process.pid
+                                               .raw()
+                                               .min(i32::MAX as usize)
+                                        as i32
+                                    })
+                                    .unwrap_or(0)
 }
 
 fn task_id() -> Result<usize, ErrNo> { task::current_task_id().ok_or(ErrNo::ESRCH) }
@@ -173,25 +206,46 @@ pub(crate) fn sys_msgget(args : SyscallArgs) -> UserRet {
     let result = {
         let mut registry = MESSAGE_REGISTRY.lock();
         if key != IPC_PRIVATE {
-            if let Some(id) = registry.by_key.get(&key).copied() {
+            if let Some(id) = registry.by_key
+                                      .get(&key)
+                                      .copied()
+            {
                 if flags & IPC_CREAT != 0 && flags & IPC_EXCL != 0 {
                     Err(ErrNo::EEXIST)
                 } else {
-                    let queue = registry.by_id.get(&id).ok_or(ErrNo::EINVAL);
+                    let queue = registry.by_id
+                                        .get(&id)
+                                        .ok_or(ErrNo::EINVAL);
                     queue.and_then(|queue| {
-                        let requested = flags & 0o666;
-                        let read_ok = requested & 0o444 == 0 || has_access(queue, false, uid, gid);
-                        let write_ok = requested & 0o222 == 0 || has_access(queue, true, uid, gid);
-                        if read_ok && write_ok { Ok(id) } else { Err(ErrNo::EACCES) }
-                    })
+                             let requested = flags & 0o666;
+                             let read_ok =
+                                 requested & 0o444 == 0 || has_access(queue, false, uid, gid);
+                             let write_ok =
+                                 requested & 0o222 == 0 || has_access(queue, true, uid, gid);
+                             if read_ok && write_ok {
+                                 Ok(id)
+                             } else {
+                                 Err(ErrNo::EACCES)
+                             }
+                         })
                 }
             } else if flags & IPC_CREAT == 0 {
                 Err(ErrNo::ENOENT)
             } else {
-                create_queue(&mut registry, key, flags, uid, gid, timestamp)
+                create_queue(&mut registry,
+                             key,
+                             flags,
+                             uid,
+                             gid,
+                             timestamp)
             }
         } else {
-            create_queue(&mut registry, key, flags, uid, gid, timestamp)
+            create_queue(&mut registry,
+                         key,
+                         flags,
+                         uid,
+                         gid,
+                         timestamp)
         }
     };
     match result {
@@ -208,23 +262,26 @@ fn create_queue(registry : &mut MessageRegistry,
                 timestamp : i64)
                 -> Result<i32, ErrNo> {
     let id = registry.alloc_id()?;
-    registry.by_id.insert(id,
-                          MessageQueue { key,
-                                         uid,
-                                         gid,
-                                         cuid : uid,
-                                         cgid : gid,
-                                         mode : (flags & 0o777) as u32,
-                                         qbytes : MSGMNB,
-                                         bytes : 0,
-                                         messages : VecDeque::new(),
-                                         stime : 0,
-                                         rtime : 0,
-                                         ctime : timestamp,
-                                         lspid : 0,
-                                         lrpid : 0 });
+    registry.by_id
+            .insert(id, MessageQueue { key,
+                                       uid,
+                                       gid,
+                                       cuid : uid,
+                                       cgid : gid,
+                                       mode : (flags & 0o777)
+                                              as u32,
+                                       qbytes : MSGMNB,
+                                       bytes : 0,
+                                       messages:
+                                           VecDeque::new(),
+                                       stime : 0,
+                                       rtime : 0,
+                                       ctime : timestamp,
+                                       lspid : 0,
+                                       lrpid : 0 });
     if key != IPC_PRIVATE {
-        registry.by_key.insert(key, id);
+        registry.by_key
+                .insert(key, id);
     }
     Ok(id)
 }
@@ -235,9 +292,11 @@ pub(crate) fn sys_msgsnd(args : SyscallArgs) -> UserRet {
     let size = args.arg(2);
     let flags = args.arg(3);
     if flags & !IPC_NOWAIT != 0 || msgp == 0 || size > MSGMAX {
-        return UserRet::from_error(if size > MSGMAX { ErrNo::EINVAL } else {
-            ErrNo::EINVAL
-        });
+        return UserRet::from_error(if size > MSGMAX {
+                                       ErrNo::EINVAL
+                                   } else {
+                                       ErrNo::EINVAL
+                                   });
     }
     let kind = match copy_from_user_struct::<i64>(msgp) {
         Ok(kind) if kind > 0 => kind,
@@ -266,8 +325,14 @@ pub(crate) fn sys_msgsnd(args : SyscallArgs) -> UserRet {
         let timestamp = now_seconds();
         let attempt = {
             let mut registry = MESSAGE_REGISTRY.lock();
-            let Some(queue) = registry.by_id.get(&id) else {
-                return UserRet::from_error(if observed { ErrNo::EIDRM } else { ErrNo::EINVAL });
+            let Some(queue) = registry.by_id
+                                      .get(&id)
+            else {
+                return UserRet::from_error(if observed {
+                                               ErrNo::EIDRM
+                                           } else {
+                                               ErrNo::EINVAL
+                                           });
             };
             observed = true;
             if !has_access(queue, true, uid, gid) {
@@ -276,19 +341,25 @@ pub(crate) fn sys_msgsnd(args : SyscallArgs) -> UserRet {
             if size > queue.qbytes {
                 return UserRet::from_error(ErrNo::EINVAL);
             }
-            if queue.bytes.saturating_add(size) > queue.qbytes {
+            if queue.bytes
+                    .saturating_add(size) >
+               queue.qbytes
+            {
                 None
             } else {
                 let sequence = registry.alloc_sequence();
-                let queue = registry.by_id.get_mut(&id).expect("queue checked above");
+                let queue = registry.by_id
+                                    .get_mut(&id)
+                                    .expect("queue checked above");
                 queue.bytes += size;
                 queue.stime = timestamp;
                 queue.lspid = sender_pid;
-                queue.messages.push_back(Message { sequence,
-                                                   kind,
-                                                   data : data.take()
-                                                              .expect("message payload moved once"),
-                                                   reserved_by : None });
+                queue.messages
+                     .push_back(Message { sequence,
+                                          kind,
+                                          data : data.take()
+                                                     .expect("message payload moved once"),
+                                          reserved_by : None });
                 Some(())
             }
         };
@@ -308,7 +379,11 @@ fn message_matches(kind : i64, requested : i64, flags : usize) -> bool {
     if requested == 0 {
         true
     } else if requested > 0 {
-        if flags & MSG_EXCEPT != 0 { kind != requested } else { kind == requested }
+        if flags & MSG_EXCEPT != 0 {
+            kind != requested
+        } else {
+            kind == requested
+        }
     } else {
         kind <= requested.saturating_neg()
     }
@@ -316,16 +391,24 @@ fn message_matches(kind : i64, requested : i64, flags : usize) -> bool {
 
 fn select_message(queue : &MessageQueue, requested : i64, flags : usize) -> Option<usize> {
     if requested < 0 {
-        queue.messages.iter()
+        queue.messages
+             .iter()
              .enumerate()
-             .filter(|(_, message)| message.reserved_by.is_none() &&
-                                      message_matches(message.kind, requested, flags))
+             .filter(|(_, message)| {
+                 message.reserved_by
+                        .is_none() &&
+                 message_matches(message.kind, requested, flags)
+             })
              .min_by_key(|(_, message)| message.kind)
              .map(|(index, _)| index)
     } else {
-        queue.messages.iter()
-             .position(|message| message.reserved_by.is_none() &&
-                                  message_matches(message.kind, requested, flags))
+        queue.messages
+             .iter()
+             .position(|message| {
+                 message.reserved_by
+                        .is_none() &&
+                 message_matches(message.kind, requested, flags)
+             })
     }
 }
 
@@ -336,7 +419,9 @@ pub(crate) fn sys_msgrcv(args : SyscallArgs) -> UserRet {
     let requested = args.arg(3) as i64;
     let flags = args.arg(4);
     let known = IPC_NOWAIT | MSG_NOERROR | MSG_EXCEPT | MSG_COPY;
-    if msgp == 0 || capacity > SYSCALL_IO_MAX || flags & !known != 0 ||
+    if msgp == 0 ||
+       capacity > SYSCALL_IO_MAX ||
+       flags & !known != 0 ||
        flags & MSG_COPY != 0 ||
        (flags & MSG_EXCEPT != 0 && requested <= 0)
     {
@@ -352,8 +437,14 @@ pub(crate) fn sys_msgrcv(args : SyscallArgs) -> UserRet {
     loop {
         let reserved = {
             let mut registry = MESSAGE_REGISTRY.lock();
-            let Some(queue) = registry.by_id.get_mut(&id) else {
-                return UserRet::from_error(if observed { ErrNo::EIDRM } else { ErrNo::EINVAL });
+            let Some(queue) = registry.by_id
+                                      .get_mut(&id)
+            else {
+                return UserRet::from_error(if observed {
+                                               ErrNo::EIDRM
+                                           } else {
+                                               ErrNo::EINVAL
+                                           });
             };
             observed = true;
             if !has_access(queue, false, uid, gid) {
@@ -376,18 +467,24 @@ pub(crate) fn sys_msgrcv(args : SyscallArgs) -> UserRet {
             message.reserved_by = Some(receiver);
             (message.sequence,
              message.kind,
-             message.data[..message.data.len().min(capacity)].to_vec())
+             message.data[..message.data
+                                   .len()
+                                   .min(capacity)]
+                                                  .to_vec())
         };
 
         let total = core::mem::size_of::<i64>() + reserved.2.len();
-        let mut output = match try_kbuf(total, SYSCALL_IO_MAX + core::mem::size_of::<i64>()) {
+        let mut output = match try_kbuf(total,
+                                        SYSCALL_IO_MAX + core::mem::size_of::<i64>())
+        {
             Ok(output) => output,
             Err(error) => {
                 unreserve_message(id, reserved.0, receiver);
                 return UserRet::from_error(error);
             }
         };
-        output[..8].copy_from_slice(&reserved.1.to_ne_bytes());
+        output[..8].copy_from_slice(&reserved.1
+                                             .to_ne_bytes());
         output[8..].copy_from_slice(&reserved.2);
         if copy_to_user(msgp, &output).ok() != Some(output.len()) {
             unreserve_message(id, reserved.0, receiver);
@@ -397,17 +494,25 @@ pub(crate) fn sys_msgrcv(args : SyscallArgs) -> UserRet {
         let timestamp = now_seconds();
         let removed = {
             let mut registry = MESSAGE_REGISTRY.lock();
-            let Some(queue) = registry.by_id.get_mut(&id) else {
-                return UserRet::from_error(ErrNo::EIDRM);
-            };
-            let Some(index) = queue.messages.iter()
-                                   .position(|message| message.sequence == reserved.0 &&
-                                                      message.reserved_by == Some(receiver))
+            let Some(queue) = registry.by_id
+                                      .get_mut(&id)
             else {
                 return UserRet::from_error(ErrNo::EIDRM);
             };
-            let message = queue.messages.remove(index).expect("selected message exists");
-            queue.bytes = queue.bytes.saturating_sub(message.data.len());
+            let Some(index) = queue.messages
+                                   .iter()
+                                   .position(|message| {
+                                       message.sequence == reserved.0 &&
+                                       message.reserved_by == Some(receiver)
+                                   })
+            else {
+                return UserRet::from_error(ErrNo::EIDRM);
+            };
+            let message = queue.messages
+                               .remove(index)
+                               .expect("selected message exists");
+            queue.bytes = queue.bytes
+                               .saturating_sub(message.data.len());
             queue.rtime = timestamp;
             queue.lrpid = receiver_pid;
             reserved.2.len()
@@ -420,11 +525,11 @@ fn unreserve_message(id : i32, sequence : u64, receiver : usize) {
     if let Some(message) = MESSAGE_REGISTRY.lock()
                                            .by_id
                                            .get_mut(&id)
-                                           .and_then(|queue| queue.messages.iter_mut()
-                                                                          .find(|message| {
-                                                                              message.sequence ==
-                                                                              sequence
-                                                                          }))
+                                           .and_then(|queue| {
+                                               queue.messages
+                                                    .iter_mut()
+                                                    .find(|message| message.sequence == sequence)
+                                           })
     {
         if message.reserved_by == Some(receiver) {
             message.reserved_by = None;
@@ -438,37 +543,79 @@ pub(crate) fn sys_msgctl(args : SyscallArgs) -> UserRet {
     let pointer = args.arg(2);
     let (uid, gid) = identity();
     let result = match command {
+        IPC_INFO | MSG_INFO => {
+            // stress-ng 等用 IPC_INFO 探测系统消息队列限制。
+            if pointer == 0 {
+                return UserRet::from_error(ErrNo::EFAULT);
+            }
+            let registry = MESSAGE_REGISTRY.lock();
+            let queue_count = registry.by_id.len().min(i32::MAX as usize) as i32;
+            let message_count = registry.by_id
+                                        .values()
+                                        .map(|queue| queue.messages.len())
+                                        .sum::<usize>()
+                                        .min(i32::MAX as usize) as i32;
+            let message_bytes = registry.by_id
+                                        .values()
+                                        .map(|queue| queue.bytes)
+                                        .sum::<usize>()
+                                        .min(i32::MAX as usize) as i32;
+            let max_id = registry.by_id
+                                 .keys()
+                                 .next_back()
+                                 .copied()
+                                 .unwrap_or(0);
+            let info = Msginfo { msgpool : if command == MSG_INFO { queue_count } else { 0 },
+                                 msgmap : if command == MSG_INFO { message_count } else { 0 },
+                                 msgmax : MSGMAX as i32,
+                                 msgmnb : MSGMNB as i32,
+                                 msgmni : 32000,
+                                 msgssz : 8,
+                                 msgtql : if command == MSG_INFO { message_bytes } else { 16384 },
+                                 msgseg : u16::MAX };
+            drop(registry);
+            crate::user_copy::copy_to_user_struct(pointer, &info)
+                .map(|_| max_id.max(0) as usize)
+        }
         IPC_RMID => {
             let mut registry = MESSAGE_REGISTRY.lock();
-            let Some(queue) = registry.by_id.get(&id) else {
+            let Some(queue) = registry.by_id
+                                      .get(&id)
+            else {
                 return UserRet::from_error(ErrNo::EINVAL);
             };
             if uid != 0 && uid != queue.uid && uid != queue.cuid {
                 return UserRet::from_error(ErrNo::EPERM);
             }
-            let queue = registry.by_id.remove(&id).expect("queue checked above");
+            let queue = registry.by_id
+                                .remove(&id)
+                                .expect("queue checked above");
             if queue.key != IPC_PRIVATE {
-                registry.by_key.remove(&queue.key);
+                registry.by_key
+                        .remove(&queue.key);
             }
             Ok(0)
         }
-        IPC_STAT => {
+        IPC_STAT | MSG_STAT | MSG_STAT_ANY => {
             if pointer == 0 {
                 return UserRet::from_error(ErrNo::EFAULT);
             }
             let snapshot = {
                 let registry = MESSAGE_REGISTRY.lock();
-                let queue = registry.by_id.get(&id).ok_or(ErrNo::EINVAL);
+                let queue = registry.by_id
+                                    .get(&id)
+                                    .ok_or(ErrNo::EINVAL);
                 queue.and_then(|queue| {
-                    if !has_access(queue, false, uid, gid) {
-                        return Err(ErrNo::EACCES);
-                    }
-                    Ok(queue_snapshot(queue))
-                })
+                         if command != MSG_STAT_ANY && !has_access(queue, false, uid, gid) {
+                             return Err(ErrNo::EACCES);
+                         }
+                         Ok(queue_snapshot(queue))
+                     })
             };
             snapshot.and_then(|snapshot| {
-                crate::user_copy::copy_to_user_struct(pointer, &snapshot).map(|_| 0)
-            })
+                        crate::user_copy::copy_to_user_struct(pointer, &snapshot)
+                            .map(|_| if command == IPC_STAT { 0 } else { id.max(0) as usize })
+                    })
         }
         IPC_SET => {
             if pointer == 0 {
@@ -480,14 +627,17 @@ pub(crate) fn sys_msgctl(args : SyscallArgs) -> UserRet {
             };
             let timestamp = now_seconds();
             let mut registry = MESSAGE_REGISTRY.lock();
-            let queue = match registry.by_id.get_mut(&id) {
+            let queue = match registry.by_id
+                                      .get_mut(&id)
+            {
                 Some(queue) => queue,
                 None => return UserRet::from_error(ErrNo::EINVAL),
             };
             if uid != 0 && uid != queue.uid && uid != queue.cuid {
                 return UserRet::from_error(ErrNo::EPERM);
             }
-            if update.qbytes == 0 || update.qbytes > usize::MAX as u64 ||
+            if update.qbytes == 0 ||
+               update.qbytes > usize::MAX as u64 ||
                (update.qbytes as usize > MSGMNB && uid != 0)
             {
                 return UserRet::from_error(ErrNo::EPERM);
@@ -509,12 +659,12 @@ pub(crate) fn sys_msgctl(args : SyscallArgs) -> UserRet {
 
 fn queue_snapshot(queue : &MessageQueue) -> Msqid64Ds {
     Msqid64Ds { perm : Ipc64Perm { key : queue.key,
-                                  uid : queue.uid,
-                                  gid : queue.gid,
-                                  cuid : queue.cuid,
-                                  cgid : queue.cgid,
-                                  mode : queue.mode,
-                                  ..Ipc64Perm::default() },
+                                   uid : queue.uid,
+                                   gid : queue.gid,
+                                   cuid : queue.cuid,
+                                   cgid : queue.cgid,
+                                   mode : queue.mode,
+                                   ..Ipc64Perm::default() },
                 stime : queue.stime,
                 rtime : queue.rtime,
                 ctime : queue.ctime,

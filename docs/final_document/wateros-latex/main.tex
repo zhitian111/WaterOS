@@ -1,0 +1,27 @@
+% WaterOS决赛设计文档入口。
+% 内部结论与证据映射保存在 data/evidence.tsv，不进入提交 PDF。
+
+\documentclass[12pt,openany,oneside,AutoFakeBold=true]{ctexbook}
+
+\input{setup/document}
+
+\begin{document}
+
+\frontmatter
+\input{frontmatter/cover}
+
+\clearpage
+\pdfbookmark[0]{目录}{toc}
+\tableofcontents
+
+\mainmatter
+\ctexset{chapter/pagestyle=fancy}
+\defaultfont
+\sloppy\raggedbottom
+\input{chapters/01-evolution}
+\input{chapters/02-architecture}
+\input{chapters/03-final-design}
+\input{chapters/04-workloads}
+\input{chapters/07-conclusion}
+
+\end{document}

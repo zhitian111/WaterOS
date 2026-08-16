@@ -616,26 +616,49 @@ make image ARCH=rv PACKAGE=waterfm JOBS=4
 对象 SHA-1。1.21.11 是兼容 Java 21 的最后一个正式版本；Minecraft 26.1 起改用 Java 25，
 不能用于验收当前 OpenJDK 21。该 package 依赖 `openjdk21`，不会进入默认 `PACKAGE=all`。
 官方说明下载服务端软件即
-表示同意 Minecraft EULA 与隐私政策，因此首次联网构建必须显式确认：
+表示同意 Minecraft EULA 与隐私政策，因此首次联网构建必须显式确认。以下是从构建、
+安全验收到正式运行的完整流程：
 
 ```bash
-cd user
+# 1. 首次联网准备工具链并构建专用镜像
+cd /path/to/WaterOS/user
+make setup ARCH=rv
 MINECRAFT_EULA_DOWNLOAD_ACCEPTED=true \
   make image ARCH=rv PACKAGE=minecraft IMAGE_SIZE_MB=1024 \
   OUTPUT=build/images/wateros-rv-minecraft.ext4
+
+# 2. 以 snapshot 模式进入 WaterOS；本轮操作不会写回基础镜像
+cd ../os
+make shell ARCH=rv PROFILE=pre SMP=8 SNAPSHOT=1 \
+  SDCARD=../user/build/images/wateros-rv-minecraft.ext4
+```
+
+进入 WaterOS shell 后顺序执行：
+
+```sh
+# 3. 镜像内验收
+wos-minecraft-preflight          # 不接受 EULA，也不创建正式世界
+minecraft-server --accept-eula   # 阅读官方 EULA 后显式接受
+minecraft-server --check
+wos-minecraft-vm-info
+wos-minecraft-smoke              # 隔离的 flat 世界：启动、Done、stop、保存
+
+# 4. 本次 snapshot 会话内正式运行（退出 QEMU 后世界不会写回镜像）
+minecraft-server
 ```
 
 下载文件缓存于 `user/build/downloads/minecraft-server/`，此后不设置该变量也能离线重建。
-构建确认不等于运行时确认；镜像不会预置 `eula=true`。进入 WaterOS 后先阅读官方 EULA，
-可以先运行不接受 EULA、也不创建世界的 Java 21 预检；之后再显式启用严格验收：
+构建确认不等于运行时确认；镜像不会预置 `eula=true`。上面的 `SNAPSHOT=1` 适合无损验收，
+但退出 QEMU 后会丢弃 EULA、配置和世界。需要持久保存正式世界时，退出验收会话后使用：
 
-```sh
-wos-minecraft-preflight
-minecraft-server --accept-eula
-minecraft-server --check
-wos-minecraft-vm-info
-wos-minecraft-smoke
+```bash
+cd /path/to/WaterOS/os
+make shell ARCH=rv PROFILE=pre SMP=8 WRITE_DISK=1 \
+  SDCARD=../user/build/images/wateros-rv-minecraft.ext4
 ```
+
+然后在新的 WaterOS shell 中重新执行 `minecraft-server --accept-eula` 和 `minecraft-server`。
+`WRITE_DISK=1` 会直接修改基础镜像，运行前应保留备份，并使用 `stop` 正常关服。
 
 这些验收命令同时提供 `/usr/bin` 入口和 `/opt/wateros/bin` 的自动运行路径。旧镜像若尚未
 包含 `/usr/bin` 链接，可直接运行 `/opt/wateros/bin/wos-minecraft-smoke`。
@@ -645,10 +668,16 @@ wos-minecraft-smoke
 flat 测试世界，等待服务端输出 `Done`，通过
 控制台执行 `stop`，并检查正常退出、`level.dat` 与 region 目录。它同时覆盖真实 JAR
 加载、较大堆、GC、后台线程、环回 TCP 监听、文件锁、同步写入、世界保存和
-关服路径；成功时输出 `WATEROS_MINECRAFT_SERVER_OK`。正式数据默认位于
+关服路径；成功时输出 `WATEROS_MINECRAFT_SERVER_OK`。`Done` 只统计服务端世界准备阶段，
+不包含之前的 JAR 解包和数据加载；QEMU TCG 下整条 smoke 首次运行仍可能持续数分钟，
+preflight 和 smoke 脚本都会每 30 秒输出一次当前进度。正式数据默认位于
 `/var/lib/minecraft`，可通过 `MINECRAFT_DATA_DIR` 和 `MINECRAFT_JAVA_ARGS` 覆盖。
 `wos-minecraft-vm-info` 会列出可能注入 JVM 参数的环境变量，并确认 HotSpot 的
 `SelfDestructTimer` 初始值为 0；它用于区分启动参数和运行期破坏导致的 JVM 主动退出。
+首次直接运行 `minecraft-server` 且数据目录尚无 `server.properties` 时，启动器会写入
+适合 QEMU TCG 的快速首启配置：保留普通地形，关闭结构生成，并把 view/simulation
+distance 设为 2。已有配置永远不会被覆盖。RISC-V 默认向 Java 暴露 4 个处理器；仍保留
+Serial GC 与 C1 限制以避开尚未解决的 C2 崩溃。
 
 完整服务端初测曾在并发解包阶段打印 `VM self-destructed`。诊断确认 HotSpot 的该选项启动
 值为默认的 0，实际缺口是 RISC-V trap 帧没有保存浮点上下文：时钟抢占和线程切换会让

@@ -5,14 +5,20 @@ JAVA=/usr/lib/jvm/java-21-openjdk/bin/java
 SERVER_JAR=/opt/minecraft/server.jar
 DATA_DIR=${MINECRAFT_DATA_DIR:-/var/lib/minecraft}
 EULA_FILE=$DATA_DIR/eula.txt
-DEFAULT_JAVA_ARGS="-XX:+UseSerialGC -XX:ActiveProcessorCount=2 -XX:-UseCompressedOops -XX:-UseCompressedClassPointers -Xms128m -Xmx768m"
+PROPERTIES_FILE=$DATA_DIR/server.properties
+ACTIVE_PROCESSORS=2
 case "$(uname -m)" in
     riscv64|riscv*)
         # Complex C2 output still crashes on WaterOS RV. C1 is stable after
-        # synchronous SIGILL/SIGSEGV siginfo was made Linux-compatible.
-        DEFAULT_JAVA_ARGS="-XX:TieredStopAtLevel=1 $DEFAULT_JAVA_ARGS"
+        # synchronous SIGILL/SIGSEGV siginfo was made Linux-compatible. Four
+        # Java-visible CPUs improve chunk generation while staying within the
+        # configuration used by the strict four-core JVM acceptance run.
+        ACTIVE_PROCESSORS=4
+        TIERED_ARGS="-XX:TieredStopAtLevel=1"
         ;;
+    *) TIERED_ARGS= ;;
 esac
+DEFAULT_JAVA_ARGS="$TIERED_ARGS -XX:+UseSerialGC -XX:ActiveProcessorCount=$ACTIVE_PROCESSORS -XX:-UseCompressedOops -XX:-UseCompressedClassPointers -Xms128m -Xmx768m"
 JAVA_ARGS=${MINECRAFT_JAVA_ARGS:-$DEFAULT_JAVA_ARGS}
 
 usage() {
@@ -57,6 +63,18 @@ if ! grep -qx 'eula=true' "$EULA_FILE" 2>/dev/null; then
 fi
 
 mkdir -p "$DATA_DIR"
+if [ ! -e "$PROPERTIES_FILE" ]; then
+    # QEMU TCG makes Vanilla's first normal-world spawn generation very slow.
+    # Keep normal terrain, but use a small simulation radius and skip expensive
+    # structures for a responsive first boot. Never overwrite operator settings.
+    cat >"$PROPERTIES_FILE" <<'EOF'
+# WaterOS first-boot performance defaults; existing files are never overwritten.
+generate-structures=false
+simulation-distance=2
+view-distance=2
+EOF
+    echo "Created WaterOS fast-start properties in $PROPERTIES_FILE"
+fi
 cd "$DATA_DIR"
 # JAVA_ARGS is intentionally word-split so operators can override individual VM flags.
 # shellcheck disable=SC2086

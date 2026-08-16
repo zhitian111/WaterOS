@@ -118,7 +118,8 @@ impl PageCacheIo for FsPageIo {
             FsRoute::AuxRw { fs, rel, .. } => fs.lock()
                                                 .write_range(rel.as_str(), offset, data)
                                                 .map_err(map_fs_err),
-            FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } | FsRoute::PseudoSecurity { .. } => {
+            FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } | FsRoute::PseudoSys { .. } |
+            FsRoute::PseudoSecurity { .. } => {
                 Err(VfsError::ReadOnlyFs)
             }
         }
@@ -758,6 +759,7 @@ impl VfsIoHandle for PagedFileHandle {
                     }
                     FsRoute::AuxRo { .. } |
                     FsRoute::PseudoProc { .. } |
+                    FsRoute::PseudoSys { .. } |
                     FsRoute::PseudoSecurity { .. } => return Err(VfsError::ReadOnlyFs),
                 }
             }

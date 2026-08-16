@@ -43,7 +43,14 @@ impl MultiClassScheduler {
                     self.activate_ready_task(current_task_id,
                                              ReadyPlacement::Prefer(cpu_id));
                 } else {
-                    self.cpu_states[cpu_id.raw()].set_deferred_ready(current_task_id);
+                    // 待迁移任务必须先摘除本核就绪队列：若它仍残留在队列里
+                    // （如同核唤醒被 activate 入队），随后 pick_next_runnable
+                    // 会再次选中它，令 schedule 判定 next == current 而不切换，
+                    // deferred 迁移永久悬挂，下次再进本分支触发 set_deferred_ready
+                    // 的 assert（"CPU already has a deferred task migration"）。
+                    let cpu = &mut self.cpu_states[cpu_id.raw()];
+                    cpu.dequeue(current_task_id);
+                    cpu.set_deferred_ready(current_task_id);
                 }
             }
             QueueTarget::Blocked(reason) => {

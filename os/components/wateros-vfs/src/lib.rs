@@ -21,6 +21,25 @@ extern crate task;
 pub use api_v0 as api;
 pub use api_v0::*;
 
+/// `/proc/<pid>/ns/<type>` 是 Linux 的 magic link：`readlink` 返回
+/// `type:[inode]`，但路径解析不能把该文本当作普通文件名继续跟随。
+fn is_proc_namespace_magic_link(path : &str, target : &str) -> bool {
+    let mut components = path.rsplit('/').filter(|part| !part.is_empty());
+    let Some(namespace) = components.next() else { return false; };
+    if components.next() != Some("ns") || components.next().is_none() ||
+       components.next() != Some("proc")
+    {
+        return false;
+    }
+    let Some(inode) = target.strip_prefix(namespace)
+                            .and_then(|rest| rest.strip_prefix(":["))
+                            .and_then(|rest| rest.strip_suffix(']'))
+    else {
+        return false;
+    };
+    !inode.is_empty() && inode.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 /// per-task 文件描述符会话（`impl-fd-session` feature）。
 #[cfg(feature = "impl-fd-session")]
 pub mod fd;
@@ -103,7 +122,11 @@ pub fn resolve_symlink_absolute(
             Ok(target) => {
                 let target = alloc::string::String::from_utf8(target)
                     .map_err(|_| VfsError::NotUtf8)?;
-                Ok(Some(target))
+                if is_proc_namespace_magic_link(candidate, target.as_str()) {
+                    Ok(None)
+                } else {
+                    Ok(Some(target))
+                }
             }
             Err(VfsError::NotAFile) => Ok(None),
             Err(error) => Err(error),
@@ -150,11 +173,15 @@ pub fn resolve_symlink_in_root_absolute(
         if !is_final || final_symlink == FinalSymlink::Follow {
             match impl_fs_bridge::read_symlink_path(candidate.as_str()) {
                 Ok(target) => {
+                    let target = String::from_utf8(target).map_err(|_| VfsError::NotUtf8)?;
+                    if is_proc_namespace_magic_link(candidate.as_str(), target.as_str()) {
+                        resolved = candidate;
+                        continue;
+                    }
                     if followed == MAX_SYMLINKS {
                         return Err(VfsError::TooManySymlinks);
                     }
                     followed += 1;
-                    let target = String::from_utf8(target).map_err(|_| VfsError::NotUtf8)?;
                     let mut combined = cwd::resolve_with_virtual_root(root,
                                                                       resolved.as_str(),
                                                                       target.as_str())?;
@@ -357,11 +384,22 @@ pub fn ensure_proc_mount_point() -> VfsResult<()> {
     impl_fs_bridge::ensure_proc_mount_point()
 }
 
+/// 在根卷创建 `/sys` 挂载点（若不存在）。
+#[cfg(all(feature = "bridge-fs-api", feature = "impl-fd-session"))]
+pub fn ensure_sys_mount_point() -> VfsResult<()> {
+    impl_fs_bridge::ensure_sys_mount_point()
+}
+
 /// 挂载 procfs 到 `mount_point`（默认 `/proc`）。
 #[cfg(all(feature = "bridge-fs-api", feature = "impl-fd-session"))]
 pub fn mount_procfs_at(mount_point: &str) -> VfsResult<()> {
     fs::procfs::active_impl::register_task_argv_lookup(|tid| cwd::lookup_argv_for_task(tid));
+    fs::procfs::active_impl::register_task_env_lookup(|tid| cwd::lookup_env_for_task(tid));
+    fs::procfs::active_impl::register_task_auxv_lookup(|tid| cwd::lookup_auxv_for_task(tid));
+    fs::procfs::active_impl::register_task_io_lookup(|tid| cwd::lookup_io_for_task(tid));
     fs::procfs::active_impl::register_task_exe_lookup(|tid| cwd::lookup_exe_for_task(tid));
+    fs::procfs::active_impl::register_task_cwd_lookup(|tid| cwd::lookup_cwd_for_task(tid));
+    fs::procfs::active_impl::register_task_root_lookup(|tid| cwd::lookup_root_for_task(tid));
     fs::procfs::active_impl::register_task_fd_lookup(|tid| fd::open_fds_for_task(tid));
     fs::procfs::active_impl::register_task_fd_target_lookup(|tid, raw_fd| {
         fd::fd_target_for_task(tid, raw_fd)
@@ -376,7 +414,12 @@ pub fn mount_procfs_at(mount_point: &str) -> VfsResult<()> {
 #[cfg(all(feature = "bridge-fs-api", feature = "impl-fd-session"))]
 pub fn mount_bootstrap_procfs_at(mount_point: &str) -> VfsResult<()> {
     fs::procfs::active_impl::register_task_argv_lookup(|tid| cwd::lookup_argv_for_task(tid));
+    fs::procfs::active_impl::register_task_env_lookup(|tid| cwd::lookup_env_for_task(tid));
+    fs::procfs::active_impl::register_task_auxv_lookup(|tid| cwd::lookup_auxv_for_task(tid));
+    fs::procfs::active_impl::register_task_io_lookup(|tid| cwd::lookup_io_for_task(tid));
     fs::procfs::active_impl::register_task_exe_lookup(|tid| cwd::lookup_exe_for_task(tid));
+    fs::procfs::active_impl::register_task_cwd_lookup(|tid| cwd::lookup_cwd_for_task(tid));
+    fs::procfs::active_impl::register_task_root_lookup(|tid| cwd::lookup_root_for_task(tid));
     fs::procfs::active_impl::register_task_fd_lookup(|tid| fd::open_fds_for_task(tid));
     fs::procfs::active_impl::register_task_fd_target_lookup(|tid, raw_fd| {
         fd::fd_target_for_task(tid, raw_fd)
@@ -387,10 +430,28 @@ pub fn mount_bootstrap_procfs_at(mount_point: &str) -> VfsResult<()> {
     impl_fs_bridge::mount_bootstrap_proc_at(mount_point)
 }
 
+/// 挂载 sysfs 到当前任务的挂载命名空间。
+#[cfg(all(feature = "bridge-fs-api", feature = "impl-fd-session"))]
+pub fn mount_sysfs_at(mount_point: &str) -> VfsResult<()> {
+    impl_fs_bridge::mount_sysfs_at(mount_point)
+}
+
+/// 在 bootstrap namespace 中挂载 sysfs，供之后创建的任务继承。
+#[cfg(all(feature = "bridge-fs-api", feature = "impl-fd-session"))]
+pub fn mount_bootstrap_sysfs_at(mount_point: &str) -> VfsResult<()> {
+    impl_fs_bridge::mount_bootstrap_sys_at(mount_point)
+}
+
 /// procfs 是否已挂在 `mount_point`。
 #[cfg(feature = "bridge-fs-api")]
 pub fn is_proc_mounted_at(mount_point: &str) -> bool {
     impl_fs_bridge::is_proc_mounted_at(mount_point)
+}
+
+/// 查询路径是否为当前挂载命名空间中的挂载点。
+#[cfg(feature = "bridge-fs-api")]
+pub fn is_mount_point(mount_point: &str) -> bool {
+    impl_fs_bridge::is_mount_point(mount_point)
 }
 
 /// 卸载 `mount_point`；`detach` 为 true 时接受 lazy umount（`MNT_DETACH`）。

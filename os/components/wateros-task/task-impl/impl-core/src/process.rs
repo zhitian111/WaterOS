@@ -89,6 +89,9 @@ pub struct ProcessControlBlock {
     child_subreaper : bool,
     /// POSIX capability 三集合（capset 维护；fork 继承）。
     caps : ProcessCaps,
+    /// Linux PR_SET_KEEPCAPS：setuid 从 0 降到非 0 时保留 permitted。
+    /// exec 后失效；fork 继承。
+    keep_caps : bool,
     //SIGSTOP/SIGTSTP/SIGTTIN/SIGTTOU 等待通知标记。
     stop_wait_pending : bool,
     //SIGCONT 等待通知标记。
@@ -295,6 +298,7 @@ impl ProcessRegistry {
                                             dumpable : true,
                                             child_subreaper : false,
                                             caps : ProcessCaps::ROOT,
+                                            keep_caps : false,
                                             stop_wait_pending : false,
                                             continued_wait_pending : false,
                                             umask : 0o022 };
@@ -345,6 +349,7 @@ impl ProcessRegistry {
         let parent_dumpable = parent.dumpable;
         let parent_umask = parent.umask;
         let parent_caps = parent.caps;
+        let parent_keep_caps = parent.keep_caps;
         let parent_comm = parent.tasks
                                 .get(&source_task_id)
                                 .ok_or(ProcessError::TaskNotFound)?
@@ -359,6 +364,7 @@ impl ProcessRegistry {
             process.dumpable = parent_dumpable;
             process.umask = parent_umask;
             process.caps = parent_caps;
+            process.keep_caps = parent_keep_caps;
             process.parent_death_source = Some(ParentDeathSource::Task(source_task_id));
             if let Some(task) = process.tasks
                                        .get_mut(&child_task_id)
@@ -1069,6 +1075,19 @@ impl ProcessRegistry {
         let process = self.process_mut(pid)
                           .ok_or(ProcessError::ProcessNotFound)?;
         process.caps = caps;
+        Ok(())
+    }
+
+    pub fn process_keep_caps(&self, pid : ProcessId) -> Option<bool> {
+        self.processes
+            .get(&pid)
+            .map(|process| process.keep_caps)
+    }
+
+    pub fn set_process_keep_caps(&mut self, pid : ProcessId, enabled : bool) -> ProcessResult<()> {
+        let process = self.process_mut(pid)
+                          .ok_or(ProcessError::ProcessNotFound)?;
+        process.keep_caps = enabled;
         Ok(())
     }
 

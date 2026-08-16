@@ -1080,6 +1080,7 @@ dependencies = [
  "wateros-driver-block-api-v0",
  "wateros-fs-api-v0",
  "wateros-fs-procfs-api-v0",
+ "wateros-mm-api-v0",
  "wateros-mm-frame-alloctor",
  "wateros-network",
  "wateros-runtime-logging",

@@ -18,6 +18,7 @@ const CLONE_PIDFD : usize = 0x0000_1000;
 const CLONE_VM_RAW : usize = 0x0000_0100;
 const CLONE_FS_RAW : usize = 0x0000_0200;
 const CLONE_FILES_RAW : usize = 0x0000_0400;
+const CLONE_SIGHAND_RAW : usize = 0x0000_0800;
 const CLONE_PARENT_RAW : usize = 0x0000_8000;
 const CLONE_VFORK : usize = 0x0000_4000;
 const CLONE_PARENT_SETTID_RAW : usize = 0x0010_0000;
@@ -36,6 +37,7 @@ const CLONE_FORK_COMPAT_MASK : usize = CLONE_CSIGNAL_MASK |
                                        CLONE_VM_RAW |
                                        CLONE_FS_RAW |
                                        CLONE_FILES_RAW |
+                                       CLONE_SIGHAND_RAW |
                                        CLONE_PARENT_RAW |
                                        CLONE_NEWNS_RAW |
                                        CLONE_PARENT_SETTID_RAW |
@@ -397,7 +399,8 @@ fn do_clone_request(request : CloneRequest) -> UserRet {
     // 返回给父进程的 pidfd；同时仍在 start_fork_child 之前，失败可完整回滚。
     if let Some(pidfd_ptr) = pidfd {
         let pidfd_fd = match super::pidfd::allocate_pidfd(task::ProcessId::from_raw(child_pid),
-                                                          false) {
+                                                          false)
+        {
             Ok(fd) => fd,
             Err(error) => {
                 abort_initialized_fork(child_id, child_pid, new_aspace_ptr);
@@ -426,6 +429,7 @@ fn abort_initialized_fork(child_id : task::TaskId, child_pid : usize, aspace : u
     crate::sys::ipc::robust::drop_robust_state(child_id);
     crate::sys::ipc::signal::abort_fork_signal(child_pid, child_id);
     super::wait::drop_task_runtime_resources_with_aspace(child_id, aspace);
+    cred::drop_task_cred(child_id);
     let _ = task::abort_fork_child(child_id);
 }
 
@@ -622,11 +626,10 @@ fn validate_fork_clone_flags(clone_flags : task::CloneFlags) -> Result<(), ErrNo
     }
 
     let unsupported = bits & !CLONE_FORK_COMPAT_MASK;
-    log::warn!("[syscall] clone(nr=220) fork unsupported flags={:#x} (allowed CSIGNAL={:#x}, tid \
-                compat={:#x}, vfork compat={:#x})",
-               unsupported,
-               bits & CLONE_CSIGNAL_MASK,
-               CLONE_PARENT_SETTID_RAW | CLONE_CHILD_CLEARTID_RAW | CLONE_CHILD_SETTID_RAW,
-               CLONE_VM_RAW | CLONE_VFORK | CLONE_CLEAR_SIGHAND_RAW,);
+    // clone/stress-ng 会系统性探测未知 flag；返回 EINVAL/EOPNOTSUPP 才是 ABI，
+    // 不是需要污染 operator 串口的内核异常。需要排查兼容性时再开 trace。
+    log::trace!("[syscall] clone fork unsupported flags={:#x} csig={:#x}",
+                unsupported,
+                bits & CLONE_CSIGNAL_MASK,);
     Err(ErrNo::EINVAL)
 }

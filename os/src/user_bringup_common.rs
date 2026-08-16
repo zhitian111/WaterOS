@@ -36,13 +36,14 @@ pub fn run_one_bringup_command(log_tag : &str, cmd : &BringupCommand) -> Option<
 pub fn create_user_task_from_loaded_elf_with_argv(loaded : &LoadedElf,
                                                   argv : &[&str],
                                                   envp : &[&str])
-                                                  -> Result<task::TaskId, PrepareUserStackError> {
-    let sp = mm::kernel_mm::prepare_elf_user_stack(loaded, argv, envp)?;
+                                                  -> Result<(task::TaskId, Vec<u8>), PrepareUserStackError> {
+    let prepared = mm::kernel_mm::prepare_elf_user_stack(loaded, argv, envp)?;
+    let sp = prepared.sp;
     let (argc, argv_ptr, envp_ptr) = initial_entry_args(sp, argv.len());
     let spec =
         task::user_task_from_loaded_elf(loaded).with_initial_user_sp(sp)
                                                .with_initial_user_args(argc, argv_ptr, envp_ptr);
-    Ok(task::create_user_task(spec))
+    Ok((task::create_user_task(spec), prepared.auxv))
 }
 
 /// 根据 `prepare_elf_user_stack` 返回的栈顶，推算 argc/argv/envp 指针（与
@@ -91,8 +92,8 @@ pub fn run_one_elf_argv_env_exit(log_tag : &str,
                                                 .collect();
     info!("[{log_tag}] spawn path={elf_path} entry_pc={:#x} satp={:#x} argv={final_argv:?}",
           loaded.entry_pc, loaded.satp);
-    let tid = match create_user_task_from_loaded_elf_with_argv(&loaded, &final_argv_refs, envp) {
-        Ok(t) => t,
+    let (tid, auxv) = match create_user_task_from_loaded_elf_with_argv(&loaded, &final_argv_refs, envp) {
+        Ok(created) => created,
         Err(e) => {
             warn!("[{log_tag}] skip spawn path={elf_path}: {e:?}");
             mm::kernel_mm::drop_user_aspace(loaded.user_aspace_ptr);
@@ -104,6 +105,10 @@ pub fn run_one_elf_argv_env_exit(log_tag : &str,
 
     #[cfg(feature = "vfs-bridge")]
     vfs::cwd::on_user_task_spawned_for_elf(tid, executable_path.as_str(), &final_argv_refs);
+    #[cfg(feature = "vfs-bridge")]
+    let _ = vfs::cwd::set_task_env(tid, envp.iter().copied());
+    #[cfg(feature = "vfs-bridge")]
+    let _ = vfs::cwd::set_task_auxv(tid, auxv);
     #[cfg(feature = "vfs-bridge")]
     if envp.iter().any(|entry| *entry == "PWD=/root") {
         if let Err(error) = vfs::cwd::set_task_cwd(tid, "/root") {

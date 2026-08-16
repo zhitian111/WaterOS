@@ -36,7 +36,7 @@ impl DemandPageLoader for WritableFaultTestLoader {
     }
 
     fn load_page(&mut self, _file_offset : usize, dst : &mut [u8]) -> MmResult<()> {
-        dst[0] = 0x5a;
+        dst[0] = 0x5A;
         Ok(())
     }
 
@@ -75,15 +75,16 @@ pub fn test_with_range(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
     let changed = MmapOps::mprotect(&mut aspace,
                                     vpn.start_addr(),
                                     PAGE_SIZE,
-                                    PagePerm::R)
-                      .expect("mprotect should succeed");
-    assert!(changed, "resident permission change must require a flush");
+                                    PagePerm::R).expect("mprotect should succeed");
+    assert!(changed,
+            "resident permission change must require a flush");
     let unchanged = MmapOps::mprotect(&mut aspace,
                                       vpn.start_addr(),
                                       PAGE_SIZE,
-                                      PagePerm::R)
-                        .expect("same-permission mprotect should succeed");
-    assert!(!unchanged, "same resident permission must not require a flush");
+                                      PagePerm::R).expect("same-permission mprotect should \
+                                                           succeed");
+    assert!(!unchanged,
+            "same resident permission must not require a flush");
     let pa2 = aspace.translate_addr(va)
                     .unwrap()
                     .unwrap();
@@ -111,26 +112,28 @@ pub fn test_with_range(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
                                   PagePerm::R | PagePerm::U,
                                   0,
                                   0,
-                                   VmaBacking::File { loader : Box::new(WritableFaultTestLoader) })
+                                  VmaBacking::File { loader : Box::new(WritableFaultTestLoader) })
           .expect("register lazy page");
     let lazy_changed = MmapOps::mprotect(&mut aspace,
                                          lazy_start,
                                          PAGE_SIZE,
-                                         PagePerm::R | PagePerm::W)
-                           .expect("protect lazy page");
-    assert!(!lazy_changed, "lazy VMA-only change must not require a flush");
-    assert!(aspace.leaf_page_perm(lazy_vpn).unwrap().is_none());
+                                         PagePerm::R | PagePerm::W).expect("protect lazy page");
+    assert!(!lazy_changed,
+            "lazy VMA-only change must not require a flush");
+    assert!(aspace.leaf_page_perm(lazy_vpn)
+                  .unwrap()
+                  .is_none());
     let mut allocator = GlobalPhysFrameAllocator;
     assert!(MmapOps::handle_page_fault(&mut aspace,
                                        &mut allocator,
                                        lazy_start,
-                                       PageFaultAccess::Write)
-            .expect("fault protected lazy page"));
-    assert_eq!(aspace.leaf_page_perm(lazy_vpn).unwrap(),
+                                       PageFaultAccess::Write).expect("fault protected lazy page"));
+    assert_eq!(aspace.leaf_page_perm(lazy_vpn)
+                     .unwrap(),
                Some(PagePerm::R | PagePerm::W | PagePerm::U));
     let lazy_ppn = aspace.unmap_page_to_ppn(lazy_vpn)
-                          .expect("unmap lazy test page")
-                          .expect("lazy test page should be resident");
+                         .expect("unmap lazy test page")
+                         .expect("lazy test page should be resident");
     frame_dealloc_result(lazy_ppn).expect("dealloc lazy test frame");
     impl_common::test_readonly_elf_page_cache();
     impl_common::test_readonly_mmap_page_cache();
@@ -168,18 +171,18 @@ pub mod kernel_mm_impl {
     /// 时返回 [`api_v0::error::MmError::InvalidAddress`]。
     // 本方法代码由AI完成
     pub fn fork_user_aspace(parent_aspace_ptr : usize) -> api_v0::error::MmResult<(usize, usize)> {
-        use api_v0::error::MmError;
         use api_v0::address_space::AddressSpaceOps;
+        use api_v0::error::MmError;
 
         if parent_aspace_ptr == 0 {
             return Err(MmError::InvalidAddress);
         }
         let (child, satp) = crate::user_aspace::with_user_aspace_mut_and_flush(parent_aspace_ptr,
-            |parent| {
-                let child = parent.fork_cow()?;
-                let satp = child.satp_value();
-                Ok((child, satp))
-            })?;
+                                                                               |parent| {
+                                                                                   let child = parent.fork_cow()?;
+                                                                                   let satp = child.satp_value();
+                                                                                   Ok((child, satp))
+                                                                               })?;
         Ok((crate::user_aspace::into_handle(child), satp))
     }
 
@@ -188,24 +191,33 @@ pub mod kernel_mm_impl {
                             fault_addr : usize)
                             -> api_v0::error::MmResult<bool> {
         use api_v0::addr::VirtAddr;
+        use api_v0::address_space::AddressSpaceOps;
         use api_v0::error::MmError;
 
         if parent_aspace_ptr == 0 {
             return Err(MmError::InvalidAddress);
         }
-        crate::user_aspace::with_user_aspace_mut_and_page_flush(parent_aspace_ptr,
-            fault_addr,
-            |aspace| {
-                let changed = aspace.handle_cow_fault_no_flush(VirtAddr(fault_addr))?;
-                Ok((changed, changed))
-            })
+        crate::user_aspace::with_user_aspace_mut_and_page_flush(
+                                                                parent_aspace_ptr,
+                                                                fault_addr,
+                                                                |aspace| {
+                                                                    let changed = aspace.handle_cow_fault_no_flush(VirtAddr(fault_addr))?;
+                                                                    // If a sibling CPU already resolved this COW page, the PTE is
+                                                                    // writable but this hart may have trapped on a stale read-only
+                                                                    // TLB entry.  Treat it as handled; the wrapper always performs
+                                                                    // the required local page invalidation.
+                                                                    let stale_writable = !changed &&
+                    aspace.leaf_page_perm(VirtAddr(fault_addr).floor_page())?
+                          .is_some_and(|perm| perm.user() && perm.writable());
+                                                                    Ok((changed || stale_writable,
+                                                                        changed))
+                                                                },
+        )
     }
 
     /// 销毁用户地址空间：递归释放所有用户页帧和页表帧。
     ///
     /// `aspace_ptr` 来自 `LoadedElf::user_aspace_ptr`，调用后指针失效。
     // 本方法代码由AI完成
-    pub fn drop_user_aspace(aspace_ptr : usize) {
-        crate::user_aspace::destroy(aspace_ptr);
-    }
+    pub fn drop_user_aspace(aspace_ptr : usize) { crate::user_aspace::destroy(aspace_ptr); }
 }

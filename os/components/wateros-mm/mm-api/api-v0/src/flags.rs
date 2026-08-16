@@ -16,6 +16,8 @@ impl MapFlags {
     pub const SHARED: Self = Self(1 << 2);
     /// 固定地址映射（若目标已映射则失败；语义子集，与 Linux `MAP_FIXED` 对齐程度见 syscall 层）。
     pub const FIXED: Self = Self(1 << 4);
+    /// 固定地址但禁止替换任何既有映射；用于 `shmat` 未指定 `SHM_REMAP` 的语义。
+    pub const FIXED_NOREPLACE: Self = Self(1 << 5);
 
     /// 无任何标志位。
     #[inline]
@@ -50,4 +52,3 @@ pub fn test() {
     assert!(!f.contains(MapFlags::SHARED));
     log::trace!("[mm-api::flags] test end");
 }
-
