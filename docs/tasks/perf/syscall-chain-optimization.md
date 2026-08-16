@@ -5,7 +5,8 @@
 审计基线：`a6cf2515`（分支 `perf/syscall-chain-opt`）。
 
 实施状态：T1-T5 已完成；T6 已完成可证明不跨越阻塞/偏移线性化边界的 socket 子集，其余
-VFS context 复用按风险约束保留。
+VFS context 复用按风险约束保留。后续审计又补齐了 pollfd 元数据的批量导入，并修正了批量
+iovec 导入的分配错误透传。
 
 本任务只进入不改变 Linux ABI、阻塞/唤醒顺序、文件偏移线性化点和锁顺序的优化。每个子项
 单独实现、单独验证、单独提交，便于回滚。完整 QEMU 验收由主分支合入前另行执行。
@@ -35,12 +36,14 @@ trap_handler
 
 ### T1：缓存 `poll/select` 用户输入
 
-状态：已完成，提交为 `[perf] cache poll and select userspace inputs`。
+状态：已完成，提交为 `[perf] cache poll and select userspace inputs`，并由
+`[perf] batch import pollfd metadata` 补齐 pollfd 元数据整体导入。
 
 实现结果：`poll/ppoll` 在入口导入一次 `PollFd` 数组，等待扫描复用内核副本；
 `select/pselect6` 在入口导入三份 fdset，等待阶段不再重复访问用户地址空间，结果仍按原路径
 写回用户空间。输入数组使用 checked offset 和 `try_reserve_exact`，空指针、长度及错误返回
-保持原有边界。`rv_check` 已通过（`CARGO_NET_OFFLINE=true make rv_check`）。
+保持原有边界。`rv_check` 已通过（`CARGO_NET_OFFLINE=true make rv_check`）。后续提交还保留了
+`PollFd` 数组导入的容量分配错误，不会在 `try_reserve_exact` 失败时继续执行。
 
 现状：
 
@@ -77,11 +80,13 @@ handle 查询；等待路径仍使用 detached handle，不能把共享 fd 槽�
 
 ### T3：路径 C 字符串按块复制
 
-状态：已完成，提交为 `[perf] copy user paths in bounded chunks`。
+状态：已完成，提交为 `[perf] copy user paths in bounded chunks`，并由
+`[test] cover chunked user path boundaries` 增加块边界/NUL/EFAULT 回归覆盖。
 
 实现结果：`copy_user_path_cstr` 以 64 字节块读取，正常路径每块只做一次用户地址空间访问；
 块复制遇到跨页错误时回退到该块的逐字节读取，保留有效前缀中的 NUL、`EFAULT` 和边界语义。
-`rv_check` 已通过（`CARGO_NET_OFFLINE=true make rv_check`）。
+`rv_check` 已通过（`CARGO_NET_OFFLINE=true make rv_check`）；边界 helper 的 host 单测未能
+执行，原因见最终验证。
 
 现状：`copy_user_path_cstr` 每次只复制 1 字节，最长路径最多进行 4096 次 MM copy。
 
@@ -90,7 +95,8 @@ handle 查询；等待路径仍使用 detached handle，不能把共享 fd 槽�
 
 ### T4：批量导入 iovec 元数据
 
-状态：已完成，提交为 `[perf] batch import user iovec metadata`。
+状态：已完成，提交为 `[perf] batch import user iovec metadata`；随后由
+`[fix] preserve batched iovec allocation errors` 修正批量导入路径的分配错误透传。
 
 实现结果：新增 checked 连续结构数组导入助手，`readv/writev/preadv/pwritev` 与
 `sendmsg/recvmsg` 的 iovec 元数据由逐项用户复制改为一次整体复制。`vmsplice` 仍按项读取，
@@ -185,7 +191,8 @@ handle 和 epoll 快照均不是本轮应优先改动的对象。
 
 ## 最终验证
 
-- `CARGO_NET_OFFLINE=true make rv_check`：通过；
-- `CARGO_NET_OFFLINE=true make la_check`：通过；
+- `CARGO_NET_OFFLINE=true make rv_check`（当前 HEAD `5924c8c6`）：通过；
+- `CARGO_NET_OFFLINE=true make la_check`（当前 follow-up 代码）：通过；
+- `CARGO_NET_OFFLINE=true cargo test --manifest-path components/wateros-syscall/syscall-impl/impl-kernel/Cargo.toml ...`：未执行成功；该 crate 直接作为 host package 构建时未选择 `ArchTimeImpl`、`ArchInterruptImpl`、`ArchPagingImpl` 等平台实现 feature，构建在测试运行前失败；
 - `git diff --check a6cf2515..HEAD`：通过；
 - QEMU/workload：按任务边界未执行，由合入 `main` 前统一验收。
