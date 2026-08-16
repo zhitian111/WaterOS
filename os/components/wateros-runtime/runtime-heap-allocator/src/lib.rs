@@ -207,6 +207,17 @@ pub fn activate_slab() -> Result<(), ()> {
     Ok(())
 }
 
+/// 在当前 CPU 上有界推进一个 pending remote-free class。
+///
+/// 由定时器中断调用；普通分配临界区会关闭本 CPU 中断，因此不会与 owner cache 并发。
+#[inline]
+pub fn maintain_slab_remote_frees() {
+    if !HEAP_ALLOCATOR.slab_active() {
+        return;
+    }
+    interrupt_guard::with_allocator_interrupt_guard(|| slab::maintain_on(current_cpu_id()));
+}
+
 /// 返回 boot heap、slab retained page 和全局 frame pool 的独立快照。
 ///
 /// 这是诊断快照：拿到值后 allocator 可立即变化；TLSF backend 的 `used` 还是按 layout

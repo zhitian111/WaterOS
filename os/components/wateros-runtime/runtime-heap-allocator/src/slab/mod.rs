@@ -13,7 +13,6 @@ pub(crate) mod slab_page;
 
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
-use core::sync::atomic::AtomicPtr;
 #[cfg(feature = "impl-slab")]
 use alloc::boxed::Box;
 
@@ -21,7 +20,7 @@ use base::cpu::{CpuId, CpuLocal};
 use base::sync::BootOnceCell;
 use config::task::MAX_CPUS;
 
-use cpu_slab::CpuSlab;
+use cpu_slab::{CpuSlab, RemoteFreeQueues};
 #[cfg(feature = "slab-diagnostics")]
 use diagnostics::{SlabDiagnostics, SlabDiagnosticsSnapshot};
 use page_stats::{SlabPageMemStats, SlabPageStats};
@@ -83,6 +82,12 @@ pub(crate) fn dealloc_on(cpu : CpuId, ptr : *mut u8, layout : Layout) -> bool {
         .map_or(false, |slab| slab.dealloc_on(cpu, ptr, layout))
 }
 
+pub(crate) fn maintain_on(cpu : CpuId) {
+    if let Some(slab) = SLAB.get() {
+        slab.maintain_on(cpu);
+    }
+}
+
 pub(crate) fn page_mem_stats() -> SlabPageMemStats {
     SLAB.get()
         .map_or_else(SlabPageMemStats::default, |slab| slab.page_mem_stats())
@@ -137,20 +142,11 @@ struct CpuLocalSlab(UnsafeCell<CpuSlab>);
 // SAFETY: 每个槽位只允许 owner CPU 在关中断后独占访问，跨 CPU 不读写同一槽位。
 unsafe impl Sync for CpuLocalSlab {}
 
-struct RemoteFreeHead(AtomicPtr<u8>);
-
-// SAFETY: AtomicPtr 队列通过 CAS 同步，允许跨 CPU push/swap。
-unsafe impl Sync for RemoteFreeHead {}
-
-impl RemoteFreeHead {
-    fn new() -> Self { Self(AtomicPtr::new(core::ptr::null_mut())) }
-}
-
 /// 支持固定数量 CPU 的 slab 后端。
 pub(crate) struct SlabAllocator {
     frames : &'static dyn HeapFrameSource,
     cpus : CpuLocal<CpuLocalSlab, MAX_CPUS>,
-    remote_heads : CpuLocal<RemoteFreeHead, MAX_CPUS>,
+    remote_queues : CpuLocal<RemoteFreeQueues, MAX_CPUS>,
     page_stats : CpuLocal<SlabPageStats, MAX_CPUS>,
     #[cfg(feature = "slab-diagnostics")]
     diagnostics : CpuLocal<SlabDiagnostics, MAX_CPUS>,
@@ -163,7 +159,7 @@ impl SlabAllocator {
             cpus : CpuLocal::new(core::array::from_fn(|_| {
                 CpuLocalSlab(UnsafeCell::new(CpuSlab::new()))
             })),
-            remote_heads : CpuLocal::new(core::array::from_fn(|_| RemoteFreeHead::new())),
+            remote_queues : CpuLocal::new(core::array::from_fn(|_| RemoteFreeQueues::new())),
             page_stats : CpuLocal::new(core::array::from_fn(|_| SlabPageStats::new())),
             #[cfg(feature = "slab-diagnostics")]
             diagnostics : CpuLocal::new(core::array::from_fn(|_| SlabDiagnostics::new())),
@@ -175,8 +171,8 @@ impl SlabAllocator {
         let class = SizeClass::from_layout(layout)?;
         let slot = self.cpus
                        .get(cpu)?;
-        let remote_head = self.remote_heads
-                             .get(cpu)?;
+        let remote_queues = self.remote_queues
+                                .get(cpu)?;
         let page_stats = self.page_stats
                              .get(cpu)?;
         #[cfg(feature = "slab-diagnostics")]
@@ -190,7 +186,7 @@ impl SlabAllocator {
         let result = unsafe { state.alloc(self.frames,
                                           class.index(),
                                           cpu.raw() as u16,
-                                          &remote_head.0,
+                                          remote_queues,
                                           page_stats,
                                           #[cfg(feature = "slab-diagnostics")]
                                           diagnostics) };
@@ -239,22 +235,53 @@ impl SlabAllocator {
             result
         } else {
             let owner = CpuId::from_raw(hdr.owner_cpu as usize);
-            let Some(owner_remote_head) = self.remote_heads
-                                               .get(owner)
+            let Some(owner_remote_queues) = self.remote_queues
+                                                 .get(owner)
             else {
                 return false;
             };
+            let misses = CpuSlab::remote_push(owner_remote_queues, class.index(), ptr);
             #[cfg(not(feature = "slab-diagnostics"))]
-            CpuSlab::remote_push(&owner_remote_head.0, ptr);
+            let _ = misses;
             #[cfg(feature = "slab-diagnostics")]
             {
-                let misses = CpuSlab::remote_push(&owner_remote_head.0, ptr);
                 if let Some(diagnostics) = self.diagnostics.get(cpu) {
                     diagnostics.record_remote_free(class.index(), misses);
                 }
             }
             true
         }
+    }
+
+    /// 在 owner CPU 的定时中断中有界推进一个 pending remote-free class。
+    pub(crate) fn maintain_on(&self, cpu : CpuId) {
+        let Some(slot) = self.cpus.get(cpu) else {
+            return;
+        };
+        let Some(remote_queues) = self.remote_queues.get(cpu) else {
+            return;
+        };
+        let Some(page_stats) = self.page_stats.get(cpu) else {
+            return;
+        };
+        #[cfg(feature = "slab-diagnostics")]
+        let Some(diagnostics) = self.diagnostics.get(cpu) else {
+            return;
+        };
+        // SAFETY: timer 在 owner CPU 上运行；普通 allocator 临界区关闭本 CPU 中断。
+        let state = unsafe { &mut *slot.0.get() };
+        state.maintain_remote(self.frames,
+                              remote_queues,
+                              page_stats,
+                              #[cfg(feature = "slab-diagnostics")]
+                              diagnostics);
+    }
+
+    #[cfg(test)]
+    fn remote_queue_len(&self, owner : CpuId, class : usize) -> usize {
+        self.remote_queues
+            .get(owner)
+            .map_or(0, |queues| queues.len(class))
     }
 
     pub(crate) fn page_mem_stats(&self) -> SlabPageMemStats {
@@ -283,14 +310,17 @@ impl SlabAllocator {
                 continue;
             }
             log::error!("[heap][slab-diag] cpu={} fallback={} oom={} remote_cas_miss={} \
-                         drain_events={} drain_objects={} drain_max={}",
+                         drain_events={} drain_objects={} drain_max={} drain_cas_miss={} \
+                         drain_limit_hit={}",
                         cpu_raw,
                         snapshot.fallbacks,
                         snapshot.oom,
                         snapshot.remote_cas_misses,
                         snapshot.drain_events,
                         snapshot.drain_objects,
-                        snapshot.drain_max);
+                        snapshot.drain_max,
+                        snapshot.drain_cas_misses,
+                        snapshot.drain_limit_hits);
             for class in 0..SIZE_CLASS_COUNT {
                 if snapshot.allocs[class] == 0 &&
                    snapshot.local_frees[class] == 0 &&
@@ -317,13 +347,16 @@ impl SlabAllocator {
             total.add_assign(&snapshot);
         }
         log::error!("[heap][slab-diag] total fallback={} oom={} remote_cas_miss={} \
-                     drain_events={} drain_objects={} drain_max={}",
+                     drain_events={} drain_objects={} drain_max={} drain_cas_miss={} \
+                     drain_limit_hit={}",
                     total.fallbacks,
                     total.oom,
                     total.remote_cas_misses,
                     total.drain_events,
                     total.drain_objects,
-                    total.drain_max);
+                    total.drain_max,
+                    total.drain_cas_misses,
+                    total.drain_limit_hits);
         for class in 0..SIZE_CLASS_COUNT {
             if total.allocs[class] == 0 && total.pages[class] == 0 {
                 continue;
@@ -365,7 +398,10 @@ pub fn log_diagnostics() {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use alloc::boxed::Box;
+    use alloc::collections::BTreeSet;
     use alloc::vec::Vec;
     use core::alloc::Layout;
 
@@ -374,6 +410,7 @@ mod tests {
     use super::*;
     use size_class::{SLAB_MAX_SIZE, SLAB_PAGE_SIZE, SIZE_CLASS_SIZES};
     use slab_page::SlabPageHeader;
+    use std::thread;
 
     #[repr(align(4096))]
     struct TestPage([u8; SLAB_PAGE_SIZE]);
@@ -515,6 +552,93 @@ mod tests {
         assert_eq!(stats.pages, 2);
         assert_eq!(stats.reclaimable_pages, 1);
         assert!(allocator.dealloc_on(owner, ptr, layout));
+    }
+
+    #[test]
+    fn remote_drain_is_bounded_class_scoped_and_timer_driven() {
+        let (allocator, _frames) = test_allocator();
+        let owner = CpuId::from_raw(0);
+        let remote = CpuId::from_raw(1);
+        let layout_a = Layout::from_size_align(64, 8).unwrap();
+        let layout_b = Layout::from_size_align(384, 8).unwrap();
+        let count = cpu_slab::REMOTE_DRAIN_LIMIT + 19;
+        let class_a = SizeClass::from_layout(layout_a).unwrap().index();
+        let class_b = SizeClass::from_layout(layout_b).unwrap().index();
+
+        let objects_a = allocate_many(&allocator, owner, layout_a, count);
+        let objects_b = allocate_many(&allocator, owner, layout_b, count);
+        for object in objects_a {
+            assert!(allocator.dealloc_on(remote, object, layout_a));
+        }
+        for object in objects_b {
+            assert!(allocator.dealloc_on(remote, object, layout_b));
+        }
+        assert_eq!(allocator.remote_queue_len(owner, class_a), count);
+        assert_eq!(allocator.remote_queue_len(owner, class_b), count);
+
+        let object = allocator.alloc_on(owner, layout_a).expect("bounded owner drain");
+        assert_eq!(allocator.remote_queue_len(owner, class_a),
+                   count - cpu_slab::REMOTE_DRAIN_LIMIT);
+        assert_eq!(allocator.remote_queue_len(owner, class_b), count,
+                   "allocating class A must not drain class B");
+        assert!(allocator.dealloc_on(owner, object, layout_a));
+
+        for _ in 0..64 {
+            if allocator.remote_queue_len(owner, class_a) == 0 &&
+               allocator.remote_queue_len(owner, class_b) == 0
+            {
+                break;
+            }
+            allocator.maintain_on(owner);
+        }
+        assert_eq!(allocator.remote_queue_len(owner, class_a), 0);
+        assert_eq!(allocator.remote_queue_len(owner, class_b), 0,
+                   "timer maintenance must drain a class the owner no longer allocates");
+    }
+
+    #[test]
+    fn concurrent_remote_pushes_are_drained_exactly_once() {
+        let (allocator, _frames) = test_allocator();
+        let owner = CpuId::from_raw(0);
+        let layout = Layout::from_size_align(128, 8).unwrap();
+        let class = SizeClass::from_layout(layout).unwrap().index();
+        let count = cpu_slab::REMOTE_DRAIN_LIMIT * 4 + 37;
+        let addresses : Vec<usize> = allocate_many(&allocator, owner, layout, count)
+            .into_iter()
+            .map(|ptr| ptr as usize)
+            .collect();
+
+        thread::scope(|scope| {
+            for (worker, chunk) in addresses.chunks(count.div_ceil(4)).enumerate() {
+                let chunk = chunk.to_vec();
+                let allocator = &allocator;
+                scope.spawn(move || {
+                    let remote = CpuId::from_raw(worker + 1);
+                    for address in chunk {
+                        assert!(allocator.dealloc_on(remote, address as *mut u8, layout));
+                    }
+                });
+            }
+        });
+        assert_eq!(allocator.remote_queue_len(owner, class), count);
+
+        for _ in 0..16 {
+            if allocator.remote_queue_len(owner, class) == 0 {
+                break;
+            }
+            allocator.maintain_on(owner);
+        }
+        assert_eq!(allocator.remote_queue_len(owner, class), 0);
+
+        let reused = allocate_many(&allocator, owner, layout, count);
+        let mut unique = BTreeSet::new();
+        for object in &reused {
+            assert!(unique.insert(*object as usize), "object allocated twice");
+        }
+        assert_eq!(unique.len(), count);
+        for object in reused {
+            assert!(allocator.dealloc_on(owner, object, layout));
+        }
     }
 
     #[test]

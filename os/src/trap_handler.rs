@@ -449,6 +449,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             #[cfg(not(feature = "gdb-fault-injection"))]
             let suppress_scheduler = false;
             let tick = TIMER_TICK_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+            runtime::heap_allocator::maintain_slab_remote_frees();
             #[cfg(feature = "bringup-stats")]
             if tick % 300 == 0 {
                 syscall::log_thread_bringup_stats_summary();

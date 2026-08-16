@@ -86,6 +86,7 @@ alloc / dealloc
 - `backend_tlsf.rs`：默认 TLSF 后端（O(1)）。
 - `backend_linked_list.rs`：`impl-linked-list-allocator` 后端。
 - `interrupt_guard.rs`：分配期间禁止本 CPU 中断重入。
+- slab remote free 按 owner/class 分流并由同 class 分配或 timer tick 有界推进。
 - `stress.rs`：`heap_fragmentation_stress_report()` 碎片压力报告。
 
 ### runtime-serial / 串口

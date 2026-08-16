@@ -18,11 +18,17 @@ refill/return；其它页只有在全部对象已释放且 remote-free 队列已
 才从 current/partial 状态摘除并归还 frame allocator。RISC-V 使用 per-CPU batch 归还，
 LoongArch64 直接归还全局 frame pool。
 
+remote free 按 `owner CPU + size class` 发布到无分配、无阻塞锁的原子栈。owner 在同 class
+后续分配时最多 drain 256 个对象；每次 timer tick 还会轮转推进一个 pending class，因此
+owner 不再分配原 class 时也能有界完成回收。完全空闲页沿上述 frame return 路径进入共享
+frame pool，随后可由其它 CPU 重新取得；部分使用页仍由原 owner 管理。pending bit 只用于
+维护提示，队列头才是对象所有权的事实来源。
+
 生产 `heap-slab` 不在 alloc/free 热路径维护全局统计。显式启用顶层
 `slab-diagnostics` 后，allocator 才会编译 per-CPU、cache-line 对齐的统计槽；owner CPU
 在关中断区内用原子 load/store 更新，bring-up 队列结束时一次性汇总 size class、local
-hit/free、remote free/CAS miss/drain、frame refill/reclaim、当前页数、空页数、fallback 和
-OOM。普通 Final 不包含这些诊断字段、更新调用或汇总符号。
+hit/free、remote free/CAS miss、drain 对象数/上限命中/pop CAS miss、frame refill/reclaim、
+当前页数、空页数、fallback 和 OOM。普通 Final 不包含这些诊断字段、更新调用或汇总符号。
 
 `heap_mem_stats()` 把三个口径保持为独立字段：`used/free/capacity` 是 boot heap，
 `slab_retained/slab_reclaimable` 是 slab 当前持有页和 detached warm reserve 的字节数，

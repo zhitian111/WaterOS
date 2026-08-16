@@ -20,6 +20,8 @@ pub(crate) struct SlabDiagnosticsSnapshot {
     pub(crate) drain_events : u64,
     pub(crate) drain_objects : u64,
     pub(crate) drain_max : u64,
+    pub(crate) drain_cas_misses : u64,
+    pub(crate) drain_limit_hits : u64,
 }
 
 impl SlabDiagnosticsSnapshot {
@@ -64,6 +66,10 @@ impl SlabDiagnosticsSnapshot {
                                  .saturating_add(other.drain_objects);
         self.drain_max = self.drain_max
                              .max(other.drain_max);
+        self.drain_cas_misses = self.drain_cas_misses
+                                     .saturating_add(other.drain_cas_misses);
+        self.drain_limit_hits = self.drain_limit_hits
+                                    .saturating_add(other.drain_limit_hits);
     }
 }
 
@@ -85,6 +91,8 @@ pub(crate) struct SlabDiagnostics {
     drain_events : AtomicU64,
     drain_objects : AtomicU64,
     drain_max : AtomicU64,
+    drain_cas_misses : AtomicU64,
+    drain_limit_hits : AtomicU64,
 }
 
 impl SlabDiagnostics {
@@ -102,7 +110,9 @@ impl SlabDiagnostics {
                remote_cas_misses : AtomicU64::new(0),
                drain_events : AtomicU64::new(0),
                drain_objects : AtomicU64::new(0),
-               drain_max : AtomicU64::new(0) }
+               drain_max : AtomicU64::new(0),
+               drain_cas_misses : AtomicU64::new(0),
+               drain_limit_hits : AtomicU64::new(0) }
     }
 
     #[inline]
@@ -162,9 +172,16 @@ impl SlabDiagnostics {
 
     pub(crate) fn record_oom(&self) { Self::increment(&self.oom); }
 
-    pub(crate) fn record_drain(&self, objects : usize) {
+    pub(crate) fn record_drain(&self,
+                               objects : usize,
+                               cas_misses : usize,
+                               hit_limit : bool) {
         Self::increment(&self.drain_events);
         Self::add(&self.drain_objects, objects);
+        Self::add(&self.drain_cas_misses, cas_misses);
+        if hit_limit {
+            Self::increment(&self.drain_limit_hits);
+        }
         let current = self.drain_max
                           .load(Ordering::Relaxed);
         if objects as u64 > current {
@@ -196,6 +213,10 @@ impl SlabDiagnostics {
                                   drain_objects : self.drain_objects
                                                       .load(Ordering::Relaxed),
                                   drain_max : self.drain_max
-                                                  .load(Ordering::Relaxed) }
+                                                  .load(Ordering::Relaxed),
+                                  drain_cas_misses : self.drain_cas_misses
+                                                           .load(Ordering::Relaxed),
+                                  drain_limit_hits : self.drain_limit_hits
+                                                          .load(Ordering::Relaxed) }
     }
 }
