@@ -17,22 +17,6 @@ _start:
     ori $t1, $zero, 0x57
     st.b $t1, $t0, 0
 
-    csrrd $t0, 0x0
-    li.d $t1, -17
-    and $t0, $t0, $t1
-    ori $t0, $t0, 0x8
-    csrwr $t0, 0x0
-    invtlb 0, $zero, $zero
-    ibar 0
-
-    li.d $t0, 0x800000001fe20000
-21:
-    ld.bu $t1, $t0, 5
-    andi $t1, $t1, 0x20
-    beqz $t1, 21b
-    ori $t1, $zero, 0x42
-    st.b $t1, $t0, 0
-
     move $r7, $r6
     move $r6, $r5
     move $r5, $r4

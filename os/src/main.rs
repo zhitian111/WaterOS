@@ -19,6 +19,7 @@ use runtime::logging::warn;
 use syscall as _;
 
 mod boot_timebase;
+mod early_paging;
 #[cfg(feature = "dashboard-debug")]
 mod dashboard;
 #[cfg(feature = "gdb-fault-injection")]
@@ -546,6 +547,9 @@ mod loongson2k1000la {
                 options(nostack)
             );
         }
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"P0\r\n");
+        crate::early_paging::init();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"P1\r\n");
         let _ = platform::active_impl::console::console_write_raw_buffer(b"[2K1000] enter WaterOS Rust\r\n");
         let _ = platform::active_impl::console::console_flush();
         let cpu_id = task::CpuId::from_raw(cpu_raw);
