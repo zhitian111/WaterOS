@@ -32,6 +32,13 @@ trap_handler
 
 ### T1：缓存 `poll/select` 用户输入
 
+状态：已完成，提交为 `[perf] cache poll and select userspace inputs`。
+
+实现结果：`poll/ppoll` 在入口导入一次 `PollFd` 数组，等待扫描复用内核副本；
+`select/pselect6` 在入口导入三份 fdset，等待阶段不再重复访问用户地址空间，结果仍按原路径
+写回用户空间。输入数组使用 checked offset 和 `try_reserve_exact`，空指针、长度及错误返回
+保持原有边界。`rv_check` 已通过（`CARGO_NET_OFFLINE=true make rv_check`）。
+
 现状：
 
 - `poll` 每轮扫描逐项 `copy_from_user_struct`；等待轮次会重复导入同一份 `(fd, events)`；
@@ -140,4 +147,3 @@ epoll 当前先复制 interest 快照，再逐项查询 readiness，避免在 fd
 当前最确定的性能损失来自用户输入在等待循环中的重复复制、路径逐字节 MM 访问、以及
 syscall 热路径上的重复 fd registry lookup。syscall 双表分发、统计 atomic、detached
 handle 和 epoll 快照均不是本轮应优先改动的对象。
-

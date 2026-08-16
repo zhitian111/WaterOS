@@ -155,8 +155,38 @@ mod tests {
 }
 
 struct ScanCtx {
-    fds_ptr : usize,
-    nfds : usize,
+    pollfds : PollSet,
+}
+
+struct PollSet {
+    user_ptr : usize,
+    entries : alloc::vec::Vec<PollFd>,
+}
+
+impl PollSet {
+    fn import(fds_ptr : usize, nfds : usize) -> Result<Self, ErrNo> {
+        if nfds == 0 {
+            return Ok(Self { user_ptr : fds_ptr,
+                             entries : alloc::vec::Vec::new() });
+        }
+        if fds_ptr == 0 {
+            return Err(ErrNo::EFAULT);
+        }
+        if nfds > 1024 {
+            return Err(ErrNo::EINVAL);
+        }
+        let pollfd_size = core::mem::size_of::<PollFd>();
+        let mut entries = alloc::vec::Vec::new();
+        entries.try_reserve_exact(nfds).map_err(|_| ErrNo::ENOMEM)?;
+        for i in 0..nfds {
+            let offset = i.checked_mul(pollfd_size)
+                           .and_then(|offset| fds_ptr.checked_add(offset))
+                           .ok_or(ErrNo::EFAULT)?;
+            entries.push(copy_from_user_struct(offset)?);
+        }
+        Ok(Self { user_ptr : fds_ptr, entries })
+    }
+
 }
 
 fn current_task_has_deliverable_signal() -> bool {
@@ -167,8 +197,7 @@ fn current_task_has_deliverable_signal() -> bool {
 
 impl ScanCtx {
     fn scan_count(&self) -> Result<usize, ErrNo> {
-        let (n, _) = scan_pollfds(self.fds_ptr, self.nfds)?;
-        Ok(n)
+        scan_pollfds(&self.pollfds, true)
     }
 }
 
@@ -259,24 +288,14 @@ pub(crate) fn poll_revents_fd(fd : usize, events : i16) -> i16 {
     }
 }
 
-pub(crate) fn scan_pollfds(fds_ptr : usize, nfds : usize) -> Result<(usize, usize), ErrNo> {
-    if nfds == 0 {
-        return Ok((0, 0));
-    }
-    if fds_ptr == 0 {
-        return Err(ErrNo::EFAULT);
-    }
-    if nfds > 1024 {
-        return Err(ErrNo::EINVAL);
-    }
-
-    let pollfd_size = core::mem::size_of::<PollFd>();
+fn scan_pollfds(pollfds : &PollSet, writeback : bool) -> Result<usize, ErrNo> {
     let mut ready_count = 0usize;
     let mut network_driven = false;
+    let user_ptr = pollfds.user_ptr;
+    let pollfd_size = core::mem::size_of::<PollFd>();
 
-    for i in 0..nfds {
-        let ptr = fds_ptr + i * pollfd_size;
-        let mut pfd : PollFd = copy_from_user_struct(ptr)?;
+    for (index, input) in pollfds.entries.iter().enumerate() {
+        let mut pfd = *input;
         pfd.revents = 0;
 
         if pfd.fd < 0 {
@@ -292,37 +311,43 @@ pub(crate) fn scan_pollfds(fds_ptr : usize, nfds : usize) -> Result<(usize, usiz
         if revents & POLLNVAL != 0 {
             pfd.revents = POLLNVAL;
             ready_count += 1;
-            copy_to_user_struct(ptr, &pfd)?;
+            if writeback {
+                let ptr = index.checked_mul(pollfd_size)
+                               .and_then(|offset| user_ptr.checked_add(offset))
+                               .ok_or(ErrNo::EFAULT)?;
+                copy_to_user_struct(ptr, &pfd)?;
+            }
             continue;
         }
         pfd.revents = revents & (pfd.events | POLLHUP | POLLERR | POLLPRI);
         if pfd.revents != 0 {
             ready_count += 1;
-            copy_to_user_struct(ptr, &pfd)?;
+            if writeback {
+                let ptr = index.checked_mul(pollfd_size)
+                               .and_then(|offset| user_ptr.checked_add(offset))
+                               .ok_or(ErrNo::EFAULT)?;
+                copy_to_user_struct(ptr, &pfd)?;
+            }
         }
     }
 
-    Ok((ready_count, nfds))
+    Ok(ready_count)
 }
 
-fn poll_wait_pipe_fds(fds_ptr : usize,
-                      nfds : usize,
+fn poll_wait_pipe_fds(pollfds : &PollSet,
                       deadline : &PollDeadline,
                       still_waiting : &mut dyn FnMut() -> bool)
                       -> Result<bool, ErrNo> {
-    let pollfd_size = core::mem::size_of::<PollFd>();
     let remaining = deadline.remaining_ticks();
     if remaining == 0 {
         return Ok(false);
     }
     let wait_ticks = remaining.min(1);
     let mut any_pipe = false;
-    for i in 0..nfds {
+    for pfd in &pollfds.entries {
         if !still_waiting() {
             return Ok(true);
         }
-        let ptr = fds_ptr + i * pollfd_size;
-        let pfd : PollFd = copy_from_user_struct(ptr)?;
         if pfd.fd < 0 {
             continue;
         }
@@ -346,11 +371,10 @@ fn poll_wait_pipe_fds(fds_ptr : usize,
     Ok(any_pipe)
 }
 
-pub(crate) fn poll_block_until_ready(fds_ptr : usize,
-                                     nfds : usize,
-                                     deadline : PollDeadline)
-                                     -> Result<usize, ErrNo> {
-    let ctx = ScanCtx { fds_ptr, nfds };
+fn poll_block_until_ready(pollfds : PollSet,
+                          deadline : PollDeadline)
+                          -> Result<usize, ErrNo> {
+    let ctx = ScanCtx { pollfds };
     loop {
         let n = ctx.scan_count()?;
         if n > 0 {
@@ -377,8 +401,7 @@ pub(crate) fn poll_block_until_ready(fds_ptr : usize,
             0 &&
             !deadline.expired()
         };
-        let any_pipe = poll_wait_pipe_fds(fds_ptr,
-                                          nfds,
+        let any_pipe = poll_wait_pipe_fds(&ctx.pollfds,
                                           &deadline,
                                           &mut still_waiting)?;
         if !any_pipe {
@@ -396,7 +419,11 @@ pub(crate) fn do_poll_with_deadline(fds_ptr : usize,
                                     nfds : usize,
                                     deadline : PollDeadline)
                                     -> UserRet {
-    let (n, _) = match scan_pollfds(fds_ptr, nfds) {
+    let pollfds = match PollSet::import(fds_ptr, nfds) {
+        Ok(v) => v,
+        Err(e) => return UserRet::from_error(e),
+    };
+    let n = match scan_pollfds(&pollfds, true) {
         Ok(v) => v,
         Err(e) => return UserRet::from_error(e),
     };
@@ -406,7 +433,7 @@ pub(crate) fn do_poll_with_deadline(fds_ptr : usize,
     if deadline.remaining_ticks() == 0 {
         return UserRet::from_success(0);
     }
-    match poll_block_until_ready(fds_ptr, nfds, deadline) {
+    match poll_block_until_ready(pollfds, deadline) {
         Ok(n) => UserRet::from_success(n),
         Err(e) => UserRet::from_error(e),
     }
@@ -510,18 +537,41 @@ pub(crate) fn copy_fd_set_to_user(ptr : usize, set : &FdSet) -> Result<(), ErrNo
     }
 }
 
-fn scan_fd_sets_inner(nfds : usize,
-                      readfds_ptr : usize,
-                      writefds_ptr : usize,
-                      exceptfds_ptr : usize,
+struct FdSetInputs {
+    nfds : usize,
+    read_ptr : usize,
+    write_ptr : usize,
+    except_ptr : usize,
+    read : Option<FdSet>,
+    write : Option<FdSet>,
+    except : Option<FdSet>,
+}
+
+impl FdSetInputs {
+    fn import(nfds : usize,
+              read_ptr : usize,
+              write_ptr : usize,
+              except_ptr : usize)
+              -> Result<Self, ErrNo> {
+        if nfds > FD_SETSIZE {
+            return Err(ErrNo::EINVAL);
+        }
+        Ok(Self { nfds,
+                  read_ptr,
+                  write_ptr,
+                  except_ptr,
+                  read : copy_fd_set_from_user(read_ptr)?,
+                  write : copy_fd_set_from_user(write_ptr)?,
+                  except : copy_fd_set_from_user(except_ptr)? })
+    }
+}
+
+fn scan_fd_sets_inner(inputs : &FdSetInputs,
                       writeback : bool)
                       -> Result<usize, ErrNo> {
-    if nfds > FD_SETSIZE {
-        return Err(ErrNo::EINVAL);
-    }
-    let read_in = copy_fd_set_from_user(readfds_ptr)?;
-    let write_in = copy_fd_set_from_user(writefds_ptr)?;
-    let except_in = copy_fd_set_from_user(exceptfds_ptr)?;
+    let read_in = inputs.read.as_ref();
+    let write_in = inputs.write.as_ref();
+    let except_in = inputs.except.as_ref();
 
     let mut read_out = [0u64; FD_SET_WORDS];
     let mut write_out = [0u64; FD_SET_WORDS];
@@ -529,7 +579,7 @@ fn scan_fd_sets_inner(nfds : usize,
     let mut ready_count = 0usize;
     let mut network_driven = false;
 
-    for fd in 0..nfds {
+    for fd in 0..inputs.nfds {
         let mut events = 0i16;
         if read_in.as_ref()
                   .is_some_and(|s| fd_set_get(s, fd))
@@ -573,49 +623,33 @@ fn scan_fd_sets_inner(nfds : usize,
     }
 
     if writeback && read_in.is_some() {
-        copy_fd_set_to_user(readfds_ptr, &read_out)?;
+        copy_fd_set_to_user(inputs.read_ptr, &read_out)?;
     }
     if writeback && write_in.is_some() {
-        copy_fd_set_to_user(writefds_ptr, &write_out)?;
+        copy_fd_set_to_user(inputs.write_ptr, &write_out)?;
     }
     if writeback && except_in.is_some() {
-        copy_fd_set_to_user(exceptfds_ptr, &except_out)?;
+        copy_fd_set_to_user(inputs.except_ptr, &except_out)?;
     }
 
     Ok(ready_count)
 }
 
-fn fd_monitored_in_sets(fd : usize,
-                        readfds_ptr : usize,
-                        writefds_ptr : usize,
-                        exceptfds_ptr : usize)
-                        -> Result<i16, ErrNo> {
-    let read_in = copy_fd_set_from_user(readfds_ptr)?;
-    let write_in = copy_fd_set_from_user(writefds_ptr)?;
-    let except_in = copy_fd_set_from_user(exceptfds_ptr)?;
+fn fd_monitored_in_sets(fd : usize, inputs : &FdSetInputs) -> i16 {
     let mut events = 0i16;
-    if read_in.as_ref()
-              .is_some_and(|s| fd_set_get(s, fd))
-    {
+    if inputs.read.as_ref().is_some_and(|s| fd_set_get(s, fd)) {
         events |= POLLIN;
     }
-    if write_in.as_ref()
-               .is_some_and(|s| fd_set_get(s, fd))
-    {
+    if inputs.write.as_ref().is_some_and(|s| fd_set_get(s, fd)) {
         events |= POLLOUT;
     }
-    if except_in.as_ref()
-                .is_some_and(|s| fd_set_get(s, fd))
-    {
+    if inputs.except.as_ref().is_some_and(|s| fd_set_get(s, fd)) {
         events |= POLLPRI;
     }
-    Ok(events)
+    events
 }
 
-fn poll_wait_monitored_fds(nfds : usize,
-                           readfds_ptr : usize,
-                           writefds_ptr : usize,
-                           exceptfds_ptr : usize,
+fn poll_wait_monitored_fds(inputs : &FdSetInputs,
                            deadline : &PollDeadline,
                            still_waiting : &mut dyn FnMut() -> bool)
                            -> Result<bool, ErrNo> {
@@ -625,14 +659,11 @@ fn poll_wait_monitored_fds(nfds : usize,
     }
     let wait_ticks = remaining.min(1);
     let mut any_pipe = false;
-    for fd in 0..nfds {
+    for fd in 0..inputs.nfds {
         if !still_waiting() {
             return Ok(true);
         }
-        let events = fd_monitored_in_sets(fd,
-                                          readfds_ptr,
-                                          writefds_ptr,
-                                          exceptfds_ptr)?;
+        let events = fd_monitored_in_sets(fd, inputs);
         if events == 0 {
             continue;
         }
@@ -652,34 +683,19 @@ fn poll_wait_monitored_fds(nfds : usize,
     Ok(any_pipe)
 }
 
-pub(crate) fn poll_block_fd_sets(nfds : usize,
-                                 readfds_ptr : usize,
-                                 writefds_ptr : usize,
-                                 exceptfds_ptr : usize,
+fn poll_block_fd_sets(inputs : FdSetInputs,
                                  deadline : PollDeadline)
                                  -> Result<usize, ErrNo> {
     loop {
-        let n = scan_fd_sets_inner(nfds,
-                                   readfds_ptr,
-                                   writefds_ptr,
-                                   exceptfds_ptr,
-                                   false)?;
+        let n = scan_fd_sets_inner(&inputs, false)?;
         if n > 0 {
-            return scan_fd_sets_inner(nfds,
-                                      readfds_ptr,
-                                      writefds_ptr,
-                                      exceptfds_ptr,
-                                      true);
+            return scan_fd_sets_inner(&inputs, true);
         }
         if current_task_has_deliverable_signal() {
             return Err(ErrNo::EINTR);
         }
         if deadline.expired() {
-            scan_fd_sets_inner(nfds,
-                               readfds_ptr,
-                               writefds_ptr,
-                               exceptfds_ptr,
-                               true)?;
+            scan_fd_sets_inner(&inputs, true)?;
             return Ok(0);
         }
         let remaining = deadline.remaining_ticks();
@@ -687,29 +703,18 @@ pub(crate) fn poll_block_fd_sets(nfds : usize,
             return Ok(0);
         }
         let mut still_waiting = || -> bool {
-            scan_fd_sets_inner(nfds,
-                               readfds_ptr,
-                               writefds_ptr,
-                               exceptfds_ptr,
-                               false).map(|c| c == 0)
+            scan_fd_sets_inner(&inputs, false).map(|c| c == 0)
                                      .unwrap_or(true) &&
             !deadline.expired()
         };
-        let any_pipe = poll_wait_monitored_fds(nfds,
-                                               readfds_ptr,
-                                               writefds_ptr,
-                                               exceptfds_ptr,
+        let any_pipe = poll_wait_monitored_fds(&inputs,
                                                &deadline,
                                                &mut still_waiting)?;
         if !any_pipe {
             let mut became_ready = false;
             for _ in 0..SOCKET_READY_YIELD_SPINS {
                 task::yield_now();
-                if scan_fd_sets_inner(nfds,
-                                      readfds_ptr,
-                                      writefds_ptr,
-                                      exceptfds_ptr,
-                                      false)? >
+                if scan_fd_sets_inner(&inputs, false)? >
                    0
                 {
                     became_ready = true;
@@ -738,33 +743,25 @@ pub(crate) fn do_pselect_with_deadline(nfds : usize,
                                        exceptfds_ptr : usize,
                                        deadline : PollDeadline)
                                        -> UserRet {
-    let n = match scan_fd_sets_inner(nfds,
-                                     readfds_ptr,
-                                     writefds_ptr,
-                                     exceptfds_ptr,
-                                     false)
-    {
+    let inputs = match FdSetInputs::import(nfds,
+                                           readfds_ptr,
+                                           writefds_ptr,
+                                           exceptfds_ptr) {
+        Ok(inputs) => inputs,
+        Err(e) => return UserRet::from_error(e),
+    };
+    let n = match scan_fd_sets_inner(&inputs, false) {
         Ok(v) => v,
         Err(e) => return UserRet::from_error(e),
     };
     if n > 0 {
-        return match scan_fd_sets_inner(nfds,
-                                        readfds_ptr,
-                                        writefds_ptr,
-                                        exceptfds_ptr,
-                                        true)
-        {
+        return match scan_fd_sets_inner(&inputs, true) {
             Ok(n) => UserRet::from_success(n),
             Err(e) => UserRet::from_error(e),
         };
     }
     if deadline.expired() {
-        return match scan_fd_sets_inner(nfds,
-                                        readfds_ptr,
-                                        writefds_ptr,
-                                        exceptfds_ptr,
-                                        true)
-        {
+        return match scan_fd_sets_inner(&inputs, true) {
             Ok(_) => UserRet::from_success(0),
             Err(e) => UserRet::from_error(e),
         };
@@ -772,12 +769,7 @@ pub(crate) fn do_pselect_with_deadline(nfds : usize,
     if deadline.remaining_ticks() == 0 {
         return UserRet::from_success(0);
     }
-    match poll_block_fd_sets(nfds,
-                             readfds_ptr,
-                             writefds_ptr,
-                             exceptfds_ptr,
-                             deadline)
-    {
+    match poll_block_fd_sets(inputs, deadline) {
         Ok(v) => UserRet::from_success(v),
         Err(e) => UserRet::from_error(e),
     }
