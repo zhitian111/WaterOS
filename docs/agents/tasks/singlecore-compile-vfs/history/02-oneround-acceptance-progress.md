@@ -22,3 +22,18 @@ RV 基线中位数: 562.63
 结果明显差于基线，但宿主机长时间 QEMU 后可能已受内存/swap/tmpfs 压力影响，因此
 暂不作为最终结论。需要环境恢复后重新做对照；若仍回退，再逐项拆分定位。
 
+## 宿主恢复后复测
+
+宿主恢复到 swap 未使用、无其它 QEMU、可用内存约 24 GiB 后，使用相同 16 GiB、
+`-snapshot` 口径各复测一轮：
+
+```text
+LA 一轮: 529.46
+RV 一轮: 561.14
+```
+
+两轮均满足 `TOOLCHAIN_RESULT status=OK`、`MINIBUILD_RESULT status=OK` 和
+`BUILDSTORM_RESULT mode=multi status=OK`，编译产物启动验证为 `run=OK`；日志中没有
+运行时 panic/OOM/ENOMEM/SIGSEGV。相对基线，LA 快 9.18 秒（约 1.70%），RV 快
+1.49 秒（约 0.26%）。因此保留 statx 重复校验去除和 resolver `AtomicPtr` 两项改动，
+继续下一阶段热点定位；最终结论仍需双架构各三轮中位数验收。
