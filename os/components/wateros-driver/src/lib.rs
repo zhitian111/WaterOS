@@ -110,9 +110,14 @@ pub fn self_test() {
     character::api_v0::test();
     assert_eq!(display::supported_devices().len(), 3);
     network::test();
+    machine().test();
     #[cfg(feature = "impl-qemu-loongarch64-virt")]
     impl_qemu_loongarch64_virt::self_test();
     #[cfg(feature = "impl-qemu-riscv64-virt")]
     impl_qemu_riscv64_virt::self_test();
+    #[cfg(feature = "impl-jh7110-visionfive2")]
+    impl_jh7110_visionfive2::self_test();
+    #[cfg(feature = "impl-loongson2k1000la")]
+    impl_loongson2k1000la::self_test();
     log::info!("[driver] self_test complete");
 }
