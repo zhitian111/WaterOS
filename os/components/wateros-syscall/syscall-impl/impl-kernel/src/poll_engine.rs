@@ -213,13 +213,6 @@ pub(crate) fn drive_network_stack() {
     stack::poll_socket_events();
 }
 
-pub(crate) fn poll_socket_revents(fd : usize, events : i16) -> i16 {
-    let Some(socket) = socket_fd::lookup(fd) else {
-        return 0;
-    };
-    poll_socket_revents_for_ref(&socket, events)
-}
-
 fn poll_socket_revents_for_ref(socket : &network::SocketRef, events : i16) -> i16 {
     let mut revents = 0i16;
     let Ok(snapshot) = socket.poll_snapshot() else {
