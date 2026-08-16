@@ -12,6 +12,7 @@
 
 ```text
 scripts/
+├── analysis/          # ELF 依赖与 Linux syscall 静态审计
 ├── competition/       # 比赛平台认证与提交环境辅助工具
 ├── config/            # Cargo feature 树的导出、转换和应用
 ├── debug/             # QEMU/GDB 调试、停滞检测与符号解析
@@ -67,6 +68,7 @@ Makefile 调用的底层脚本传递运行环境。常用直接入口如下：
 | `pc-hot/pc-hot-{rv,la}.sh` | `build`、`run`、`analyze` 或 `all` | 输出文件、ELF、Top N、icount shift 和完整 QEMU 命令 |
 | `pc-hot/wait-hot-{rv,la}.sh` | `build` 或 `run` | 输出文件和完整 QEMU 命令 |
 | `syscall-profile/syscall-profile-{rv,la}.sh` | `build` 或 `run` | 输出文件、plugin `key=value` 选项和完整 QEMU 命令 |
+| `analysis/elf_syscalls.py` | ELF 可执行文件或动态库 | rootfs、动态库搜索目录、文本/JSON 输出和严格模式 |
 | `testing/operator_smoke.py` | `--arch {rv,la}` | profile、SMP、模式、Guest 脚本、超时和日志路径 |
 | `testing/ltp_prune_sdcard_before.sh` | 无 | 镜像、起始用例、libc、dry-run 和重置源镜像 |
 
@@ -172,6 +174,22 @@ Git 工作区可恢复。会写镜像的脚本只能针对副本或可丢弃 ove
 
 性能测量应固定 QEMU 版本、镜像、SMP、宿主 CPU 绑定与本地 baseline。诊断 feature 和
 QEMU trace 会改变热路径开销，不能与正式成绩直接比较。
+
+## `analysis/`：软件移植审计
+
+`analysis/elf_syscalls.py` 接受一个 ELF 可执行文件或动态库，递归解析 interpreter、
+`DT_NEEDED`、`RPATH`/`RUNPATH` 和 `$ORIGIN`，汇总反汇编 syscall 指令及动态 wrapper
+符号给出的 Linux syscall 候选。分析目标 rootfs 中的软件时必须用 `--root` 指定其根目录：
+
+```bash
+./scripts/analysis/elf_syscalls.py \
+  --root ../user/build/staging/rv/rootfs \
+  ../user/build/staging/rv/rootfs/bin/busybox
+```
+
+该工具只读 ELF 和 rootfs，不执行目标程序。结果是静态上界，不替代实际 workload 的
+syscall trace；JSON 输出、严格模式和分析边界见
+[`docs/tools/elf-syscalls.md`](../../docs/tools/elf-syscalls.md)。
 
 ## `setup/`、`maintenance/` 与 `competition/`
 
