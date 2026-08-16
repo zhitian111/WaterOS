@@ -23,15 +23,29 @@ pub(crate) fn layout(reg_shift : Option<u32>,
     }
 }
 
+/// 纯函数自检：验证已知寄存器布局映射。
+pub fn test() {
+    assert_eq!(layout(None, None),
+               Some(RegisterLayout::Byte16550));
+    assert_eq!(layout(Some(0), Some(1)),
+               Some(RegisterLayout::Byte16550));
+    assert_eq!(layout(Some(2), Some(4)),
+               Some(RegisterLayout::DwApb32));
+    assert_eq!(layout(Some(2), Some(1)), None);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn accepts_only_known_register_layout_pairs() {
-        assert_eq!(layout(None, None), Some(RegisterLayout::Byte16550));
-        assert_eq!(layout(Some(0), Some(1)), Some(RegisterLayout::Byte16550));
-        assert_eq!(layout(Some(2), Some(4)), Some(RegisterLayout::DwApb32));
+        assert_eq!(layout(None, None),
+                   Some(RegisterLayout::Byte16550));
+        assert_eq!(layout(Some(0), Some(1)),
+                   Some(RegisterLayout::Byte16550));
+        assert_eq!(layout(Some(2), Some(4)),
+                   Some(RegisterLayout::DwApb32));
         assert_eq!(layout(Some(2), Some(1)), None);
         assert_eq!(layout(Some(1), Some(4)), None);
         assert_eq!(layout(Some(4), Some(8)), None);

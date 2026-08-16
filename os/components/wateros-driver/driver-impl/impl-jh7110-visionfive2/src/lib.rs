@@ -6,6 +6,7 @@ extern crate alloc;
 pub mod irq;
 pub mod mmc;
 pub mod plic;
+pub mod rtc;
 pub mod topology;
 pub mod uart;
 
@@ -16,75 +17,73 @@ static INITIALIZED : AtomicBool = AtomicBool::new(false);
 pub struct Machine;
 static MACHINE : Machine = Machine;
 
-pub fn machine() -> &'static dyn MachineDriver {
-    &MACHINE
-}
+pub fn machine() -> &'static dyn MachineDriver { &MACHINE }
 
 #[cfg(target_arch = "riscv64")]
-fn platform_dtb_pa() -> usize {
-    platform::dtb_pa()
-}
+fn platform_dtb_pa() -> usize { platform::dtb_pa() }
 #[cfg(not(target_arch = "riscv64"))]
-fn platform_dtb_pa() -> usize {
-    0
-}
+fn platform_dtb_pa() -> usize { 0 }
 
 impl MachineDriver for Machine {
     fn init_after_boot(&self) -> DriverResult<()> {
         if INITIALIZED.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
-        let result = topology::discover(platform_dtb_pa()).and_then(|board| {
-                         topology::store(board.clone());
-                         if let Some(console) = board.console_uart {
-                             let index = uart::register(console);
-                             log::info!("[driver][visionfive2] registered console uart #{} \
-                                         base={:#x} layout={:?}",
-                                        index,
-                                        console.mmio.base,
-                                        console.layout);
-                         } else {
-                             log::warn!("[driver][visionfive2] DTB has no supported /chosen \
-                                         console UART; early console remains available");
-                         }
-                         character::register_builtin_character_devices();
-                         if let Some(plic) = board.plic {
-                             log::info!("[driver][visionfive2] PLIC discovered base={:#x} \
-                                         size={:#x} sources={} contexts={}; source activation \
-                                         requires an explicit IRQ handler",
-                                        plic.mmio.base,
-                                        plic.mmio.size,
-                                        plic.sources,
-                                        plic.contexts.len());
-                         }
-                         for host in &board.mmc_hosts {
-                             let plan = mmc::bring_up_plan(host);
-                             log::info!("[driver][visionfive2] MMC bring-up plan base={:#x} \
-                                         irq={} width={} max_hz={:?} blockers={:?}; \
-                                         activation=UNVERIFIED",
-                                        plan.host.mmio.base,
-                                        plan.host.irq,
-                                        plan.host.bus_width,
-                                        plan.host.max_frequency_hz,
-                                        plan.blockers);
-                             match mmc::activate_and_register_readonly(host) {
-                                 Ok(index) => log::info!("[driver][visionfive2] MMC host \
-                                                          base={:#x} activated; registered \
-                                                          block device #{}",
-                                                         host.mmio.base,
-                                                         index),
-                                 Err(err) => log::error!("[driver][visionfive2] MMC host \
-                                                          base={:#x} activation failed: {}",
-                                                         host.mmio.base,
-                                                         err),
-                             }
-                         }
-                         Ok(())
-                     });
+        let result =
+            topology::discover(platform_dtb_pa()).and_then(|board| {
+                topology::store(board.clone());
+                if let Some(console) = board.console_uart {
+                    let index = uart::register(console);
+                    log::info!("[driver][visionfive2] registered console uart #{} base={:#x} \
+                                layout={:?}",
+                               index,
+                               console.mmio.base,
+                               console.layout);
+                } else {
+                    log::warn!("[driver][visionfive2] DTB has no supported /chosen console UART; \
+                                early console remains available");
+                }
+                character::register_builtin_character_devices();
+                if let Some(plic) = board.plic {
+                    log::info!("[driver][visionfive2] PLIC discovered base={:#x} size={:#x} \
+                                sources={} contexts={}; source activation requires an explicit \
+                                IRQ handler",
+                               plic.mmio.base,
+                               plic.mmio.size,
+                               plic.sources,
+                               plic.contexts.len());
+                }
+                for host in &board.mmc_hosts {
+                    let plan = mmc::bring_up_plan(host);
+                    log::info!("[driver][visionfive2] MMC bring-up plan base={:#x} irq={} \
+                                width={} max_hz={:?} blockers={:?}; activation=UNVERIFIED",
+                               plan.host.mmio.base,
+                               plan.host.irq,
+                               plan.host.bus_width,
+                               plan.host
+                                   .max_frequency_hz,
+                               plan.blockers);
+                    match mmc::activate_and_register_readonly(host) {
+                        Ok(index) => log::info!("[driver][visionfive2] MMC host base={:#x} \
+                                                 activated; registered block device #{}",
+                                                host.mmio.base,
+                                                index),
+                        Err(err) => log::error!("[driver][visionfive2] MMC host base={:#x} \
+                                                 activation failed: {}",
+                                                host.mmio.base,
+                                                err),
+                    }
+                }
+                Ok(())
+            });
         if result.is_err() {
             INITIALIZED.store(false, Ordering::Release);
         }
         result
+    }
+
+    fn realtime_ns(&self) -> DriverResult<Option<u64>> {
+        rtc::realtime_ns(platform_dtb_pa()).map(Some)
     }
 
     fn handle_external_interrupt(&self, cpu_raw : usize) -> DriverResult<bool> {
@@ -100,6 +99,8 @@ impl MachineDriver for Machine {
             log::info!("[driver][visionfive2] topology={:?}; hardware MMIO/IRQ status=UNVERIFIED",
                        topology)
         });
+        uart::test();
+        rtc::test();
     }
 }
 
@@ -113,7 +114,5 @@ pub fn self_test() {
 /// 只读自检：复用 [`MachineDriver::test`] 的拓扑日志路径。
 #[cfg(feature = "self_test")]
 mod test {
-    pub fn self_test_body() {
-        super::Machine.test();
-    }
+    pub fn self_test_body() { super::Machine.test(); }
 }
