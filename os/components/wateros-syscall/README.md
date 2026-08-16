@@ -13,7 +13,7 @@
 | ------------- | ----------------------------- | ----------------------------------------------------------------------------------------- |
 | 聚合门面    | `src/lib.rs`                | 重导出 API 与内核入口：trap 分发、信号投递/恢复、进程/线程退出、可重启 syscall 判断。   |
 | syscall API | `syscall-api/api-v0/`       | 调用号、参数、errno、返回值契约；纯`no_std` 数据契约，不依赖 platform/task/MM。         |
-| 内核实现    | `syscall-impl/impl-kernel/` | 单次 match 分发器、各`sys_*` 具体语义、用户内存安全拷贝、socket/poll/epoll 与 AF_UNIX。 |
+| 内核实现    | `syscall-impl/impl-kernel/` | 稠密函数指针表分发器、各`sys_*` 具体语义、用户内存安全拷贝、socket/poll/epoll 与 AF_UNIX。 |
 
 ## 实现说明
 
@@ -30,8 +30,8 @@
 
 - handler 应在最终返回到 trap 层前使用 `UserRet::from_success` / `from_error` /
   `from_kernel_result`；不要在中间层把 `ErrNo` 预先取负，否则容易发生双重编码。
-- 分发采用调用号单次 `match`（H-3），替代旧的 `SyscallKind::decode` + 巨型 match；未命中的
-  调用号走旁路号与 `ENOSYS`。
+- 分发采用按裸调用号索引的稠密函数指针表（H-3），替代旧的 `SyscallKind::decode` + 巨型
+  match；越界或未实现的槽位稳定返回 `ENOSYS`。
 - 用户内存访问集中在 `user_copy.rs`：`copy_from_user` / `copy_to_user` 经 `ActiveUserMemoryOps`，
   空缓冲返回 0、指针 0 返回 `EFAULT`；`USER_PATH_MAX = 4096`，可用 `user-copy-diagnostics`
   记录失败。
@@ -50,7 +50,7 @@ trap 进入：
 trap / 异常返回路径
   -> dispatch_syscall_from_trap(nr, args)
   -> sys::record_syscall()（统计）
-  -> dispatch_syscall_by_nr(nr, args)（单次 match）
+  -> dispatch_syscall_by_nr(nr, args)（函数指针表索引）
   -> sys_* handler -> UserRet 编码 -> isize
 ```
 
@@ -78,8 +78,8 @@ trap / 异常返回路径
 
 主要实现在 `syscall-impl/impl-kernel/src/`。
 
-- 分发：`syscall_nr_dispatch.rs` 按裸调用号单次 match 路由到各 `sys_*`，未命中走旁路号与
-  `ENOSYS`；`is_restartable_syscall` 供 EINTR 自动重启。
+- 分发：`syscall_nr_dispatch.rs` 按裸调用号直接索引函数指针表并调用对应 `sys_*`，越界或
+  未实现槽位返回 `ENOSYS`；`is_restartable_syscall` 供 EINTR 自动重启。
 - 用户内存安全拷贝：`user_copy.rs` 经 `ActiveUserMemoryOps` 提供 `copy_from_user` /
   `copy_to_user` / 字符串拷贝，指针 0 → `EFAULT`，可记录失败诊断。
 - 文件系统类（`sys/fs`）：open/close/read/write/readv/pwrite、lseek、fstat/statfs/getdents64、

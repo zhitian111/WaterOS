@@ -23,7 +23,7 @@ use impl_common::{
     map_zeroed_range_with_alloc, mmap_map_end, mremap_range, MREMAP_FIXED, MREMAP_MAYMOVE,
 };
 
-use crate::pagetable::{DeviceVma, LazyFileVma, LoongArch64AddressSpace};
+use crate::pagetable::{DeviceVma, LazyFileVma, LoongArch64AddressSpace, VmaBacking};
 
 #[inline]
 fn fence_user_ptes() { platform::arch::paging::flush_address_space_translations(); }
@@ -102,9 +102,15 @@ impl LoongArch64AddressSpace {
                             -> MmResult<VirtAddr>
         where A : PhysicalFrameAllocator<FrameId = PhysPageNum>
     {
-        if req.len == 0 || !req.flags.contains(MapFlags::SHARED) ||
-           req.flags.contains(MapFlags::PRIVATE) || req.flags.contains(MapFlags::ANONYMOUS) ||
-           req.prot.executable()
+        if req.len == 0 ||
+           !req.flags
+               .contains(MapFlags::SHARED) ||
+           req.flags
+              .contains(MapFlags::PRIVATE) ||
+           req.flags
+              .contains(MapFlags::ANONYMOUS) ||
+           req.prot
+              .executable()
         {
             return Err(MmError::InvalidAddress);
         }
@@ -115,20 +121,32 @@ impl LoongArch64AddressSpace {
         if offset % api_v0::addr::PAGE_SIZE != 0 || mapping.len == 0 {
             return Err(MmError::InvalidAddress);
         }
-        let rounded_len = req.len.checked_add(api_v0::addr::PAGE_SIZE - 1)
-                                 .ok_or(MmError::InvalidAddress)? /
-                          api_v0::addr::PAGE_SIZE * api_v0::addr::PAGE_SIZE;
-        if offset.checked_add(rounded_len).ok_or(MmError::InvalidAddress)? > mapping.len {
+        let rounded_len = req.len
+                             .checked_add(api_v0::addr::PAGE_SIZE - 1)
+                             .ok_or(MmError::InvalidAddress)? /
+                          api_v0::addr::PAGE_SIZE *
+                          api_v0::addr::PAGE_SIZE;
+        if offset.checked_add(rounded_len)
+                 .ok_or(MmError::InvalidAddress)? >
+           mapping.len
+        {
             return Err(MmError::InvalidAddress);
         }
         let base = match req.addr_hint {
-            Some(hint) if req.flags.contains(MapFlags::FIXED) => hint,
+            Some(hint)
+                if req.flags
+                      .contains(MapFlags::FIXED) =>
+            {
+                hint
+            }
             Some(_) => return Err(MmError::InvalidAddress),
             None => self.find_free_mmap_base_considering_vmas(self.mmap_file_cursor, req.len)?,
         };
         let end = mmap_map_end(base, req.len)?;
         self.validate_user_mapping_range(base, end)?;
-        if req.flags.contains(MapFlags::FIXED) {
+        if req.flags
+              .contains(MapFlags::FIXED)
+        {
             self.sync_shared_file_vmas(base, end)?;
             self.unmap_mmap_range(allocator, base, end)?;
             self.remove_lazy_file_vmas(base, end)?;
@@ -161,7 +179,9 @@ impl LoongArch64AddressSpace {
                                              phys_start,
                                              perm,
                                              lease : mapping.lease });
-        if req.addr_hint.is_none() {
+        if req.addr_hint
+              .is_none()
+        {
             self.mmap_file_cursor = end;
         }
         fence_user_ptes();
@@ -255,17 +275,15 @@ impl LoongArch64AddressSpace {
         if !shared && !private {
             return Err(MmError::InvalidAddress);
         }
-        let fixed = req.flags.contains(MapFlags::FIXED);
-        let fixed_noreplace = req.flags.contains(MapFlags::FIXED_NOREPLACE);
+        let fixed = req.flags
+                       .contains(MapFlags::FIXED);
+        let fixed_noreplace = req.flags
+                                 .contains(MapFlags::FIXED_NOREPLACE);
         if fixed && fixed_noreplace {
             return Err(MmError::InvalidAddress);
         }
         let base = match req.addr_hint {
-            Some(hint)
-                if fixed || fixed_noreplace =>
-            {
-                hint
-            }
+            Some(hint) if fixed || fixed_noreplace => hint,
             Some(_) => return Err(MmError::InvalidAddress),
             None => self.find_free_mmap_base_considering_vmas(self.mmap_anon_cursor, req.len)?,
         };
@@ -294,8 +312,7 @@ impl LoongArch64AddressSpace {
                                         perm,
                                         0,
                                         0,
-                                        false,
-                                        Box::new(impl_common::ZeroAnonLoader))?;
+                                        VmaBacking::Anonymous)?;
         }
         if req.addr_hint
               .is_none()
@@ -528,8 +545,7 @@ impl MmapOps for LoongArch64AddressSpace {
                                     perm,
                                     file_offset,
                                     file_size,
-                                    req.flags.contains(MapFlags::SHARED),
-                                    loader)?;
+                                    VmaBacking::File { loader })?;
         if req.addr_hint
               .is_none()
         {
@@ -608,8 +624,10 @@ impl MmapOps for LoongArch64AddressSpace {
         if end.0 > crate::pagetable::USER_VA_LIMIT {
             return Err(MmError::InvalidAddress);
         }
-        let page_start = addr.floor_page().start_addr();
-        let page_end = end.ceil_page().start_addr();
+        let page_start = addr.floor_page()
+                             .start_addr();
+        let page_end = end.ceil_page()
+                          .start_addr();
         let mut vpn = page_start.floor_page();
         let vpn_end = page_end.floor_page();
         while vpn.0 < vpn_end.0 {
@@ -651,8 +669,10 @@ impl MmapOps for LoongArch64AddressSpace {
         if end.0 > crate::pagetable::USER_VA_LIMIT {
             return Err(MmError::InvalidAddress);
         }
-        let page_start = addr.floor_page().start_addr();
-        let page_end = end.ceil_page().start_addr();
+        let page_start = addr.floor_page()
+                             .start_addr();
+        let page_end = end.ceil_page()
+                          .start_addr();
         if perm.executable() && self.device_vma_overlaps(page_start, page_end) {
             return Err(MmError::AccessViolation);
         }
@@ -737,9 +757,8 @@ impl MmapOps for LoongArch64AddressSpace {
                                                              perm : vma.perm,
                                                              file_offset : vma.file_offset,
                                                              file_size : vma.file_size,
-                                                             shared : vma.shared,
-                                                             loader : vma.loader
-                                                                         .duplicate_box()? })
+                                                             backing : vma.backing
+                                                                          .duplicate()? })
                 })
                 .transpose()?;
         if lazy_overlap && lazy_vma.is_none() {
@@ -812,8 +831,7 @@ impl MmapOps for LoongArch64AddressSpace {
                                         vma.perm,
                                         vma.file_offset,
                                         vma.file_size,
-                                        vma.shared,
-                                        vma.loader)?;
+                                        vma.backing)?;
         } else if flags & MREMAP_FIXED != 0 {
             self.remove_lazy_file_vmas(result, result_end)?;
         }
@@ -827,39 +845,46 @@ impl MmapOps for LoongArch64AddressSpace {
 impl LoongArch64AddressSpace {
     /// 使当前可按需装入的文件、brk 与用户栈 VMA 全部驻留。
     pub fn prefault_all_current_user_ranges<A>(&mut self, allocator : &mut A) -> MmResult<()>
-        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>
-    {
-        let mut ranges : Vec<(VirtAddr, VirtAddr, PageFaultAccess)> = self.lazy_file_vmas
-            .iter()
-            .filter_map(|vma| {
-                let access = if vma.perm.writable() {
-                    PageFaultAccess::Write
-                } else if vma.perm.readable() {
-                    PageFaultAccess::Read
-                } else if vma.perm.executable() {
-                    PageFaultAccess::Execute
-                } else {
-                    return None;
-                };
-                Some((vma.start, vma.end, access))
-            })
-            .collect();
-        if self.user_brk_start.0 < self.user_brk_current_end.0 {
-            ranges.push((self.user_brk_start,
-                         self.user_brk_current_end,
-                         PageFaultAccess::Read));
+        where A : PhysicalFrameAllocator<FrameId = PhysPageNum> {
+        let mut ranges : Vec<(VirtAddr, VirtAddr, PageFaultAccess)> =
+            self.lazy_file_vmas
+                .iter()
+                .filter_map(|vma| {
+                    let access = if vma.perm.writable() {
+                        PageFaultAccess::Write
+                    } else if vma.perm.readable() {
+                        PageFaultAccess::Read
+                    } else if vma.perm
+                                 .executable()
+                    {
+                        PageFaultAccess::Execute
+                    } else {
+                        return None;
+                    };
+                    Some((vma.start, vma.end, access))
+                })
+                .collect();
+        if self.user_brk_start
+               .0 <
+           self.user_brk_current_end
+               .0
+        {
+            ranges.push((self.user_brk_start, self.user_brk_current_end, PageFaultAccess::Read));
         }
-        if self.user_stack_bottom.0 < self.user_stack_top.0 {
-            ranges.push((self.user_stack_bottom,
-                         self.user_stack_top,
-                         PageFaultAccess::Read));
+        if self.user_stack_bottom
+               .0 <
+           self.user_stack_top
+               .0
+        {
+            ranges.push((self.user_stack_bottom, self.user_stack_top, PageFaultAccess::Read));
         }
         for (start, end, access) in ranges {
             let mut vpn = start.floor_page();
             let vpn_end = end.ceil_page();
             while vpn.0 < vpn_end.0 {
                 let page = vpn.start_addr();
-                if self.translate_addr(page)?.is_none() &&
+                if self.translate_addr(page)?
+                       .is_none() &&
                    !MmapOps::handle_page_fault(self, allocator, page, access)?
                 {
                     return Err(MmError::InvalidAddress);
@@ -874,14 +899,21 @@ impl LoongArch64AddressSpace {
         if len == 0 {
             return true;
         }
-        let Some(end) = addr.0.checked_add(len).map(VirtAddr) else {
+        let Some(end) = addr.0
+                            .checked_add(len)
+                            .map(VirtAddr)
+        else {
             return false;
         };
         let mut vpn = addr.floor_page();
         let vpn_end = end.ceil_page();
         while vpn.0 < vpn_end.0 {
             let page = vpn.start_addr();
-            if self.translate_addr(page).ok().flatten().is_some() {
+            if self.translate_addr(page)
+                   .ok()
+                   .flatten()
+                   .is_some()
+            {
                 vpn = VirtPageNum(vpn.0 + 1);
                 continue;
             }
@@ -897,10 +929,18 @@ impl LoongArch64AddressSpace {
                          self.device_vmas
                              .iter()
                              .any(|vma| vma.contains_page(page));
-            let in_stack = self.user_stack_bottom.0 <= page.0 &&
-                           page.0 < self.user_stack_top.0;
-            let in_brk = self.user_brk_start.0 <= page.0 &&
-                         page.0 < self.user_brk_current_end.0;
+            let in_stack = self.user_stack_bottom
+                               .0 <=
+                           page.0 &&
+                           page.0 <
+                           self.user_stack_top
+                               .0;
+            let in_brk = self.user_brk_start
+                             .0 <=
+                         page.0 &&
+                         page.0 <
+                         self.user_brk_current_end
+                             .0;
             if !in_vma && !in_stack && !in_brk {
                 return false;
             }
@@ -913,7 +953,10 @@ impl LoongArch64AddressSpace {
         if len == 0 {
             return false;
         }
-        let Some(end) = addr.0.checked_add(len).map(VirtAddr) else {
+        let Some(end) = addr.0
+                            .checked_add(len)
+                            .map(VirtAddr)
+        else {
             return true;
         };
         self.lazy_file_vmas

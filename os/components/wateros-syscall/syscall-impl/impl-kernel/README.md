@@ -3,8 +3,9 @@
 [返回 syscall 总览](../../README.md)
 
 这是 WaterOS 的 Linux syscall 内核实现。`src/syscall_nr_dispatch.rs` 是唯一按号
-分发入口，`src/sys/` 按领域拆分 handler；用户内存、fd、socket 和 poll 的公共
-机制放在 `src/` 根，避免各 handler 重复实现。
+分发入口，通过稠密函数指针表把裸调用号直接路由到 handler；`src/sys/` 按领域拆分
+handler，用户内存、fd、socket 和 poll 的公共机制放在 `src/` 根，避免各 handler
+重复实现。
 
 ## 公共基础设施
 

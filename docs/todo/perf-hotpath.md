@@ -45,18 +45,21 @@
 - **架构差异**：算法相同（LA `impl-loongarch64/src/user_access.rs:92-128` 同构）。
 - **风险/依赖**：合并 walk 需与 `handle_lazy_page_fault` 的 COW/懒分配语义一致。
 
-### H-3. Syscall 分发存在双重 decode（if-else 链 + 巨型 match）【高】
+### H-3. Syscall 分发由线性比较改为函数指针表【已实施，收益高】
 
 - **位置**：
   - `os/components/wateros-syscall/syscall-api/api-v0/src/lib.rs:162-444,1757-1899`
-  - `os/src/trap_handler.rs:341-353`（`restartable_syscall` 再次 decode）
-  - `os/components/wateros-syscall/syscall-impl/impl-kernel/src/lib.rs:687-717`（unknown 又一次 if 链）
-- **当前实现/复杂度**：`SyscallKind::decode` 约 140 个 `if syscall_nr == T::XXX` 线性比较，最坏 O(n)（n≈140）；随后 `dispatch_syscall_from_trap` 对 `SyscallKind` 再 match 约 140 分支；EINTR 重启路径第三次 decode。
-- **问题**：每次 syscall 固定支付 2~3 次分发；编译器难完全优化为跳表；I-cache 压力大。
-- **改进方案**：构建期生成 `[max_nr] → handler` 稠密/稀疏跳表（或对号表索引 match）；trap 层直接 `handlers[nr](args)`，去掉 `SyscallKind` 中间层；重启判定用位图 O(1)。
+  - `os/src/trap_handler.rs:341-353`（`restartable_syscall` 再次判断）
+- **状态**：已实施。`os/components/wateros-syscall/syscall-impl/impl-kernel/src/syscall_nr_dispatch.rs`
+  现使用按裸调用号索引的稠密函数指针表；标准 handler 直接放入 `ARG_SYSCALL_TABLE`，
+  少数签名不一致的调用进入 `SPECIAL_SYSCALL_TABLE` 适配。
+- **当前实现/复杂度**：主路径一次边界检查 + 一次函数指针加载 + 间接调用，复杂度 O(1)；未命中
+  槽位返回 `ENOSYS`。
+- **改进方案（剩余）**：若后续继续收口，可将 `is_restartable_syscall_nr` 从若干 `==` 比较改为
+  位图/布尔表，进一步缩短 EINTR 重启路径。
 - **预期收益**：高，所有 syscall 入口。
 - **架构差异**：无（RV/LA 共用 dispatch）。
-- **风险/依赖**：需与 `ActiveSyscallNumberTable`、旁路号（statx/fstatat）代码生成策略统一。
+- **风险/依赖**：新增号必须同步进入表；RISC-V 专用号经 cfg 适配后仍可共用同一张表。
 
 ### H-4. 已有 ASID 字段却仍全局 sfence / invtlb 【中高】
 

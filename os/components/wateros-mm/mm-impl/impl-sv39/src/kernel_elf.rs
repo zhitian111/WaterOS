@@ -26,15 +26,16 @@ use frame_alloctor::frame_alloc_result;
 #[cfg(not(feature = "vfs-root-read"))]
 use fs::api::{FsError, SharedFs};
 use impl_common::{
-    entry_file_offset, finalize_elf_read, rd_u16, rd_u32, rd_u64, ElfSegmentLoadParams, PT_LOAD,
+    entry_file_offset, finalize_elf_read, rd_u16, rd_u32, rd_u64, ElfSegmentLoadParams, VmaBacking,
+    PT_LOAD,
 };
 
 use crate::pagetable::Sv39AddressSpace;
 
 #[cfg(feature = "vfs-root-read")]
-use vfs::api::{SingleRootReadView, VfsError, VfsIoHandle, VfsOpenFlags, VfsOpenOps};
-#[cfg(feature = "vfs-root-read")]
 use spin::Mutex;
+#[cfg(feature = "vfs-root-read")]
+use vfs::api::{SingleRootReadView, VfsError, VfsIoHandle, VfsOpenFlags, VfsOpenOps};
 
 #[cfg(not(feature = "vfs-root-read"))]
 #[inline]
@@ -64,9 +65,9 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
         VfsError::InvalidPath | VfsError::Exists => RootVolumeReadError::InvalidPath,
         VfsError::NotEmpty => RootVolumeReadError::Unsupported,
         VfsError::NotUtf8 => RootVolumeReadError::NotUtf8,
-        VfsError::NotDirectory |
-        VfsError::TooManySymlinks |
-        VfsError::Unsupported => RootVolumeReadError::Unsupported,
+        VfsError::NotDirectory | VfsError::TooManySymlinks | VfsError::Unsupported => {
+            RootVolumeReadError::Unsupported
+        }
         VfsError::Driver => RootVolumeReadError::Driver,
         VfsError::Corrupt => RootVolumeReadError::Corrupt,
         VfsError::Io => RootVolumeReadError::Io,
@@ -294,7 +295,9 @@ fn read_whole_file_ro_retry_bad_prefix_vfs(view : &dyn SingleRootReadView,
     let read_once = || {
         view.read(path)
             .map_err(|e| {
-                runtime::logging::error!("[elf-load] Vfs::read err={:?} path={}", e, path);
+                runtime::logging::error!("[elf-load] Vfs::read err={:?} path={}",
+                                         e,
+                                         path);
                 LoadElfError::RootVolume(map_vfs_to_root_vol(e))
             })
     };
@@ -964,9 +967,11 @@ impl ElfPathSegmentLoader {
            -> Result<Self, LoadElfError> {
         let vma_file_origin = p_offset.saturating_sub(vbase.saturating_sub(vma_start));
         #[cfg(feature = "vfs-root-read")]
-        let handle = vfs::active_impl::backend()
-                         .open(path, VfsOpenFlags::read())
-                         .map_err(|error| LoadElfError::RootVolume(map_vfs_to_root_vol(error)))?;
+        let handle =
+            vfs::active_impl::backend().open(path, VfsOpenFlags::read())
+                                       .map_err(|error| {
+                                           LoadElfError::RootVolume(map_vfs_to_root_vol(error))
+                                       })?;
         Ok(Self { path : String::from(path),
                   params : ElfSegmentLoadParams { vbase,
                                                   p_offset,
@@ -987,7 +992,8 @@ fn read_handle_exact(handle : &Arc<Mutex<Box<dyn VfsIoHandle>>>,
     let mut filled = 0usize;
     while filled < buf.len() {
         let n = handle.lock()
-                      .read_at(offset + filled as u64, &mut buf[filled..])
+                      .read_at(offset + filled as u64,
+                               &mut buf[filled..])
                       .map_err(|_| MmError::AccessViolation)?;
         if n == 0 {
             return Err(MmError::AccessViolation);
@@ -1003,22 +1009,27 @@ impl DemandPageLoader for ElfPathSegmentLoader {
                                       .clone(),
                            params:
                                self.params.clone(),
-                           shareable : self.shareable,
+                           shareable:
+                               self.shareable,
                            #[cfg(feature = "vfs-root-read")]
-                           handle : self.handle.clone() }))
+                           handle:
+                               self.handle.clone() }))
     }
 
     fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()> {
-        self.params.fill_page(file_offset, dst, |pos, buf| {
-            #[cfg(feature = "vfs-root-read")]
-            {
-                read_handle_exact(&self.handle, pos as u64, buf)
-            }
-            #[cfg(not(feature = "vfs-root-read"))]
-            {
-                read_path_exact(&self.path, pos as u64, buf).map_err(|_| MmError::AccessViolation)
-            }
-        })
+        self.params
+            .fill_page(file_offset, dst, |pos, buf| {
+                #[cfg(feature = "vfs-root-read")]
+                {
+                    read_handle_exact(&self.handle, pos as u64, buf)
+                }
+                #[cfg(not(feature = "vfs-root-read"))]
+                {
+                    read_path_exact(&self.path, pos as u64, buf).map_err(|_| {
+                                                                    MmError::AccessViolation
+                                                                })
+                }
+            })
     }
 
     fn load_shared_page(&mut self,
@@ -1029,20 +1040,25 @@ impl DemandPageLoader for ElfPathSegmentLoader {
             if !self.shareable {
                 return Ok(None);
             }
-            let Some(identity) = self.handle.lock().file_content_identity() else {
+            let Some(identity) = self.handle
+                                     .lock()
+                                     .file_content_identity()
+            else {
                 return Ok(None);
             };
             let key_params = self.params.clone();
             let load_params = key_params.clone();
             let handle = self.handle.clone();
-            let ppn = impl_common::load_or_get_readonly_elf_page(&identity,
+            let ppn = impl_common::load_or_get_readonly_elf_page(
+                                                                 &identity,
                                                                  &key_params,
                                                                  file_offset,
                                                                  move |dst| {
-                load_params.fill_page(file_offset, dst, |pos, buf| {
+                                                                     load_params.fill_page(file_offset, dst, |pos, buf| {
                     read_handle_exact(&handle, pos as u64, buf)
                 })
-            })?;
+                                                                 },
+            )?;
             Ok(Some(ppn))
         }
         #[cfg(not(feature = "vfs-root-read"))]
@@ -1077,8 +1093,7 @@ fn register_lazy_segment_run(aspace : &mut Sv39AddressSpace,
                                   perm,
                                   vma_file_origin,
                                   vma_file_size,
-                                  false,
-                                  loader)
+                                  VmaBacking::File { loader })
           .map_err(LoadElfError::Mm)
 }
 
