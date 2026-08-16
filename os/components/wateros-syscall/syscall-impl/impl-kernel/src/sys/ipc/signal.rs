@@ -44,6 +44,10 @@ pub(super) struct PendingSignalSource {
 static PENDING_SIGNAL_SOURCES : Mutex<BTreeMap<(usize, usize), PendingSignalSource>> =
     Mutex::new(BTreeMap::new());
 
+/// 同步异常是线程定向的；单独按 task 保存，避免同进程并发 fault 覆盖 `si_addr`。
+static PENDING_FAULT_SOURCES : Mutex<BTreeMap<(usize, usize), PendingSignalSource>> =
+    Mutex::new(BTreeMap::new());
+
 fn record_pending_signal_source(process_pid : usize, signal : usize, source : PendingSignalSource) {
     if signal != 0 {
         PENDING_SIGNAL_SOURCES.lock()
@@ -66,6 +70,25 @@ pub(super) fn peek_pending_signal_source(process_pid : usize,
                           .get(&(process_pid, signal))
                           .copied()
                           .unwrap_or_default()
+}
+
+fn take_delivery_signal_source(task_id : usize,
+                               process_pid : usize,
+                               signal : usize)
+                               -> PendingSignalSource {
+    PENDING_FAULT_SOURCES.lock()
+                         .remove(&(task_id, signal))
+                         .unwrap_or_else(|| take_pending_signal_source(process_pid, signal))
+}
+
+fn drop_thread_signal_sources(task_id : usize) {
+    PENDING_FAULT_SOURCES.lock()
+                         .retain(|(source_task_id, _), _| *source_task_id != task_id);
+}
+
+fn drop_process_signal_sources(process_pid : usize) {
+    PENDING_SIGNAL_SOURCES.lock()
+                          .retain(|(source_pid, _), _| *source_pid != process_pid);
 }
 
 #[cfg(target_arch = "riscv64")]
@@ -470,12 +493,18 @@ pub(crate) fn raise_current_fault_signal(signal : usize,
         return Err(ErrNo::EINVAL);
     }
     let snapshot = ensure_current_signal_state()?;
-    record_pending_signal_source(snapshot.pid.raw(),
-                                 signal,
+    let dispatch = ipc::signal::force_thread_signal(snapshot.task_id, signal)
+        .map_err(|error| match error {
+            SignalError::NoSuchTask | SignalError::NoSuchProcess => ErrNo::ESRCH,
+            _ => ErrNo::EINVAL,
+        })?;
+    PENDING_FAULT_SOURCES.lock()
+                         .insert((snapshot.task_id, signal),
                                  PendingSignalSource { code,
                                                        fault_addr,
                                                        ..PendingSignalSource::default() });
-    send_thread(snapshot.task_id, signal)
+    apply_signal_dispatch(dispatch, signal);
+    Ok(())
 }
 
 pub(crate) fn notify_parent_sigchld(pid : ProcessId) {
@@ -553,16 +582,24 @@ pub(crate) fn on_clone_thread(parent_task_id : usize,
 }
 
 pub(crate) fn on_exec(task_id : usize, removed_threads : &[task::ExitedTask]) {
+    for thread in removed_threads {
+        drop_thread_signal_sources(thread.id);
+    }
     let _ = ipc::signal::exec_process(task_id,
                                       removed_threads.iter()
                                                      .map(|thread| thread.id));
 }
 
 pub(crate) fn on_thread_exit(task_id : usize, pid : usize, last_thread : bool) {
+    drop_thread_signal_sources(task_id);
+    if last_thread {
+        drop_process_signal_sources(pid);
+    }
     ipc::signal::exit_thread(task_id, pid, last_thread);
 }
 
 pub(crate) fn drop_thread_state(task_id : usize) {
+    drop_thread_signal_sources(task_id);
     ipc::signal::drop_thread_and_empty_process(task_id);
 }
 
@@ -599,6 +636,7 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
     let pending = match effect {
         SignalEffect::Handler(pending) => pending,
         SignalEffect::Terminate { signal } => {
+            let _ = take_delivery_signal_source(snapshot.task_id, snapshot.pid.raw(), signal);
             let exit_code =
                 crate::sys::task::wait::signal_terminate_exit_code(signal, snapshot.task_id);
             crate::sys::task::exit_group_with_wait_code(exit_code);
@@ -651,7 +689,8 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
                             .map(|sp| sp & !0xF)
                             .ok_or(ErrNo::EFAULT)?;
     let frame_on_alternate = already_on_alternate || switch_to_alternate;
-    let source = take_pending_signal_source(snapshot.pid.raw(), pending.signal);
+    let source =
+        take_delivery_signal_source(snapshot.task_id, snapshot.pid.raw(), pending.signal);
     let user_frame = build_user_signal_frame(user_siginfo(pending.signal, source),
                                                    signal_stack_for_user(alternate_stack,
                                                                          already_on_alternate),

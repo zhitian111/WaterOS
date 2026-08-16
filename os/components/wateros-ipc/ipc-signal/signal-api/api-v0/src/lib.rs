@@ -21,6 +21,7 @@ pub const SIG_SETMASK : usize = 2;
 pub const SIGHUP : usize = 1;
 pub const SIGINT : usize = 2;
 pub const SIGILL : usize = 4;
+pub const SIGTRAP : usize = 5;
 pub const SIGBUS : usize = 7;
 pub const SIGFPE : usize = 8;
 pub const SIGKILL : usize = 9;

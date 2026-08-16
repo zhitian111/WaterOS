@@ -10,6 +10,7 @@ use arch_api_v0::trap::{Exception, Interrupt, TrapCause, TrapFrameRead, TrapFram
 use base_config::task::SCHED_TIMER_PERIOD_MS;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mm::api::mmap::PageFaultAccess;
+use mm::kernel_mm::UserPageFaultResult;
 use platform::arch::paging;
 use platform::arch::trap::ActiveTrapFrame as TrapContext;
 use runtime::logging::*;
@@ -71,6 +72,12 @@ fn exit_current_if_process_exiting() {
 /// trampoline」，实为 **trap 风暴**而非 `sret` 损坏。
 const TIMER_REARM_MS : u64 = SCHED_TIMER_PERIOD_MS;
 static TIMER_TICK_COUNT : AtomicUsize = AtomicUsize::new(0);
+
+const ILL_ILLOPC : i32 = 1;
+const TRAP_BRKPT : i32 = 1;
+const BUS_ADRERR : i32 = 2;
+const SEGV_MAPERR : i32 = 1;
+const SEGV_ACCERR : i32 = 2;
 /// 当前支持架构的 syscall/trap 指令宽度，用于将用户 PC 前进到下一条指令。
 const SYSCALL_INSN_BYTES : usize = 4;
 
@@ -103,7 +110,11 @@ fn log_unhandled_user_fault_probe(cx : &TrapContext, trap_cause : TrapCause, raw
 }
 
 /// 记录用户任务 trap 杀进程上下文并终止当前进程。
-fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapContext) -> ! {
+fn kill_current_user_task(context : &str,
+                          trap_cause : TrapCause,
+                          cx : &TrapContext,
+                          signal : usize)
+                          -> ! {
     if let Some(snapshot) = task::current_task_snapshot() {
         if snapshot.kind != task::TaskKind::User {
             if !cx.returns_to_user() || task::current_process_task_snapshot().is_none() {
@@ -133,7 +144,7 @@ fn kill_current_user_task(context : &str, trap_cause : TrapCause, cx : &TrapCont
               cx.user_pc(),
               cx.fault_addr());
     }
-    syscall::terminate_current_process(-1);
+    syscall::terminate_current_process_by_signal(signal);
 }
 
 /// 内核态不可恢复 trap：记录诊断后停机，避免 `sret` 到损坏 PC 形成级联 fault。
@@ -218,7 +229,8 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                     if has_user_context {
                         kill_current_user_task("invalid rt_sigreturn frame",
                                                trap_cause,
-                                               cx);
+                                               cx,
+                                               syscall::SIGSEGV);
                     }
                     warn!("[trap] ignoring invalid rt_sigreturn on non-user context pc={:#x}",
                           cx.user_pc());
@@ -259,16 +271,40 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             // fault， 形成无限 trap 风暴；在 INFO
             // 日志级别下毫无输出，表现为「sret 后卡死」。
             if cx.returns_to_user() {
-                if matches!(trap_cause,
-                            TrapCause::Exception(Exception::StorePageFault)) &&
-                   mm::kernel_mm::handle_cow_fault(task::current_task_user_aspace_ptr(),
-                                                   cx.fault_addr())
-                {
-                    trace!("[trap] handled user COW fault sepc={:#x} stval={:#x}",
-                           cx.user_pc(),
-                           cx.fault_addr());
-                    finish_trap_return(frame, cx, raw_cause);
-                    return;
+                if matches!(trap_cause, TrapCause::Exception(Exception::StorePageFault)) {
+                    match mm::kernel_mm::handle_cow_fault(task::current_task_user_aspace_ptr(),
+                                                          cx.fault_addr())
+                    {
+                        Ok(true) => {
+                            trace!("[trap] handled user COW fault sepc={:#x} stval={:#x}",
+                                   cx.user_pc(),
+                                   cx.fault_addr());
+                            finish_trap_return(frame, cx, raw_cause);
+                            return;
+                        }
+                        Ok(false) => {}
+                        Err(mm::api::error::MmError::OutOfMemory) => {
+                            error!("[trap] OOM while handling user COW fault sepc={:#x} \
+                                    stval={:#x}",
+                                   cx.user_pc(),
+                                   cx.fault_addr());
+                            kill_current_user_task("user COW fault OOM",
+                                                   trap_cause,
+                                                   cx,
+                                                   syscall::SIGKILL);
+                        }
+                        Err(error) => {
+                            error!("[trap] failed to handle user COW fault sepc={:#x} \
+                                    stval={:#x}: {:?}",
+                                   cx.user_pc(),
+                                   cx.fault_addr(),
+                                   error);
+                            kill_current_user_task("user COW fault internal error",
+                                                   trap_cause,
+                                                   cx,
+                                                   syscall::SIGSEGV);
+                        }
+                    }
                 }
                 let fault_access = match trap_cause {
                     TrapCause::Exception(Exception::InstructionPageFault) => {
@@ -278,21 +314,46 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                     TrapCause::Exception(Exception::StorePageFault) => PageFaultAccess::Write,
                     _ => unreachable!(),
                 };
-                if mm::kernel_mm::handle_user_page_fault(task::current_task_user_aspace_ptr(),
-                                                         cx.fault_addr(),
-                                                         fault_access)
-                {
-                    syscall::record_user_page_fault_handled();
-                    trace!("[trap] handled user lazy page fault sepc={:#x} stval={:#x}",
-                           cx.user_pc(),
-                           cx.fault_addr());
-                    finish_trap_return(frame, cx, raw_cause);
-                    return;
-                }
+                let fault_result =
+                    mm::kernel_mm::handle_user_page_fault(task::current_task_user_aspace_ptr(),
+                                                          cx.fault_addr(),
+                                                          fault_access);
+                let (signal, code) = match fault_result {
+                    UserPageFaultResult::Handled => {
+                        syscall::record_user_page_fault_handled();
+                        trace!("[trap] handled user lazy page fault sepc={:#x} stval={:#x}",
+                               cx.user_pc(),
+                               cx.fault_addr());
+                        finish_trap_return(frame, cx, raw_cause);
+                        return;
+                    }
+                    UserPageFaultResult::MapError => (syscall::SIGSEGV, SEGV_MAPERR),
+                    UserPageFaultResult::AccessError => (syscall::SIGSEGV, SEGV_ACCERR),
+                    UserPageFaultResult::BackingError => (syscall::SIGBUS, BUS_ADRERR),
+                    UserPageFaultResult::OutOfMemory => {
+                        error!("[trap] OOM while handling user page fault sepc={:#x} stval={:#x}",
+                               cx.user_pc(),
+                               cx.fault_addr());
+                        kill_current_user_task("user page fault OOM",
+                                               trap_cause,
+                                               cx,
+                                               syscall::SIGKILL);
+                    }
+                    UserPageFaultResult::Internal(error) => {
+                        error!("[trap] internal user page fault error sepc={:#x} stval={:#x}: {:?}",
+                               cx.user_pc(),
+                               cx.fault_addr(),
+                               error);
+                        kill_current_user_task("user page fault internal error",
+                                               trap_cause,
+                                               cx,
+                                               syscall::SIGSEGV);
+                    }
+                };
                 log_unhandled_user_fault_probe(cx, trap_cause, raw_cause);
                 debug!("[trap] user memory fault {:?} raw={:#x} ecode={:#x} sepc={:#x} \
                         stval={:#x} user_sp={:#x} return_satp={:#x} aspace_ptr={:#x} — \
-                        delivering SIGSEGV",
+                        delivering signal={} si_code={}",
                        trap_cause,
                        raw_cause,
                        (raw_cause >> 16) & 0x3F,
@@ -300,22 +361,24 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                        cx.fault_addr(),
                        cx.user_sp(),
                        cx.return_address_space_token(),
-                       task::current_task_user_aspace_ptr());
-                // Synchronous page faults carry a positive si_code and
-                // si_addr on Linux. HotSpot uses both to distinguish a CPU
-                // fault from kill(2)-style asynchronous delivery.
-                let raised = syscall::raise_current_fault_signal(11, 1, cx.fault_addr());
-                debug!("[trap][probe] raise_current_fault_signal(SIGSEGV) -> {}",
+                       task::current_task_user_aspace_ptr(),
+                       signal,
+                       code);
+                let raised = syscall::raise_current_fault_signal(signal, code, cx.fault_addr());
+                debug!("[trap][probe] raise_current_fault_signal({}, {}) -> {}",
+                       signal,
+                       code,
                        raised);
                 if !raised {
-                    kill_current_user_task("user memory fault", trap_cause, cx);
+                    kill_current_user_task("user memory fault", trap_cause, cx, signal);
                 }
                 let delivered = return_to_user_signal_delivery(authoritative, trap_cause, cx, None);
                 if !delivered {
-                    error!("[trap] SIGSEGV signal not delivered — killing user task");
+                    error!("[trap] synchronous fault signal not delivered — killing user task");
                     kill_current_user_task("user memory fault (no signal delivered)",
                                            trap_cause,
-                                           cx);
+                                           cx,
+                                           signal);
                 }
                 finish_trap_return(frame, cx, raw_cause);
                 return;
@@ -391,11 +454,12 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 let (signal, code, address) = match trap_cause {
                     // ILL_ILLOPC and the faulting instruction address.
                     TrapCause::Exception(Exception::IllegalInstruction) => {
-                        (4, 1, cx.user_pc())
+                        (syscall::SIGILL, ILL_ILLOPC, cx.user_pc())
                     }
-                    // SEGV_MAPERR is the conservative classification for the
-                    // remaining synchronous user exceptions.
-                    _ => (11, 1, cx.fault_addr()),
+                    TrapCause::Exception(Exception::Breakpoint) => {
+                        (syscall::SIGTRAP, TRAP_BRKPT, cx.user_pc())
+                    }
+                    _ => (syscall::SIGSEGV, SEGV_MAPERR, cx.fault_addr()),
                 };
                 warn!("[trap] unhandled user exception cause={:?} raw={:#x} pc={:#x} \
                        fault_addr={:#x} signal={}",
@@ -405,9 +469,14 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                       cx.fault_addr(),
                       signal);
                 if !syscall::raise_current_fault_signal(signal, code, address) {
-                    kill_current_user_task("user exception", trap_cause, cx);
+                    kill_current_user_task("user exception", trap_cause, cx, signal);
                 }
-                return_to_user_signal_delivery(authoritative, trap_cause, cx, None);
+                if !return_to_user_signal_delivery(authoritative, trap_cause, cx, None) {
+                    kill_current_user_task("user exception (no signal delivered)",
+                                           trap_cause,
+                                           cx,
+                                           signal);
+                }
                 finish_trap_return(frame, cx, raw_cause);
                 return;
             }
@@ -492,7 +561,8 @@ fn return_to_user_signal_delivery(frame : *mut u8,
         if has_user_context {
             kill_current_user_task("signal frame setup failed",
                                    trap_cause,
-                                   cx);
+                                   cx,
+                                   syscall::SIGSEGV);
         }
         warn!("[trap] ignoring signal frame setup failure on non-user context pc={:#x}",
               cx.user_pc());

@@ -413,6 +413,39 @@ impl SignalRegistry {
         }
     }
 
+    /// 强制投递由当前线程同步异常产生的信号。
+    ///
+    /// Linux 对同步 fault 不允许通过阻塞或 `SIG_IGN` 跳过：这两种情况都恢复默认
+    /// disposition、从线程 mask 中移除该信号，再把它放入线程 pending 集。
+    pub fn force_thread_signal(&mut self,
+                               task_id : usize,
+                               sig : usize)
+                               -> SignalResult<SignalDispatch> {
+        if !valid_signal(sig) {
+            return Err(SignalError::InvalidSignal);
+        }
+        let thread = *self.threads
+                          .get(&task_id)
+                          .ok_or(SignalError::NoSuchTask)?;
+        let action = self.processes
+                         .get(&thread.pid)
+                         .ok_or(SignalError::NoSuchProcess)?
+                         .action(sig);
+        if thread.mask.contains(sig) || action.is_ignore() {
+            self.processes
+                .get_mut(&thread.pid)
+                .ok_or(SignalError::NoSuchProcess)?
+                .actions[sig - 1] = SignalAction::default_action();
+            self.thread_mut(task_id)?
+                .mask
+                .remove(sig);
+        }
+        let target = self.thread_mut(task_id)?;
+        target.pending.insert(sig);
+        target.waiting_for = None;
+        Ok(SignalDispatch::pending(Some(task_id)))
+    }
+
     /// `FLOW:` 向进程投递信号（`kill` 路径）；选择最低未屏蔽 tid 或 `sigwait` 线程。
     ///
     /// 普通信号记录在进程共享 pending 中；选择的 task ID 只决定优先唤醒谁，真正消费者在
@@ -942,6 +975,56 @@ mod tests {
                 .unwrap();
         assert_eq!(registry.take_deliverable(100),
                    Some(SignalEffect::Terminate { signal : SIGTERM }));
+    }
+
+    #[test]
+    fn forced_fault_overrides_ignore_and_blocked_handler() {
+        let mut registry = registry_with_process();
+        registry.set_action(100, SIGSEGV, SignalAction::ignore())
+                .unwrap();
+
+        let dispatch = registry.force_thread_signal(100, SIGSEGV)
+                               .unwrap();
+        assert_eq!(dispatch, SignalDispatch::pending(Some(100)));
+        assert_eq!(registry.get_action(100, SIGSEGV).unwrap(),
+                   SignalAction::default_action());
+        assert_eq!(registry.take_deliverable(100),
+                   Some(SignalEffect::Terminate { signal : SIGSEGV }));
+
+        let handler = SignalAction { handler : 0x8000,
+                                     ..SignalAction::default_action() };
+        registry.set_action(100, SIGSEGV, handler)
+                .unwrap();
+        let mut blocked = SignalSet::empty();
+        blocked.insert(SIGSEGV);
+        registry.replace_mask(100, blocked)
+                .unwrap();
+
+        registry.force_thread_signal(100, SIGSEGV)
+                .unwrap();
+        assert!(!registry.current_mask(100).unwrap().contains(SIGSEGV));
+        assert_eq!(registry.get_action(100, SIGSEGV).unwrap(),
+                   SignalAction::default_action());
+        assert_eq!(registry.take_deliverable(100),
+                   Some(SignalEffect::Terminate { signal : SIGSEGV }));
+    }
+
+    #[test]
+    fn forced_fault_preserves_unblocked_user_handler() {
+        let mut registry = registry_with_process();
+        let handler = SignalAction { handler : 0x8000,
+                                     ..SignalAction::default_action() };
+        registry.set_action(100, SIGSEGV, handler)
+                .unwrap();
+
+        registry.force_thread_signal(100, SIGSEGV)
+                .unwrap();
+        assert!(matches!(registry.take_deliverable(100),
+                         Some(SignalEffect::Handler(PendingSignal {
+                             signal: SIGSEGV,
+                             action,
+                             ..
+                         })) if action == handler));
     }
 
     #[test]

@@ -6,6 +6,12 @@ extern crate alloc;
 
 use api_v0::SyscallArgs;
 
+pub const SIGBUS : usize = ipc::signal::SIGBUS;
+pub const SIGILL : usize = ipc::signal::SIGILL;
+pub const SIGKILL : usize = ipc::signal::SIGKILL;
+pub const SIGSEGV : usize = ipc::signal::SIGSEGV;
+pub const SIGTRAP : usize = ipc::signal::SIGTRAP;
+
 mod epoll_fd;
 mod fallible_buf;
 mod linux_stat;
@@ -72,6 +78,14 @@ pub fn send_kernel_signal_to_process_group(pgid : usize, signal : usize) -> usiz
 pub fn terminate_current_process(exit_code : isize) -> ! {
     sys::sys_exit_group(exit_code);
     unreachable!("sys_exit_group must not return")
+}
+
+/// 以 Linux wait status 的信号终止语义结束当前线程组。
+pub fn terminate_current_process_by_signal(signal : usize) -> ! {
+    let task_id = task::current_task_id().unwrap_or(0);
+    let exit_code = sys::task::signal_terminate_exit_code(signal, task_id);
+    sys::task::exit_group_with_wait_code(exit_code);
+    unreachable!("exit_group_with_wait_code must not return")
 }
 
 /// Finish one thread of a process whose exit-group state is already published.
