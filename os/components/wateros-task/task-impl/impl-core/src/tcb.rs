@@ -106,6 +106,8 @@ pub struct TaskControlBlock {
     vruntime : VRunTime,
     stats : TaskRuntimeStats,
     wait_result : Option<TaskWaitResult>,
+    /// `exit_group` 已要求本线程退出；TCB 回收前持续拒绝入睡。
+    exit_wait_interrupted : bool,
     task_cx : TaskContext,
     inner : TaskInner,
     /// The CPU runqueue that owns this task while it is published as Ready.
@@ -143,6 +145,7 @@ impl TaskControlBlock {
                vruntime : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
+               exit_wait_interrupted : false,
                task_cx,
                inner : TaskInner::Kernel(KernelResources { kernel_stack,
                                                            bootstrap }),
@@ -170,6 +173,7 @@ impl TaskControlBlock {
                vruntime : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
+               exit_wait_interrupted : false,
                task_cx,
                inner : TaskInner::Idle(KernelResources { kernel_stack,
                                                          bootstrap }),
@@ -195,6 +199,7 @@ impl TaskControlBlock {
                vruntime : 0,
                stats : TaskRuntimeStats::default(),
                wait_result : None,
+               exit_wait_interrupted : false,
                task_cx,
                inner : TaskInner::User(user),
                ready_cpu_id : None,
@@ -253,6 +258,7 @@ impl TaskControlBlock {
                     vruntime : self.vruntime,
                     stats : TaskRuntimeStats::default(),
                     wait_result : None,
+                    exit_wait_interrupted : false,
                     task_cx,
                     inner : TaskInner::User(UserResources { kernel_stack,
                                                             trap_frame : child_trap,
@@ -297,6 +303,7 @@ impl TaskControlBlock {
                     vruntime : self.vruntime,
                     stats : TaskRuntimeStats::default(),
                     wait_result : None,
+                    exit_wait_interrupted : false,
                     task_cx,
                     inner : TaskInner::User(UserResources { kernel_stack,
                                                             trap_frame : child_trap,
@@ -639,6 +646,14 @@ impl TaskControlBlock {
             .take()
             .unwrap_or(TaskWaitResult::Woken)
     }
+
+    /// 登记线程组退出专用的 sticky wait interrupt。
+    #[inline]
+    pub fn request_exit_wait_interrupt(&mut self) { self.exit_wait_interrupted = true; }
+
+    /// 线程组退出后持续拒绝等待，直至本 TCB 被回收。
+    #[inline]
+    pub fn exit_wait_interrupted(&self) -> bool { self.exit_wait_interrupted }
 
     #[inline]
     pub fn ready_to_wake(&self, current_tick : TaskTick) -> bool {

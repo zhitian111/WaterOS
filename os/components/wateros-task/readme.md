@@ -104,7 +104,8 @@ TCB 的主要实现在 `task-impl/impl-core/src/tcb.rs`。
 - 区分 Idle、Kernel、User 三种任务资源。三者都拥有独立内核栈和任务上下文；用户任务额外
   拥有用户 trap frame、入口、用户栈和地址空间信息。
 - 维护 `Ready`、`Running`、`Blocking`、`Sleeping`、`Exited` 五种调度生命周期状态。
-- 维护调度策略、实时优先级、nice、vruntime、线程级 I/O 优先级、运行统计和等待结果。
+- 维护调度策略、实时优先级、nice、vruntime、线程级 I/O 优先级、运行统计、等待结果和
+  `exit_group` sticky wait interrupt。后者保证退出通知与 sibling 入睡并发时不会丢失。
 - `ready_cpu_id` 表示 Ready 任务所属的唯一 CPU runqueue；`running_cpu_id` 表示任务当前运行
   的 CPU；`last_cpu_id` 用于唤醒时尽量回到最近运行 CPU，提高缓存局部性。
 - 新创建但尚未发布的任务状态也是 Ready，但 `ready_cpu_id` 为 `None`，且不在任何就绪队列；
@@ -140,5 +141,8 @@ TCB 的主要实现在 `task-impl/impl-core/src/tcb.rs`。
   本地运行统计、fair vruntime、RR 时间片和抢占判断。
 - WaitQueues 支持条件等待、超时、wake-one、wake-all 和 requeue。条件等待在 scheduler
   临界区内复查条件，避免条件变化与入队之间发生丢失唤醒。
+- 线程组退出在同一 scheduler 临界区内登记 sticky interrupt；已阻塞 sibling 立即唤醒，
+  Running/Ready sibling 的后续 wait/sleep 均在入队前返回 `Interrupted`，直至其本地退出路径
+  展开 syscall 栈、释放 FD、pipe lease 等资源并回收 TCB。
 - `cpu_states()`、`task_snapshot()` 和 `log_stall_diagnostics()` 可用于检查 CPU online、当前
   任务、各类队列长度、等待目标、`need_resched`、timer 和 context-switch 是否继续推进。

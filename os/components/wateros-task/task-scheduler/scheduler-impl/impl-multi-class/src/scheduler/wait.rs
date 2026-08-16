@@ -46,6 +46,41 @@ impl MultiClassScheduler {
         true
     }
 
+    /// 登记线程组退出中断，并闭合 Running -> Blocking/Sleeping 的入睡竞态。
+    pub fn interrupt_task_for_exit(&mut self, task_id : TaskId) -> bool {
+        let Some(state) = self.registry
+                              .state(task_id)
+        else {
+            return false;
+        };
+        if self.registry
+               .is_idle_task(task_id) ||
+           matches!(state, TaskState::Exited(_))
+        {
+            return false;
+        }
+        if !self.registry
+                .request_exit_wait_interrupt(task_id)
+        {
+            return false;
+        }
+        match state {
+            TaskState::Blocking(_) | TaskState::Sleeping { .. } => {
+                let removed = self.wait_queues
+                                  .interrupt_task(task_id);
+                debug_assert!(removed,
+                              "blocked exit-group sibling must be present in WaitQueues");
+                self.registry
+                    .finish_wait(task_id, TaskWaitResult::Interrupted);
+                self.activate_ready_task(task_id, ReadyPlacement::LastCpu);
+            }
+            TaskState::Running => self.request_task_reschedule(task_id),
+            TaskState::Ready => {}
+            TaskState::Exited(_) => unreachable!(),
+        }
+        true
+    }
+
     pub fn wake_child_exit_waiters(&mut self, parent_id : TaskId) {
         let waiters = self.wait_queues
                           .wake_child_exit_waiters(parent_id);

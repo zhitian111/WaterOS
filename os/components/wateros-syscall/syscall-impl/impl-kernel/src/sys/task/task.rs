@@ -154,7 +154,7 @@ pub(crate) fn exit_group_with_wait_code(exit_code : isize) -> isize {
                         // unwinds, the trap-return ProcessState::Exiting check routes
                         // that thread through exit_current_with_wait_code and performs
                         // clear_child_tid, robust-list, fd and signal cleanup locally.
-                        if !task::interrupt_task(sibling) {
+                        if !task::interrupt_task_for_exit(sibling) {
                             task::request_task_reschedule(sibling);
                         }
                     }

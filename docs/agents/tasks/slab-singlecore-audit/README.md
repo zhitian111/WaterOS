@@ -40,6 +40,7 @@
 | `03-low-overhead-slab-diagnostics.md` | 增加 per-CPU、feature-gated 诊断，量化 remote/refill/page 状态 |
 | `04-slab-page-reclaim.md` | 安全回收空页并修正 slab/frame 内存统计 |
 | `05-remote-free-rebalance.md` | 有界 remote-free、按 class 分流和 owner/页再平衡 |
+| `05a-exit-group-wait-interrupt-race.md` | 闭合 `exit_group` 通知与 sibling 入睡之间的 lost-interrupt 竞态 |
 | `06-singlecore-allocator-ab.md` | `smp=1` 与正常 SMP 的 allocator 归因实验和门禁 |
 | `07-buildstorm-crate-attribution.md` | 为大型 crate 记录开始/完成时间和内核链路画像 |
 | `08-selected-serial-chain-optimization.md` | 依据任务 07 数据实施一个可解释的串行链路优化 |

@@ -411,6 +411,26 @@ impl TaskRegistry {
         }
     }
 
+    /// 为任务登记线程组退出专用的 sticky wait interrupt。
+    pub fn request_exit_wait_interrupt(&mut self, task_id : TaskId) -> bool {
+        let Some(task) = self.tasks
+                             .get_mut(&task_id)
+                             .map(|task| task.as_mut())
+        else {
+            return false;
+        };
+        task.request_exit_wait_interrupt();
+        true
+    }
+
+    /// 任务是否已被线程组退出永久禁止再次等待。
+    pub fn exit_wait_interrupted(&self, task_id : TaskId) -> bool {
+        self.tasks
+            .get(&task_id)
+            .map(|task| task.as_ref())
+            .is_some_and(|task| task.exit_wait_interrupted())
+    }
+
     pub fn take_current_wait_result(&mut self, task_id : TaskId) -> TaskWaitResult {
         self.tasks
             .get_mut(&task_id)

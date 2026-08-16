@@ -62,6 +62,11 @@ pub fn wake_task(task_id : TaskId) -> bool { scheduler::wake_task(task_id) }
 /// 以 `Interrupted` 结果将指定任务从等待与超时队列中同时移除。
 pub fn interrupt_task(task_id : TaskId) -> bool { scheduler::interrupt_task(task_id) }
 
+/// 为 `exit_group` 登记不可丢失的等待中断；目标线程仍负责在本 CPU 展开栈并退出。
+pub fn interrupt_task_for_exit(task_id : TaskId) -> bool {
+    scheduler::interrupt_task_for_exit(task_id)
+}
+
 /// 回收指定已退出任务的信息。
 pub fn reap_exited_task(task_id : TaskId) -> Option<ExitedTask> {
     let leader_pid = active_impl::process_task_snapshot(task_id).and_then(|process_task| {

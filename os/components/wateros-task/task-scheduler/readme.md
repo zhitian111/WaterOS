@@ -100,6 +100,11 @@ wake_one() / wake_all()
   -> 从 WaitQueues 取出仍匹配等待目标的任务
   -> 写入 wait result，并按 LastCpu/LeastLoaded 重新发布
   -> 锁外向实际远端 CPU 发送重调度 IPI
+
+exit_group sibling interrupt
+  -> scheduler 临界区内登记 sticky interrupt
+  -> 已在 WaitQueues 的任务以 Interrupted 唤醒
+  -> Running/Ready 任务若随后进入 wait/sleep，在入队前拒绝入睡，直至 TCB 回收
 ```
 
 ## TaskRegistry实现功能
@@ -111,7 +116,8 @@ wake_one() / wake_all()
 - 支持创建初始用户任务，以及 fork、clone 和 exec 所需的 TCB 操作。
 - 维护 `Ready`、`Running`、`Blocking`、`Sleeping`、`Exited` 状态。
 - 维护 `ready_cpu_id`、`running_cpu_id` 和 `last_cpu_id`，供队列归属检查、唤醒放置和诊断使用。
-- 保存 policy、priority、nice、I/O priority、vruntime、运行统计、等待结果和 TaskContext。
+- 保存 policy、priority、nice、I/O priority、vruntime、运行统计、等待结果、线程组退出专用
+  sticky wait interrupt 和 TaskContext。
 - 提供稳定的 `TaskSnapshot`，避免 dashboard 和诊断代码直接长期借用 TCB。
 - 任务退出后先保留 Exited TCB 供 wait/reap 观察，确认回收时再从 registry 移除。
 
@@ -149,6 +155,8 @@ CPU 的 current task 一致。
 - 支持无期限等待、带 deadline 等待、wake-one、wake-all 和跨队列 requeue。
 - timeout 队列按 deadline 排序，只由 timekeeper CPU 推进并激活到期任务。
 - 条件等待在 scheduler 锁内复查条件，保证“检查条件”和“登记 waiter”之间不会丢失唤醒。
+- `exit_group` sticky interrupt 与 wait/sleep 入队也由同一 scheduler 锁串行化，并持续到 TCB
+  回收，闭合“退出 CPU 看到 Running、目标线程随后一次或多次尝试入睡”的 lost-interrupt 窗口。
 - 唤醒时会再次核对任务状态和等待目标；已经退出、已被其它路径唤醒或不再匹配的陈旧 waiter
   会被丢弃，避免重复入队或重复 Running。
 - requeue 会同时更新 waiter 所在容器和 TCB 的 Blocking target，保持两边语义一致。

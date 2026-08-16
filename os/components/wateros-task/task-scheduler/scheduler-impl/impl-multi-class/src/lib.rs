@@ -836,6 +836,24 @@ pub fn interrupt_task(task_id : TaskId) -> bool {
     interrupted
 }
 
+/// 线程组退出专用中断：已阻塞者立即唤醒，其余任务在后续等待前持续拒绝入睡。
+pub fn interrupt_task_for_exit(task_id : TaskId) -> bool {
+    let cpu_id = cpu::current_cpu_id();
+    let (interrupted, targets) = {
+        let _guard = InterruptGuard::new();
+        with_scheduler(|scheduler| {
+            let interrupted = scheduler.interrupt_task_for_exit(task_id);
+            let targets = scheduler.take_pending_reschedule_cpus();
+            (interrupted, targets)
+        })
+    };
+    dispatch_reschedules(targets, cpu_id);
+    if interrupted {
+        record_task_event(DebugEventKind::TaskWake, task_id, [2, 0, 0]);
+    }
+    interrupted
+}
+
 pub fn wake_child_exit_waiters(parent_id : TaskId) {
     let cpu_id = cpu::current_cpu_id();
     let targets = {

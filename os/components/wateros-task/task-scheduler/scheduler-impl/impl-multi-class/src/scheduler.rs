@@ -211,6 +211,15 @@ impl MultiClassScheduler {
         {
             self.cpu_states[cpu_id.raw()].prepare_yield();
         }
+        if matches!(reason,
+                    ScheduleReason::Block(_) | ScheduleReason::Sleep(1..)) &&
+           self.registry
+               .exit_wait_interrupted(current_task_id)
+        {
+            self.registry
+                .finish_wait(current_task_id, TaskWaitResult::Interrupted);
+            return None;
+        }
         let queue_target = self.pick_queue(reason);
         self.enqueue_task(queue_target, current_task_id, cpu_id);
         // 当前任务的状态转换可能唤醒其它任务（最典型是 Exit 唤醒父 runner）。
@@ -303,6 +312,15 @@ impl MultiClassScheduler {
             self.activate_woken_and_timeout_tasks();
         }
 
+        let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id()?;
+        if self.registry
+               .exit_wait_interrupted(current_task_id)
+        {
+            self.registry
+                .finish_wait(current_task_id, TaskWaitResult::Interrupted);
+            return None;
+        }
+
         // ===== Phase 2: 快速路径 — 目标已就绪，无需阻塞 =====
         if self.registry
                .wait_target_ready(target)
@@ -315,7 +333,6 @@ impl MultiClassScheduler {
         }
 
         // ===== Phase 3: 从 cpu_states 取出当前任务 =====
-        let current_task_id = self.cpu_states[cpu_id.raw()].current_task_id()?;
         let current_ptr = self.cpu_states[cpu_id.raw()].current_task_cx();
         self.cpu_states[cpu_id.raw()].dequeue(current_task_id);
 
