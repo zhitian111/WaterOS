@@ -16,6 +16,7 @@ use mm::ActiveUserMemoryOps;
 use crate::mm_util::{current_user_aspace_handle, mm_err_to_errno};
 
 pub(crate) const USER_PATH_MAX : usize = 4096;
+const PATH_COPY_CHUNK : usize = 64;
 
 fn mm_user_copy_errno(e : mm::api::error::MmError) -> ErrNo {
     match e {
@@ -192,15 +193,23 @@ pub(crate) fn copy_user_path_cstr(ptr : usize, max : usize) -> Result<String, Er
     if max == 0 {
         return Err(ErrNo::EINVAL);
     }
-    const PATH_COPY_CHUNK : usize = 64;
-    let mut raw = Vec::with_capacity(max.min(256));
     let ops = user_aspace_required()?;
+    copy_cstr_in_chunks(ptr, max, |buf, address| {
+        ops.copy_from_user(buf, VirtAddr(address))
+           .map_err(mm_user_copy_errno)
+    })
+}
+
+fn copy_cstr_in_chunks(mut ptr : usize,
+                       max : usize,
+                       mut read : impl FnMut(&mut [u8], usize) -> Result<usize, ErrNo>)
+                       -> Result<String, ErrNo> {
+    let mut raw = Vec::with_capacity(max.min(256));
     let mut len = 0usize;
     while len < max {
         let chunk_len = (max - len).min(PATH_COPY_CHUNK);
-        let chunk_ptr = ptr.checked_add(len).ok_or(ErrNo::EFAULT)?;
         let mut chunk = [0u8; PATH_COPY_CHUNK];
-        match ops.copy_from_user(&mut chunk[..chunk_len], VirtAddr(chunk_ptr)) {
+        match read(&mut chunk[..chunk_len], ptr) {
             Ok(copied) if copied == chunk_len => {
                 let end = chunk[..chunk_len].iter().position(|byte| *byte == 0);
                 let data_len = end.unwrap_or(chunk_len);
@@ -215,10 +224,9 @@ pub(crate) fn copy_user_path_cstr(ptr : usize, max : usize) -> Result<String, Er
                 // in the valid prefix. Fall back to the byte semantics for this
                 // chunk so that the fault boundary remains unchanged.
                 for byte_offset in 0..chunk_len {
-                    let byte_ptr = chunk_ptr.checked_add(byte_offset).ok_or(ErrNo::EFAULT)?;
+                    let byte_ptr = ptr.checked_add(byte_offset).ok_or(ErrNo::EFAULT)?;
                     let mut byte = [0u8; 1];
-                    ops.copy_from_user(&mut byte, VirtAddr(byte_ptr))
-                       .map_err(mm_user_copy_errno)?;
+                    read(&mut byte, byte_ptr)?;
                     if byte[0] == 0 {
                         return String::from_utf8(raw).map_err(|_| ErrNo::EINVAL);
                     }
@@ -227,6 +235,7 @@ pub(crate) fn copy_user_path_cstr(ptr : usize, max : usize) -> Result<String, Er
                 }
             }
         }
+        ptr = ptr.checked_add(chunk_len).ok_or(ErrNo::EFAULT)?;
     }
     if len >= max {
         return Err(ErrNo::ENAMETOOLONG);
@@ -346,4 +355,72 @@ pub(crate) fn copy_from_user_struct_in_aspace<T : Copy>(handle : usize,
         return Err(ErrNo::EFAULT);
     }
     Ok(unsafe { value.assume_init() })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn slice_reader<'a>(base : usize,
+                        data : &'a [u8],
+                        calls : &'a mut usize)
+                        -> impl FnMut(&mut [u8], usize) -> Result<usize, ErrNo> + 'a {
+        move |dst, address| {
+            *calls += 1;
+            let offset = address.checked_sub(base).ok_or(ErrNo::EFAULT)?;
+            let end = offset.checked_add(dst.len()).ok_or(ErrNo::EFAULT)?;
+            let source = data.get(offset..end).ok_or(ErrNo::EFAULT)?;
+            dst.copy_from_slice(source);
+            Ok(dst.len())
+        }
+    }
+
+    #[test]
+    fn chunked_cstr_reads_one_block_per_chunk() {
+        let base = 0x1000;
+        let mut data = [b'a'; PATH_COPY_CHUNK * 2 + 1];
+        data[PATH_COPY_CHUNK * 2] = 0;
+        let mut calls = 0;
+        let value = copy_cstr_in_chunks(base,
+                                        data.len(),
+                                        slice_reader(base, &data, &mut calls)).unwrap();
+        assert_eq!(value.len(), PATH_COPY_CHUNK * 2);
+        assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn chunked_cstr_falls_back_to_nul_before_fault() {
+        let base = 0x2000;
+        let data = [b'x', 0];
+        let mut calls = 0;
+        let value = copy_cstr_in_chunks(base,
+                                        PATH_COPY_CHUNK,
+                                        slice_reader(base, &data, &mut calls)).unwrap();
+        assert_eq!(value, "x");
+        assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn chunked_cstr_rejects_missing_nul() {
+        let base = 0x3000;
+        let data = [b'x'; PATH_COPY_CHUNK];
+        let mut calls = 0;
+        assert_eq!(copy_cstr_in_chunks(base,
+                                       data.len(),
+                                       slice_reader(base, &data, &mut calls)),
+                   Err(ErrNo::ENAMETOOLONG));
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn chunked_cstr_rejects_invalid_utf8() {
+        let base = 0x4000;
+        let data = [0xff, 0];
+        let mut calls = 0;
+        assert_eq!(copy_cstr_in_chunks(base,
+                                       data.len(),
+                                       slice_reader(base, &data, &mut calls)),
+                   Err(ErrNo::EINVAL));
+        assert_eq!(calls, 1);
+    }
 }
