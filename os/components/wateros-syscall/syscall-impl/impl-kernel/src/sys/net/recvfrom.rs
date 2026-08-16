@@ -73,7 +73,7 @@ pub(crate) fn sys_recvfrom(args : SyscallArgs) -> UserRet {
         Ok(capacity) => capacity,
         Err(error) => return UserRet::from_error(error),
     };
-    let nonblocking = socket_fd::is_nonblocking(fd) || flags & MSG_DONTWAIT != 0;
+    let nonblocking = socket_fd::is_nonblocking_socket(&socket) || flags & MSG_DONTWAIT != 0;
     let lease = match receive_blocking(&socket,
                                        len.min(SYSCALL_IO_MAX),
                                        nonblocking)

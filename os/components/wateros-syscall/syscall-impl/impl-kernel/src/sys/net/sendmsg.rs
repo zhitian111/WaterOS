@@ -328,7 +328,7 @@ fn sendmsg_one(fd : usize, msg_ptr : usize, flags : usize) -> Result<usize, ErrN
 
     let sent = match socket.kind() {
         Ok(SocketKind::Udp) => {
-            super::sendto::send_udp_blocking(fd, &socket, &kbuf, destination, flags)
+            super::sendto::send_udp_blocking(&socket, &kbuf, destination, flags)
         }
         Ok(SocketKind::Tcp) => socket.send(&kbuf)
                                      .map_err(super::sendto::socket_send_error_to_errno),
@@ -393,7 +393,7 @@ pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
         Ok(kind) => kind,
         Err(_) => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
-    let lease = match recvmsg_receive_blocking(fd, &socket, flags, total_len) {
+    let lease = match recvmsg_receive_blocking(&socket, flags, total_len) {
         Ok(Some(lease)) => lease,
         Ok(None) => return UserRet::from_success(0),
         Err(error) => return UserRet::from_error(error),
@@ -488,16 +488,11 @@ pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
     }
 }
 
-fn recvmsg_is_nonblocking(fd : usize, flags : usize) -> bool {
-    socket_fd::is_nonblocking(fd) || (flags & MSG_DONTWAIT) != 0
-}
-
-fn recvmsg_receive_blocking(fd : usize,
-                            socket : &SocketRef,
+fn recvmsg_receive_blocking(socket : &SocketRef,
                             flags : usize,
                             max_len : usize)
                             -> Result<Option<SocketReceiveLease>, ErrNo> {
-    let nonblocking = recvmsg_is_nonblocking(fd, flags);
+    let nonblocking = socket_fd::is_nonblocking_socket(socket) || (flags & MSG_DONTWAIT) != 0;
     let wait_ticks = socket_recv_wait_ticks(socket, SOCKET_RECVMSG_WAIT_TICKS);
     for _ in 0..wait_ticks {
         drive_network_stack();

@@ -119,6 +119,13 @@ vectored VFS/socket API，暂不在本轮改公开契约；本任务只处理元
 
 ### T6：有限范围复用 fd context
 
+状态：已完成低风险子集，提交为 `[perf] reuse resolved sockets across syscall paths`。
+
+实现结果：read/write 与 inet socket syscall 在已经取得 `SocketRef` 后直接读取 nonblocking
+状态，阻塞 socket write 循环也持续持有同一引用，不再反复进入 fd registry。VFS 普通文件的
+重复检查没有合并，因为 detached handle、文件偏移和 close/reuse 的线性化边界尚不足以证明
+可保持。`rv_check` 已通过（`CARGO_NET_OFFLINE=true make rv_check`）。
+
 现状：`read/write` 先做 access/path/socket 检查，随后再次查同一个 fd；`is_nonblocking`、
 TTY/PTY 检查也会重复进入 registry。
 
