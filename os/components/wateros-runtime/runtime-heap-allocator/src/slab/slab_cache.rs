@@ -2,6 +2,8 @@
 
 use super::slab_page::{SlabPageHeader, SLAB_MAGIC};
 use super::HeapFrameSource;
+#[cfg(feature = "slab-diagnostics")]
+use super::diagnostics::SlabDiagnostics;
 
 pub(crate) struct SlabCache {
     current : *mut SlabPageHeader,
@@ -21,13 +23,22 @@ impl SlabCache {
     pub(crate) unsafe fn alloc(&mut self,
                                frames : &dyn HeapFrameSource,
                                class_idx : usize,
-                               owner_cpu : u16)
+                               owner_cpu : u16,
+                               #[cfg(feature = "slab-diagnostics")]
+                               diagnostics : &SlabDiagnostics)
                                -> Option<*mut u8> {
         loop {
             if !self.current.is_null() {
                 // SAFETY: current 始终指向已初始化的 slab header。
                 let hdr = unsafe { &mut *self.current };
                 if !hdr.is_full() {
+                    #[cfg(feature = "slab-diagnostics")]
+                    {
+                        diagnostics.record_local_hit(class_idx);
+                        if hdr.is_empty() {
+                            diagnostics.record_page_became_nonempty(class_idx);
+                        }
+                    }
                     return Some(hdr.pop_free());
                 }
                 self.current = core::ptr::null_mut();
@@ -52,7 +63,15 @@ impl SlabCache {
                 continue;
             }
 
+            #[cfg(not(feature = "slab-diagnostics"))]
             let frame = frames.alloc_frame()?;
+            #[cfg(feature = "slab-diagnostics")]
+            let Some(frame) = frames.alloc_frame() else {
+                diagnostics.record_oom();
+                return None;
+            };
+            #[cfg(feature = "slab-diagnostics")]
+            diagnostics.record_frame_refill(class_idx);
             // SAFETY: frame 是页对齐独占内存；init 会初始化整页。
             let hdr = unsafe { SlabPageHeader::init(frame as *mut u8, class_idx, owner_cpu) };
             self.current = hdr;
@@ -66,7 +85,9 @@ impl SlabCache {
     /// `ptr` 必须来自 slab；调用方保证 owner CPU 独占访问。
     pub(crate) unsafe fn dealloc_local(&mut self,
                                        ptr : *mut u8,
-                                       class_idx : usize)
+                                       class_idx : usize,
+                                       #[cfg(feature = "slab-diagnostics")]
+                                       diagnostics : &SlabDiagnostics)
                                        -> bool {
         // SAFETY: ptr 由调用方保证来自 slab 页面。
         let hdr = unsafe { SlabPageHeader::from_obj(ptr) };
@@ -75,7 +96,13 @@ impl SlabCache {
         }
 
         let is_current = hdr as *mut _ == self.current;
+        #[cfg(feature = "slab-diagnostics")]
+        let was_empty = hdr.is_empty();
         hdr.push_free(ptr);
+        #[cfg(feature = "slab-diagnostics")]
+        if !was_empty && hdr.is_empty() {
+            diagnostics.record_page_became_empty(class_idx);
+        }
 
         if !is_current && !hdr.in_partial {
             hdr.in_partial = true;

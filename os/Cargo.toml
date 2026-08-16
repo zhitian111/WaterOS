@@ -81,6 +81,8 @@
     # 内核全局堆后端由顶层统一选择；架构 feature 不隐式绑定具体实现。
     heap-linked-list = [ "runtime/heap-linked-list" ]
     heap-slab = [ "runtime/heap-slab" ]
+    # Per-CPU slab counters and one-shot bring-up summary; default Final keeps this disabled.
+    slab-diagnostics = [ "runtime/slab-diagnostics" ]
     heap-stress = [ "runtime/heap-stress" ]
     heap-tlsf = [ "runtime/heap-tlsf" ]
     impl-sv39 = [ "mm/impl-sv39" ]

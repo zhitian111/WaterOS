@@ -23,6 +23,7 @@
     default = [ "impl-tlsf", "impl-riscv64" ]
     impl-linked-list-allocator = [ "dep:linked_list_allocator" ]
     impl-slab = [  ]
+    slab-diagnostics = [ "impl-slab" ]
     impl-tlsf = [  ]
     stress-on-init = [  ]
     tlsf-diagnostics = [  ]

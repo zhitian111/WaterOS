@@ -339,8 +339,8 @@ WaterOS 不为不同平台维护多套源代码。Makefile 将命令行参数组
 features，再由各 `wateros-*` 组件继续选择接口实现。平台、赛事阶段和可选能力因此都在
 编译期确定，最终二进制只包含本次构建需要的实现。
 
-平台 profile 同时选择唯一的编译期日志上限：RISC-V64 当前为 `Info`，LoongArch64 当前为
-`Error`。该选择通过 `wateros-runtime` 转发到 `log/max_level_*`，更详细的日志宏及其参数
+平台 profile 同时选择唯一的编译期日志上限：RISC-V64 与 LoongArch64 当前均为 `Error`。
+该选择通过 `wateros-runtime` 转发到 `log/max_level_*`，更详细的日志宏及其参数
 求值不会进入最终内核；运行期间不再改变日志级别。
 
 Makefile 提供统一的 `make <目标> 参数=值` 接口。例如：
@@ -365,7 +365,11 @@ make run ARCH=la PROFILE=final SMP=4 SDCARD=/path/to/rootfs.img
 | `SNAPSHOT` | `1` 使用 QEMU 内存快照，不向基础镜像写回；`0` 允许正常块设备写入 | 未启用写盘时为 `1` |
 | `WRITE_DISK` | `1` 明确请求持久化写盘，并使 `SNAPSHOT` 默认变为 `0`；`0` 保护基础镜像 | `0` |
 | `HEAP_ALLOCATOR_FEATURE` | 顶层内核堆 feature。当前常用值为 `heap-tlsf`、`heap-linked-list` 或 `heap-slab` | `heap-tlsf` |
-| `EXTRA_FEATURES` | 追加一个或多个逗号分隔的顶层 Cargo features，例如 `bringup-stats`、`stall-debug`、`gui` | 空 |
+| `EXTRA_FEATURES` | 追加一个或多个逗号分隔的顶层 Cargo features，例如 `bringup-stats`、`slab-diagnostics`、`stall-debug`、`gui` | 空 |
+
+`slab-diagnostics` 只用于 `heap-slab` 诊断构建：它在每 CPU 槽位记录 slab 分配、远端释放、
+refill 和页占用，并在自动 bring-up 队列结束时输出一次汇总。普通 Final 不启用该 feature，
+不会包含统计字段或热路径更新。
 
 #### 默认镜像
 

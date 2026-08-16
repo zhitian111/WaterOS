@@ -44,7 +44,7 @@ make run ARCH=rv PROFILE=final SDCARD=/path/to/rootfs.img
 [`构建配置`](../README.md#构建配置)。Makefile 的参数传播、目标分层和扩展约定见
 [`docs/tools/makefile.md`](../docs/tools/makefile.md)。
 
-平台 feature 还会互斥地选择一档编译期日志上限（RISC-V64 为 `Info`，LoongArch64 为
+平台 feature 还会互斥地选择一档编译期日志上限（RISC-V64 与 LoongArch64 当前均为
 `Error`）。`log` 会在编译期裁掉更详细的日志调用及参数求值，operator 模式不会在启动后
 重新调整级别。
 
@@ -205,6 +205,10 @@ wateros-example/
 
 改动内核路径后，应根据影响范围执行对应架构的 `make check`、内核构建和 QEMU
 workload。仅通过 Cargo check 不能证明运行时行为正确。
+
+需要采集 slab 分布时，使用
+`HEAP_ALLOCATOR_FEATURE=heap-slab EXTRA_FEATURES=slab-diagnostics` 构建；统计只在该诊断
+feature 下编译，并在自动 bring-up 队列结束时汇总。性能验收必须使用未启用诊断的 Final。
 
 ## 开发约定
 

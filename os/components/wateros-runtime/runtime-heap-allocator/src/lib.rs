@@ -21,6 +21,8 @@ use config::mm::KERNEL_HEAP_SIZE;
 use heap_backend::HeapBackend;
 
 pub use slab::HeapFrameSource;
+#[cfg(feature = "slab-diagnostics")]
+pub use slab::log_diagnostics as log_slab_diagnostics;
 
 const STATE_BOOT : u8 = 0;
 const STATE_SLAB : u8 = 1;
@@ -93,8 +95,12 @@ unsafe impl GlobalAlloc for KernelAllocator {
                 if slab::is_slab_layout(layout) {
                     slab::alloc_on(arch::cpu::current_cpu_id(), layout)
                 } else if LARGE_FRAME_ENABLED.load(Ordering::Acquire) {
+                    #[cfg(feature = "slab-diagnostics")]
+                    slab::record_fallback(arch::cpu::current_cpu_id());
                     slab::alloc_large(layout)
                 } else {
+                    #[cfg(feature = "slab-diagnostics")]
+                    slab::record_fallback(arch::cpu::current_cpu_id());
                     None
                 }
             });

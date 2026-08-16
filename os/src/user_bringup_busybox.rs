@@ -160,6 +160,8 @@ pub(crate) extern "C" fn run_auto_queue(_arg : usize) -> ! {
             }
         }
     }
+    #[cfg(feature = "slab-diagnostics")]
+    runtime::heap_allocator::log_slab_diagnostics();
     error!("[{LOG_TAG}] all commands finished");
     let _ = shutdown(platform::reset::PlatformResetReason::NoReason);
     task::exit_current(0);

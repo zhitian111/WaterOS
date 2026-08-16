@@ -4,6 +4,8 @@
 //! Task 03 由顶层注册真实 frame allocator 适配器。
 
 pub(crate) mod cpu_slab;
+#[cfg(feature = "slab-diagnostics")]
+mod diagnostics;
 pub(crate) mod size_class;
 pub(crate) mod slab_cache;
 pub(crate) mod slab_page;
@@ -19,7 +21,11 @@ use base::sync::BootOnceCell;
 use config::task::MAX_CPUS;
 
 use cpu_slab::CpuSlab;
+#[cfg(feature = "slab-diagnostics")]
+use diagnostics::{SlabDiagnostics, SlabDiagnosticsSnapshot};
 use size_class::{SizeClass, SLAB_PAGE_SIZE};
+#[cfg(feature = "slab-diagnostics")]
+use size_class::{SIZE_CLASS_COUNT, SIZE_CLASS_SIZES};
 use slab_page::{SlabPageHeader, SLAB_MAGIC};
 
 /// slab 页来源：返回页对齐的内核可访问基址（WaterOS 恒等映射下为 `PPN * PAGE_SIZE`）。
@@ -124,6 +130,8 @@ pub(crate) struct SlabAllocator {
     frames : &'static dyn HeapFrameSource,
     cpus : CpuLocal<CpuLocalSlab, MAX_CPUS>,
     remote_heads : CpuLocal<RemoteFreeHead, MAX_CPUS>,
+    #[cfg(feature = "slab-diagnostics")]
+    diagnostics : CpuLocal<SlabDiagnostics, MAX_CPUS>,
 }
 
 impl SlabAllocator {
@@ -134,6 +142,8 @@ impl SlabAllocator {
                 CpuLocalSlab(UnsafeCell::new(CpuSlab::new()))
             })),
             remote_heads : CpuLocal::new(core::array::from_fn(|_| RemoteFreeHead::new())),
+            #[cfg(feature = "slab-diagnostics")]
+            diagnostics : CpuLocal::new(core::array::from_fn(|_| SlabDiagnostics::new())),
         }
     }
 
@@ -144,13 +154,25 @@ impl SlabAllocator {
                        .get(cpu)?;
         let remote_head = self.remote_heads
                              .get(cpu)?;
+        #[cfg(feature = "slab-diagnostics")]
+        let diagnostics = self.diagnostics
+                              .get(cpu)?;
+        #[cfg(feature = "slab-diagnostics")]
+        diagnostics.record_alloc(class.index());
         // SAFETY: 调用方保证 `cpu` 为当前 CPU 且已满足 ALLOC_SYNC；本地槽位无并发。
         let state = unsafe { &mut *slot.0.get() };
         // SAFETY: 与 GlobalAlloc::alloc 相同约束；本方法不归还指针所有权。
-        unsafe { state.alloc(self.frames,
-                             class.index(),
-                             cpu.raw() as u16,
-                             &remote_head.0) }
+        let result = unsafe { state.alloc(self.frames,
+                                          class.index(),
+                                          cpu.raw() as u16,
+                                          &remote_head.0,
+                                          #[cfg(feature = "slab-diagnostics")]
+                                          diagnostics) };
+        #[cfg(feature = "slab-diagnostics")]
+        if result.is_none() {
+            diagnostics.record_fallback();
+        }
+        result
     }
 
     /// 在 `cpu` 的本地 slab 上释放；指针不属于该 CPU/size class 时返回 `false`。
@@ -173,9 +195,17 @@ impl SlabAllocator {
             else {
                 return false;
             };
+            #[cfg(feature = "slab-diagnostics")]
+            let Some(diagnostics) = self.diagnostics.get(cpu) else {
+                return false;
+            };
             // SAFETY: 与 GlobalAlloc::dealloc 相同约束；owner CPU 独占本地槽位。
             let state = unsafe { &mut *slot.0.get() };
-            unsafe { state.dealloc_local(ptr, class.index()) }
+            let result = unsafe { state.dealloc_local(ptr,
+                                                      class.index(),
+                                                      #[cfg(feature = "slab-diagnostics")]
+                                                      diagnostics) };
+            result
         } else {
             let owner = CpuId::from_raw(hdr.owner_cpu as usize);
             let Some(owner_remote_head) = self.remote_heads
@@ -183,9 +213,104 @@ impl SlabAllocator {
             else {
                 return false;
             };
+            #[cfg(not(feature = "slab-diagnostics"))]
             CpuSlab::remote_push(&owner_remote_head.0, ptr);
+            #[cfg(feature = "slab-diagnostics")]
+            {
+                let misses = CpuSlab::remote_push(&owner_remote_head.0, ptr);
+                if let Some(diagnostics) = self.diagnostics.get(cpu) {
+                    diagnostics.record_remote_free(class.index(), misses);
+                }
+            }
             true
         }
+    }
+
+    #[cfg(feature = "slab-diagnostics")]
+    fn log_diagnostics(&self) {
+        let mut total = SlabDiagnosticsSnapshot::default();
+        for cpu_raw in 0..MAX_CPUS {
+            let Some(slot) = self.diagnostics.get(CpuId::from_raw(cpu_raw)) else {
+                continue;
+            };
+            let snapshot = slot.snapshot();
+            if snapshot.is_empty() {
+                continue;
+            }
+            log::error!("[heap][slab-diag] cpu={} fallback={} oom={} remote_cas_miss={} \
+                         drain_events={} drain_objects={} drain_max={}",
+                        cpu_raw,
+                        snapshot.fallbacks,
+                        snapshot.oom,
+                        snapshot.remote_cas_misses,
+                        snapshot.drain_events,
+                        snapshot.drain_objects,
+                        snapshot.drain_max);
+            for class in 0..SIZE_CLASS_COUNT {
+                if snapshot.allocs[class] == 0 &&
+                   snapshot.local_frees[class] == 0 &&
+                   snapshot.remote_frees[class] == 0 &&
+                   snapshot.pages[class] == 0
+                {
+                    continue;
+                }
+                log::error!("[heap][slab-diag] cpu={} class={} size={} alloc={} local_hit={} \
+                             local_free={} remote_free={} refill={} pages={} empty_pages={}",
+                            cpu_raw,
+                            class,
+                            SIZE_CLASS_SIZES[class],
+                            snapshot.allocs[class],
+                            snapshot.local_hits[class],
+                            snapshot.local_frees[class],
+                            snapshot.remote_frees[class],
+                            snapshot.frame_refills[class],
+                            snapshot.pages[class],
+                            snapshot.empty_pages[class]);
+            }
+            total.add_assign(&snapshot);
+        }
+        log::error!("[heap][slab-diag] total fallback={} oom={} remote_cas_miss={} \
+                     drain_events={} drain_objects={} drain_max={}",
+                    total.fallbacks,
+                    total.oom,
+                    total.remote_cas_misses,
+                    total.drain_events,
+                    total.drain_objects,
+                    total.drain_max);
+        for class in 0..SIZE_CLASS_COUNT {
+            if total.allocs[class] == 0 && total.pages[class] == 0 {
+                continue;
+            }
+            log::error!("[heap][slab-diag] total class={} size={} alloc={} local_hit={} \
+                         local_free={} remote_free={} refill={} pages={} empty_pages={}",
+                        class,
+                        SIZE_CLASS_SIZES[class],
+                        total.allocs[class],
+                        total.local_hits[class],
+                        total.local_frees[class],
+                        total.remote_frees[class],
+                        total.frame_refills[class],
+                        total.pages[class],
+                        total.empty_pages[class]);
+        }
+    }
+}
+
+#[cfg(feature = "slab-diagnostics")]
+pub(crate) fn record_fallback(cpu : CpuId) {
+    if let Some(slab) = SLAB.get() {
+        if let Some(diagnostics) = slab.diagnostics.get(cpu) {
+            diagnostics.record_fallback();
+        }
+    }
+}
+
+#[cfg(feature = "slab-diagnostics")]
+pub fn log_diagnostics() {
+    if let Some(slab) = SLAB.get() {
+        slab.log_diagnostics();
+    } else {
+        log::error!("[heap][slab-diag] slab allocator is not active");
     }
 }
 
