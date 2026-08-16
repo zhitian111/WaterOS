@@ -18,6 +18,7 @@ scripts/
 ├── gdb/               # 在 GDB 内加载的 WaterOS 扩展
 ├── maintenance/       # 清理、统计、导出和仓库维护
 ├── pc-hot/            # 基于 QEMU TCG plugin 的 PC 与等待热点分析
+├── perf/              # BuildStorm pub 镜像准备与 QEMU 9.2.1 性能验收
 ├── run/               # 统一 QEMU 启动器、兼容入口与并行运行
 ├── setup/             # Rust、链接工具链和官方测试环境初始化
 ├── source/            # Shell 与 Python 脚本共用模块
@@ -167,6 +168,9 @@ Git 工作区可恢复。会写镜像的脚本只能针对副本或可丢弃 ove
 
 - [`pc-hot/`](./pc-hot/)：以 QEMU TCG plugin 统计 guest PC、符号和等待时间，使用方法见
   [`docs/tools/pc-hot.md`](../../docs/tools/pc-hot.md)。
+- [`perf/`](./perf/)：准备固定 BuildStorm pub 镜像并运行双架构 QEMU 9.2.1 验收，详见
+  [`perf/README.md`](./perf/README.md) 和
+  [`docs/tools/buildstorm-runner.md`](../../docs/tools/buildstorm-runner.md)。
 - [`syscall-profile/`](./syscall-profile/)：采集 syscall 画像并生成 Markdown 报告，详见
   [`syscall-profile/README.md`](./syscall-profile/README.md)。
 
