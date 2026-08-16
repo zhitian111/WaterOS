@@ -24,7 +24,12 @@ impl InterruptSafeLockedHeap {
         let heap = self.inner.lock();
         HeapMemStats { used: heap.used(),
                        free: heap.free(),
-                       capacity: KERNEL_HEAP_SIZE }
+                       capacity: KERNEL_HEAP_SIZE,
+                       slab_retained: 0,
+                       slab_reclaimable: 0,
+                       frame_used: 0,
+                       frame_free: 0,
+                       frame_capacity: 0 }
     }
 
     pub(crate) unsafe fn init_region(&self,

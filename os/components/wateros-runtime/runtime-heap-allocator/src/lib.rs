@@ -20,12 +20,18 @@ use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use config::mm::KERNEL_HEAP_SIZE;
 use heap_backend::HeapBackend;
 
-pub use slab::HeapFrameSource;
+pub use slab::{HeapFrameMemStats, HeapFrameSource};
 #[cfg(feature = "slab-diagnostics")]
 pub use slab::log_diagnostics as log_slab_diagnostics;
 
 const STATE_BOOT : u8 = 0;
 const STATE_SLAB : u8 = 1;
+
+#[cfg(not(test))]
+fn current_cpu_id() -> base::cpu::CpuId { arch::cpu::current_cpu_id() }
+
+#[cfg(test)]
+fn current_cpu_id() -> base::cpu::CpuId { base::cpu::CpuId::from_raw(0) }
 
 /// 大对象是否走 frame-backed 连续帧路径；默认关闭（boot TLSF 有界，避免
 /// 大分配把 guest 内存提交到 QEMU 导致宿主机 OOM）。Task 07 调参时开启。
@@ -52,12 +58,22 @@ pub use stress::heap_fragmentation_stress_report;
 /// 内核堆用量快照。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HeapMemStats {
-    /// 已分配字节（实现定义：链表后端为精确值，TLSF 为估算）。
+    /// boot heap 已分配字节（链表后端为精确值，TLSF 为估算）。
     pub used : usize,
-    /// 剩余可用字节。
+    /// boot heap 剩余可用字节。
     pub free : usize,
-    /// 堆池总容量（`KERNEL_HEAP_SIZE`）。
+    /// boot heap 总容量（`KERNEL_HEAP_SIZE`）。
     pub capacity : usize,
+    /// slab 当前持有的物理页字节数，包括部分使用和 warm empty 页。
+    pub slab_retained : usize,
+    /// slab 脱离 current、作为 warm reserve 保留的全空页字节数。
+    pub slab_reclaimable : usize,
+    /// 全局 frame pool 视角的已用字节；包含 per-CPU frame batch 缓存页。
+    pub frame_used : usize,
+    /// 全局 frame pool 的空闲字节；不包含 per-CPU frame batch 缓存页。
+    pub frame_free : usize,
+    /// 全局 frame pool 总容量字节数。
+    pub frame_capacity : usize,
 }
 
 /// 全局分配器入口：按编译期 feature 委托给唯一活动后端。
@@ -93,14 +109,14 @@ unsafe impl GlobalAlloc for KernelAllocator {
         if self.slab_active() {
             let ptr = interrupt_guard::with_allocator_interrupt_guard(|| {
                 if slab::is_slab_layout(layout) {
-                    slab::alloc_on(arch::cpu::current_cpu_id(), layout)
+                    slab::alloc_on(current_cpu_id(), layout)
                 } else if LARGE_FRAME_ENABLED.load(Ordering::Acquire) {
                     #[cfg(feature = "slab-diagnostics")]
-                    slab::record_fallback(arch::cpu::current_cpu_id());
+                    slab::record_fallback(current_cpu_id());
                     slab::alloc_large(layout)
                 } else {
                     #[cfg(feature = "slab-diagnostics")]
-                    slab::record_fallback(arch::cpu::current_cpu_id());
+                    slab::record_fallback(current_cpu_id());
                     None
                 }
             });
@@ -118,7 +134,7 @@ unsafe impl GlobalAlloc for KernelAllocator {
         if self.slab_active() && !in_boot_heap(ptr) {
             let freed = interrupt_guard::with_allocator_interrupt_guard(|| {
                 if slab::is_slab_layout(layout) {
-                    slab::dealloc_on(arch::cpu::current_cpu_id(), ptr, layout)
+                    slab::dealloc_on(current_cpu_id(), ptr, layout)
                 } else if LARGE_FRAME_ENABLED.load(Ordering::Acquire) {
                     slab::dealloc_large(ptr, layout)
                 } else {
@@ -174,7 +190,7 @@ fn in_boot_heap(ptr : *mut u8) -> bool {
     value >= start && value < end
 }
 
-#[global_allocator]
+#[cfg_attr(not(test), global_allocator)]
 pub(crate) static HEAP_ALLOCATOR : KernelAllocator = KernelAllocator::new();
 
 /// 注册 slab 使用的真实 frame source；由 BSP 在 frame allocator 初始化后调用。
@@ -191,23 +207,41 @@ pub fn activate_slab() -> Result<(), ()> {
     Ok(())
 }
 
-/// 返回当前内核堆用量（`used`/`free`/`capacity`）。
+/// 返回 boot heap、slab retained page 和全局 frame pool 的独立快照。
 ///
 /// 这是诊断快照：拿到值后 allocator 可立即变化；TLSF backend 的 `used` 还是按 layout
 /// 大小累计的估算值，不能用于内存回收决策。
 pub fn heap_mem_stats() -> HeapMemStats {
-    interrupt_guard::with_allocator_interrupt_guard(|| backend::stats())
+    interrupt_guard::with_allocator_interrupt_guard(|| {
+        let mut stats = backend::stats();
+        let slab_pages = slab::page_mem_stats();
+        stats.slab_retained = slab_pages.pages.saturating_mul(slab::size_class::SLAB_PAGE_SIZE);
+        stats.slab_reclaimable = slab_pages.reclaimable_pages
+                                              .saturating_mul(slab::size_class::SLAB_PAGE_SIZE);
+        if let Some(frames) = slab::frame_mem_stats() {
+            stats.frame_capacity = frames.capacity;
+            stats.frame_free = frames.free.min(frames.capacity);
+            stats.frame_used = stats.frame_capacity.saturating_sub(stats.frame_free);
+        }
+        stats
+    })
 }
 
 /// 堆分配失败路径：由内核 `#[alloc_error_handler]` 委托（见 `wateros` 根 crate），打印布局后 panic。
 pub fn handle_alloc_error(layout : core::alloc::Layout) -> ! {
     let stats = heap_mem_stats();
-    log::warn!("[heap] OOM: layout_size={} align={} used={} free={} cap={}",
+    log::warn!("[heap] OOM: layout_size={} align={} boot_used={} boot_free={} boot_cap={} \
+                slab_retained={} slab_reclaimable={} frame_used={} frame_free={} frame_cap={}",
                layout.size(),
                layout.align(),
                stats.used,
                stats.free,
-               stats.capacity);
+               stats.capacity,
+               stats.slab_retained,
+               stats.slab_reclaimable,
+               stats.frame_used,
+               stats.frame_free,
+               stats.frame_capacity);
     panic!("Heap allocation error, layout = {:?}",
            layout);
 }

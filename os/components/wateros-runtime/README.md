@@ -81,7 +81,8 @@ alloc / dealloc
 
 ### runtime-heap-allocator / 全局堆
 
-- `lib.rs`：`init`、`heap_mem_stats()`（`HeapMemStats`：used/free/capacity）、OOM。
+- `lib.rs`：`init`、`heap_mem_stats()`（分别报告 boot heap、slab retained/reclaimable 和
+  全局 frame pool 快照）、OOM。
 - `backend_tlsf.rs`：默认 TLSF 后端（O(1)）。
 - `backend_linked_list.rs`：`impl-linked-list-allocator` 后端。
 - `interrupt_guard.rs`：分配期间禁止本 CPU 中断重入。

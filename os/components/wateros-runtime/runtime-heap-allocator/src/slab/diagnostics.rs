@@ -11,6 +11,7 @@ pub(crate) struct SlabDiagnosticsSnapshot {
     pub(crate) local_frees : [u64; SIZE_CLASS_COUNT],
     pub(crate) remote_frees : [u64; SIZE_CLASS_COUNT],
     pub(crate) frame_refills : [u64; SIZE_CLASS_COUNT],
+    pub(crate) frame_reclaims : [u64; SIZE_CLASS_COUNT],
     pub(crate) pages : [u64; SIZE_CLASS_COUNT],
     pub(crate) empty_pages : [u64; SIZE_CLASS_COUNT],
     pub(crate) fallbacks : u64,
@@ -46,6 +47,8 @@ impl SlabDiagnosticsSnapshot {
             self.remote_frees[idx] = self.remote_frees[idx].saturating_add(other.remote_frees[idx]);
             self.frame_refills[idx] =
                 self.frame_refills[idx].saturating_add(other.frame_refills[idx]);
+            self.frame_reclaims[idx] =
+                self.frame_reclaims[idx].saturating_add(other.frame_reclaims[idx]);
             self.pages[idx] = self.pages[idx].saturating_add(other.pages[idx]);
             self.empty_pages[idx] = self.empty_pages[idx].saturating_add(other.empty_pages[idx]);
         }
@@ -73,6 +76,7 @@ pub(crate) struct SlabDiagnostics {
     local_frees : [AtomicU64; SIZE_CLASS_COUNT],
     remote_frees : [AtomicU64; SIZE_CLASS_COUNT],
     frame_refills : [AtomicU64; SIZE_CLASS_COUNT],
+    frame_reclaims : [AtomicU64; SIZE_CLASS_COUNT],
     pages : [AtomicU64; SIZE_CLASS_COUNT],
     empty_pages : [AtomicU64; SIZE_CLASS_COUNT],
     fallbacks : AtomicU64,
@@ -90,6 +94,7 @@ impl SlabDiagnostics {
                local_frees : core::array::from_fn(|_| AtomicU64::new(0)),
                remote_frees : core::array::from_fn(|_| AtomicU64::new(0)),
                frame_refills : core::array::from_fn(|_| AtomicU64::new(0)),
+               frame_reclaims : core::array::from_fn(|_| AtomicU64::new(0)),
                pages : core::array::from_fn(|_| AtomicU64::new(0)),
                empty_pages : core::array::from_fn(|_| AtomicU64::new(0)),
                fallbacks : AtomicU64::new(0),
@@ -132,6 +137,15 @@ impl SlabDiagnostics {
     pub(crate) fn record_frame_refill(&self, class : usize) {
         Self::increment(&self.frame_refills[class]);
         Self::increment(&self.pages[class]);
+        Self::increment(&self.empty_pages[class]);
+    }
+
+    pub(crate) fn record_frame_reclaim(&self, class : usize) {
+        Self::increment(&self.frame_reclaims[class]);
+        let pages = self.pages[class].load(Ordering::Relaxed);
+        self.pages[class].store(pages.saturating_sub(1), Ordering::Relaxed);
+        let empty_pages = self.empty_pages[class].load(Ordering::Relaxed);
+        self.empty_pages[class].store(empty_pages.saturating_sub(1), Ordering::Relaxed);
     }
 
     pub(crate) fn record_page_became_empty(&self, class : usize) {
@@ -168,6 +182,7 @@ impl SlabDiagnostics {
                                   local_frees : load_array(&self.local_frees),
                                   remote_frees : load_array(&self.remote_frees),
                                   frame_refills : load_array(&self.frame_refills),
+                                  frame_reclaims : load_array(&self.frame_reclaims),
                                   pages : load_array(&self.pages),
                                   empty_pages : load_array(&self.empty_pages),
                                   fallbacks : self.fallbacks

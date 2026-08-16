@@ -80,6 +80,14 @@ impl runtime::heap_allocator::HeapFrameSource for HeapFrameSourceAdapter {
         }
     }
 
+    fn mem_stats(&self) -> Option<runtime::heap_allocator::HeapFrameMemStats> {
+        let stats = mm::frame_alloctor::frame_mem_stats();
+        Some(runtime::heap_allocator::HeapFrameMemStats {
+            capacity : stats.total_frames.saturating_mul(stats.page_bytes),
+            free : stats.free_frames.saturating_mul(stats.page_bytes),
+        })
+    }
+
     fn alloc_contiguous(&self, pages : usize) -> Option<usize> {
         mm::frame_alloctor::frame_alloc_contiguous_result(pages)
             .ok()

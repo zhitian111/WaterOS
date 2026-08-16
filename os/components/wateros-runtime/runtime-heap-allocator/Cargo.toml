@@ -12,14 +12,14 @@
     ] }
     config = { path = "../../wateros-base/base-config/", package = "wateros-base-config" }
     base = { path = "../../wateros-base/", package = "wateros-base" }
-    arch = { path = "../../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = false, features = [
+    arch = { path = "../../wateros-platform/platform-arch/", package = "wateros-platform-arch", default-features = false, optional = true, features = [
         "api-v0",
     ] }
     log = { version = "0.4" }
 [features]
     self_test = [  ]
-    impl-riscv64 = [ "arch/impl-riscv64" ]
-    impl-loongarch64 = [ "arch/impl-loongarch64" ]
+    impl-riscv64 = [ "dep:arch", "arch/impl-riscv64" ]
+    impl-loongarch64 = [ "dep:arch", "arch/impl-loongarch64" ]
     default = [ "impl-tlsf", "impl-riscv64" ]
     impl-linked-list-allocator = [ "dep:linked_list_allocator" ]
     impl-slab = [  ]

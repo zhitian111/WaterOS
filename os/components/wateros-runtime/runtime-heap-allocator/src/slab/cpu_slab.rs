@@ -2,6 +2,7 @@
 
 use core::sync::atomic::{AtomicPtr, Ordering};
 
+use super::page_stats::SlabPageStats;
 use super::size_class::SIZE_CLASS_COUNT;
 use super::slab_cache::SlabCache;
 use super::slab_page::{read_next, write_next, SlabPageHeader, SLAB_MAGIC};
@@ -23,18 +24,22 @@ impl CpuSlab {
                                class_idx : usize,
                                owner_cpu : u16,
                                remote_head : &AtomicPtr<u8>,
+                               page_stats : &SlabPageStats,
                                #[cfg(feature = "slab-diagnostics")]
                                diagnostics : &SlabDiagnostics)
                                -> Option<*mut u8> {
         // 只有 remote 队列非空才执行昂贵的 atomic swap；本地 slab 分配是最热路径。
         if !remote_head.load(Ordering::Relaxed).is_null() {
-            self.drain_remote(remote_head,
+            self.drain_remote(frames,
+                              remote_head,
+                              page_stats,
                               #[cfg(feature = "slab-diagnostics")]
                               diagnostics);
         }
         unsafe { self.caches[class_idx].alloc(frames,
                                              class_idx,
                                              owner_cpu,
+                                             page_stats,
                                              #[cfg(feature = "slab-diagnostics")]
                                              diagnostics) }
     }
@@ -42,11 +47,15 @@ impl CpuSlab {
     pub(crate) unsafe fn dealloc_local(&mut self,
                                        ptr : *mut u8,
                                        class_idx : usize,
+                                       frames : &dyn HeapFrameSource,
+                                       page_stats : &SlabPageStats,
                                        #[cfg(feature = "slab-diagnostics")]
                                        diagnostics : &SlabDiagnostics)
                                        -> bool {
         let result = unsafe { self.caches[class_idx].dealloc_local(ptr,
                                                                   class_idx,
+                                                                  frames,
+                                                                  page_stats,
                                                                   #[cfg(feature = "slab-diagnostics")]
                                                                   diagnostics) };
         #[cfg(feature = "slab-diagnostics")]
@@ -99,7 +108,9 @@ impl CpuSlab {
 
     /// 把本 CPU remote 队列中的对象放回对应 size class 的本地 cache。
     fn drain_remote(&mut self,
+                    frames : &dyn HeapFrameSource,
                     remote_head : &AtomicPtr<u8>,
+                    page_stats : &SlabPageStats,
                     #[cfg(feature = "slab-diagnostics")] diagnostics : &SlabDiagnostics) {
         let head = remote_head.swap(core::ptr::null_mut(), Ordering::AcqRel);
         let mut cur = head;
@@ -115,6 +126,8 @@ impl CpuSlab {
                 unsafe {
                     self.caches[class].dealloc_local(cur,
                                                     class,
+                                                    frames,
+                                                    page_stats,
                                                     #[cfg(feature = "slab-diagnostics")]
                                                     diagnostics)
                 };

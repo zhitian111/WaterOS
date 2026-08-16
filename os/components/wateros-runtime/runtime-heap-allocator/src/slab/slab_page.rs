@@ -98,6 +98,13 @@ impl SlabPageHeader {
     pub(crate) fn is_full(&self) -> bool { self.free_objects == 0 }
 
     pub(crate) fn is_empty(&self) -> bool { self.free_objects == self.total_objects }
+
+    /// 使页首不再能被 slab 反查识别；必须在归还 frame source 前调用。
+    pub(crate) fn invalidate(&mut self) {
+        self.magic = 0;
+        self.next_partial = ptr::null_mut();
+        self.in_partial = false;
+    }
 }
 
 /// 读取 intrusive free list 下一个指针。

@@ -6,13 +6,14 @@
 pub(crate) mod cpu_slab;
 #[cfg(feature = "slab-diagnostics")]
 mod diagnostics;
+mod page_stats;
 pub(crate) mod size_class;
 pub(crate) mod slab_cache;
 pub(crate) mod slab_page;
 
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::AtomicPtr;
 #[cfg(feature = "impl-slab")]
 use alloc::boxed::Box;
 
@@ -23,6 +24,7 @@ use config::task::MAX_CPUS;
 use cpu_slab::CpuSlab;
 #[cfg(feature = "slab-diagnostics")]
 use diagnostics::{SlabDiagnostics, SlabDiagnosticsSnapshot};
+use page_stats::{SlabPageMemStats, SlabPageStats};
 use size_class::{SizeClass, SLAB_PAGE_SIZE};
 #[cfg(feature = "slab-diagnostics")]
 use size_class::{SIZE_CLASS_COUNT, SIZE_CLASS_SIZES};
@@ -36,11 +38,21 @@ pub trait HeapFrameSource : Send + Sync {
     /// 归还先前由 [`Self::alloc_frame`] 返回的页。
     fn dealloc_frame(&self, frame : usize);
 
+    /// 返回 frame pool 的只读快照。`free` 不包含仍缓存在 per-CPU frame batch 中的页。
+    fn mem_stats(&self) -> Option<HeapFrameMemStats> { None }
+
     /// 分配 `pages` 个连续页并返回起始基址；不支持时返回 `None`。
     fn alloc_contiguous(&self, _pages : usize) -> Option<usize> { None }
 
     /// 归还连续页分配。
     fn dealloc_contiguous(&self, _frame : usize, _pages : usize) {}
+}
+
+/// slab frame source 的字节级快照；capacity/free 属于全局 frame pool 口径。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HeapFrameMemStats {
+    pub capacity : usize,
+    pub free : usize,
 }
 
 static FRAME_SOURCE : BootOnceCell<&'static dyn HeapFrameSource> = BootOnceCell::new();
@@ -69,6 +81,15 @@ pub(crate) fn alloc_on(cpu : CpuId, layout : Layout) -> Option<*mut u8> {
 pub(crate) fn dealloc_on(cpu : CpuId, ptr : *mut u8, layout : Layout) -> bool {
     SLAB.get()
         .map_or(false, |slab| slab.dealloc_on(cpu, ptr, layout))
+}
+
+pub(crate) fn page_mem_stats() -> SlabPageMemStats {
+    SLAB.get()
+        .map_or_else(SlabPageMemStats::default, |slab| slab.page_mem_stats())
+}
+
+pub(crate) fn frame_mem_stats() -> Option<HeapFrameMemStats> {
+    FRAME_SOURCE.get().and_then(|frames| frames.mem_stats())
 }
 
 pub(crate) fn is_slab_layout(layout : Layout) -> bool {
@@ -130,6 +151,7 @@ pub(crate) struct SlabAllocator {
     frames : &'static dyn HeapFrameSource,
     cpus : CpuLocal<CpuLocalSlab, MAX_CPUS>,
     remote_heads : CpuLocal<RemoteFreeHead, MAX_CPUS>,
+    page_stats : CpuLocal<SlabPageStats, MAX_CPUS>,
     #[cfg(feature = "slab-diagnostics")]
     diagnostics : CpuLocal<SlabDiagnostics, MAX_CPUS>,
 }
@@ -142,6 +164,7 @@ impl SlabAllocator {
                 CpuLocalSlab(UnsafeCell::new(CpuSlab::new()))
             })),
             remote_heads : CpuLocal::new(core::array::from_fn(|_| RemoteFreeHead::new())),
+            page_stats : CpuLocal::new(core::array::from_fn(|_| SlabPageStats::new())),
             #[cfg(feature = "slab-diagnostics")]
             diagnostics : CpuLocal::new(core::array::from_fn(|_| SlabDiagnostics::new())),
         }
@@ -153,6 +176,8 @@ impl SlabAllocator {
         let slot = self.cpus
                        .get(cpu)?;
         let remote_head = self.remote_heads
+                             .get(cpu)?;
+        let page_stats = self.page_stats
                              .get(cpu)?;
         #[cfg(feature = "slab-diagnostics")]
         let diagnostics = self.diagnostics
@@ -166,6 +191,7 @@ impl SlabAllocator {
                                           class.index(),
                                           cpu.raw() as u16,
                                           &remote_head.0,
+                                          page_stats,
                                           #[cfg(feature = "slab-diagnostics")]
                                           diagnostics) };
         #[cfg(feature = "slab-diagnostics")]
@@ -195,6 +221,9 @@ impl SlabAllocator {
             else {
                 return false;
             };
+            let Some(page_stats) = self.page_stats.get(cpu) else {
+                return false;
+            };
             #[cfg(feature = "slab-diagnostics")]
             let Some(diagnostics) = self.diagnostics.get(cpu) else {
                 return false;
@@ -203,6 +232,8 @@ impl SlabAllocator {
             let state = unsafe { &mut *slot.0.get() };
             let result = unsafe { state.dealloc_local(ptr,
                                                       class.index(),
+                                                      self.frames,
+                                                      page_stats,
                                                       #[cfg(feature = "slab-diagnostics")]
                                                       diagnostics) };
             result
@@ -224,6 +255,20 @@ impl SlabAllocator {
             }
             true
         }
+    }
+
+    pub(crate) fn page_mem_stats(&self) -> SlabPageMemStats {
+        let mut total = SlabPageMemStats::default();
+        for cpu_raw in 0..MAX_CPUS {
+            let Some(stats) = self.page_stats.get(CpuId::from_raw(cpu_raw)) else {
+                continue;
+            };
+            let snapshot = stats.snapshot();
+            total.pages = total.pages.saturating_add(snapshot.pages);
+            total.reclaimable_pages = total.reclaimable_pages
+                                           .saturating_add(snapshot.reclaimable_pages);
+        }
+        total
     }
 
     #[cfg(feature = "slab-diagnostics")]
@@ -255,7 +300,8 @@ impl SlabAllocator {
                     continue;
                 }
                 log::error!("[heap][slab-diag] cpu={} class={} size={} alloc={} local_hit={} \
-                             local_free={} remote_free={} refill={} pages={} empty_pages={}",
+                             local_free={} remote_free={} refill={} reclaim={} pages={} \
+                             empty_pages={}",
                             cpu_raw,
                             class,
                             SIZE_CLASS_SIZES[class],
@@ -264,6 +310,7 @@ impl SlabAllocator {
                             snapshot.local_frees[class],
                             snapshot.remote_frees[class],
                             snapshot.frame_refills[class],
+                            snapshot.frame_reclaims[class],
                             snapshot.pages[class],
                             snapshot.empty_pages[class]);
             }
@@ -282,7 +329,8 @@ impl SlabAllocator {
                 continue;
             }
             log::error!("[heap][slab-diag] total class={} size={} alloc={} local_hit={} \
-                         local_free={} remote_free={} refill={} pages={} empty_pages={}",
+                         local_free={} remote_free={} refill={} reclaim={} pages={} \
+                         empty_pages={}",
                         class,
                         SIZE_CLASS_SIZES[class],
                         total.allocs[class],
@@ -290,6 +338,7 @@ impl SlabAllocator {
                         total.local_frees[class],
                         total.remote_frees[class],
                         total.frame_refills[class],
+                        total.frame_reclaims[class],
                         total.pages[class],
                         total.empty_pages[class]);
         }
@@ -326,8 +375,11 @@ mod tests {
     use size_class::{SLAB_MAX_SIZE, SLAB_PAGE_SIZE, SIZE_CLASS_SIZES};
     use slab_page::SlabPageHeader;
 
+    #[repr(align(4096))]
+    struct TestPage([u8; SLAB_PAGE_SIZE]);
+
     struct FakeFrameSource {
-        live : Mutex<Vec<Box<[u8; SLAB_PAGE_SIZE]>>>,
+        live : Mutex<Vec<Box<TestPage>>>,
         free : Mutex<Vec<usize>>,
     }
 
@@ -338,6 +390,8 @@ mod tests {
         }
 
         fn free_count(&self) -> usize { self.free.lock().len() }
+
+        fn backing_count(&self) -> usize { self.live.lock().len() }
     }
 
     impl HeapFrameSource for FakeFrameSource {
@@ -345,14 +399,20 @@ mod tests {
             if let Some(addr) = self.free.lock().pop() {
                 return Some(addr);
             }
-            let page = Box::new([0u8; SLAB_PAGE_SIZE]);
-            let addr = page.as_ptr() as usize;
+            let page = Box::new(TestPage([0u8; SLAB_PAGE_SIZE]));
+            let addr = page.0.as_ptr() as usize;
+            assert_eq!(addr % SLAB_PAGE_SIZE, 0);
             self.live.lock().push(page);
             Some(addr)
         }
 
         fn dealloc_frame(&self, frame : usize) {
-            self.free.lock().push(frame);
+            assert_eq!(frame % SLAB_PAGE_SIZE, 0);
+            assert!(self.live.lock().iter().any(|page| page.0.as_ptr() as usize == frame),
+                    "returned frame does not belong to source");
+            let mut free = self.free.lock();
+            assert!(!free.contains(&frame), "frame returned twice");
+            free.push(frame);
         }
     }
 
@@ -391,20 +451,108 @@ mod tests {
         assert!(allocator.dealloc_on(cpu, ptr, layout));
     }
 
+    fn allocate_many(allocator : &SlabAllocator,
+                     cpu : CpuId,
+                     layout : Layout,
+                     count : usize)
+                     -> Vec<*mut u8> {
+        (0..count).map(|_| allocator.alloc_on(cpu, layout).expect("alloc")).collect()
+    }
+
+    fn objects_per_page(layout : Layout) -> usize {
+        SizeClass::from_layout(layout).unwrap().objects_per_slab()
+    }
+
     #[test]
-    fn many_objects_force_multiple_slabs() {
+    fn fully_empty_pages_are_returned_except_two_warm_pages() {
         let (allocator, frames) = test_allocator();
         let cpu = CpuId::from_raw(0);
         let layout = Layout::from_size_align(64, 8).unwrap();
-        let mut ptrs = Vec::new();
-        for _ in 0..(SIZE_CLASS_SIZES.len() as usize * 8) {
-            ptrs.push(allocator.alloc_on(cpu, layout).expect("alloc"));
-        }
+        let mut ptrs = allocate_many(&allocator, cpu, layout, objects_per_page(layout) * 3);
+        assert_eq!(frames.backing_count(), 3);
         for ptr in ptrs.drain(..) {
             assert!(allocator.dealloc_on(cpu, ptr, layout));
         }
-        // 大量释放后至少应能看到归还的页，或者至少不泄漏到负数。
-        assert!(frames.free_count() >= 0);
+        assert_eq!(frames.free_count(), 1);
+        let stats = allocator.page_mem_stats();
+        assert_eq!(stats.pages, 2);
+        assert_eq!(stats.reclaimable_pages, 1);
+    }
+
+    #[test]
+    fn partially_free_page_is_not_reclaimed() {
+        let (allocator, frames) = test_allocator();
+        let cpu = CpuId::from_raw(0);
+        let layout = Layout::from_size_align(128, 8).unwrap();
+        let mut ptrs = allocate_many(&allocator, cpu, layout, objects_per_page(layout) + 1);
+        assert!(allocator.dealloc_on(cpu, ptrs.remove(0), layout));
+        assert_eq!(frames.free_count(), 0);
+        let stats = allocator.page_mem_stats();
+        assert_eq!(stats.pages, 2);
+        assert_eq!(stats.reclaimable_pages, 0);
+        for ptr in ptrs {
+            assert!(allocator.dealloc_on(cpu, ptr, layout));
+        }
+        assert_eq!(frames.free_count(), 0);
+    }
+
+    #[test]
+    fn remote_frees_reclaim_only_after_owner_drain() {
+        let (allocator, frames) = test_allocator();
+        let owner = CpuId::from_raw(0);
+        let remote = CpuId::from_raw(1);
+        let layout = Layout::from_size_align(384, 8).unwrap();
+        let ptrs = allocate_many(&allocator, owner, layout, objects_per_page(layout) * 3);
+        for ptr in ptrs {
+            assert!(allocator.dealloc_on(remote, ptr, layout));
+        }
+        assert_eq!(frames.free_count(), 0);
+        assert_eq!(allocator.page_mem_stats().reclaimable_pages, 0);
+
+        let ptr = allocator.alloc_on(owner, layout).expect("owner drain alloc");
+        assert_eq!(frames.free_count(), 1);
+        let stats = allocator.page_mem_stats();
+        assert_eq!(stats.pages, 2);
+        assert_eq!(stats.reclaimable_pages, 1);
+        assert!(allocator.dealloc_on(owner, ptr, layout));
+    }
+
+    #[test]
+    fn reclaimed_frames_are_reused_without_new_backing_pages() {
+        let (allocator, frames) = test_allocator();
+        let cpu = CpuId::from_raw(0);
+        let layout = Layout::from_size_align(768, 8).unwrap();
+        let count = objects_per_page(layout) * 3;
+        let ptrs = allocate_many(&allocator, cpu, layout, count);
+        for ptr in ptrs {
+            assert!(allocator.dealloc_on(cpu, ptr, layout));
+        }
+        assert_eq!(frames.backing_count(), 3);
+        assert_eq!(frames.free_count(), 1);
+
+        let ptrs = allocate_many(&allocator, cpu, layout, count);
+        assert_eq!(frames.backing_count(), 3);
+        assert_eq!(frames.free_count(), 0);
+        for ptr in ptrs {
+            assert!(allocator.dealloc_on(cpu, ptr, layout));
+        }
+        assert_eq!(frames.free_count(), 1);
+    }
+
+    #[test]
+    fn each_size_class_survives_ten_thousand_round_trips() {
+        let (allocator, frames) = test_allocator();
+        let cpu = CpuId::from_raw(0);
+        for size in SIZE_CLASS_SIZES {
+            let layout = Layout::from_size_align(size, 8).unwrap();
+            for iteration in 0..10_000usize {
+                let ptr = allocator.alloc_on(cpu, layout).expect("stress alloc");
+                unsafe { ptr.write((iteration & 0xff) as u8) };
+                assert!(allocator.dealloc_on(cpu, ptr, layout));
+            }
+        }
+        assert_eq!(frames.backing_count(), SIZE_CLASS_SIZES.len());
+        assert_eq!(frames.free_count(), 0);
     }
 
     #[test]

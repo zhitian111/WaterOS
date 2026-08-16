@@ -74,7 +74,12 @@ impl InterruptSafeTlsfHeap {
         let free = pool_len.saturating_sub(used);
         HeapMemStats { used,
                        free,
-                       capacity : KERNEL_HEAP_SIZE }
+                       capacity : KERNEL_HEAP_SIZE,
+                       slab_retained : 0,
+                       slab_reclaimable : 0,
+                       frame_used : 0,
+                       frame_free : 0,
+                       frame_capacity : 0 }
     }
 
     /// 饱和加法，避免诊断用估算值 wrapping 成天文数字。
