@@ -4,6 +4,9 @@
 
 审计基线：`a6cf2515`（分支 `perf/syscall-chain-opt`）。
 
+实施状态：T1-T5 已完成；T6 已完成可证明不跨越阻塞/偏移线性化边界的 socket 子集，其余
+VFS context 复用按风险约束保留。
+
 本任务只进入不改变 Linux ABI、阻塞/唤醒顺序、文件偏移线性化点和锁顺序的优化。每个子项
 单独实现、单独验证、单独提交，便于回滚。完整 QEMU 验收由主分支合入前另行执行。
 
@@ -48,9 +51,9 @@ trap_handler
 位置：`poll_engine.rs` 的 `scan_pollfds`、`poll_block_until_ready`、
 `scan_fd_sets_inner`、`fd_monitored_in_sets`。
 
-方案：syscall 入口一次性导入用户输入，内核中保存不可变监视集合和可变结果集合；等待期间
-只扫描内核数据，返回前一次性写回 `revents`/fdset。保留所有空指针、长度、EFAULT、EBADF
-和超时语义。
+方案：syscall 入口一次性导入用户输入，内核中保存不可变监视集合；等待期间只扫描内核数据，
+`revents`/fdset 仍按原有就绪与超时触发点写回。保留所有空指针、长度、EFAULT、EBADF 和
+超时语义。
 
 风险边界：不持有 fd registry 锁跨越等待；每次 readiness 检查仍调用现有 handle/socket
 接口；只缓存用户输入，不缓存可能变化的设备状态。
@@ -179,3 +182,10 @@ epoll 当前先复制 interest 快照，再逐项查询 readiness，避免在 fd
 当前最确定的性能损失来自用户输入在等待循环中的重复复制、路径逐字节 MM 访问、以及
 syscall 热路径上的重复 fd registry lookup。syscall 双表分发、统计 atomic、detached
 handle 和 epoll 快照均不是本轮应优先改动的对象。
+
+## 最终验证
+
+- `CARGO_NET_OFFLINE=true make rv_check`：通过；
+- `CARGO_NET_OFFLINE=true make la_check`：通过；
+- `git diff --check a6cf2515..HEAD`：通过；
+- QEMU/workload：按任务边界未执行，由合入 `main` 前统一验收。
