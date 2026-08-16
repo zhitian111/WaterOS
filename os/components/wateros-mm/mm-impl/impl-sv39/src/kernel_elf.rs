@@ -703,27 +703,12 @@ fn entry_file_offset_from_phdrs(phdrs : &[u8],
 pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
     let resolved_path = resolve_elf_path(path)?;
     let path = resolved_path.as_str();
-    let mut ehdr = [0u8; 64];
-    read_path_exact(path, 0, &mut ehdr)?;
-    from_elf_path_resolved_with_header(path, &ehdr)
-}
-
-/// 使用可执行格式探测阶段已读取的前缀装载 ELF；`path` 必须已经完成 VFS 路径解析。
-pub(crate) fn from_elf_path_with_prefix(path : &str,
-                                        prefix : &[u8])
-                                        -> Result<LoadedElf, LoadElfError> {
-    let ehdr : &[u8; 64] = prefix.get(..64)
-                                  .ok_or(LoadElfError::TooSmall)?
-                                  .try_into()
-                                  .map_err(|_| LoadElfError::TooSmall)?;
-    from_elf_path_resolved_with_header(path, ehdr)
-}
-
-fn from_elf_path_resolved_with_header(path : &str,
-                                      ehdr : &[u8; 64])
-                                      -> Result<LoadedElf, LoadElfError> {
     runtime::logging::trace!("[elf-load] from_elf_path begin path={}",
                              path);
+
+    // 只读 64 字节 ELF header
+    let mut ehdr = [0u8; 64];
+    read_path_exact(path, 0, &mut ehdr)?;
     if &ehdr[0..4] != b"\x7FELF" {
         return Err(LoadElfError::BadMagic);
     }
@@ -733,13 +718,13 @@ fn from_elf_path_resolved_with_header(path : &str,
     if ehdr.get(5) != Some(&1) {
         return Err(LoadElfError::BadEndian);
     }
-    if rd_u16(ehdr, 18).ok_or(LoadElfError::TooSmall)? != EM_RISCV {
+    if rd_u16(&ehdr, 18).ok_or(LoadElfError::TooSmall)? != EM_RISCV {
         return Err(LoadElfError::BadMachine);
     }
-    let e_entry = rd_u64(ehdr, 0x18).ok_or(LoadElfError::TooSmall)? as usize;
-    let e_phoff = rd_u64(ehdr, 0x20).ok_or(LoadElfError::TooSmall)? as usize;
-    let e_phentsize = rd_u16(ehdr, 0x36).ok_or(LoadElfError::TooSmall)? as usize;
-    let e_phnum = rd_u16(ehdr, 0x38).ok_or(LoadElfError::TooSmall)? as usize;
+    let e_entry = rd_u64(&ehdr, 0x18).ok_or(LoadElfError::TooSmall)? as usize;
+    let e_phoff = rd_u64(&ehdr, 0x20).ok_or(LoadElfError::TooSmall)? as usize;
+    let e_phentsize = rd_u16(&ehdr, 0x36).ok_or(LoadElfError::TooSmall)? as usize;
+    let e_phnum = rd_u16(&ehdr, 0x38).ok_or(LoadElfError::TooSmall)? as usize;
     if e_phentsize < 56 || e_phnum == 0 {
         return Err(LoadElfError::Parse);
     }
