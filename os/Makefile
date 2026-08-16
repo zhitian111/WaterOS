@@ -16,7 +16,7 @@ BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 .PHONY: rv_pre_run-gdb rv_final_run-gdb rv_final_run_log-gdb rv_final_debug_run-gdb
 .PHONY: rv_qemu_run rv_qemu_run_snapshot
 .PHONY: rv_qemu_run_with_log
-.PHONY: la_check la2k_check jh7110_check kernel-la2k la2k_uimage la2k_bootscr kernel-jh7110 jh7110_uimage jh7110_bootdir dd_img_vf2 dd_img_2k1000 la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
+.PHONY: la_check la2k_check jh7110_check kernel-la2k la2k_uimage la2k_bootscr la2k_tftp kernel-jh7110 jh7110_uimage jh7110_bootdir dd_img_vf2 dd_img_2k1000 la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
 .PHONY: kernel-la kernel-la-best kernel-la-pre kernel-la-final la_pre_run la_final_run la_final_run_log
 .PHONY: la_pre_run-gdb la_final_run-gdb la_final_run_log-gdb
 .PHONY: la_qemu_run la_qemu_run_snapshot
@@ -95,7 +95,12 @@ operator_env = WATEROS_OPERATOR_SHELL="$(GUEST_SHELL)" WATEROS_OPERATOR_SCRIPT="
 cargo_env = $(if $(filter 1,$(GDB_BUILD)),WATEROS_DEBUG_BUILD_ID="$(GDB_BUILD_ID)" WATEROS_DEBUG_FRAME_POINTERS=1 RUSTFLAGS="$(strip $(RUSTFLAGS) $(GDB_FRAME_FLAGS))",)
 # Loongson 2K1000 经 U-Boot 在高 cached 段（VSEG=9）执行，不能使用
 # LoongArch small code model 的 32 位 PC 相对寻址；此处固定为 large。
-la2k_rustflags = $(strip $(RUSTFLAGS) -C code-model=large)
+# 2K1000 的 LA264 核不支持硬件非对齐访问，关闭默认 `ual`，避免 LLVM
+# 为 `starts_with`/字符串比较等优化出 `ld.w` 非对齐内存访问。
+la2k_rustflags = $(strip $(RUSTFLAGS) -C code-model=large -C target-feature=-ual)
+# 2K1000 关闭 `ual` 后必须连 `core`/`alloc` 一起重编；否则预编译的
+# `core::fmt` 仍包含非对齐 `ldx.h`，在 LA264 上触发 ALE。
+la2k_build_std_flags = -Z build-std=core,alloc
 cargo_build = $(operator_env) $(cargo_env) cargo build
 
 kernel_rv_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
@@ -182,6 +187,7 @@ help:
 	@echo "  make gdb                             手动挡：终端二连接"
 	@echo "  make dd_img_vf2 DEVICE=/dev/sdX     烧录 VisionFive 2 整盘镜像（先 cd user && make disk）"
 	@echo "  make dd_img_2k1000 DEVICE=/dev/sdX  烧录 Loongson 2K1000 整盘镜像（先 make disk ARCH=la）"
+	@echo "  make la2k_tftp                       启动 2K1000 TFTP 服务并同步最新启动文件"
 	@echo "  make snapshot / make watch           附加当前活动会话"
 	@echo "  make doctor                          检查 GDB/QEMU/符号工具"
 	@echo "  make show-config                     显示当前最终生效配置"
@@ -489,14 +495,14 @@ jh7110_check:
 
 la2k_check:
 	$(call INFO, "开始对 loongson2k1000la 平台进行 cargo check ...")
-	@$(operator_env) RUSTFLAGS="$(la2k_rustflags)" cargo check --no-default-features \
+	@$(operator_env) RUSTFLAGS="$(la2k_rustflags)" cargo check $(la2k_build_std_flags) --no-default-features \
 		--features loongson2k1000la,pre --target loongarch64-unknown-none
 	$(call INFO, "对 loongson2k1000la 平台的 cargo check 完成！")
 
 # Loongson 2K1000LA（PMON/uImage）构建与 uImage 生成
 kernel-la2k:
 	$(call INFO, "开始构建 loongson2k1000la 内核...")
-	@$(operator_env) RUSTFLAGS="$(la2k_rustflags)" cargo build $(CARGO_PROFILE_ARG) --no-default-features \
+	@$(operator_env) RUSTFLAGS="$(la2k_rustflags)" cargo build $(la2k_build_std_flags) $(CARGO_PROFILE_ARG) --no-default-features \
 		--features loongson2k1000la,pre --target loongarch64-unknown-none
 	@cp ./target/loongarch64-unknown-none/release/wateros ./kernel-la2k
 	$(call INFO, "loongson2k1000la 内核构建完成！")
@@ -520,6 +526,12 @@ la2k_bootscr:
 	@mkimage -T script -C none -n "WaterOS 2K1000 boot" \
 		-d ./scripts/root_image/boot-loongson2k1000.cmd ./build/wateros-2k1000.scr
 	$(call INFO, "Loongson 2K1000 网络启动脚本生成完成：./build/wateros-2k1000.scr")
+
+TFTP_LISTEN ?= 192.168.1.2
+TFTP_ROOT ?= /srv/tftp
+
+la2k_tftp: la2k_uimage la2k_bootscr
+	@bash ./scripts/real-hardware/tftp_serve.sh "$(TFTP_LISTEN)" "$(TFTP_ROOT)"
 
 # VisionFive 2 / JH7110（U-Boot/uImage）构建与打包
 kernel-jh7110:

@@ -15,6 +15,9 @@
 /kernel-la2k
 /kernel-la2k.bin
 /kernel-la2k.ui
+/kernel-la2k-buildstd
+/kernel-la2k-buildstd.bin
+/kernel-la2k-buildstd.ui
 /kernel-jh7110
 /kernel-jh7110.bin
 /kernel-jh7110.ui

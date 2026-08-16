@@ -49,6 +49,29 @@ pub fn alloc_error_handler(layout : core::alloc::Layout) -> ! {
     runtime::heap_allocator::handle_alloc_error(layout)
 }
 
+unsafe extern "C" {
+    /// `.bss` 起始地址（链接脚本定义，位于 `.bss.stack` 之后）。
+    static bss_start : u8;
+    /// 需要清零的 BSS 结束地址（链接脚本定义，不包含 `.kernel.heap`）。
+    static bss_zero_end : u8;
+}
+
+/// 在正式 Rust 入口最先清空内核 BSS。
+///
+/// 固件不保证 BSS 内容为零；`spin::Mutex`、原子标志和各类全局状态都位于 BSS，
+/// 若残留 DRAM 旧值会在首次访问时表现为锁死或随机失败。`.bss.stack` 由链接脚本
+/// 放在 `bss_start` 之前，因此当前调用栈不会被清零。
+///
+/// RUNTIME_ORDER: 必须在任何 Rust 静态变量读取、锁获取、日志或堆分配前调用。
+pub(crate) unsafe fn clear_bss() {
+    let start = core::ptr::addr_of!(bss_start) as *mut u8;
+    let end = core::ptr::addr_of!(bss_zero_end) as *mut u8;
+    let len = end as usize - start as usize;
+    unsafe {
+        core::ptr::write_bytes(start, 0, len);
+    }
+}
+
 // ── 共享 bring-up ──────────────────────────────────────────────
 
 /// 网络协议栈轮询任务：周期性驱动 smoltcp 收发包。
@@ -333,6 +356,9 @@ mod riscv64_opensbi_entry {
 
     #[unsafe(no_mangle)]
     pub fn wateros_kernel_main(cpu_raw : usize, dtb_pa : usize, _platform_arg1 : usize) -> ! {
+        unsafe {
+            crate::clear_bss();
+        }
         let cpu_id = task::CpuId::from_raw(cpu_raw);
         platform::arch::cpu::init_current_cpu(cpu_id).expect("init current CPU");
         mask_boot_interrupts();
@@ -471,6 +497,9 @@ mod qemu_loongarch64_virt {
 
     #[unsafe(no_mangle)]
     pub fn wateros_kernel_main(cpu_raw : usize, _argc : usize, _argv : usize, _envp : usize) -> ! {
+        unsafe {
+            crate::clear_bss();
+        }
         let cpu_id = task::CpuId::from_raw(cpu_raw);
         mask_boot_interrupts();
         if BSP_CLAIMED.swap(true, Ordering::AcqRel) {
@@ -522,6 +551,8 @@ mod qemu_loongarch64_virt {
 mod loongson2k1000la {
     use crate::{bringup_user_and_optional_services, init_after_boot, init_services_after_boot,
                 init_when_boot};
+    use arch_api_v0::kernel_trap::register_kernel_trap_handler;
+    use platform::arch::trap::{ActiveTrapFrame as TrapContext, TrapFrameRead};
     use runtime::logging::*;
 
     fn mask_boot_interrupts() {
@@ -530,74 +561,85 @@ mod loongson2k1000la {
         platform::arch::interrupt::disable_soft_interrupt();
     }
 
+    fn write_early_hex(mut value : usize) {
+        let mut buf = [0u8; 18];
+        let mut pos = buf.len();
+        loop {
+            pos -= 1;
+            let digit = (value & 0xf) as u8;
+            buf[pos] = if digit < 10 {
+                b'0' + digit
+            } else {
+                b'a' + digit - 10
+            };
+            value >>= 4;
+            if value == 0 {
+                break;
+            }
+        }
+        let _ = platform::active_impl::console::console_write_raw_buffer(&buf[pos..]);
+    }
+
+    extern "C" fn early_2k_trap(frame : *mut u8) {
+        let cx = unsafe { &mut *(frame as *mut TrapContext) };
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"\r\nEARLY2K estat=0x");
+        write_early_hex(cx.raw_cause());
+        let _ = platform::active_impl::console::console_write_raw_buffer(b" era=0x");
+        write_early_hex(cx.user_pc());
+        let _ = platform::active_impl::console::console_write_raw_buffer(b" badv=0x");
+        write_early_hex(cx.fault_addr());
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"\r\n");
+        let _ = platform::active_impl::console::console_flush();
+        loop {
+            core::hint::spin_loop();
+        }
+    }
+
     /// Loongson 2K1000LA 内核入口（PMON + uImage）。
     ///
     /// `a0` = 逻辑 CPU id；`a1/a2/a3` 为 PMON 透传（非 UEFI argc/argv/envp），忽略。
     #[unsafe(no_mangle)]
     pub fn wateros_kernel_main_rust(cpu_raw : usize, _argc : usize, _argv : usize, _envp : usize) -> ! {
         unsafe {
-            core::arch::asm!(
-                "li.d $t0, 0x800000001fe20000",
-                "1:",
-                "ld.bu $t1, $t0, 5",
-                "andi $t1, $t1, 0x20",
-                "beqz $t1, 1b",
-                "ori $t1, $zero, 0x54",
-                "st.b $t1, $t0, 0",
-                options(nostack)
-            );
+            crate::clear_bss();
         }
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"P0\r\n");
         crate::early_paging::init();
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"P1\r\n");
-        let _ = platform::console::console_write_raw_buffer(b"CW\r\n");
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"[2K1000] enter WaterOS Rust\r\n");
-        let _ = platform::active_impl::console::console_flush();
         let cpu_id = task::CpuId::from_raw(cpu_raw);
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M0\r\n");
         mask_boot_interrupts();
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M1\r\n");
 
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M2\r\n");
-        // 2K1000 早期 console 聚合层尚不可用，先用 board console 直写。
-        let _ = platform::active_impl::console::console_flush();
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M3\r\n");
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M4\r\n");
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"[WaterOS] 2K1000 early boot\r\n");
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M5\r\n");
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M6\r\n");
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K0\r\n");
+        runtime::init_console();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K1\r\n");
+        runtime::showlogo();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K2\r\n");
         klog::init();
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M7\r\n");
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M8\r\n");
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K3\r\n");
         runtime::logging::init();
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M9\r\n");
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M10\r\n");
-        // 2K1000 首启先跳过 TLSF heap init，确认后续 arch/platform 初始化链路；
-        // heap init 单独定位。
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M11\r\n");
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K4\r\n");
+        runtime::heap_allocator::init();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K5\r\n");
+
         platform::arch::cpu::init_current_cpu(cpu_id).expect("BSP init current CPU");
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M12\r\n");
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K6\r\n");
         platform::arch::init();
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M13\r\n");
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K7\r\n");
+        register_kernel_trap_handler(early_2k_trap);
         let _ = platform::smp::init_ipi();
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M14\r\n");
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K8\r\n");
         let dtb_pa = platform::active_impl::boot::device_tree_phys_addr();
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M15\r\n");
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K9\r\n");
         init_when_boot(dtb_pa);
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M16\r\n");
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K10\r\n");
         let configured =
             platform::active_impl::smp::init_configured_cpu_mask(dtb_pa).expect("initialize \
                                                                                  LoongArch CPU \
                                                                                  topology");
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M17\r\n");
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"configured cpu mask ready\r\n");
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K11\r\n");
+        info!("[smp] 2K1000 configured CPU mask={:#x}",
+              configured.bits());
         let memory_end = platform::physical_ram_end_exclusive();
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M18\r\n");
         init_after_boot(dtb_pa, memory_end, cpu_id);
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M19\r\n");
         task::set_cpu_online(cpu_id);
-        let _ = platform::active_impl::console::console_write_raw_buffer(b"M20\r\n");
-        platform::arch::paging::init_paging_disable_mmu();
 
         // PM 控制器：DTB 优先，PMON 无 DTB 时回退板级固定基址（0x1FE2_7000）。
         let pm_base = platform::active_impl::reset::discover_pm_base(dtb_pa);

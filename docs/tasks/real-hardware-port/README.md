@@ -1,8 +1,15 @@
 # 真实硬件移植任务手册（Loongson 2K1000 + VisionFive 2）
 
+[任务总览](../README.md) · [文档总览](../../README.md)
+
 本目录是 WaterOS 向两块物理板移植的**顺序任务清单**。每一个任务（`NN-*.md`）
 对应一次**可回归、可验收的 commit**。任务按依赖顺序编号，前一个通过验收后才进入
 下一个；禁止跨任务混改无关模块。
+
+## 当前闭环报告
+
+- [Loongson 2K1000 SATA/AHCI 真机闭环报告](reports/2026-08-16-loongson2k1000-sata-ahci-success.md)：
+  已完成 IDENTIFY、块读写、MBR 分区识别和 ext4 RW 挂载。
 
 ## 目标平台
 
@@ -14,8 +21,9 @@
 ## 已定的关键决策（约束后续所有任务）
 
 1. **许可证**：WaterOS 保持 **MIT**。禁止把 GPL 文件原样拷入。
-   - 第三方宽松许可 crate 可直接复用：`isomorphic_drivers`（AHCI）、`pci`（robigalia）、
-     以及 WaterOS 已有的 `impl-uart-16550`。
+   - 第三方宽松许可 crate 可直接复用：`simple-ahci`（2K1000 AHCI 实际后端）、
+     `pci`（robigalia）以及 WaterOS 已有的 `impl-uart-16550`。早期引入的
+     `isomorphic_drivers` AHCI 路径只保留作 bring-up 诊断对照。
    - 参考实现 NPUcore-IMPACT（GPL-3.0）只当作**规格来源**，按硬件事实（地址、寄存器、
      DMW 配置、CPUCFG 时钟算法）在 WaterOS 内**重新实现表达**，不逐字搬运其源文件。
 2. **第一轮范围**：先「能启动 + 串口打印 + 定时器 + 块设备读写」，外部中断控制器
@@ -56,7 +64,7 @@
 | 编号 | 文档 | 可 QEMU/宿主机验收 |
 |------|------|--------------------|
 | 09 | `09-loongson2k1000-platform-profile.md` | 🟡 中（若拿到 2K1000 QEMU fork 可仿真，否则真机） |
-| 10 | `10-loongson2k1000-sata-ahci.md` | 🟠 低（host 单测 + 真机 SATA） |
+| 10 | [`10-loongson2k1000-sata-ahci.md`](10-loongson2k1000-sata-ahci.md) | ✅ 真机闭环（IDENTIFY、块读写、ext4 RW） |
 | 11 | `11-loongson2k1000-external-irq.md` | 🔴 真机 |
 
 ### 阶段 D：rootfs 正经化（与阶段 B/C 并行开发，板级挂载前完成）

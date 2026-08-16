@@ -1,5 +1,9 @@
 # 10 Loongson 2K1000 SATA/AHCI 块设备
 
+> 后续状态（2026-08-16）：本任务已改用 `simple-ahci 0.1.1-preview.1` 在 2K1000LA 真机
+> 闭环，完成 IDENTIFY、块读写、MBR 分区识别和 ext4 RW 挂载。详见
+> [SATA/AHCI 真机闭环报告](reports/2026-08-16-loongson2k1000-sata-ahci-success.md)。
+
 ## 任务内容
 
 用宽松许可 crate 为 2K1000 接入 SATA/AHCI 块设备，替代旧分支里未验证的手写 AHCI：

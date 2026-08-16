@@ -44,6 +44,19 @@ make run ARCH=rv PROFILE=final SDCARD=/path/to/rootfs.img
 [`构建配置`](../README.md#构建配置)。Makefile 的参数传播、目标分层和扩展约定见
 [`docs/tools/makefile.md`](../docs/tools/makefile.md)。
 
+Loongson 2K1000LA 真机构建使用单独的板级目标；`la2k_tftp` 会先生成 uImage 和 U-Boot
+启动脚本，再同步到指定 TFTP 根目录并以前台方式启动服务：
+
+```bash
+make la2k_check
+make la2k_uimage
+make la2k_tftp TFTP_LISTEN=192.168.1.2 TFTP_ROOT=/srv/tftp
+```
+
+该路径需要 LoongArch GNU objcopy、`mkimage`（缺失时内核 uImage 可回退到项目脚本）、
+`dnsmasq` 和 `sudo`。真机 SATA 验证结果见
+[`2K1000 SATA/AHCI 闭环报告`](../docs/tasks/real-hardware-port/reports/2026-08-16-loongson2k1000-sata-ahci-success.md)。
+
 ## 常见开发场景
 
 ### 交互终端

@@ -55,6 +55,8 @@ Makefile 中的目标按职责分为以下几组：
 - 稳定入口：`help`、`show-config`、`build`、`check`、`run`、`shell`；
 - 调试入口：`doctor`、`debug`、`debug-server`、`gdb`、`snapshot`、`watch`；
 - 产物入口：`kernel-rv-*`、`kernel-la-*`、`all`；
+- 真机入口：`la2k_check`、`la2k_uimage`、`la2k_bootscr`、`la2k_tftp`、
+  `jh7110_check`、`jh7110_uimage`；
 - 地址与 trace 工具：`rv_pc_watch`、`la_pc_watch`、`*_symbol_at`、`*_elf_info`；
 - 配置维护：`configure`、`apply_features*`、`revert_features`；
 - 仓库维护：`fmt`、`clean`、`stat`、`export`。
@@ -73,6 +75,23 @@ kernel-la-pre       kernel-la-final
 
 `make all` 构建两个 `final` 目标，并额外生成 `kernel-rv` 与 `kernel-la` 兼容副本。Cargo
 中间产物仍位于 `target/<target-triple>/<profile>/`，不应直接作为比赛提交文件。
+
+### Loongson 2K1000LA 真机
+
+2K1000LA 的 LA264 核关闭非对齐访问能力，并使用 large code model；`la2k_check` 和
+`kernel-la2k` 会带 `-C target-feature=-ual`，同时通过 `-Z build-std=core,alloc` 重建
+与该能力一致的核心库。常用流程为：
+
+```bash
+make la2k_check
+make la2k_uimage
+make la2k_tftp TFTP_LISTEN=192.168.1.2 TFTP_ROOT=/srv/tftp
+```
+
+`la2k_uimage` 生成 `kernel-la2k`、`kernel-la2k.bin` 和 `kernel-la2k.ui`；这些都是本地
+构建产物并已由 `os/.gitignore` 排除。`la2k_tftp` 还生成 U-Boot script，随后调用
+`scripts/real-hardware/tftp_serve.sh` 同步文件并启动前台 `dnsmasq`。它会使用 `sudo` 写入
+TFTP 根目录，执行前必须确认监听地址和目标目录。
 
 ## 镜像与写入策略
 

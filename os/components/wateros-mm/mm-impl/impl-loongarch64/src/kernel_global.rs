@@ -4,8 +4,8 @@
 //! ## trap 与映射语义
 //!
 //! [`init`] 在 **S 态**（内核 PLV0）安装 PGDL 后映射 QEMU virt **RAM
-//! 恒等区**（`0x9000_0000` 起，`R|W|X`）与 **MMIO**（`R|W`），保证内核、trap
-//! 入口、设备 MMIO 访问在同一套映射下有效；不包含 `U`
+//! 恒等区**（`0x9000_0000` 起，`R|W|X`、一致可缓存）与 **MMIO**（`R|W`、
+//! 强序非缓存），保证内核、trap 入口、设备 MMIO 访问在同一套映射下有效；不包含 `U`
 //! 位，用户态须使用独立用户页表或后续 `protect`/`map_identity_range_user`
 //! 等路径。
 //!
@@ -42,9 +42,12 @@ const LOONGARCH64_LOW_MMIO_START : usize = 0x1000_0000;
 const LOONGARCH64_LOW_MMIO_END : usize = 0x3000_0000;
 const LOONGARCH64_PCI_MMIO_START : usize = 0x4000_0000;
 const LOONGARCH64_PCI_MMIO_END : usize = 0x8000_0000;
+const LOONGSON2K1000_PCI_ECAM_KERNEL_VA : usize = 0x40_0000_0000;
+const LOONGSON2K1000_PCI_ECAM_PHYS : usize = 0xFE_0000_0000;
+const LOONGSON2K1000_PCI_ECAM_SIZE : usize = 0x0100_0000;
 /// 高 cached/uncached 段窗口只保留高 16 位；低 48 位才是物理地址。
-const LOONGARCH64_PHYS_ADDR_MASK : usize = 0x0000_ffff_ffff_ffff;
-const LOONGARCH64_WINDOW_BASE_MASK : usize = 0xffff_0000_0000_0000;
+const LOONGARCH64_PHYS_ADDR_MASK : usize = 0x0000_FFFF_FFFF_FFFF;
+const LOONGARCH64_WINDOW_BASE_MASK : usize = 0xFFFF_0000_0000_0000;
 
 #[inline]
 fn phys_page_for_va(va : usize) -> PhysPageNum {
@@ -73,9 +76,11 @@ pub(crate) fn phys_ram_end_exclusive() -> usize {
 
 // `Acquire` 与 `init` 末尾 `Release` 配对；仅在 `init` 完成后合法调用。
 #[inline]
-fn with_kernel_aspace<R>(f: impl FnOnce(&mut LoongArch64AddressSpace) -> R) -> R {
-    let cell = KERNEL_ASPACE.get().expect("kernel_mm: not initialized");
-    let mut guard = cell.inner.exclusive_access();
+fn with_kernel_aspace<R>(f : impl FnOnce(&mut LoongArch64AddressSpace) -> R) -> R {
+    let cell = KERNEL_ASPACE.get()
+                            .expect("kernel_mm: not initialized");
+    let mut guard = cell.inner
+                        .exclusive_access();
     f(&mut guard)
 }
 
@@ -91,7 +96,8 @@ pub fn kernel_satp() -> usize { api_v0::kernel_satp::get() }
 /// `ram_end_exclusive` 为物理 RAM 上界（不包含），应与 DTB `/memory` 或
 /// bring-up 约定一致。
 pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
-    let ram_base_low = platform::memory::kernel_layout().ram.start;
+    let ram_base_low = platform::memory::kernel_layout().ram
+                                                        .start;
     assert!(ram_end_exclusive > ram_base_low,
             "kernel_mm: ram_end_exclusive must be above RAM base");
     PHYS_RAM_END_EXCL.store(ram_end_exclusive, Ordering::Release);
@@ -111,8 +117,9 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
     frame_alloctor::init_frame_allocator(PhysPageNum(start_ppn),
                                          PhysPageNum(end_ppn));
 
-    let mut aspace = LoongArch64AddressSpace::new_kernel()
-        .expect("kernel_mm: LoongArch64AddressSpace::new_kernel failed");
+    let mut aspace =
+        LoongArch64AddressSpace::new_kernel().expect("kernel_mm: \
+                                                      LoongArch64AddressSpace::new_kernel failed");
 
     let map_ram_identity = |aspace : &mut LoongArch64AddressSpace,
                             start : usize,
@@ -142,7 +149,7 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
         for vpn_raw in lo.0..hi.0 {
             let vpn = VirtPageNum(vpn_raw);
             let ppn = vpn.to_phys_page_identity();
-            aspace.map_page_to_ppn(vpn, ppn, perm)
+            aspace.map_mmio_page_to_ppn(vpn, ppn, perm)
                   .unwrap_or_else(|e| {
                       panic!("kernel_mm: identity map {} [{:#x},{:#x}): {:?}",
                              what, start, end, e)
@@ -169,6 +176,21 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
                       LOONGARCH64_PCI_MMIO_END,
                       PagePerm::R | PagePerm::W,
                       "PCI MMIO");
+
+    // 2K1000 的 PCIe ECAM 物理地址超出当前 LoongArch 三级页表可表示的低 39
+    // 位空间，不能做恒等映射；这里把它映射到一个未占用的低内核 VA 别名，
+    // 驱动中的 `PCI_CONFIG_BASE` 也使用同一别名。
+    for page in 0..(LOONGSON2K1000_PCI_ECAM_SIZE / PAGE_SIZE) {
+        let vpn = VirtPageNum(LOONGSON2K1000_PCI_ECAM_KERNEL_VA / PAGE_SIZE + page);
+        let ppn = PhysPageNum(LOONGSON2K1000_PCI_ECAM_PHYS / PAGE_SIZE + page);
+        aspace.map_mmio_page_to_ppn(vpn, ppn, PagePerm::R | PagePerm::W)
+              .unwrap_or_else(|e| {
+                  panic!("kernel_mm: map 2K1000 PCI ECAM {:#x} -> {:#x}: {:?}",
+                         vpn.start_addr().0,
+                         ppn.start_addr().0,
+                         e)
+              });
+    }
 
     // 选一枚帧池内真实 RAM 帧，用已建立的 RAM 恒等映射做 PGDL 切换后的访存探针。
     // 避免额外低地址 VA 受 LoongArch64 PGDL/PGDH 选择规则影响。
@@ -213,7 +235,7 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
     api_v0::kernel_satp::set(pgdl_target);
     api_v0::user_aspace_lifecycle::register_drop_user_aspace_hook(crate::kernel_mm_impl::drop_user_aspace);
     api_v0::user_aspace_lifecycle::register_aspace_cpu_hooks(crate::user_aspace::mark_active,
-                                                              crate::user_aspace::mark_inactive);
+                                                             crate::user_aspace::mark_inactive);
 }
 
 /// 将 `[va_start, va_end)` 内每一虚拟页映射到 **恒等物理页**，并设置
@@ -223,15 +245,17 @@ pub fn map_identity_range_user(start : VirtAddr, end : VirtAddr, perm : PagePerm
             "kernel_mm: empty range");
     let mut vpn = start.floor_page();
     let vpn_end = end.ceil_page();
-    with_kernel_aspace(|a| while vpn.0 < vpn_end.0 {
-        let ppn = vpn.to_phys_page_identity();
-        match a.map_page_to_ppn(vpn, ppn, perm) {
-            Ok(()) => {}
-            Err(MmError::AlreadyMapped) => {}
-            Err(e) => panic!("kernel_mm: map {:?} -> {:?}: {:?}",
-                             vpn, ppn, e),
+    with_kernel_aspace(|a| {
+        while vpn.0 < vpn_end.0 {
+            let ppn = vpn.to_phys_page_identity();
+            match a.map_page_to_ppn(vpn, ppn, perm) {
+                Ok(()) => {}
+                Err(MmError::AlreadyMapped) => {}
+                Err(e) => panic!("kernel_mm: map {:?} -> {:?}: {:?}",
+                                 vpn, ppn, e),
+            }
+            vpn = VirtPageNum(vpn.0 + 1);
         }
-        vpn = VirtPageNum(vpn.0 + 1);
     });
 }
 
@@ -239,9 +263,10 @@ pub fn map_identity_range_user(start : VirtAddr, end : VirtAddr, perm : PagePerm
 /// 入口落在内核镜像内）。
 pub fn ensure_user_execute_for_kernel_va(va : usize) {
     let vpn = VirtAddr(va).floor_page();
-    with_kernel_aspace(|a| a.protect_page(vpn,
-                              PagePerm::R | PagePerm::X | PagePerm::U))
-        .expect("kernel_mm: protect_page for user exec");
+    with_kernel_aspace(|a| {
+        a.protect_page(vpn,
+                       PagePerm::R | PagePerm::X | PagePerm::U)
+    }).expect("kernel_mm: protect_page for user exec");
 }
 
 /// 为一段虚拟地址分配匿名帧并映射（用于用户栈等）。
@@ -250,19 +275,21 @@ pub fn map_anon_range_user(start : VirtAddr, end : VirtAddr, perm : PagePerm) {
             "kernel_mm: empty anon range");
     let mut vpn = start.floor_page();
     let vpn_end = end.ceil_page();
-    with_kernel_aspace(|a| while vpn.0 < vpn_end.0 {
-        if a.translate_addr(vpn.start_addr())
-            .ok()
-            .flatten()
-            .is_none()
-        {
-            let ppn = frame_alloc_result().expect("kernel_mm: frame oom for anon map");
-            match a.map_page_to_ppn(vpn, ppn, perm) {
-                Ok(()) => {}
-                Err(MmError::AlreadyMapped) => {}
-                Err(e) => panic!("kernel_mm: anon map {:?}: {:?}", vpn, e),
+    with_kernel_aspace(|a| {
+        while vpn.0 < vpn_end.0 {
+            if a.translate_addr(vpn.start_addr())
+                .ok()
+                .flatten()
+                .is_none()
+            {
+                let ppn = frame_alloc_result().expect("kernel_mm: frame oom for anon map");
+                match a.map_page_to_ppn(vpn, ppn, perm) {
+                    Ok(()) => {}
+                    Err(MmError::AlreadyMapped) => {}
+                    Err(e) => panic!("kernel_mm: anon map {:?}: {:?}", vpn, e),
+                }
             }
+            vpn = VirtPageNum(vpn.0 + 1);
         }
-        vpn = VirtPageNum(vpn.0 + 1);
     });
 }

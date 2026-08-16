@@ -7,7 +7,9 @@
     block = { path = "../../block-api/api-v0", package = "wateros-driver-block-api-v0", default-features = true }
     frame_alloctor = { path = "../../../../wateros-mm/mm-frame-alloctor", package = "wateros-mm-frame-alloctor", default-features = true, optional = true }
     mm-api = { path = "../../../../wateros-mm/mm-api/api-v0", package = "wateros-mm-api-v0", default-features = true, optional = true }
-    isomorphic_drivers = { path = "../../../../../vendor/isomorphic_drivers" }
+    platform = { path = "../../../../wateros-platform", package = "wateros-platform", default-features = false, features = [ "impl-loongson2k1000la" ], optional = true }
+    isomorphic_drivers = { path = "../../../../../vendor/isomorphic_drivers", features = [ "log" ] }
+    simple-ahci = { version = "=0.1.1-preview.1", optional = true }
     pci = { path = "../../../../../vendor/pci" }
     spin = "0.10.0"
     log = "0.4.29"
@@ -15,4 +17,4 @@
 [features]
     api-v0 = [  ]
     default = [ "api-v0" ]
-    dma = [ "dep:frame_alloctor", "dep:mm-api" ]
+    dma = [ "dep:frame_alloctor", "dep:mm-api", "dep:platform", "dep:simple-ahci" ]
