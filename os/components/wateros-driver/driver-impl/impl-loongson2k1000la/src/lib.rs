@@ -3,9 +3,11 @@
 //! 第一阶段为 polled PIO（无外部中断）；LIOINTC 等外部中断接入在任务 11。
 
 #![no_std]
+extern crate alloc;
 
 use api_v0::{DriverResult, MachineDriver};
 
+pub mod gmac;
 pub mod liointc;
 pub mod rtc;
 pub mod uart;
@@ -30,6 +32,10 @@ impl MachineDriver for Machine {
                            error);
             }
             character::register_builtin_character_devices();
+            if let Err(error) = gmac::register_from_dtb(platform_dtb_pa()) {
+                log::warn!("[driver][2k1000] GMAC probe failed: {:?}",
+                           error);
+            }
             match ahci::init() {
                 Ok(index) => {
                     log::info!("[driver][2k1000] AHCI/SATA registered as block device #{}",
@@ -73,7 +79,8 @@ impl MachineDriver for Machine {
         uart::test();
         rtc::test();
         liointc::test();
-        log::info!("[driver][2k1000] machine test: UART/RTC/LIOINTC/AHCI hooks ready");
+        gmac::test();
+        log::info!("[driver][2k1000] machine test: UART/RTC/LIOINTC/AHCI/GMAC hooks ready");
     }
 }
 

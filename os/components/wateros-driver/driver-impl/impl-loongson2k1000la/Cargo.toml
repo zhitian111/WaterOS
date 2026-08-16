@@ -13,6 +13,8 @@
     common = { path = "../impl-common", package = "wateros-driver-impl-common", default-features = true }
     fdt = "0.1.5"
     log = "0.4.29"
+    network = { path = "../../driver-network", package = "wateros-driver-network", default-features = false, features = [ "api-v0" ] }
+    spin = "0.10.0"
 
 [target.'cfg(target_arch = "loongarch64")'.dependencies]
     ahci = { path = "../../driver-block/block-impl/impl-ahci", package = "wateros-driver-block-impl-ahci", default-features = true, features = [ "dma" ] }
