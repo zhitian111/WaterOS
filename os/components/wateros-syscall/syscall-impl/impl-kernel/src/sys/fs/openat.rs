@@ -49,6 +49,7 @@ const KNOWN_UNSUPPORTED_OPEN_FLAGS: u32 = O_ASYNC | O_DIRECT | O_NOATIME;
 
 // 本方法代码由AI完成
 pub(crate) fn sys_openat(args : SyscallArgs) -> UserRet {
+    crate::sys::misc::bringup_stats::record_openat();
     let dirfd = args.arg(0) as isize;
     let path_ptr = args.arg(1);
     let flags = args.arg(2) as u32;

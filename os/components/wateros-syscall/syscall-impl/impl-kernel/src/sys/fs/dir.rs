@@ -549,6 +549,7 @@ fn check_readlink_parent_search(path : &str, cred : &ProcessCredentials) -> Resu
 }
 
 pub(crate) fn sys_readlinkat(args : SyscallArgs) -> UserRet {
+    crate::sys::misc::bringup_stats::record_readlinkat();
     let dirfd = args.arg(0) as isize;
     let path_ptr = args.arg(1);
     let buf_ptr = args.arg(2);

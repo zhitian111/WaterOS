@@ -159,6 +159,7 @@ pub(crate) fn sys_fstatat(args: SyscallArgs) -> UserRet {
 
 // 本方法代码由AI完成
 pub(crate) fn sys_statx(args: SyscallArgs) -> UserRet {
+    crate::sys::misc::bringup_stats::record_statx();
     let dirfd = args.arg(0) as isize;
     let path_ptr = args.arg(1);
     let flags = args.arg(2) as u32;

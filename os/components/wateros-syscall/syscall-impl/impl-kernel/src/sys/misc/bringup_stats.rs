@@ -19,6 +19,9 @@ mod enabled {
         futex_wait_eagain : AtomicU64,
         user_page_fault_handled : AtomicU64,
         syscalls : AtomicU64,
+        statx : AtomicU64,
+        openat : AtomicU64,
+        readlinkat : AtomicU64,
     }
 
     impl CpuCounters {
@@ -32,7 +35,10 @@ mod enabled {
                    futex_wait_sleep : AtomicU64::new(0),
                    futex_wait_eagain : AtomicU64::new(0),
                    user_page_fault_handled : AtomicU64::new(0),
-                   syscalls : AtomicU64::new(0) }
+                   syscalls : AtomicU64::new(0),
+                   statx : AtomicU64::new(0),
+                   openat : AtomicU64::new(0),
+                   readlinkat : AtomicU64::new(0) }
         }
     }
 
@@ -52,6 +58,9 @@ mod enabled {
         futex_wait_eagain : u64,
         user_page_fault_handled : u64,
         syscalls : u64,
+        statx : u64,
+        openat : u64,
+        readlinkat : u64,
     }
 
     #[inline]
@@ -82,6 +91,12 @@ mod enabled {
                                                       .load(Ordering::Relaxed);
             result.syscalls += counters.syscalls
                                        .load(Ordering::Relaxed);
+            result.statx += counters.statx
+                                    .load(Ordering::Relaxed);
+            result.openat += counters.openat
+                                     .load(Ordering::Relaxed);
+            result.readlinkat += counters.readlinkat
+                                         .load(Ordering::Relaxed);
         }
         result
     }
@@ -144,6 +159,24 @@ mod enabled {
                  .fetch_add(1, Ordering::Relaxed);
     }
 
+    #[inline]
+    pub(super) fn record_statx() {
+        current().statx
+                 .fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub(super) fn record_openat() {
+        current().openat
+                 .fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub(super) fn record_readlinkat() {
+        current().readlinkat
+                 .fetch_add(1, Ordering::Relaxed);
+    }
+
     pub(super) fn log_summary() {
         let counters = snapshot();
         let mut context_switches = 0u64;
@@ -157,10 +190,13 @@ mod enabled {
             timer_ticks = timer_ticks
                               .saturating_add(state.timer_ticks);
         }
-        log::info!("[bringup-stats] syscalls={} clone_thread={} exit={} reap_calls={} \
+        log::info!("[bringup-stats] syscalls={} statx={} openat={} readlinkat={} clone_thread={} exit={} reap_calls={} \
                     reap_tasks={} futex_wake={} futex_wake_zero={} futex_sleep={} \
                     futex_eagain={} user_pf={} ctx={} idle_ticks={} timer_ticks={}",
                    counters.syscalls,
+                   counters.statx,
+                   counters.openat,
+                   counters.readlinkat,
                    counters.clone_thread,
                    counters.sys_exit,
                    counters.reap_member_calls,
@@ -229,6 +265,21 @@ pub fn record_user_page_fault_handled() {
 pub fn record_syscall() {
     #[cfg(feature = "bringup-stats")]
     enabled::record_syscall();
+}
+
+pub fn record_statx() {
+    #[cfg(feature = "bringup-stats")]
+    enabled::record_statx();
+}
+
+pub fn record_openat() {
+    #[cfg(feature = "bringup-stats")]
+    enabled::record_openat();
+}
+
+pub fn record_readlinkat() {
+    #[cfg(feature = "bringup-stats")]
+    enabled::record_readlinkat();
 }
 
 /// 输出当前累计计数（脚本切换等检查点可调用）。
