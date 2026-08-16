@@ -105,6 +105,12 @@ vectored VFS/socket API，暂不在本轮改公开契约；本任务只处理元
 
 ### T5：合并 `/proc/<pid>/io` 的双重统计锁
 
+状态：已完成，提交为 `[perf] combine bidirectional io accounting`。
+
+实现结果：fd-session registry 新增双向搬运计数入口，`sendfile/splice/copy_file_range` 的
+四个计数器在一次 owner 查找和一次 registry 独占锁内更新；单方向统计未改。`rv_check` 已通过
+（`CARGO_NET_OFFLINE=true make rv_check`）。
+
 现状：`sendfile/splice/copy_file_range` 成功后分别调用一次 read 统计和一次 write 统计，
 连续获取同一个 cwd registry 锁。
 

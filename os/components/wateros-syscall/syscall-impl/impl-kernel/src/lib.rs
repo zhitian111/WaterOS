@@ -56,8 +56,7 @@ fn account_process_io(syscall_nr : usize, bytes : u64) {
         // 这些内核内搬运接口同时产生一份读流量和一份写流量。
         api_v0::SENDFILE | api_v0::SPLICE | api_v0::COPY_FILE_RANGE => {
             let Some(task_id) = task::current_task_id() else { return; };
-            vfs::cwd::account_task_io(task_id, true, bytes);
-            vfs::cwd::account_task_io(task_id, false, bytes);
+            vfs::cwd::account_task_io_transfer(task_id, bytes);
             return;
         }
         _ => None,
