@@ -7,7 +7,7 @@
 
 ## 实施方案
 
-1. 使用同一候选内核分别运行 `-smp 1`、标准 RV `-smp 8` 和标准 LA `-smp 12`；只改变
+1. 使用同一 RISC-V 候选内核分别运行 `-smp 1` 和标准 `-smp 8`；只改变
    vCPU 数，镜像、QEMU、脚本和 kernel commit 固定。
 2. 每个配置做 TLSF/slab A/B/B/A；记录 BuildStorm 内部 elapsed、工具链/minibuild marker、
    CPU 迁移/remote 诊断和宿主内存状态。
@@ -36,4 +36,3 @@ codegraph callers "current_cpu_id"
 ## 完成后
 
 新增 `history/06-brief.md`，明确 slab 的退化归因和是否允许进入任务 07/08。
-

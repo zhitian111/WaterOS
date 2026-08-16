@@ -21,7 +21,8 @@ git diff --check
 
 ### 运行功能
 
-使用任务 00 的干净脚本镜像，RV/LA 各至少三轮完整 BuildStorm；额外执行：
+使用任务 00 的干净脚本镜像运行 RISC-V 完整 BuildStorm；LoongArch 通过静态、构建和定向
+功能 smoke，不运行长时间性能 workload。额外执行：
 
 - slab alloc/free/realloc、跨 CPU free、远程队列超限、页回收压力；
 - fork/exec/exit/wait、futex、mmap/mprotect、文件重开/fsync/卸载；
@@ -44,4 +45,3 @@ codegraph callers "dealloc_frame remote_push realloc"
 ## 完成后
 
 新增 `history/09-brief.md`，记录每轮日志路径、功能检查、资源统计和所有未验证限制。
-

@@ -17,7 +17,7 @@
 - `CODEX_HANDOFF_TEMPLATE.md`：交接文件的字段、证据链和完整性模板。
 - `vma-unified/`：VMA 统一路径重构的分支任务拆解、验收与历史简报。
 - `kernel-heap-slab/`：内核堆 slab/SLUB 优化的分支任务拆解、验收与历史简报。
-- `slab-singlecore-audit/`：slab 全局堆退化审计、单核编译长尾链路和双架构性能验收。
+- `slab-singlecore-audit/`：slab 全局堆退化审计、单核编译长尾链路、双架构功能门禁和 RISC-V 性能验收。
 
 当前问题、性能实施和专项回归分别位于 `docs/tasks/known-issues/`、
 `docs/tasks/perf/` 和 `docs/tasks/read-family/`。每项任务的已完成记录保留在其自身的

@@ -28,7 +28,7 @@ git diff --check
 指针 dealloc、slab 指针跨 CPU dealloc。必须无 panic、double free、数据破坏或错误 OOM。
 
 反汇编检查 guard 调用和 `SizeClass::from_layout` 调用数量；性能用任务 00 的镜像和
-`-snapshot` 做 TLSF/slab A/B/B/A。若 RV 或 LA 中位数退化超过 2%，回退本任务。
+`-snapshot` 做 RISC-V TLSF/slab A/B/B/A。若 RV 中位数退化超过 2%，回退本任务。
 
 ## 涉及文件与 CodeGraph
 
@@ -44,5 +44,4 @@ codegraph callers "fits_existing_class"
 
 ## 完成后
 
-新增 `history/02-brief.md`，记录每个路由的 guard 数量、边界测试和双架构 A/B 结果。
-
+新增 `history/02-brief.md`，记录每个路由的 guard 数量、边界测试和 RISC-V A/B 结果。

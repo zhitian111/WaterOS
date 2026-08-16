@@ -30,7 +30,7 @@ HEAP_ALLOCATOR_FEATURE=heap-slab make kernel-la-final
 git diff --check
 ```
 
-使用任务 03 诊断比较 remote 比例、最大 drain 长度、page high-water；再做 RV/LA 完整
+使用任务 03 诊断比较 remote 比例、最大 drain 长度、page high-water；再做 RISC-V 完整
 BuildStorm A/B。任何功能错误立即回退；性能至少不能比任务 04 候选再退化 2%。
 
 ## 涉及文件与 CodeGraph
@@ -47,5 +47,4 @@ codegraph callers "remote_push"
 
 ## 完成后
 
-新增 `history/05-brief.md`，记录选择的再平衡方案、不变量、压力结果和双架构性能结果。
-
+新增 `history/05-brief.md`，记录选择的再平衡方案、不变量、压力结果和 RISC-V 性能结果。

@@ -29,7 +29,7 @@ HEAP_ALLOCATOR_FEATURE=heap-slab make kernel-la-final
 git diff --check
 ```
 
-按任务 00 的镜像流程做功能 smoke 和 A/B/B/A；每架构至少两轮完整 BuildStorm。必须满足：
+按任务 00 的镜像流程做功能 smoke 和 RISC-V A/B/B/A；至少两轮完整 BuildStorm。必须满足：
 
 - 无 panic/OOM/ENOMEM/SIGSEGV/fault、缓存失效、丢唤醒或产物错误；
 - 目标窗口耗时和相应 pc/syscall 指标方向一致；
@@ -47,4 +47,3 @@ codegraph impact "<任务07选定公共API或锁>"
 ## 完成后
 
 新增 `history/08-brief.md`，记录根因、修改层、功能门禁、目标窗口和完整 A/B 结果。
-

@@ -10,8 +10,8 @@
 - 每个任务文档对应一个独立提交；提交前必须完成该文档的静态/功能门禁和最窄性能 A/B。
 - 每个任务完成后新增 `history/<task-id>-brief.md`，记录改动、验证命令、结果、未验证项和
   是否满足进入下一任务的门槛。
-- 功能正确性是硬门禁；性能实验可以暂时退化，但最终 RV 与 LA 都必须优于本任务保存的
-  `main` 基线。
+- 功能正确性是硬门禁，两架构静态/构建检查必须通过；性能实验可以暂时退化，但根据当前
+  资源约束，性能运行只做 RISC-V，最终 RV 必须优于本任务保存的 `main` 基线。
 - 不修改 `~/Downloads/*.img.gz` 原始镜像，不把性能镜像、内核 ELF、日志和 `target/`
   加入提交。
 - CodeGraph 已初始化；源码定位优先使用 `codegraph explore`、`codegraph callers`、
@@ -22,7 +22,6 @@
 | 项目 | 路径/值 |
 |---|---|
 | main 基线分支 | `main`，当前基线提交以任务 00 实际记录为准 |
-| LA 原始镜像 | `~/Downloads/sdcard-la-pub.img.gz` |
 | RV 原始镜像 | `~/Downloads/sdcard-rv-pub.img.gz` |
 | BuildStorm 脚本 | `~/Downloads/buildstorm_testcode.recovered.sh` |
 | 镜像内目标 | `/glibc/buildstorm_testcode.sh` |
@@ -45,8 +44,7 @@
 | `07-buildstorm-crate-attribution.md` | 为大型 crate 记录开始/完成时间和内核链路画像 |
 | `08-selected-serial-chain-optimization.md` | 依据任务 07 数据实施一个可解释的串行链路优化 |
 | `09-final-functional-acceptance.md` | 双架构功能、压力、镜像一致性终验 |
-| `10-final-performance-acceptance.md` | main 与最终候选的双架构三轮中位数验收 |
+| `10-final-performance-acceptance.md` | main 与最终候选的 RISC-V 性能终验 |
 
 任务 08 的具体调用链必须由任务 07 的数据选出；若证据不足，提交诊断结论并停止扩大改动，
 不得预先假定 dcache、readahead 或 exec prefix 一定有效。
-

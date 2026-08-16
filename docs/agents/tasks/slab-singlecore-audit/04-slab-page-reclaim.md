@@ -31,7 +31,8 @@ git diff --check
 ```
 
 运行短压力：重复分配/释放各 class 至少 10,000 次，检查无重复帧、UAF、OOM、递归分配和
-frame count 泄漏。双架构 BuildStorm smoke 必须通过；性能暂允许变化，但单架构超过 5%
+frame count 泄漏。双架构静态/构建和定向功能门禁必须通过；RISC-V BuildStorm smoke 必须
+通过。性能暂允许变化，但 RISC-V 超过 5%
 回退需停止并分析回收阈值。
 
 ## 涉及文件与 CodeGraph
@@ -50,4 +51,3 @@ codegraph callers "HeapFrameSource::dealloc_frame"
 ## 完成后
 
 新增 `history/04-brief.md`，记录状态机、回收计数、压力结果、统计字段变化和镜像功能结果。
-

@@ -33,7 +33,7 @@ llvm-nm -n kernel-la-final | rg 'SLAB_(ALLOC|DEALLOC)_COUNT' && exit 1 || true
 ```
 
 功能：运行 slab 自检、短 BuildStorm smoke，检查无递归分配、OOM、SIGSEGV、错误脚本结果。
-性能：在同一宿主用任务 00 的 main/TLSF 与候选 slab 做 A/B/B/A，各至少一轮；单轮不能
+性能仅运行 RISC-V：在同一宿主用任务 00 的 main/TLSF 与候选 slab 做 A/B/B/A，各至少一轮；单轮不能
 出现超过 2% 的稳定回退，若回退则不得进入任务 02。
 
 ## 涉及文件与 CodeGraph
@@ -49,5 +49,4 @@ codegraph callers "heap_slab_stats"
 
 ## 完成后
 
-新增 `history/01-brief.md`，列出默认内核是否仍含计数符号、双架构检查、A/B 结果和未验证项。
-
+新增 `history/01-brief.md`，列出默认内核是否仍含计数符号、双架构检查、RISC-V A/B 结果和未验证项。
