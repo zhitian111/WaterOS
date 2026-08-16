@@ -53,8 +53,8 @@ macro_rules! hot_syscall_trace {
 
 #[inline]
 fn exit_current_if_process_exiting() {
-    if let Some(process) = task::current_process_snapshot() {
-        if let task::ProcessState::Exiting(exit_code) = process.state {
+    if let Some(current) = task::current_process_context() {
+        if let task::ProcessState::Exiting(exit_code) = current.process_state {
             syscall::terminate_current_thread(exit_code);
         }
     }
@@ -224,6 +224,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                           cx.user_pc());
                     cx.add_user_pc(SYSCALL_INSN_BYTES);
                     cx.set_syscall_ret(UserRet(syscall::ErrNo::EINVAL.user_ret()));
+                    exit_current_if_process_exiting();
                     finish_trap_return(frame, cx, raw_cause);
                     return;
                 }
@@ -267,6 +268,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                     trace!("[trap] handled user COW fault sepc={:#x} stval={:#x}",
                            cx.user_pc(),
                            cx.fault_addr());
+                    exit_current_if_process_exiting();
                     finish_trap_return(frame, cx, raw_cause);
                     return;
                 }
@@ -286,6 +288,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                     trace!("[trap] handled user lazy page fault sepc={:#x} stval={:#x}",
                            cx.user_pc(),
                            cx.fault_addr());
+                    exit_current_if_process_exiting();
                     finish_trap_return(frame, cx, raw_cause);
                     return;
                 }
@@ -419,7 +422,6 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
     }
 
     if cx.returns_to_user() {
-        exit_current_if_process_exiting();
         return_to_user_signal_delivery(authoritative, trap_cause, cx, restart);
         // `raw_cause` 来自 TrapContext.scause 快照，即 **本次** 进入内核的原因（如
         // ecall=0x8）， 不是硬件 CSR 的“下一异常预告”；`sret`
@@ -503,9 +505,6 @@ fn return_to_user_signal_delivery(frame : *mut u8,
 
 /// 信号/页错等提前返回路径：打 trace 后把 TCB trap 帧拷回内核栈供 `sret`。
 fn finish_trap_return(frame : *mut u8, cx : &TrapContext, raw_cause : usize) {
-    if cx.returns_to_user() {
-        exit_current_if_process_exiting();
-    }
     hot_syscall_trace!("[trap] sret to user pc={:#x} sp={:#x} return_satp={:#x} \
                         kernel_satp={:#x} frame_scause={:#x}",
                        cx.user_pc(),

@@ -17,8 +17,8 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use api_v0::{
-    ProcessCaps, ProcessId, ProcessResult, ProcessSnapshot, ProcessTaskSnapshot, TaskClearTid,
-    TaskId, ThreadId,
+    ProcessCaps, ProcessId, ProcessResult, ProcessSnapshot, ProcessState, ProcessTaskSnapshot,
+    TaskClearTid, TaskId, ThreadId,
 };
 use arch::interrupt::ArchInterruptState;
 use base::sync::MultiprocessorSafeCell;
@@ -121,6 +121,12 @@ pub fn process_snapshot(pid : ProcessId) -> Option<ProcessSnapshot> {
 /// 按调度实体查询进程内任务快照。
 pub fn process_task_snapshot(task_id : TaskId) -> Option<ProcessTaskSnapshot> {
     with_process_registry(|registry| registry.process_task_snapshot(task_id))
+}
+
+/// 在一次 registry 临界区内查询任务归属与所属进程状态。
+pub fn process_task_context(task_id : TaskId)
+                            -> Option<(ProcessTaskSnapshot, ProcessState)> {
+    with_process_registry(|registry| registry.process_task_context(task_id))
 }
 
 /// 按调度实体查询进程及其父进程标识，避免为标识类 syscall 构造完整快照。

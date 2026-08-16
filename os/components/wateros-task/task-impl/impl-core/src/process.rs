@@ -810,6 +810,16 @@ impl ProcessRegistry {
             .ptask_snapshot(task_id)
     }
 
+    pub fn process_task_context(&self,
+                                task_id : TaskId)
+                                -> Option<(ProcessTaskSnapshot, ProcessState)> {
+        let pid = self.pid_for_task
+                      .get(&task_id)?;
+        let process = self.processes
+                          .get(pid)?;
+        Some((process.ptask_snapshot(task_id)?, process.state))
+    }
+
     pub fn process_identity_for_task(&self,
                                      task_id : TaskId)
                                      -> Option<(ProcessId, Option<ProcessId>)> {
@@ -1273,6 +1283,27 @@ mod tests {
                    Some((child_pid, Some(parent_pid))));
         assert_eq!(registry.process_identity_for_task(99),
                    None);
+    }
+
+    #[test]
+    fn resolves_task_and_process_state_together() {
+        let mut registry = ProcessRegistry::new();
+        let pid = registry.create_process_for_task(10, None, None)
+                          .expect("create process");
+
+        let (task, state) = registry.process_task_context(10)
+                                    .expect("resolve task context");
+        assert_eq!(task.task_id, 10);
+        assert_eq!(task.pid, pid);
+        assert_eq!(state, ProcessState::Running);
+
+        registry.mark_process_stopped(pid, 19)
+                .expect("stop process");
+        assert_eq!(registry.process_task_context(10)
+                           .map(|(_, state)| state),
+                   Some(ProcessState::Stopped { signo : 19 }));
+        assert!(registry.process_task_context(99)
+                        .is_none());
     }
 
     #[test]

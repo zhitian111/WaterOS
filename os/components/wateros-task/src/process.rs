@@ -8,6 +8,13 @@ use crate::{
     TaskWaitTarget, ThreadId,
 };
 
+/// 当前调度实体及所属进程在同一次 registry 临界区内取得的状态。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CurrentProcessContext {
+    pub task : ProcessTaskSnapshot,
+    pub process_state : ProcessState,
+}
+
 /// 查询进程语义快照；第一阶段仅供内部 bring-up / 后续 syscall 迁移使用。
 pub fn process_snapshot(pid : ProcessId) -> Option<ProcessSnapshot> {
     active_impl::process_snapshot(pid)
@@ -43,6 +50,14 @@ pub fn task_id_for_thread(tid : ThreadId) -> Option<TaskId> {
 pub fn current_process_task_snapshot() -> Option<ProcessTaskSnapshot> {
     let task_id = crate::schedule::current_task_id()?;
     process_task_snapshot(task_id)
+}
+
+/// 一次查询当前任务的 pid/tid/task id 与所属进程状态。
+pub fn current_process_context() -> Option<CurrentProcessContext> {
+    let task_id = crate::schedule::current_task_id()?;
+    let (task, process_state) = active_impl::process_task_context(task_id)?;
+    Some(CurrentProcessContext { task,
+                                 process_state })
 }
 
 /// 当前运行任务所属进程及其父进程标识。

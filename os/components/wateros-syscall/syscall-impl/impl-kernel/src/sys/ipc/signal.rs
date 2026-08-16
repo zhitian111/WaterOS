@@ -382,13 +382,18 @@ fn send_thread(task_id : usize, signal : usize) -> Result<(), ErrNo> {
 
 // ── 公开 API ────────────────────────────────────────────────
 
-pub(crate) fn ensure_current_signal_state() -> Result<task::ProcessTaskSnapshot, ErrNo> {
-    let snapshot = task::current_process_task_snapshot().ok_or(ErrNo::ESRCH)?;
+fn ensure_signal_state(snapshot : task::ProcessTaskSnapshot)
+                       -> Result<task::ProcessTaskSnapshot, ErrNo> {
     ipc::signal::ensure_process(snapshot.pid.raw(),
                                 snapshot.task_id,
                                 snapshot.tid.raw(),
                                 []).map_err(|_| ErrNo::ESRCH)?;
     Ok(snapshot)
+}
+
+pub(crate) fn ensure_current_signal_state() -> Result<task::ProcessTaskSnapshot, ErrNo> {
+    let snapshot = task::current_process_task_snapshot().ok_or(ErrNo::ESRCH)?;
+    ensure_signal_state(snapshot)
 }
 
 pub(crate) fn ensure_process_signal_state(pid : ProcessId) -> Result<(), ErrNo> {
@@ -571,27 +576,29 @@ pub(crate) fn drop_thread_state(task_id : usize) {
 pub(crate) fn deliver_pending_signal(frame : *mut u8,
                                      restart : Option<(usize, SyscallArgs)>)
                                      -> Result<bool, ErrNo> {
-    if let Some(process) = task::current_process_snapshot() {
-        match process.state {
+    let snapshot = if let Some(current) = task::current_process_context() {
+        match current.process_state {
             task::ProcessState::Stopped { .. } => {
-                if task::current_task_id().is_some_and(ipc::signal::take_sigkill) {
-                    let task_id = task::current_task_id().ok_or(ErrNo::ESRCH)?;
+                if ipc::signal::take_sigkill(current.task.task_id) {
                     let exit_code =
                         crate::sys::task::wait::signal_terminate_exit_code(ipc::signal::SIGKILL,
-                                                                           task_id);
+                                                                           current.task.task_id);
                     crate::sys::task::exit_group_with_wait_code(exit_code);
                     unreachable!("exit_group_with_wait_code must not return");
                 }
                 task::block_current(task::TaskWaitTarget::Manual);
+                // block_current 可能经历迁移或进程状态变化，恢复后不得复用旧快照。
+                ensure_current_signal_state()?
             }
             task::ProcessState::Exiting(exit_code) | task::ProcessState::Exited(exit_code) => {
                 crate::sys::task::exit_current_with_wait_code(exit_code);
                 unreachable!("exit_current_with_wait_code must not return");
             }
-            task::ProcessState::Running => {}
+            task::ProcessState::Running => ensure_signal_state(current.task)?,
         }
-    }
-    let snapshot = ensure_current_signal_state()?;
+    } else {
+        ensure_current_signal_state()?
+    };
     let effect = ipc::signal::take_deliverable(snapshot.task_id);
     let Some(effect) = effect else {
         return Ok(false);
