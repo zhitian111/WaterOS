@@ -552,7 +552,9 @@ mod loongson2k1000la {
         let _ = platform::active_impl::console::console_write_raw_buffer(b"[2K1000] enter WaterOS Rust\r\n");
         let _ = platform::active_impl::console::console_flush();
         let cpu_id = task::CpuId::from_raw(cpu_raw);
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M0\r\n");
         mask_boot_interrupts();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M1\r\n");
         if BSP_CLAIMED.swap(true, Ordering::AcqRel) {
             panic!("[boot] 2K1000 SMP AP entry not supported yet");
         }
