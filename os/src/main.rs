@@ -550,6 +550,7 @@ mod loongson2k1000la {
         let _ = platform::active_impl::console::console_write_raw_buffer(b"P0\r\n");
         crate::early_paging::init();
         let _ = platform::active_impl::console::console_write_raw_buffer(b"P1\r\n");
+        let _ = platform::console::console_write_raw_buffer(b"CW\r\n");
         let _ = platform::active_impl::console::console_write_raw_buffer(b"[2K1000] enter WaterOS Rust\r\n");
         let _ = platform::active_impl::console::console_flush();
         let cpu_id = task::CpuId::from_raw(cpu_raw);
