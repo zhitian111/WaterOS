@@ -1,4 +1,4 @@
-//! Loongson 2K1000LA 机器驱动：PCIe ECAM 上探测 AHCI/SATA 并注册块设备。
+//! Loongson 2K1000LA 机器驱动：DTB UART、RTC、LIOINTC 与 AHCI/SATA。
 //!
 //! 第一阶段为 polled PIO（无外部中断）；LIOINTC 等外部中断接入在任务 11。
 
@@ -7,18 +7,29 @@
 use api_v0::{DriverResult, MachineDriver};
 
 pub mod liointc;
+pub mod rtc;
+pub mod uart;
 
 pub struct Machine;
 static MACHINE : Machine = Machine;
 
-pub fn machine() -> &'static dyn MachineDriver {
-    &MACHINE
-}
+pub fn machine() -> &'static dyn MachineDriver { &MACHINE }
+
+#[cfg(target_arch = "loongarch64")]
+fn platform_dtb_pa() -> usize { platform::dtb_pa() }
+
+#[cfg(not(target_arch = "loongarch64"))]
+fn platform_dtb_pa() -> usize { 0 }
 
 impl MachineDriver for Machine {
     fn init_after_boot(&self) -> DriverResult<()> {
         #[cfg(target_arch = "loongarch64")]
         {
+            if let Err(error) = uart::register_from_dtb(platform_dtb_pa()) {
+                log::warn!("[driver][2k1000] UART probe failed: {:?}",
+                           error);
+            }
+            character::register_builtin_character_devices();
             match ahci::init() {
                 Ok(index) => {
                     log::info!("[driver][2k1000] AHCI/SATA registered as block device #{}",
@@ -38,6 +49,10 @@ impl MachineDriver for Machine {
         }
     }
 
+    fn realtime_ns(&self) -> DriverResult<Option<u64>> {
+        rtc::realtime_ns(platform_dtb_pa()).map(Some)
+    }
+
     fn handle_external_interrupt(&self, cpu_raw : usize) -> DriverResult<bool> {
         #[cfg(target_arch = "loongarch64")]
         {
@@ -55,7 +70,10 @@ impl MachineDriver for Machine {
     }
 
     fn test(&self) {
-        log::info!("[driver][2k1000] machine test: AHCI is polled-PIO, no MMIO touched");
+        uart::test();
+        rtc::test();
+        liointc::test();
+        log::info!("[driver][2k1000] machine test: UART/RTC/LIOINTC/AHCI hooks ready");
     }
 }
 

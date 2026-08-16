@@ -5,12 +5,13 @@
 //! 接设备派发表。
 
 use api_v0::{DriverError, DriverResult};
+#[cfg(target_arch = "loongarch64")]
 use core::sync::atomic::{AtomicBool, Ordering};
 
 /// Linux 2K1000 DTS 的 LIOINTC 固定基址（真机确认前为回退值）。
-pub const LIOINTC_MAIN_BASE : usize = 0x1fe0_1400;
+pub const LIOINTC_MAIN_BASE : usize = 0x1FE0_1400;
 /// LIOINTC core0 中断状态（ISR0）寄存器基址。
-pub const LIOINTC_ISR0_BASE : usize = 0x1fe0_1540;
+pub const LIOINTC_ISR0_BASE : usize = 0x1FE0_1540;
 const MAX_IRQS : u32 = 64;
 
 /// 抽象 claim/complete，便于 host 单测闭环；真实实现包住 `irq-loongarch::Liointc`。
@@ -31,7 +32,8 @@ impl ClaimComplete for RealController {
     }
 
     fn complete(&self, irq : u32) {
-        self.0.complete_irq(irq as usize);
+        self.0
+            .complete_irq(irq as usize);
     }
 }
 
@@ -64,7 +66,8 @@ pub fn init_current_cpu(_cpu_raw : usize) -> DriverResult<()> {
 /// 处理一次已 claim 的中断：当前无设备 handler，记日志；返回是否应 complete。
 pub fn dispatch_claimed_irq(irq : u32) -> bool {
     if irq >= MAX_IRQS {
-        log::warn!("[driver][2k1000] LIOINTC out-of-range irq {}", irq);
+        log::warn!("[driver][2k1000] LIOINTC out-of-range irq {}",
+                   irq);
         return false;
     }
     log::info!("[driver][2k1000] LIOINTC irq {} (no handler; completing)",
@@ -89,6 +92,12 @@ pub fn handle_external_interrupt_la() -> DriverResult<bool> {
     handle_external_interrupt(&CONTROLLER)
 }
 
+/// 纯函数自检：验证 LIOINTC 的范围检查和派发语义。
+pub fn test() {
+    assert!(dispatch_claimed_irq(0));
+    assert!(!dispatch_claimed_irq(MAX_IRQS));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,11 +110,13 @@ mod tests {
 
     impl ClaimComplete for MockController {
         fn claim(&self) -> Option<u32> {
-            self.pending.replace(None)
+            self.pending
+                .replace(None)
         }
 
         fn complete(&self, irq : u32) {
-            self.completed.set(Some(irq));
+            self.completed
+                .set(Some(irq));
         }
     }
 
@@ -113,16 +124,22 @@ mod tests {
     fn claim_dispatch_complete_roundtrip() {
         let controller = MockController { pending : Cell::new(Some(7)),
                                           completed : Cell::new(None) };
-        assert_eq!(handle_external_interrupt(&controller), Ok(true));
-        assert_eq!(controller.completed.get(), Some(7));
+        assert_eq!(handle_external_interrupt(&controller),
+                   Ok(true));
+        assert_eq!(controller.completed
+                             .get(),
+                   Some(7));
     }
 
     #[test]
     fn empty_claim_reports_no_pending_source() {
         let controller = MockController { pending : Cell::new(None),
                                           completed : Cell::new(None) };
-        assert_eq!(handle_external_interrupt(&controller), Ok(false));
-        assert_eq!(controller.completed.get(), None);
+        assert_eq!(handle_external_interrupt(&controller),
+                   Ok(false));
+        assert_eq!(controller.completed
+                             .get(),
+                   None);
     }
 
     #[test]
