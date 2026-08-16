@@ -12,7 +12,7 @@ use task::TaskTick;
 use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 
 use crate::socket_fd;
-use crate::user_copy::{copy_from_user_struct, copy_to_user_struct};
+use crate::user_copy::{copy_from_user_array, copy_from_user_struct, copy_to_user_struct};
 
 // 本变量代码由AI完成
 pub(crate) const POLLIN : i16 = 0x001;
@@ -175,15 +175,7 @@ impl PollSet {
         if nfds > 1024 {
             return Err(ErrNo::EINVAL);
         }
-        let pollfd_size = core::mem::size_of::<PollFd>();
-        let mut entries = alloc::vec::Vec::new();
-        entries.try_reserve_exact(nfds).map_err(|_| ErrNo::ENOMEM)?;
-        for i in 0..nfds {
-            let offset = i.checked_mul(pollfd_size)
-                           .and_then(|offset| fds_ptr.checked_add(offset))
-                           .ok_or(ErrNo::EFAULT)?;
-            entries.push(copy_from_user_struct(offset)?);
-        }
+        let entries = copy_from_user_array::<PollFd>(fds_ptr, nfds)?;
         Ok(Self { user_ptr : fds_ptr, entries })
     }
 
