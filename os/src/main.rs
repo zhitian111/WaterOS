@@ -571,7 +571,8 @@ mod loongson2k1000la {
         runtime::logging::init();
         let _ = platform::active_impl::console::console_write_raw_buffer(b"M9\r\n");
         let _ = platform::active_impl::console::console_write_raw_buffer(b"M10\r\n");
-        runtime::heap_allocator::init();
+        // 2K1000 首启先跳过 TLSF heap init，确认后续 arch/platform 初始化链路；
+        // heap init 单独定位。
         let _ = platform::active_impl::console::console_write_raw_buffer(b"M11\r\n");
         platform::arch::cpu::init_current_cpu(cpu_id).expect("BSP init current CPU");
         platform::arch::init();
