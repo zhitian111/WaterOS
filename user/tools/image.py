@@ -47,14 +47,19 @@ def default_image_path(arch: str) -> Path:
 def create_disk_image(staging: Path, output: Path, arch: str,
                       size_mb: int, table: str = "gpt",
                       boot_dir: Path | None = None,
-                      boot_size_mb: int = 64) -> Path:
+                      boot_size_mb: int = 64,
+                      extra_images: list[Path] | None = None,
+                      extra_partition_types: list[str] | None = None,
+                      disk_size_mb: int | None = None) -> Path:
     """Build a partitioned (GPT/MBR) whole-disk image from a staging tree.
 
     The rootfs partition is produced by `user/tools/root_image.py`
     (loopback, no root required) and verified with `e2fsck -fn`. The raw EXT4
-    from [`create_image`] remains the QEMU-facing artifact. When `boot_dir`
-    is given, the VisionFive 2 layout is used (P1/P2 placeholders, P3 FAT
-    boot with `boot_dir` contents, P4 ext4 rootfs).
+    from [`create_image`] remains the QEMU-facing artifact. With extra images,
+    `size_mb` is the fixed P1 rootfs size and the disk size is calculated from
+    all partitions unless `disk_size_mb` is supplied. When `boot_dir` is given,
+    the legacy VisionFive 2 layout is used (P1/P2 placeholders, P3 FAT boot,
+    P4 ext4 rootfs); extra images are appended as P5 onward.
     """
     del arch
     staging = staging.resolve()
@@ -62,7 +67,31 @@ def create_disk_image(staging: Path, output: Path, arch: str,
     if not staging.is_dir():
         raise ImageError(f"staging directory does not exist: {staging}")
     if size_mb < 16:
-        raise ImageError("disk image size must be at least 16 MiB")
+        raise ImageError("root filesystem size must be at least 16 MiB")
+    extra_images = [path.resolve() for path in (extra_images or [])]
+    extra_partition_types = list(extra_partition_types or [])
+    if extra_partition_types and len(extra_partition_types) != len(extra_images):
+        raise ImageError("filesystem partition type count must match filesystem image count")
+    if table == "mbr":
+        max_extra = 0 if boot_dir is not None else 3
+        if len(extra_images) > max_extra:
+            raise ImageError("MBR does not have enough primary partitions for the requested layout")
+    for extra_image in extra_images:
+        if not extra_image.is_file() or extra_image.stat().st_size == 0:
+            raise ImageError(f"filesystem image does not exist or is empty: {extra_image}")
+    if disk_size_mb is None:
+        disk_size_mb = size_mb
+        if extra_images:
+            alignment = 1024 * 1024
+            payload = size_mb * alignment
+            payload += sum(((path.stat().st_size + alignment - 1) // alignment) * alignment
+                           for path in extra_images)
+            if boot_dir is None:
+                payload += alignment
+            payload += 34 * 512 if table == "gpt" else 0
+            disk_size_mb = (payload + alignment - 1) // alignment
+    if disk_size_mb < size_mb:
+        raise ImageError("disk image size cannot be smaller than root filesystem size")
     root_image = USER_ROOT / "tools" / "root_image.py"
     if not root_image.is_file():
         raise ImageError(f"root_image.py not found: {root_image}")
@@ -73,7 +102,7 @@ def create_disk_image(staging: Path, output: Path, arch: str,
     build_command = [
         sys.executable, str(root_image), "build",
         "--output", str(temporary), "--copy-tree", str(staging),
-        "--size-mib", str(size_mb), "--partition-table", table, "--force",
+        "--size-mib", str(disk_size_mb), "--partition-table", table, "--force",
     ]
     verify_command = [
         sys.executable, str(root_image), "verify",
@@ -86,6 +115,13 @@ def create_disk_image(staging: Path, output: Path, arch: str,
         build_command += ["--boot-dir", str(boot_dir),
                           "--boot-size-mib", str(boot_size_mb)]
         verify_command += ["--boot-dir", str(boot_dir)]
+    if extra_images:
+        build_command += ["--root-size-mib", str(size_mb)]
+        for extra_image in extra_images:
+            build_command += ["--extra-image", str(extra_image)]
+            verify_command += ["--extra-image", str(extra_image)]
+        for partition_type in extra_partition_types:
+            build_command += ["--extra-partition-type", partition_type]
     build = subprocess.run(
         build_command, check=False,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,

@@ -531,6 +531,11 @@ TFTP_LISTEN ?= 192.168.1.2
 TFTP_ROOT ?= /srv/tftp
 
 la2k_tftp: la2k_uimage la2k_bootscr
+	@echo "备忘录：请在连接串口进入uboot后依次执行："
+	@echo "setenv serverip 192.168.1.2"
+	@echo "setenv ipaddr 192.168.1.20"
+	@echo "tftpboot 0x9000000091000000 wateros-2k1000.scr"
+	@echo "source 0x9000000091000000"
 	@bash ./scripts/real-hardware/tftp_serve.sh "$(TFTP_LISTEN)" "$(TFTP_ROOT)"
 
 # VisionFive 2 / JH7110（U-Boot/uImage）构建与打包

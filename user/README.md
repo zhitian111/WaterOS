@@ -71,6 +71,23 @@ build/images/wateros-rv.ext4.sha256
 由 `user/tools/root_image.py` 构建并校验（分区表 + `e2fsck -fn`），
 rootfs 分区内容与 staging 树一致；raw `.ext4` 仍保留供 QEMU 使用。
 
+需要把已有的无分区文件系统一起写入整盘时，使用 `FILESYSTEM_IMAGES` 指定逗号分隔的
+镜像路径，使用 `FILESYSTEM_TYPES` 按相同顺序指定分区类型。例如：
+
+```bash
+make disk ARCH=la PACKAGE=minimal IMAGE_SIZE_MB=64 \
+  FILESYSTEM_IMAGES=/tmp/data.ext4,/tmp/cache.ext4 \
+  FILESYSTEM_TYPES=83,83 PARTITION_TABLE=mbr
+```
+
+生成布局为 P1 WaterOS rootfs、P2 `/tmp/data.ext4`、P3 `/tmp/cache.ext4`。未指定
+`DISK_SIZE_MB` 时，构建器会按根分区和附加镜像总容量自动计算整盘大小；指定后容量不足会
+直接失败。MBR 只允许总计 4 个主分区（根分区加最多 3 个附加镜像），更多镜像请使用 GPT。
+`FILESYSTEM_TYPES` 省略时，MBR 使用 `83`，GPT 使用 `L`（Linux filesystem）。附加镜像
+必须是不带自身分区表的原始文件系统镜像。与 `BOOT_DIR` 同时使用时，VisionFive 2 的
+P1/P2/P3/P4 启动布局保持不变，附加镜像从 P5 开始；该组合应使用 GPT，因为 VF2 的
+MBR 布局已经占满 4 个主分区。
+
 VisionFive 2 需要传 `BOOT_DIR`（任务 14 的 `jh7110_bootdir` 素材目录，含
 uImage、`extlinux/extlinux.conf`、`uEnv.txt`、可选 DTB）：此时整盘镜像采用
 官方镜像同款分区编号（P1/P2 固件占位、P3 FAT 启动分区、P4 ext4 rootfs），
@@ -89,7 +106,9 @@ uImage、`extlinux/extlinux.conf`、`uEnv.txt`、可选 DTB）：此时整盘镜
 | `IMAGE_SIZE_MB` | `256`                              | EXT4 镜像容量，单位 MiB           |
 | `DISK`          | `0`                                | 置 `1` 额外产出带分区表的整盘镜像 `.img` |
 | `PARTITION_TABLE`| `gpt`                             | 整盘镜像分区表：`gpt` 或 `mbr`     |
-| `DISK_SIZE_MB`  | 空（沿用 `IMAGE_SIZE_MB`）          | 整盘镜像容量，单位 MiB             |
+| `DISK_SIZE_MB`  | 空（无附加镜像时沿用 `IMAGE_SIZE_MB`） | 整盘镜像容量，单位 MiB             |
+| `FILESYSTEM_IMAGES` | 空                           | 逗号分隔的无分区文件系统镜像，依次写入 P2、P3… |
+| `FILESYSTEM_TYPES`  | 空                           | 与 `FILESYSTEM_IMAGES` 对应的分区类型列表 |
 | `BOOT_DIR`      | 空                                | 传入后启用 VisionFive 2 布局：P3 FAT 启动分区内容（P4 rootfs） |
 | `BOOT_SIZE_MB`  | `64`                              | VisionFive 2 P3 启动分区容量，单位 MiB |
 | `BLOCK_SIZE`    | `4096`                             | EXT4 块大小                       |

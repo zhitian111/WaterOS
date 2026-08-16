@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools import image
+from tools import image, root_image
 
 
 REQUIRED_TOOLS = ("mke2fs", "debugfs", "e2fsck", "dumpe2fs")
@@ -77,6 +77,63 @@ class Ext4IntegrationTests(unittest.TestCase):
                 for candidate in (output, second)
             )
             self.assertEqual(first_hash, second_hash, headers)
+
+    def test_disk_image_appends_raw_filesystem_partition(self) -> None:
+        if shutil.which("sfdisk") is None:
+            self.skipTest("sfdisk is required")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            staging = root / "staging"
+            staging.mkdir()
+            make_rootfs(staging)
+            extra = root / "extra.ext4"
+            image.create_image(staging, extra, "rv", 16, 4096, 256)
+            disk = root / "wateros.img"
+            image.create_disk_image(staging, disk, "rv", 16, "gpt",
+                                    extra_images=[extra], extra_partition_types=["L"])
+            partitions = root_image.read_partitions(disk)
+            self.assertEqual([partition.number for partition in partitions], [1, 2])
+            self.assertEqual(partitions[0].start_sector, 2048)
+            with disk.open("rb") as source:
+                source.seek(partitions[1].byte_offset)
+                self.assertEqual(source.read(extra.stat().st_size), extra.read_bytes())
+
+    def test_mbr_rejects_more_than_four_partitions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            images = []
+            for index in range(4):
+                path = root / f"extra-{index}.img"
+                path.write_bytes(bytes([index + 1]))
+                images.append(path)
+            with self.assertRaisesRegex(root_image.ImageError, "at most four partitions"):
+                root_image.make_partition_table_with_images(
+                    root / "disk.img", 64 * 1024 * 1024, 16, images, [], "mbr"
+                )
+
+    def test_vf2_boot_layout_appends_filesystem_partition(self) -> None:
+        if shutil.which("sfdisk") is None or shutil.which("mkfs.vfat") is None \
+                or shutil.which("mcopy") is None:
+            self.skipTest("sfdisk, mkfs.vfat and mcopy are required")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            staging = root / "staging"
+            staging.mkdir()
+            make_rootfs(staging)
+            boot = root / "boot"
+            boot.mkdir()
+            (boot / "wateros.ui").write_bytes(b"synthetic ui\n")
+            extra = root / "extra.ext4"
+            image.create_image(staging, extra, "rv", 16, 4096, 256)
+            disk = root / "wateros-vf2.img"
+            image.create_disk_image(staging, disk, "rv", 64, "gpt",
+                                    boot_dir=boot, boot_size_mb=8,
+                                    extra_images=[extra], extra_partition_types=["L"])
+            partitions = root_image.read_partitions(disk)
+            self.assertEqual([partition.number for partition in partitions], [1, 2, 3, 4, 5])
+            with disk.open("rb") as source:
+                source.seek(partitions[4].byte_offset)
+                self.assertEqual(source.read(extra.stat().st_size), extra.read_bytes())
 
     def test_overlay_keeps_base_and_writes_allowed_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

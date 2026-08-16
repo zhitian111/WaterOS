@@ -71,7 +71,7 @@ Makefile 调用的底层脚本传递运行环境。常用直接入口如下：
 | `syscall-profile/syscall-profile-{rv,la}.sh` | `build` 或 `run` | 输出文件、plugin `key=value` 选项和完整 QEMU 命令 |
 | `testing/operator_smoke.py` | `--arch {rv,la}` | profile、SMP、模式、Guest 脚本、超时和日志路径 |
 | `testing/ltp_prune_sdcard_before.sh` | 无 | 镜像、起始用例、libc、dry-run 和重置源镜像 |
-| `user/tools/root_image.py` | `build` 或 `verify` | `--output`、`--manifest`、`--copy-tree`、`--size-mib`、`--partition-table {mbr,gpt}`、`--source-root`、`--boot-dir`/`--boot-size-mib`（VisionFive 2：P3 FAT boot + P4 rootfs） |
+| `user/tools/root_image.py` | `build` 或 `verify` | `--output`、`--manifest`、`--copy-tree`、`--size-mib`、`--partition-table {mbr,gpt}`、`--source-root`、`--extra-image`/`--extra-partition-type`（P2 起追加无分区文件系统）、`--root-size-mib`、`--boot-dir`/`--boot-size-mib`（VisionFive 2：P3 FAT boot + P4 rootfs） |
 | `real-hardware/dd_image.sh` | `<image> <device>` | 交互确认（输入 `y`）；防呆：整盘/非系统盘/未挂载/容量校验；由 `make dd_img_vf2`、`make dd_img_2k1000` 包装 |
 | `real-hardware/tftp_serve.sh` | `[listen_ip] [tftp_root]` | 默认 `192.168.1.2`、`/srv/tftp`；同步 2K1000 uImage/启动脚本并以前台 `dnsmasq` 提供 TFTP；由 `make la2k_tftp` 包装 |
 

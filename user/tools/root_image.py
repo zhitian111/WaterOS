@@ -33,6 +33,8 @@ MBR_SIGNATURE = b"\x55\xaa"
 GPT_SIGNATURE = b"EFI PART"
 LINUX_PARTITION_TYPE = 0x83
 GPT_LINUX_TYPE_GUID = bytes.fromhex("af3dc60f838472478e793d69d8477de4")
+GPT_TYPE_RE = re.compile(r"(?:[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}|[A-Za-z])$")
+MBR_TYPE_RE = re.compile(r"[0-9A-Fa-f]{1,2}$")
 
 
 class ImageError(RuntimeError):
@@ -346,13 +348,111 @@ def make_partition_table(image: Path, image_bytes: int, start_sector: int, table
     return partition[0]
 
 
+def _partition_type(value: str, table: str) -> str:
+    value = value.strip()
+    valid = GPT_TYPE_RE.fullmatch(value) if table == "gpt" else MBR_TYPE_RE.fullmatch(value)
+    if valid is None:
+        raise ImageError(f"invalid {table} partition type: {value!r}")
+    return value
+
+
+def make_partition_table_with_images(image: Path, image_bytes: int, root_size_mib: int,
+                                     extra_images: list[Path], extra_types: list[str],
+                                     table: str) -> list[Partition]:
+    """Create P1 rootfs followed by one partition for each raw filesystem image."""
+    if table not in ("mbr", "gpt"):
+        raise ImageError(f"unsupported partition table: {table}")
+    if table == "mbr" and len(extra_images) + 1 > 4:
+        raise ImageError("MBR supports at most four partitions including the rootfs")
+    if len(extra_types) not in (0, len(extra_images)):
+        raise ImageError("filesystem partition type count must match filesystem image count")
+    if root_size_mib < 16:
+        raise ImageError("root filesystem size must be at least 16 MiB")
+
+    total_sectors = image_bytes // SECTOR_SIZE
+    start = DEFAULT_START_SECTOR
+    alignment = DEFAULT_BLOCK_SIZE // SECTOR_SIZE
+    root_sectors = root_size_mib * 1024 * 1024 // SECTOR_SIZE
+    root_sectors -= root_sectors % alignment
+    starts_and_sizes: list[tuple[int, int]] = [(start, root_sectors)]
+    cursor = start + root_sectors
+    for source in extra_images:
+        size = source.stat().st_size
+        sectors = (size + SECTOR_SIZE - 1) // SECTOR_SIZE
+        sectors = ((sectors + alignment - 1) // alignment) * alignment
+        if sectors <= 0:
+            raise ImageError(f"filesystem image is empty: {source}")
+        starts_and_sizes.append((cursor, sectors))
+        cursor += sectors
+    table_sectors = 34 if table == "gpt" else 0
+    if cursor + table_sectors > total_sectors:
+        raise ImageError("disk image is too small for rootfs and filesystem images")
+
+    default_type = "L" if table == "gpt" else "83"
+    types = extra_types or [default_type] * len(extra_images)
+    types = [_partition_type(value, table) for value in types]
+    lines = ["label: gpt" if table == "gpt" else "label: dos"]
+    if table == "mbr":
+        lines.append(f"label-id: {DEFAULT_DISK_ID}")
+    lines += ["unit: sectors", ""]
+    root_type = "L" if table == "gpt" else "83"
+    for index, (partition_start, sectors) in enumerate(starts_and_sizes):
+        partition_type = root_type if index == 0 else types[index - 1]
+        lines.append(f"{partition_start},{sectors},{partition_type}")
+    run(["sfdisk", "--quiet", str(image)], input_text="\n".join(lines) + "\n")
+    partitions = read_partitions(image)
+    if len(partitions) != len(starts_and_sizes):
+        raise ImageError(f"partitioning tool created {len(partitions)} partitions, expected {len(starts_and_sizes)}")
+    return partitions
+
+
+def _validate_raw_filesystem_image(path: Path) -> None:
+    if not path.is_file():
+        raise ImageError(f"filesystem image does not exist: {path}")
+    if path.stat().st_size == 0:
+        raise ImageError(f"filesystem image is empty: {path}")
+    with path.open("rb") as source:
+        header = source.read(SECTOR_SIZE)
+    if len(header) >= SECTOR_SIZE and header[510:512] == MBR_SIGNATURE:
+        raise ImageError(f"filesystem image must be unpartitioned: {path}")
+    if header[:8] == GPT_SIGNATURE:
+        raise ImageError(f"filesystem image must be unpartitioned: {path}")
+
+
+def write_partition_image(image: Path, partition: Partition, source: Path) -> None:
+    source_size = source.stat().st_size
+    if source_size > partition.byte_length:
+        raise ImageError(f"filesystem image does not fit partition: {source}")
+    with source.open("rb") as input_file, image.open("r+b") as output:
+        output.seek(partition.byte_offset)
+        remaining = source_size
+        while remaining:
+            chunk = input_file.read(min(1024 * 1024, remaining))
+            if not chunk:
+                raise ImageError(f"short read from filesystem image: {source}")
+            output.write(chunk)
+            remaining -= len(chunk)
+        padding = partition.byte_length - source_size
+        while padding:
+            chunk = b"\0" * min(1024 * 1024, padding)
+            output.write(chunk)
+            padding -= len(chunk)
+
+
 def make_partition_table_vf2(image: Path, image_bytes: int, boot_size_mib: int,
-                             table: str = "gpt") -> list[Partition]:
-    """VisionFive 2 四分区布局：P1/P2 固件占位（2M/4M）、P3 FAT boot、P4 ext4 rootfs。
+                             table: str = "gpt", extra_images: list[Path] | None = None,
+                             extra_types: list[str] | None = None) -> list[Partition]:
+    """VisionFive 2 layout: P1/P2 placeholders, P3 FAT boot, P4 rootfs, then extras.
 
     出厂 U-Boot 默认 bootpart=3 / rootpart=4，distro 路径从 P3 sysboot
     /extlinux/extlinux.conf，因此分区编号必须与官方镜像保持一致。
     """
+    extra_images = extra_images or []
+    extra_types = extra_types or []
+    if table == "mbr" and len(extra_images) > 0:
+        raise ImageError("VF2 MBR layout has no free primary partition for extra images")
+    if len(extra_types) not in (0, len(extra_images)):
+        raise ImageError("filesystem partition type count must match filesystem image count")
     total_sectors = image_bytes // SECTOR_SIZE
     start = DEFAULT_START_SECTOR
     loader1_start = start
@@ -360,17 +460,33 @@ def make_partition_table_vf2(image: Path, image_bytes: int, boot_size_mib: int,
     boot_start = loader2_start + VF2_LOADER2_SECTORS
     boot_sectors = boot_size_mib * 1024 * 1024 // SECTOR_SIZE
     root_start = boot_start + boot_sectors
-    root_sectors = total_sectors - root_start - (34 if table == "gpt" else 0)
-    root_sectors -= root_sectors % (DEFAULT_BLOCK_SIZE // SECTOR_SIZE)
+    alignment = DEFAULT_BLOCK_SIZE // SECTOR_SIZE
+    extra_sectors: list[int] = []
+    for source in extra_images:
+        sectors = (source.stat().st_size + SECTOR_SIZE - 1) // SECTOR_SIZE
+        sectors = ((sectors + alignment - 1) // alignment) * alignment
+        extra_sectors.append(sectors)
+    root_sectors = total_sectors - root_start - sum(extra_sectors) - (34 if table == "gpt" else 0)
+    root_sectors -= root_sectors % alignment
     if boot_sectors <= 0 or root_sectors <= 0:
         raise ImageError("image is too small for VF2 boot + rootfs layout")
+    extra_starts: list[int] = []
+    cursor = root_start + root_sectors
+    for sectors in extra_sectors:
+        extra_starts.append(cursor)
+        cursor += sectors
+    extra_partition_types = extra_types or (["L"] if table == "gpt" else ["83"]) * len(extra_images)
+    extra_partition_types = [_partition_type(value, table) for value in extra_partition_types]
     if table == "mbr":
         specification = (
             "label: dos\n" f"label-id: {DEFAULT_DISK_ID}\n" "unit: sectors\n\n"
             f"{loader1_start},{VF2_LOADER1_SECTORS},0c\n"
             f"{loader2_start},{VF2_LOADER2_SECTORS},0c\n"
             f"{boot_start},{boot_sectors},0c\n"
-            f"{root_start},{root_sectors},83\n"
+            f"{root_start},{root_sectors},83\n" +
+            "".join(f"{start},{sectors},{partition_type}\n"
+                    for start, sectors, partition_type in zip(
+                        extra_starts, extra_sectors, extra_partition_types))
         )
     elif table == "gpt":
         specification = (
@@ -378,14 +494,18 @@ def make_partition_table_vf2(image: Path, image_bytes: int, boot_size_mib: int,
             f"{loader1_start},{VF2_LOADER1_SECTORS},L\n"
             f"{loader2_start},{VF2_LOADER2_SECTORS},L\n"
             f"{boot_start},{boot_sectors},EBD0A0A2-B9E5-4433-87C0-68B6B72699C7\n"
-            f"{root_start},{root_sectors},L\n"
+            f"{root_start},{root_sectors},L\n" +
+            "".join(f"{start},{sectors},{partition_type}\n"
+                    for start, sectors, partition_type in zip(
+                        extra_starts, extra_sectors, extra_partition_types))
         )
     else:
         raise ImageError(f"unsupported partition table: {table}")
     run(["sfdisk", "--quiet", str(image)], input_text=specification)
     partitions = read_partitions(image)
-    if len(partitions) != 4:
-        raise ImageError("partitioning tool did not create the VF2 four-partition layout")
+    expected = 4 + len(extra_images)
+    if len(partitions) != expected:
+        raise ImageError(f"partitioning tool created {len(partitions)} partitions, expected {expected}")
     return partitions
 
 
@@ -449,6 +569,10 @@ def build_image(args: argparse.Namespace) -> list[str]:
     if image_bytes % SECTOR_SIZE != 0 or args.size_mib < 16:
         raise ImageError("image size must be at least 16 MiB and sector aligned")
     image.parent.mkdir(parents=True, exist_ok=True)
+    extra_images = [path.resolve() for path in getattr(args, "extra_images", [])]
+    for extra_image in extra_images:
+        _validate_raw_filesystem_image(extra_image)
+    boot_dir = getattr(args, "boot_dir", None)
     temporary_image: Path | None = None
     try:
         with tempfile.TemporaryDirectory(prefix="wateros-root-staging-") as temporary:
@@ -471,7 +595,9 @@ def build_image(args: argparse.Namespace) -> list[str]:
             table = getattr(args, "partition_table", "mbr")
             if boot_dir is not None:
                 partitions = make_partition_table_vf2(
-                    temporary_image, image_bytes, getattr(args, "boot_size_mib", DEFAULT_BOOT_SIZE_MIB), table
+                    temporary_image, image_bytes,
+                    getattr(args, "boot_size_mib", DEFAULT_BOOT_SIZE_MIB), table,
+                    extra_images, list(getattr(args, "extra_partition_types", [])),
                 )
                 boot_partition = next((p for p in partitions if p.number == 3), None)
                 root_partition = next((p for p in partitions if p.number == 4), None)
@@ -480,9 +606,17 @@ def build_image(args: argparse.Namespace) -> list[str]:
                 build_boot_partition(temporary_image, boot_partition, boot_dir.resolve())
                 partition = root_partition
             else:
-                partition = make_partition_table(temporary_image, image_bytes, args.start_sector, table)
-                if partition.partition_type != LINUX_PARTITION_TYPE:
-                    raise ImageError("root partition has unexpected MBR type")
+                if extra_images:
+                    partitions = make_partition_table_with_images(
+                        temporary_image, image_bytes,
+                        getattr(args, "root_size_mib", None) or args.size_mib,
+                        extra_images, list(getattr(args, "extra_partition_types", [])), table,
+                    )
+                    partition = partitions[0]
+                else:
+                    partition = make_partition_table(temporary_image, image_bytes, args.start_sector, table)
+                    if partition.partition_type != LINUX_PARTITION_TYPE:
+                        raise ImageError("root partition has unexpected MBR type")
             if partition.byte_length % DEFAULT_BLOCK_SIZE != 0:
                 raise ImageError("partition size is not aligned to ext4 block size")
             blocks = partition.byte_length // DEFAULT_BLOCK_SIZE
@@ -504,13 +638,17 @@ def build_image(args: argparse.Namespace) -> list[str]:
                 raise ImageError("required host tool not found: mkfs.ext4") from error
             except subprocess.CalledProcessError as error:
                 raise ImageError(f"mkfs.ext4 failed with status {error.returncode}") from error
+            if extra_images:
+                extra_start = 4 if boot_dir is not None else 1
+                for extra_image, extra_partition in zip(extra_images, partitions[extra_start:]):
+                    write_partition_image(temporary_image, extra_partition, extra_image)
             # Do not replace a known-good image before the replacement passes
             # both filesystem and manifest validation.
             expected_files = None if copy_tree is not None else manifest_file_contents(
                 args.manifest.resolve()
             )
             verify_image(temporary_image, required_paths, expected_files,
-                         boot_dir=boot_dir)
+                         boot_dir=boot_dir, extra_images=extra_images)
             os.replace(temporary_image, image)
             temporary_image = None
             return required_paths
@@ -539,18 +677,24 @@ def verify_image(
     image: Path, required_paths: Iterable[str],
     expected_files: dict[str, bytes] | None = None,
     boot_dir: Path | None = None,
+    extra_images: list[Path] | None = None,
 ) -> Partition:
     partitions = read_partitions(image)
+    extra_images = extra_images or []
     if boot_dir is not None:
-        if len(partitions) != 4:
-            raise ImageError(f"expected VF2 four-partition layout, found {len(partitions)}")
+        expected_count = 4 + len(extra_images)
+        if len(partitions) != expected_count:
+            raise ImageError(f"expected VF2 layout with {expected_count} partitions, found {len(partitions)}")
         boot_partition = partitions[2]
         root_partition = partitions[3]
+        extra_partitions = partitions[4:]
     else:
-        if len(partitions) != 1:
-            raise ImageError(f"expected one root partition, found {len(partitions)}")
+        expected_count = 1 + len(extra_images)
+        if len(partitions) != expected_count:
+            raise ImageError(f"expected {expected_count} partitions, found {len(partitions)}")
         boot_partition = None
         root_partition = partitions[0]
+        extra_partitions = partitions[1:]
     partition = root_partition
     if partition.partition_type != LINUX_PARTITION_TYPE:
         raise ImageError(f"root partition type is 0x{partition.partition_type:02x}, expected 0x83")
@@ -587,6 +731,15 @@ def verify_image(
                 raise ImageError(f"root file content differs from manifest: {guest}")
     if boot_partition is not None:
         verify_boot_partition(image, boot_partition, boot_dir)
+    for source, extra_partition in zip(extra_images, extra_partitions):
+        _validate_raw_filesystem_image(source)
+        with tempfile.TemporaryDirectory(prefix="wateros-extra-verify-") as temporary:
+            extracted = Path(temporary) / source.name
+            copy_partition(image, extra_partition, extracted)
+            with extracted.open("rb") as input_file:
+                actual = input_file.read(source.stat().st_size)
+            if actual != source.read_bytes():
+                raise ImageError(f"filesystem image content differs: {source}")
     return partition
 
 
@@ -648,6 +801,12 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--boot-dir", type=Path,
                        help="VisionFive 2 layout: P1/P2 placeholders, P3 FAT boot (this dir), P4 ext4 rootfs")
     build.add_argument("--boot-size-mib", type=int, default=DEFAULT_BOOT_SIZE_MIB)
+    build.add_argument("--root-size-mib", type=int,
+                       help="root partition size when --extra-image is used")
+    build.add_argument("--extra-image", dest="extra_images", action="append", type=Path,
+                       default=[], help="raw unpartitioned filesystem image for P2+ (or P5+ with --boot-dir)")
+    build.add_argument("--extra-partition-type", dest="extra_partition_types", action="append",
+                       default=[], help="partition type for each --extra-image")
     build.add_argument("--force", action="store_true")
     verify = subcommands.add_parser("verify", help="verify partition, ext4 and manifest paths")
     verify.add_argument("--image", type=Path, required=True)
@@ -658,6 +817,8 @@ def parser() -> argparse.ArgumentParser:
                         help="expected paths come from this staging tree instead of a manifest")
     verify.add_argument("--boot-dir", type=Path,
                         help="expected boot files come from this directory")
+    verify.add_argument("--extra-image", dest="extra_images", action="append", type=Path,
+                        default=[], help="expected raw filesystem image for P2+")
     return result
 
 
@@ -673,7 +834,8 @@ def main(argv: list[str] | None = None) -> int:
                                                   args.source_root.resolve()
                                                   if args.source_root else None)
             partition = verify_image(args.output.resolve(), required, expected,
-                                     getattr(args, "boot_dir", None))
+                                     getattr(args, "boot_dir", None),
+                                     [path.resolve() for path in args.extra_images])
             print(
                 f"built {args.output}: start={partition.start_sector} "
                 f"sectors={partition.sectors} bytes={args.output.stat().st_size}"
@@ -689,7 +851,8 @@ def main(argv: list[str] | None = None) -> int:
                                                   args.source_root.resolve()
                                                   if args.source_root else None)
             partition = verify_image(args.image.resolve(), required, expected,
-                                     getattr(args, "boot_dir", None))
+                                     getattr(args, "boot_dir", None),
+                                     [path.resolve() for path in args.extra_images])
             print(
                 f"verified {args.image}: start={partition.start_sector} "
                 f"sectors={partition.sectors}"
