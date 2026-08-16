@@ -193,6 +193,6 @@ handle 和 epoll 快照均不是本轮应优先改动的对象。
 
 - `CARGO_NET_OFFLINE=true make rv_check`（当前 HEAD `5924c8c6`）：通过；
 - `CARGO_NET_OFFLINE=true make la_check`（当前 follow-up 代码）：通过；
-- `CARGO_NET_OFFLINE=true cargo test --manifest-path components/wateros-syscall/syscall-impl/impl-kernel/Cargo.toml ...`：未执行成功；该 crate 直接作为 host package 构建时未选择 `ArchTimeImpl`、`ArchInterruptImpl`、`ArchPagingImpl` 等平台实现 feature，构建在测试运行前失败；
+- `CARGO_NET_OFFLINE=true cargo test --manifest-path components/wateros-syscall/syscall-impl/impl-kernel/Cargo.toml --features 'impl-kernel,platform/impl-qemu-riscv64-opensbi' --no-run`：未执行成功；显式补齐平台 feature 后，host 编译仍在 `sbi-rt` 的 RISC-V `a0`-`a7` 内联寄存器处失败，未进入测试运行阶段；
 - `git diff --check a6cf2515..HEAD`：通过；
 - QEMU/workload：按任务边界未执行，由合入 `main` 前统一验收。
