@@ -554,10 +554,11 @@ mod loongson2k1000la {
         let _ = platform::active_impl::console::console_write_raw_buffer(b"M1\r\n");
 
         let _ = platform::active_impl::console::console_write_raw_buffer(b"M2\r\n");
-        runtime::init_console();
+        // 2K1000 早期 console 聚合层尚不可用，先用 board console 直写。
+        let _ = platform::active_impl::console::console_flush();
         let _ = platform::active_impl::console::console_write_raw_buffer(b"M3\r\n");
         let _ = platform::active_impl::console::console_write_raw_buffer(b"M4\r\n");
-        runtime::showlogo();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"[WaterOS] 2K1000 early boot\r\n");
         let _ = platform::active_impl::console::console_write_raw_buffer(b"M5\r\n");
         let _ = platform::active_impl::console::console_write_raw_buffer(b"M6\r\n");
         klog::init();
