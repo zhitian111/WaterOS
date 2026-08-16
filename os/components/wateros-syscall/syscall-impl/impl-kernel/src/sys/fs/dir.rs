@@ -563,14 +563,29 @@ pub(crate) fn sys_readlinkat(args : SyscallArgs) -> UserRet {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
-    let resolved =
+    // Linux：`readlinkat(fd, "", …)` 读取 fd 本身指向的符号链接
+    // （systemd-tmpfiles 用 `O_PATH|O_NOFOLLOW` 打开的 fd 校验链接目标）。
+    let resolved = if path.is_empty() {
+        if dirfd < 0 {
+            return UserRet::from_error(ErrNo::EBADF);
+        }
+        match vfs::fd::with_current_io(dirfd as usize, |handle| {
+                  handle.backing_path()
+                        .map(alloc::string::String::from)
+                        .ok_or(VfsError::NotAFile)
+              }) {
+            Ok(path) => path,
+            Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
+        }
+    } else {
         match resolve_path_at(dirfd, path.as_str()).and_then(|path| {
                                                        resolve_symlinks(path.as_str(),
                                                                         FinalSymlink::NoFollow)
                                                    }) {
             Ok(path) => path,
             Err(e) => return UserRet::from_error(e),
-        };
+        }
+    };
     let cred = cred::current_credentials();
     if let Err(e) = check_readlink_parent_search(resolved.as_str(), &cred) {
         return UserRet::from_error(e);

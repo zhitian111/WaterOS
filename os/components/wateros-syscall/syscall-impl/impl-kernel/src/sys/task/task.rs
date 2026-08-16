@@ -110,6 +110,9 @@ pub(crate) fn exit_current_with_wait_code(exit_code : isize) -> isize {
                                                 completed_process.is_some());
     }
     if let Some(pid) = completed_process {
+        // POSIX 记录锁属于进程：最后一个线程退出时立即释放，避免孤儿进程
+        // （父进程不 reap）残留锁导致后续同文件加锁被旧 pid 挡住。
+        vfs::fd::release_process_all_locks(pid);
         tty::detach_session_by_sid(pid.raw());
         if tty::controlling_sid() == pid.raw() {
             tty::detach_controlling_terminal();

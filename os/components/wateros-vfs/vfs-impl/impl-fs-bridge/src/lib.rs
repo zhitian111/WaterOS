@@ -22,6 +22,7 @@ mod mount_table;
 mod paged_handle;
 mod proc_handle;
 mod read_lease;
+mod symlink_handle;
 mod sysfs;
 mod tmpfs;
 

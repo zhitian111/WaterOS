@@ -160,8 +160,19 @@ pub fn sync_file_page_cache() -> VfsResult<()> {
     let mount_gen = fs::rootfs::active_impl::mount_generation();
     let cache = impl_page_cache::global_cache(mount_gen);
     let mut io = paged_handle::FsPageIo::path();
-    cache.flush_all(&mut io, core::convert::identity)?;
-    root_rw()?.lock().sync().map_err(map_fs_err)
+    // flush_all 会遍历全局页缓存的所有文件；无磁盘后端（伪文件系统等）的文件
+    // 无法写回，flush_key 会失败。Linux syncfs(2) 语义是尽力刷：跳过无法写回
+    // 的条目，不阻塞其余文件的写回与根卷 sync。
+    match cache.flush_all(&mut io, core::convert::identity) {
+        Ok(()) => {}
+        Err(VfsError::Unsupported) => {}
+        Err(VfsError::ReadOnlyFs) => {}
+        Err(VfsError::NotFound) => {}
+        Err(e) => return Err(e),
+    }
+    root_rw()?.lock()
+              .sync()
+              .map_err(map_fs_err)
 }
 
 /// 刷回并丢弃整个文件页缓存（用于测例脚本切换等批量回收点）。
@@ -231,12 +242,10 @@ pub fn read_symlink_path(path : &str) -> VfsResult<Vec<u8>> {
         return Err(VfsError::NotAFile);
     }
     match resolve_route(abs.as_str())? {
-        FsRoute::PseudoProc { rel, .. } => proc_view()
-            .read_symlink(rel.as_str())
-            .map_err(map_fs_err),
-        FsRoute::PseudoSys { rel, .. } => sys_view()
-            .read_symlink(rel.as_str())
-            .map_err(map_fs_err),
+        FsRoute::PseudoProc { rel, .. } => proc_view().read_symlink(rel.as_str())
+                                                      .map_err(map_fs_err),
+        FsRoute::PseudoSys { rel, .. } => sys_view().read_symlink(rel.as_str())
+                                                    .map_err(map_fs_err),
         FsRoute::PseudoSecurity { .. } => Err(VfsError::NotAFile),
         FsRoute::Root { abs, .. } => root_rw()?.lock()
                                                .read_symlink(abs.as_str())
@@ -251,9 +260,7 @@ pub fn read_symlink_path(path : &str) -> VfsResult<Vec<u8>> {
 }
 
 /// 查询路径元数据（经挂载表路由）。
-pub fn metadata_path(path : &str) -> VfsResult<VfsMetadata> {
-    FsBridge.metadata(path)
-}
+pub fn metadata_path(path : &str) -> VfsResult<VfsMetadata> { FsBridge.metadata(path) }
 
 /// 截断普通文件（经挂载表路由）；同步失效页缓存。
 // 本方法代码由AI完成
@@ -476,8 +483,12 @@ pub fn rename_path(old_path : &str, new_path : &str) -> VfsResult<()> {
     // source path and poison an unrelated cache miss.
     let cache = impl_page_cache::global_cache(fs::rootfs::active_impl::mount_generation());
     let mut io = paged_handle::FsPageIo::path();
-    cache.flush(&mut io, old_path.as_str(), core::convert::identity)?;
-    cache.flush(&mut io, new_path.as_str(), core::convert::identity)?;
+    cache.flush(&mut io,
+                old_path.as_str(),
+                core::convert::identity)?;
+    cache.flush(&mut io,
+                new_path.as_str(),
+                core::convert::identity)?;
 
     let replacement = match FsBridge.metadata(new_path.as_str()) {
         Ok(meta) => Some(meta.node_type),
@@ -499,7 +510,8 @@ pub fn rename_path(old_path : &str, new_path : &str) -> VfsResult<()> {
         sess.rename(rel_new.as_str(), rel_temp.as_str())?;
         if let Err(e) = sess.rename(rel_old.as_str(), rel_new.as_str()) {
             if let Err(rollback) = sess.rename(rel_temp.as_str(), rel_new.as_str()) {
-                log::error!("[vfs-rename] target rollback failed temp={} target={} err={rollback:?}",
+                log::error!("[vfs-rename] target rollback failed temp={} target={} \
+                             err={rollback:?}",
                             temp_path,
                             new_path.as_str());
             }
@@ -511,13 +523,16 @@ pub fn rename_path(old_path : &str, new_path : &str) -> VfsResult<()> {
             sess.unlink(rel_temp.as_str())
         };
         if let Err(e) = cleanup {
-            log::error!("[vfs-rename] replaced target cleanup failed temp={} err={e:?}", temp_path);
+            log::error!("[vfs-rename] replaced target cleanup failed temp={} err={e:?}",
+                        temp_path);
             return Err(e);
         }
     } else {
         sess.rename(rel_old.as_str(), rel_new.as_str())?;
     }
-    paged_handle::commit_rename_state(old_path.as_str(), new_path.as_str(), pending_detach);
+    paged_handle::commit_rename_state(old_path.as_str(),
+                                      new_path.as_str(),
+                                      pending_detach);
     Ok(())
 }
 

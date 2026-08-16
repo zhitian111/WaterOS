@@ -468,6 +468,12 @@ impl FsBridge {
                                                                                open_accmode(flags))));
         }
         if let Ok(meta) = self.metadata(abs.as_str()) {
+            if meta.node_type == VfsNodeType::Symlink {
+                // syscall 层只在 `O_PATH|O_NOFOLLOW` 时把符号链接路径原样传入，
+                // 此时应打开链接节点本身（systemd-tmpfiles 依赖）。
+                return Ok(Box::new(super::symlink_handle::SymlinkPathHandle::new(abs.clone(),
+                                                                                 meta)));
+            }
             if flags.contains(VfsOpenFlags::DIRECTORY) && meta.node_type != VfsNodeType::Directory {
                 return Err(VfsError::NotDirectory);
             }

@@ -178,8 +178,9 @@ fn mount_namespace_snapshot() -> MountNamespace {
 // 本方法代码由AI完成
 fn assert_mount_point_directory_in(ns : &MountNamespace, path : &str) -> VfsResult<()> {
     match resolve_material_route(ns, path)? {
-        FsRoute::PseudoProc { .. } | FsRoute::PseudoSys { .. } |
-        FsRoute::PseudoSecurity { .. } => Err(VfsError::NotAFile),
+        FsRoute::PseudoProc { .. } | FsRoute::PseudoSys { .. } | FsRoute::PseudoSecurity { .. } => {
+            Err(VfsError::NotAFile)
+        }
         FsRoute::Root { abs, .. } => {
             let meta = super::root_rw()?.lock()
                                         .metadata(abs.as_str())
@@ -771,9 +772,11 @@ pub fn mount_statfs_magic(abs : &str) -> Option<isize> {
     let Ok(abs) = normalize_absolute_path(abs) else {
         return None;
     };
-    let task_id = task::current_task_id()?;
-    let reg = registry().exclusive_access();
-    let ns = reg.namespace_for(task_id)?;
+    // 与 resolve_route 使用同一套快照（含惰性初始化兜底）：per-task 命名空间
+    // 可能尚未从 bootstrap 命名空间同步 /proc 等早期挂载，直接查 registry 会
+    // 漏掉挂载条目，导致 statfs 回退到 ext4 魔数（systemd 据此误报 /proc
+    // 未挂载）。
+    let ns = mount_namespace_snapshot();
     let (_, ent) = ns.longest_match(abs.as_str())?;
     Some(match ent.fstype {
         "tmpfs" => 0x0102_1994,
@@ -782,7 +785,7 @@ pub fn mount_statfs_magic(abs : &str) -> Option<isize> {
         "proc" => 0x9FA0,
         "sysfs" => 0x6265_6572,
         "securityfs" => 0x7363_6673,
-        "bind" => mount_statfs_magic_for_path(ns, abs.as_str()).unwrap_or(0xEF53),
+        "bind" => mount_statfs_magic_for_path(&ns, abs.as_str()).unwrap_or(0xEF53),
         _ => 0xEF53,
     })
 }

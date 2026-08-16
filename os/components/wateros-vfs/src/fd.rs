@@ -104,21 +104,27 @@ pub fn open_fds_for_task(task_id : task::TaskId) -> Vec<usize> {
 
 /// 返回 `/proc/<pid>/fd/N` 对应的可读链接目标。
 ///
-/// 普通文件目前仍由 procfs 使用兼容占位符；PTY 必须返回真实 slave 路径，
-/// 因为 musl/BusyBox 的 `ttyname_r()` 依赖该链接识别控制终端。
+/// 普通文件/目录返回 `backing_path`；O_TMPFILE 经 `linkat(AT_EMPTY_PATH)` 发布后
+/// 返回 `linked_tmpfile_path`。PTY 返回真实 slave 路径，因为 musl/BusyBox 的
+/// `ttyname_r()` 依赖该链接识别控制终端。其余（管道/socket 等）保持 procfs 的
+/// `anon_inode` 占位符。
 pub fn fd_target_for_task(task_id : task::TaskId, fd : usize) -> Option<alloc::string::String> {
     with_task_io(task_id, fd, |handle| {
         Ok(match handle.special_device_info() {
             Some(VfsSpecialDeviceInfo::Terminal(info)) => match info.endpoint {
                 VfsTerminalEndpoint::PtySlave => {
-                    info.pty_number.map(|number| alloc::format!("/dev/pts/{number}"))
+                    info.pty_number
+                        .map(|number| alloc::format!("/dev/pts/{number}"))
                 }
                 VfsTerminalEndpoint::PtyMaster => Some(alloc::string::String::from("/dev/ptmx")),
                 VfsTerminalEndpoint::Console => Some(alloc::string::String::from("/dev/console")),
             },
-            _ => None,
+            _ => handle.backing_path()
+                       .map(alloc::string::String::from)
+                       .or_else(|| handle.linked_tmpfile_path()),
         })
-    }).ok().flatten()
+    }).ok()
+      .flatten()
 }
 
 fn with_fd_registry<R>(f : impl FnOnce(&mut PerTaskFdRegistry) -> VfsResult<R>) -> VfsResult<R> {
@@ -225,7 +231,9 @@ pub fn close_fd_range(first : usize,
                   release_locks_for_current_process(io);
                   if let Some(endpoint) = impl_fd_session::pty_endpoint_for_handle(io) {
                       let id = endpoint.id();
-                      if !terminal_ids.contains(&id) { terminal_ids.push(id); }
+                      if !terminal_ids.contains(&id) {
+                          terminal_ids.push(id);
+                      }
                   }
                   Ok(())
               })?;
@@ -338,8 +346,8 @@ pub fn set_path_only_fd(fd : usize) -> VfsResult<()> {
 
 pub use impl_fd_session::file_lock::{
     flock_op, inode_key_from_metadata, posix_getlk, posix_setlk, release_flock_owner,
-    release_process_inode_locks, Flock, InodeKey, F_RDLCK, F_UNLCK, F_WRLCK, LOCK_EX, LOCK_NB,
-    LOCK_SH, LOCK_UN,
+    release_process_all_locks, release_process_inode_locks, Flock, InodeKey, F_RDLCK, F_UNLCK,
+    F_WRLCK, LOCK_EX, LOCK_NB, LOCK_SH, LOCK_UN,
 };
 
 /// fork 时初始化子任务 fd 表（仅默认 stdio，spawn 路径）。
@@ -374,15 +382,16 @@ pub fn unshare_fd_table() -> VfsResult<()> {
 }
 
 /// `execve` 前关闭带 `FD_CLOEXEC` 的 fd。
-pub fn close_cloexec_fds_for_current_task()
-        -> VfsResult<(Vec<usize>, Vec<tty::TerminalId>)> {
+pub fn close_cloexec_fds_for_current_task() -> VfsResult<(Vec<usize>, Vec<tty::TerminalId>)> {
     let task_id = current_task_id()?;
     let handles = with_registry(|registry| registry.take_cloexec_fds_for_task(task_id));
     let mut closed = Vec::with_capacity(handles.len());
     let mut terminal_ids = Vec::new();
     for (fd, handle) in handles {
         if let Some(id) = handle.terminal_id() {
-            if !terminal_ids.contains(&id) { terminal_ids.push(id); }
+            if !terminal_ids.contains(&id) {
+                terminal_ids.push(id);
+            }
         }
         handle.close()?;
         closed.push(fd);
@@ -395,9 +404,9 @@ pub fn drop_task_fd_table(task_id : task::TaskId) -> Vec<tty::TerminalId> {
     let handles = with_registry(|registry| registry.drain_task_fd_table(task_id));
     let mut terminal_ids = Vec::new();
     for handle in handles {
-        if let Ok(Some(endpoint)) = handle.with_io(|io| {
-            Ok(impl_fd_session::pty_endpoint_for_handle(io))
-        }) {
+        if let Ok(Some(endpoint)) =
+            handle.with_io(|io| Ok(impl_fd_session::pty_endpoint_for_handle(io)))
+        {
             if !terminal_ids.contains(&endpoint.id()) {
                 terminal_ids.push(endpoint.id());
             }
