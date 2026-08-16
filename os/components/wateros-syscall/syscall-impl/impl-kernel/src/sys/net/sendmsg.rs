@@ -278,7 +278,7 @@ fn sendmsg_one(fd : usize, msg_ptr : usize, flags : usize) -> Result<usize, ErrN
     let mut total_len : usize = 0;
     let iovs = match copy_from_user_array::<IoVec>(msg.msg_iov, msg.msg_iovlen) {
         Ok(iovs) => iovs,
-        Err(_) => return Err(ErrNo::EFAULT),
+        Err(error) => return Err(error),
     };
     for iov in &iovs {
         total_len = match total_len.checked_add(iov.iov_len) {
@@ -372,7 +372,7 @@ pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
     let mut total_len : usize = 0;
     let iovs = match copy_from_user_array::<IoVec>(msg.msg_iov, msg.msg_iovlen) {
         Ok(iovs) => iovs,
-        Err(_) => return UserRet::from_error(ErrNo::EFAULT),
+        Err(error) => return UserRet::from_error(error),
     };
     for iov in &iovs {
         total_len = match total_len.checked_add(iov.iov_len) {
