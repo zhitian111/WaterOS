@@ -83,8 +83,6 @@
     heap-stress = [ "runtime/heap-stress" ]
     heap-tlsf = [ "runtime/heap-tlsf" ]
     impl-sv39 = [ "mm/impl-sv39" ]
-    # 可选 IPv6 双栈；默认构建保持原有纯 IPv4 行为。
-    ipv6 = [ "network/ipv6", "syscall/ipv6" ]
     qemu-loongarch64-virt = [
         "dep:cred",
         "dep:driver",

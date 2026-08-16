@@ -172,7 +172,6 @@ help:
 	@echo "  make check ARCH=la PROFILE=final     检查内核"
 	@echo "  make run ARCH=rv PROFILE=final       执行内核 BRINGUP_COMMANDS"
 	@echo "  make shell ARCH=rv PROFILE=pre       进入交互 shell"
-	@echo "  make run EXTRA_FEATURES=ipv6         显式启用 IPv4/IPv6 双栈"
 	@echo "  make run EXTRA_FEATURES=display-demo 启动 VirtIO GPU 欢迎页"
 	@echo "  make run MODE=run SCRIPT=/root/x.sh  构建 operator-run 内核并运行脚本"
 	@echo "  make debug ARCH=rv PROFILE=pre       自动启动并 watch"
@@ -237,7 +236,6 @@ run: validate-config build
 	$(call INFO, "运行 ARCH=$(ARCH) PROFILE=$(PROFILE) MODE=$(MODE) SMP=$(SMP) snapshot=$(SNAPSHOT)")
 	@WOS_KERNEL="$(SELECTED_KERNEL)" WOS_SMP="$(SMP)" \
 	 WOS_QEMU_SNAPSHOT="$(SNAPSHOT)" \
-	 WOS_EXTRA_FEATURES="$(EXTRA_FEATURES)" \
 	 WOS_GRAPHICS="$(GRAPHICS)" WOS_QEMU_DISPLAY="$(GRAPHICS_BACKEND)" \
 	 WOS_WRITE_DISK="$(WRITE_DISK)" WOS_SDCARD="$(SDCARD)" \
 	 python3 ./scripts/run/qemu_run.py --arch "$(ARCH)" --profile "$(PROFILE)"

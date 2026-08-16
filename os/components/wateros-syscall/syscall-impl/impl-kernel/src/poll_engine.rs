@@ -236,7 +236,7 @@ pub(crate) fn poll_socket_revents(fd : usize, events : i16) -> i16 {
             }
             _ => {}
         },
-        SocketKind::Udp | SocketKind::Icmp => {
+        SocketKind::Udp => {
             if events & POLLOUT != 0 {
                 revents |= POLLOUT;
             }

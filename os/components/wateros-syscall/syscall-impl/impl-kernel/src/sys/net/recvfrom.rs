@@ -9,15 +9,23 @@ use network::{stack, SocketKind, SocketReceiveLease, SocketRecvError, SocketRecv
 use crate::fallible_buf::SYSCALL_IO_MAX;
 use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
-use crate::user_copy::{copy_to_user_progress, copy_to_user_struct};
-
-use super::sockaddr::copy_endpoint_to_user;
+use crate::user_copy::{copy_to_user, copy_to_user_progress, copy_to_user_struct};
 
 const MSG_DONTWAIT : usize = 0x40;
 const MSG_PEEK : usize = 0x02;
 const MSG_TRUNC : usize = 0x20;
 const MSG_OOB : usize = 0x01;
 const MSG_ERRQUEUE : usize = 0x2000;
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+// 本结构代码由AI完成
+struct SockAddrIn {
+    sin_family : u16,
+    sin_port : u16,
+    sin_addr : [u8; 4],
+    sin_zero : [u8; 8],
+}
 
 // 本方法代码由AI完成
 pub(crate) fn sys_recvfrom(args : SyscallArgs) -> UserRet {
@@ -77,12 +85,13 @@ pub(crate) fn sys_recvfrom(args : SyscallArgs) -> UserRet {
     let datagram_len = lease.datagram_len();
     let progress = copy_to_user_progress(buf_ptr, lease.bytes());
 
-    if matches!(kind, SocketKind::Udp | SocketKind::Icmp) &&
+    if kind == SocketKind::Udp &&
        progress.error
                .is_none()
     {
-        let source = lease.source();
-        if let Err(error) = write_source_address(source,
+        let (ip, port) = lease.source();
+        if let Err(error) = write_source_address(ip,
+                                                 port,
                                                  addr_ptr,
                                                  addrlen_ptr,
                                                  source_capacity)
@@ -98,8 +107,7 @@ pub(crate) fn sys_recvfrom(args : SyscallArgs) -> UserRet {
                   progress.error
                           .is_none()
         {
-            let returned = if matches!(kind, SocketKind::Udp | SocketKind::Icmp) &&
-                              flags & MSG_TRUNC != 0 {
+            let returned = if kind == SocketKind::Udp && flags & MSG_TRUNC != 0 {
                 datagram_len
             } else {
                 progress.copied
@@ -115,7 +123,7 @@ pub(crate) fn sys_recvfrom(args : SyscallArgs) -> UserRet {
                                .is_none())
     {
         Ok(SocketRecvFinish::Bytes(copied)) => {
-            if matches!(kind, SocketKind::Udp | SocketKind::Icmp) && flags & MSG_TRUNC != 0 {
+            if kind == SocketKind::Udp && flags & MSG_TRUNC != 0 {
                 UserRet::from_success(datagram_len)
             } else {
                 UserRet::from_success(copied)
@@ -143,7 +151,8 @@ fn receive_blocking(socket : &network::SocketRef,
     }
 }
 
-fn write_source_address(endpoint : network::NetworkEndpoint,
+fn write_source_address(ip : [u8; 4],
+                        port : u16,
                         addr_ptr : usize,
                         addrlen_ptr : usize,
                         capacity : Option<u32>)
@@ -151,8 +160,17 @@ fn write_source_address(endpoint : network::NetworkEndpoint,
     let Some(addrlen) = capacity else {
         return Ok(());
     };
-    let actual = copy_endpoint_to_user(endpoint, addr_ptr, addrlen as usize)?;
-    copy_to_user_struct(addrlen_ptr, &(actual as u32)).map_err(|_| ErrNo::EFAULT)?;
+    let sockaddr = SockAddrIn { sin_family : 2,
+                                sin_port : port.to_be(),
+                                sin_addr : ip,
+                                sin_zero : [0; 8] };
+    let write_len = core::mem::size_of::<SockAddrIn>().min(addrlen as usize);
+    let addr_bytes = unsafe {
+        core::slice::from_raw_parts(&sockaddr as *const SockAddrIn as *const u8,
+                                    write_len)
+    };
+    copy_to_user(addr_ptr, addr_bytes).map_err(|_| ErrNo::EFAULT)?;
+    copy_to_user_struct(addrlen_ptr, &(write_len as u32)).map_err(|_| ErrNo::EFAULT)?;
     Ok(())
 }
 

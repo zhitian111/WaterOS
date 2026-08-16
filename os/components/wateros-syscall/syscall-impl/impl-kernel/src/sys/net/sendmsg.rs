@@ -5,8 +5,7 @@ use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use network::{
-    stack, NetworkAddress, SocketKind, SocketReceiveLease, SocketRecvError, SocketRecvFinish,
-    SocketRef,
+    stack, SocketKind, SocketReceiveLease, SocketRecvError, SocketRecvFinish, SocketRef,
 };
 use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 
@@ -15,8 +14,6 @@ use crate::socket_fd;
 use crate::user_copy::{
     copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_progress, copy_to_user_struct,
 };
-
-use super::sockaddr::{copy_endpoint_to_user, endpoint_domain, read_endpoint};
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -40,6 +37,16 @@ struct MsgHdr {
 }
 
 #[repr(C)]
+#[derive(Copy, Clone)]
+// 本结构代码由AI完成
+struct SockAddrIn {
+    sin_family : u16,
+    sin_port : u16,
+    sin_addr : [u8; 4],
+    sin_zero : [u8; 8],
+}
+
+#[repr(C)]
 #[derive(Copy, Clone, Default)]
 struct UserTimespec {
     sec : isize,
@@ -54,11 +61,6 @@ const MSG_PEEK : usize = 0x02;
 const MSG_OOB : usize = 0x01;
 const MSG_ERRQUEUE : usize = 0x2000;
 const MSG_WAITFORONE : usize = 0x10000;
-const MSG_CTRUNC : i32 = 0x08;
-const SOL_IPV6 : i32 = 41;
-// 本项目 BusyBox 的 musl 头同时定义了 RFC 2292 兼容值，并在 ping.c 中
-// 将 IPV6_HOPLIMIT 重定义为该值。
-const IPV6_HOPLIMIT : i32 = 8;
 const SOCKET_RECVMSG_WAIT_TICKS : usize = 4096;
 
 // 本方法代码由AI完成
@@ -93,7 +95,7 @@ pub(crate) fn sys_sendmmsg(args : SyscallArgs) -> UserRet {
     let mut sent = 0usize;
     for index in 0..vlen {
         let Some(entry_ptr) = index.checked_mul(entry_size)
-                                   .and_then(|offset| msgvec_ptr.checked_add(offset))
+                                         .and_then(|offset| msgvec_ptr.checked_add(offset))
         else {
             return if sent > 0 {
                 UserRet::from_success(sent)
@@ -162,8 +164,10 @@ pub(crate) fn sys_recvmmsg(args : SyscallArgs) -> UserRet {
             Some(ptr) => ptr,
             None => return partial_or_error(received, ErrNo::EFAULT),
         };
-        let force_nonblocking = deadline.is_some() || (received > 0 && flags & MSG_WAITFORONE != 0);
-        let recv_flags = base_flags | if force_nonblocking { MSG_DONTWAIT } else { 0 };
+        let force_nonblocking = deadline.is_some() ||
+                                (received > 0 && flags & MSG_WAITFORONE != 0);
+        let recv_flags = base_flags |
+                         if force_nonblocking { MSG_DONTWAIT } else { 0 };
         match recvmsg_one_via_syscall(fd, entry_ptr, recv_flags) {
             Ok(message_len) => {
                 let Some(msg_len_ptr) = entry_ptr.checked_add(msg_len_offset) else {
@@ -197,7 +201,10 @@ pub(crate) fn sys_recvmmsg(args : SyscallArgs) -> UserRet {
     UserRet::from_success(received)
 }
 
-fn recvmsg_one_via_syscall(fd : usize, msg_ptr : usize, flags : usize) -> Result<usize, ErrNo> {
+fn recvmsg_one_via_syscall(fd : usize,
+                           msg_ptr : usize,
+                           flags : usize)
+                           -> Result<usize, ErrNo> {
     let ret = sys_recvmsg(SyscallArgs::from_regs([fd, msg_ptr, flags, 0, 0, 0]));
     if ret.0 >= 0 {
         Ok(ret.0 as usize)
@@ -223,33 +230,33 @@ fn recvmmsg_deadline(timeout_ptr : usize) -> Result<Option<u128>, ErrNo> {
         return Err(ErrNo::EINVAL);
     }
     let duration = (timeout.sec as u128).saturating_mul(1_000_000_000)
-                                        .saturating_add(timeout.nsec as u128);
+                                             .saturating_add(timeout.nsec as u128);
     let now = platform::wall_clock::monotonic_ns().map_err(|_| ErrNo::EIO)?;
     Ok(Some(now.saturating_add(duration)))
 }
 
 fn recvmmsg_deadline_expired(deadline : Option<u128>) -> bool {
     deadline.is_some_and(|deadline| {
-                platform::wall_clock::monotonic_ns().map_or(true, |now| now >= deadline)
-            })
+        platform::wall_clock::monotonic_ns().map_or(true, |now| now >= deadline)
+    })
 }
 
-fn write_recvmmsg_remaining(timeout_ptr : usize, deadline : Option<u128>) -> Result<(), ErrNo> {
+fn write_recvmmsg_remaining(timeout_ptr : usize,
+                            deadline : Option<u128>)
+                            -> Result<(), ErrNo> {
     if timeout_ptr == 0 {
         return Ok(());
     }
-    let Some(deadline) = deadline else {
-        return Ok(());
-    };
+    let Some(deadline) = deadline else { return Ok(()); };
     let now = platform::wall_clock::monotonic_ns().map_err(|_| ErrNo::EIO)?;
     let remaining = deadline.saturating_sub(now);
-    copy_to_user_struct(timeout_ptr, &UserTimespec { sec:
-                                                         (remaining / 1_000_000_000) as isize,
-                                                     nsec:
-                                                         (remaining % 1_000_000_000) as isize })
+    copy_to_user_struct(timeout_ptr,
+                        &UserTimespec { sec : (remaining / 1_000_000_000) as isize,
+                                        nsec : (remaining % 1_000_000_000) as isize })
 }
 
 fn sendmsg_one(fd : usize, msg_ptr : usize, flags : usize) -> Result<usize, ErrNo> {
+
     if msg_ptr == 0 {
         return Err(ErrNo::EFAULT);
     }
@@ -286,6 +293,10 @@ fn sendmsg_one(fd : usize, msg_ptr : usize, flags : usize) -> Result<usize, ErrN
         iovs.push(iov);
     }
 
+    if total_len == 0 {
+        return Ok(0);
+    }
+
     // 将 iovec 数据拼接到单个缓冲区
     let mut kbuf = match try_kbuf(total_len, SYSCALL_IO_MAX) {
         Ok(buf) => buf,
@@ -307,21 +318,21 @@ fn sendmsg_one(fd : usize, msg_ptr : usize, flags : usize) -> Result<usize, ErrN
         None => return Err(ErrNo::ENOTSOCK),
     };
     // 有目标地址 → sendto；否则使用 connect() 保存的默认 peer。
-    let destination = if msg.msg_name != 0 {
-        let endpoint = read_endpoint(msg.msg_name, msg.msg_namelen as usize)?;
-        if endpoint_domain(endpoint) != socket.domain() {
-            return Err(ErrNo::EAFNOSUPPORT);
-        }
-        Some(endpoint)
+    let destination = if msg.msg_name != 0 && msg.msg_namelen >= 16 {
+        let addr : SockAddrIn = match copy_from_user_struct(msg.msg_name) {
+            Ok(a) => a,
+            Err(_) => return Err(ErrNo::EFAULT),
+        };
+        let port = u16::from_be(addr.sin_port);
+        Some((addr.sin_addr, port))
     } else {
         None
     };
 
     let sent = match socket.kind() {
-        Ok(SocketKind::Udp | SocketKind::Icmp) => {
+        Ok(SocketKind::Udp) => {
             super::sendto::send_udp_blocking(fd, &socket, &kbuf, destination, flags)
         }
-        Ok(SocketKind::Tcp) if total_len == 0 => Ok(0),
         Ok(SocketKind::Tcp) => socket.send(&kbuf)
                                      .map_err(super::sendto::socket_send_error_to_errno),
         Err(_) => Err(ErrNo::ENOTSOCK),
@@ -394,8 +405,7 @@ pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
         Ok(None) => return UserRet::from_success(0),
         Err(error) => return UserRet::from_error(error),
     };
-    let source = lease.source();
-    let destination = lease.destination();
+    let (from_ip, from_port) = lease.source();
     let staged_len = lease.bytes().len();
     let datagram_len = lease.datagram_len();
 
@@ -438,50 +448,26 @@ pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
     }
 
     // 写回发送方地址到 msg_name
-    if matches!(kind, SocketKind::Udp | SocketKind::Icmp) && msg.msg_name != 0 {
-        let actual = match copy_endpoint_to_user(source,
-                                                 msg.msg_name,
-                                                 msg.msg_namelen as usize)
-        {
-            Ok(actual) => actual,
-            Err(error) => {
-                let _ = lease.finish(0, false);
-                return UserRet::from_error(error);
-            }
+    if kind == SocketKind::Udp && msg.msg_name != 0 {
+        let addr = SockAddrIn { sin_family : 2, // AF_INET
+                                sin_port : from_port.to_be(),
+                                sin_addr : from_ip,
+                                sin_zero : [0; 8] };
+        let write_len = core::mem::size_of::<SockAddrIn>().min(msg.msg_namelen as usize);
+        let addr_bytes = unsafe {
+            core::slice::from_raw_parts(&addr as *const SockAddrIn as *const u8,
+                                        write_len)
         };
-        msg.msg_namelen = actual as u32;
+        if copy_to_user(msg.msg_name, addr_bytes).is_err() {
+            let _ = lease.finish(0, false);
+            return UserRet::from_error(ErrNo::EFAULT);
+        }
     }
-    msg.msg_flags = if matches!(kind, SocketKind::Udp | SocketKind::Icmp) &&
-                       datagram_len > staged_len {
+    msg.msg_flags = if kind == SocketKind::Udp && datagram_len > staged_len {
         MSG_TRUNC as i32
     } else {
         0
     };
-    if kind == SocketKind::Icmp && socket.domain() == network::SocketDomain::Ipv6 {
-        if let Err(error) = write_ipv6_hoplimit_control(&mut msg, 64) {
-            let _ = lease.finish(0, false);
-            return UserRet::from_error(error);
-        }
-    } else if kind == SocketKind::Udp && socket.domain() == network::SocketDomain::Ipv6 {
-        match socket.ipv6_pktinfo_type() {
-            Ok(Some(cmsg_type)) => {
-                if let Err(error) = write_ipv6_pktinfo_control(&mut msg,
-                                                               destination,
-                                                               cmsg_type)
-                {
-                    let _ = lease.finish(0, false);
-                    return UserRet::from_error(error);
-                }
-            }
-            Ok(None) => msg.msg_controllen = 0,
-            Err(_) => {
-                let _ = lease.finish(0, false);
-                return UserRet::from_error(ErrNo::ENOTSOCK);
-            }
-        }
-    } else {
-        msg.msg_controllen = 0;
-    }
     if copy_to_user_struct(msg_ptr, &msg).is_err() {
         let _ = lease.finish(0, false);
         return UserRet::from_error(ErrNo::EFAULT);
@@ -489,7 +475,7 @@ pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
 
     if flags & MSG_PEEK != 0 {
         let _ = lease.finish(0, false);
-        return if matches!(kind, SocketKind::Udp | SocketKind::Icmp) && flags & MSG_TRUNC != 0 {
+        return if kind == SocketKind::Udp && flags & MSG_TRUNC != 0 {
             UserRet::from_success(datagram_len)
         } else {
             UserRet::from_success(staged_len)
@@ -498,7 +484,7 @@ pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
 
     match lease.finish(staged_len, true) {
         Ok(SocketRecvFinish::Bytes(copied)) => {
-            if matches!(kind, SocketKind::Udp | SocketKind::Icmp) && flags & MSG_TRUNC != 0 {
+            if kind == SocketKind::Udp && flags & MSG_TRUNC != 0 {
                 UserRet::from_success(datagram_len)
             } else {
                 UserRet::from_success(copied)
@@ -507,60 +493,6 @@ pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
         Ok(SocketRecvFinish::Fault) => UserRet::from_error(ErrNo::EFAULT),
         Err(error) => UserRet::from_error(recv_error_to_errno(error)),
     }
-}
-
-/// Linux rv64 cmsghdr: usize cmsg_len + i32 level + i32 type，数据按 usize 对齐。
-fn write_ipv6_hoplimit_control(msg : &mut MsgHdr, hop_limit : i32) -> Result<(), ErrNo> {
-    const CMSG_LEN : usize = 20;
-    const CMSG_SPACE : usize = 24;
-    if msg.msg_control == 0 || msg.msg_controllen == 0 {
-        msg.msg_controllen = 0;
-        return Ok(());
-    }
-    if msg.msg_controllen < CMSG_SPACE {
-        msg.msg_controllen = 0;
-        msg.msg_flags |= MSG_CTRUNC;
-        return Ok(());
-    }
-    let mut control = [0u8; CMSG_SPACE];
-    control[..8].copy_from_slice(&CMSG_LEN.to_ne_bytes());
-    control[8..12].copy_from_slice(&SOL_IPV6.to_ne_bytes());
-    control[12..16].copy_from_slice(&IPV6_HOPLIMIT.to_ne_bytes());
-    control[16..20].copy_from_slice(&hop_limit.to_ne_bytes());
-    copy_to_user(msg.msg_control, &control).map_err(|_| ErrNo::EFAULT)?;
-    msg.msg_controllen = CMSG_SPACE;
-    Ok(())
-}
-
-/// 写入 `struct in6_pktinfo { in6_addr ipi6_addr; u32 ipi6_ifindex; }`。
-fn write_ipv6_pktinfo_control(msg : &mut MsgHdr,
-                              destination : NetworkAddress,
-                              cmsg_type : i32)
-                              -> Result<(), ErrNo> {
-    const CMSG_LEN : usize = 36;
-    const CMSG_SPACE : usize = 40;
-    if msg.msg_control == 0 || msg.msg_controllen == 0 {
-        msg.msg_controllen = 0;
-        return Ok(());
-    }
-    if msg.msg_controllen < CMSG_SPACE {
-        msg.msg_controllen = 0;
-        msg.msg_flags |= MSG_CTRUNC;
-        return Ok(());
-    }
-    let NetworkAddress::Ipv6(address) = destination else {
-        return Err(ErrNo::EIO);
-    };
-    let mut control = [0u8; CMSG_SPACE];
-    control[..8].copy_from_slice(&CMSG_LEN.to_ne_bytes());
-    control[8..12].copy_from_slice(&SOL_IPV6.to_ne_bytes());
-    control[12..16].copy_from_slice(&cmsg_type.to_ne_bytes());
-    control[16..32].copy_from_slice(&address);
-    // WaterOS 当前只暴露一块网络接口；与 Linux 一样使用非零接口索引。
-    control[32..36].copy_from_slice(&1u32.to_ne_bytes());
-    copy_to_user(msg.msg_control, &control).map_err(|_| ErrNo::EFAULT)?;
-    msg.msg_controllen = CMSG_SPACE;
-    Ok(())
 }
 
 fn recvmsg_is_nonblocking(fd : usize, flags : usize) -> bool {
@@ -573,7 +505,6 @@ fn recvmsg_receive_blocking(fd : usize,
                             max_len : usize)
                             -> Result<Option<SocketReceiveLease>, ErrNo> {
     let nonblocking = recvmsg_is_nonblocking(fd, flags);
-    let task_id = task::current_task_id().unwrap_or(0);
     let wait_ticks = socket_recv_wait_ticks(socket, SOCKET_RECVMSG_WAIT_TICKS);
     for _ in 0..wait_ticks {
         drive_network_stack();
@@ -583,7 +514,10 @@ fn recvmsg_receive_blocking(fd : usize,
             Err(SocketRecvError::Busy | SocketRecvError::Empty) => {}
             Err(error) => return Err(recv_error_to_errno(error)),
         }
-        crate::socket_block::socket_blocking_tick(nonblocking, task_id)?;
+        if nonblocking {
+            return Err(ErrNo::EAGAIN);
+        }
+        task::sleep_for_ticks(1);
     }
     Err(ErrNo::EAGAIN)
 }

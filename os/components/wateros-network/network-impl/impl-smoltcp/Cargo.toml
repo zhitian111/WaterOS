@@ -13,7 +13,6 @@ smoltcp = { version = "=0.12.0", default-features = false, features = [
     "proto-ipv4",
     "socket-tcp",
     "socket-udp",
-    "socket-icmp",
 ] }
 log = "0.4.29"
 arch = { path = "../../../wateros-platform/platform-arch", package = "wateros-platform-arch", default-features = false, features = [ "api-v0" ] }
@@ -21,4 +20,3 @@ debug = { path = "../../../wateros-debug", package = "wateros-debug", default-fe
 
 [features]
 self_test = []
-ipv6 = [ "smoltcp/iface-max-addr-count-4", "smoltcp/proto-ipv6" ]

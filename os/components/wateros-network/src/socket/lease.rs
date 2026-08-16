@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 
 use crate::stack;
-use crate::{NetworkAddress, NetworkEndpoint, SocketKind, SocketRecvError, SocketRecvFinish};
+use crate::{SocketKind, SocketRecvError, SocketRecvFinish};
 
 use super::SocketRef;
 
@@ -22,7 +22,8 @@ impl SocketRef {
         data.try_reserve_exact(max_len)
             .map_err(|_| SocketRecvError::NoMemory)?;
         data.resize(max_len, 0);
-        let reservation = self.with_handle(|handle| stack::socket_prepare_recv(handle, &mut data))?;
+        let reservation =
+            self.with_handle(|handle| stack::socket_prepare_recv(handle, &mut data))?;
         data.truncate(reservation.staged_len());
         Ok(SocketReceiveLease { _socket : self.clone(),
                                 reservation : Some(reservation),
@@ -40,13 +41,11 @@ pub struct SocketReceiveLease {
 impl SocketReceiveLease {
     pub fn bytes(&self) -> &[u8] { self.data.as_slice() }
 
-    pub fn source(&self) -> NetworkEndpoint {
+    pub fn source(&self) -> ([u8; 4], u16) {
         self.reservation
             .as_ref()
             .map(stack::SocketRecvReservation::source)
-            .unwrap_or(NetworkEndpoint { address : NetworkAddress::Ipv4([0; 4]),
-                                         port : 0,
-                                         scope_id : 0 })
+            .unwrap_or(([0; 4], 0))
     }
 
     pub fn kind(&self) -> SocketKind {
@@ -54,13 +53,6 @@ impl SocketReceiveLease {
             .as_ref()
             .map(stack::SocketRecvReservation::kind)
             .unwrap_or(SocketKind::Tcp)
-    }
-
-    pub fn destination(&self) -> NetworkAddress {
-        self.reservation
-            .as_ref()
-            .map(stack::SocketRecvReservation::destination)
-            .unwrap_or(NetworkAddress::Ipv4([0; 4]))
     }
 
     pub fn datagram_len(&self) -> usize {

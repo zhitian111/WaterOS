@@ -8,9 +8,9 @@ extern crate alloc;
 
 pub use api_v0 as api;
 pub use api_v0::{
-    Ipv6Config, NetworkAddress, NetworkConfig, NetworkEndpoint, NetworkError, NetworkResult,
-    NetworkSocketSnapshot, SocketConnectError, SocketDomain, SocketKind, SocketPollSnapshot,
-    SocketRecvError, SocketRecvFinish, SocketSendError, SocketState,
+    Ipv4Endpoint, NetworkConfig, NetworkError, NetworkResult, NetworkSocketSnapshot,
+    SocketConnectError, SocketKind, SocketPollSnapshot, SocketRecvError, SocketRecvFinish,
+    SocketSendError, SocketState,
 };
 
 #[cfg(feature = "impl-smoltcp")]
@@ -25,11 +25,11 @@ pub mod stack {
     };
 
     pub(crate) use impl_smoltcp::stack::{
-        create_icmp_socket, create_tcp_socket, create_udp_socket, socket_accept, socket_bind, socket_close,
+        create_tcp_socket, create_udp_socket, socket_accept, socket_bind, socket_close,
         socket_connect, socket_finish_recv, socket_getsockopt, socket_kind, socket_listen,
         socket_local_endpoint, socket_peer_endpoint, socket_peer_is_loopback, socket_poll_snapshot,
-        socket_ipv6_pktinfo_type, socket_prepare_recv, socket_recv_timeout_ms, socket_send,
-        socket_sendto, socket_setsockopt, socket_shutdown, SocketRecvReservation, StackSocketHandle,
+        socket_prepare_recv, socket_recv_timeout_ms, socket_send, socket_sendto, socket_setsockopt,
+        socket_shutdown, SocketRecvReservation, StackSocketHandle,
     };
 }
 
@@ -43,10 +43,7 @@ pub use socket::{SocketReceiveLease, SocketRef};
 #[cfg(feature = "self_test")]
 pub fn self_test() {
     log::info!("[network] self_test begin");
-    let config = NetworkConfig { address : [10, 0, 2, 15],
-                                 prefix_len : 24,
-                                 gateway : [10, 0, 2, 2],
-                                 ipv6 : None };
+    let config = NetworkConfig { address: [10, 0, 2, 15], prefix_len: 24, gateway: [10, 0, 2, 2] };
     assert_eq!(config.prefix_len, 24);
     assert_ne!(config.address, config.gateway);
     #[cfg(feature = "impl-smoltcp")]

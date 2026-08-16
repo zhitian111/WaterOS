@@ -5,15 +5,25 @@ use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use network::stack;
-use network::{SocketConnectError, SocketKind, SocketRef, SocketState};
+use network::{Ipv4Endpoint, SocketConnectError, SocketKind, SocketRef, SocketState};
 
-use super::sockaddr::{endpoint_domain, read_endpoint};
 use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
+use crate::user_copy::copy_from_user_struct;
 
 /// 兜底避免设备丢包或协议状态异常导致阻塞 connect 永久挂起。
 /// 调度 tick 当前为 10ms，约对应 30 秒。
 const TCP_CONNECT_WAIT_TICKS : usize = 3_000;
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+// 本结构代码由AI完成
+struct SockAddrIn {
+    sin_family : u16,
+    sin_port : u16, // network byte order
+    sin_addr : [u8; 4],
+    sin_zero : [u8; 8],
+}
 
 // 本方法代码由AI完成
 pub(crate) fn sys_connect(args : SyscallArgs) -> UserRet {
@@ -32,18 +42,26 @@ pub(crate) fn sys_connect(args : SyscallArgs) -> UserRet {
         };
     }
 
-    let endpoint = match read_endpoint(addr_ptr, addrlen) {
-        Ok(endpoint) => endpoint,
+    if addrlen < 16 {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+
+    let addr : SockAddrIn = match copy_from_user_struct(addr_ptr) {
+        Ok(a) => a,
         Err(e) => return UserRet::from_error(e),
     };
+
+    if addr.sin_family != 2 {
+        return UserRet::from_error(ErrNo::EAFNOSUPPORT);
+    }
+
+    let port = u16::from_be(addr.sin_port);
+    let ip = addr.sin_addr;
 
     let socket = match socket_fd::lookup_or_errno(fd) {
         Ok(s) => s,
         Err(e) => return UserRet::from_error(e),
     };
-    if endpoint_domain(endpoint) != socket.domain() {
-        return UserRet::from_error(ErrNo::EAFNOSUPPORT);
-    }
 
     let kind = match socket.kind() {
         Ok(kind) => kind,
@@ -59,10 +77,8 @@ pub(crate) fn sys_connect(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EISCONN);
     }
 
-    match socket.connect(endpoint) {
-        Ok(()) if matches!(kind, SocketKind::Udp | SocketKind::Icmp) => {
-            UserRet::from_success(0)
-        }
+    match socket.connect(Ipv4Endpoint { address : ip, port }) {
+        Ok(()) if matches!(kind, SocketKind::Udp) => UserRet::from_success(0),
         Ok(()) if socket_fd::is_nonblocking(fd) => UserRet::from_error(ErrNo::EINPROGRESS),
         Ok(()) => wait_connected(&socket),
         Err(_) => UserRet::from_error(ErrNo::ECONNREFUSED),

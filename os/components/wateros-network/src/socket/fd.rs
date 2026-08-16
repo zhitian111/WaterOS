@@ -22,9 +22,7 @@ impl SocketRef {
     pub fn into_vfs_handle(self) -> NetworkResult<Box<dyn VfsIoHandle>> {
         match self.kind()? {
             SocketKind::Tcp => Ok(Box::new(TcpSocketHandle { socket : self })),
-            SocketKind::Udp | SocketKind::Icmp => {
-                Ok(Box::new(DatagramSocketHandle { socket : self }))
-            }
+            SocketKind::Udp => Ok(Box::new(UdpSocketHandle { socket : self })),
         }
     }
 
@@ -35,7 +33,7 @@ impl SocketRef {
         }
         handle
             .as_any()
-            .downcast_ref::<DatagramSocketHandle>()
+            .downcast_ref::<UdpSocketHandle>()
             .map(|handle| handle.socket.clone())
     }
 }
@@ -194,12 +192,12 @@ impl VfsIoHandle for TcpSocketHandle {
     }
 }
 
-/// UDP 与 raw ICMP 共用的数据报型 fd 句柄。
-struct DatagramSocketHandle {
+/// UDP socket 的 fd 句柄。
+struct UdpSocketHandle {
     socket : SocketRef,
 }
 
-impl VfsIoHandle for DatagramSocketHandle {
+impl VfsIoHandle for UdpSocketHandle {
     fn open_accmode(&self) -> u32 { 2 }
 
     fn open_status_flags(&self) -> u32 {

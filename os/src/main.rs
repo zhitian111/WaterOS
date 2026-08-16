@@ -129,20 +129,9 @@ fn init_services_after_boot() -> bool {
                 Err(err) => warn!("[boot] machine RTC unavailable: {:?}",
                                   err),
             }
-            #[cfg(feature = "ipv6")]
-            let ipv6 = Some(network::Ipv6Config {
-                address : [0xfe, 0xc0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x15],
-                prefix_len : 64,
-                gateway : [0xfe, 0xc0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2],
-            });
-            #[cfg(not(feature = "ipv6"))]
-            let ipv6 = None;
-            match network::stack::init(network::NetworkConfig {
-                address : [10, 0, 2, 15],
-                prefix_len : 24,
-                gateway : [10, 0, 2, 2],
-                ipv6,
-            })
+            match network::stack::init(network::NetworkConfig { address : [10, 0, 2, 15],
+                                                                prefix_len : 24,
+                                                                gateway : [10, 0, 2, 2] })
             {
                 Ok(()) => {
                     task::spawn_kernel_task(network_poller_task, 0);

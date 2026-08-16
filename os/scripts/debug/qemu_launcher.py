@@ -2,20 +2,11 @@
 """组装 QEMU 参数；通过 ``-D /dev/fd/N`` 输出 PC trace。"""
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
 from typing import Literal
 
 Arch = Literal["rv", "la"]
-
-
-def _netdev(name: str) -> str:
-    features = os.environ.get("WOS_EXTRA_FEATURES", "").replace(",", " ").split()
-    if "ipv6" in features:
-        return (f"user,id={name},ipv4=on,net=10.0.2.0/24,host=10.0.2.2,"
-                "ipv6=on,ipv6-net=fec0::/64,ipv6-host=fec0::2")
-    return f"user,id={name}"
 
 
 def _qemu_bin(arch: Arch) -> list[str]:
@@ -54,7 +45,7 @@ def build_qemu_trace_cmd(arch: Arch, work_dir: Path, trace_fd: int | None = None
             "-device",
             "virtio-net-device,netdev=net",
             "-netdev",
-            _netdev("net"),
+            "user,id=net",
             "-rtc",
             "base=utc",
         ]
@@ -78,7 +69,7 @@ def build_qemu_trace_cmd(arch: Arch, work_dir: Path, trace_fd: int | None = None
             "-device",
             "virtio-net-pci,netdev=net0",
             "-netdev",
-            _netdev("net0"),
+            "user,id=net0",
             "-rtc",
             "base=utc",
         ]
