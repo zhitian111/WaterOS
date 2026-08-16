@@ -1,0 +1,113 @@
+\chapter{总结与后续工作}
+
+\section{工作总结与项目特色}
+
+\wateros{}已经形成从双架构平台启动、trap、分页和多核任务调度到用户ELF执行的内核
+主路径，并在这条路径上接入VFS、ext4、ramfs、procfs、fd、信号、futex、socket、
+VirtIO设备和Linux generic64系统调用层。RISC-V64与LoongArch64分别处理CPU启动、
+页表、TLB、中断和设备总线差异，上层task、MM、FS/VFS、IPC、network和syscall机制
+保持复用。
+
+项目实现上的主要特点如下：
+
+\begin{itemize}
+  \item \strong{组件化组织。}平台、驱动、MM、FS、VFS、task、IPC、network和syscall
+  按职责拆分，公共接口与具体实现分离，顶层crate只负责组合与初始化编排。
+  \item \strong{双架构边界清晰。}架构差异集中在平台、页表、trap和VirtIO总线层，
+  用户态可见的进程、fd、VFS、网络和错误语义尽量保持一致。
+  \item \strong{多核机制完整。}系统提供BSP/AP分离启动、CPU-local、per-CPU任务状态、
+  IPI、跨核唤醒和TLB shootdown，并明确任务、地址空间和缓存对象的生命周期。
+  \item \strong{用户态路径连续。}glibc/musl程序、BusyBox、CAgent和Cargo/rustc能够在
+  同一套内核机制上运行，系统能力通过完整工作流而不是接口数量验证。
+  \item \strong{验证结果可追溯。}构建、镜像、命令、日志、成功标记和文件系统检查
+  组成统一证据链；历史运行与候选版本复验结果分开记录。
+\end{itemize}
+
+性能分析、A/B实验和完整优化数据由单独的性能优化文档说明，本文不重复展开。
+
+\section{后续完善方向}
+
+在已经完成双架构启动、多核调度和完整用户态工作负载运行的基础上，WaterOS后续工作
+主要面向平台拓展、组件复用和工程维护，不改变本文所述内核主路径：
+
+\begin{enumerate}
+  \item \strong{拓展运行平台。}在现有RISC-V64与LoongArch64 QEMU平台之外，利用已经
+  分离的平台、架构和驱动接口接入实体开发板及不同固件环境，检验组件边界的可移植性。
+  \item \strong{丰富组件实现。}沿用\code{api-v0}与\code{impl-*}的组织方式，引入不同
+  调度策略、文件系统或设备实现，使同一内核框架能够用于算法对比和教学实验。
+  \item \strong{扩展用户软件生态。}在现有glibc/musl、BusyBox和Rust工具链运行路径上，
+  整理更多用户软件的构建描述与根文件系统组合，形成可重复使用的软件环境。
+  \item \strong{沉淀自动化验证。}将双架构构建、工作负载运行、日志判读和文件系统检查
+  纳入持续验证流程，长期保存版本、镜像与运行结果之间的对应关系。
+  \item \strong{完善开发支持。}继续整理组件接口文档、调试工具和贡献指南，降低新增
+  实现、定位跨组件问题以及复现实验环境的成本。
+\end{enumerate}
+
+\section{非本队来源说明}
+
+\wateros{}顶层内核组织、组件边界、平台适配、任务与调度机制、MM集成、VFS桥接、
+Linux generic64系统调用分发、测试编排和系统集成由本队实现或维护。第三方crate用于
+文件系统解析、设备访问、网络协议和基础运行时能力；引入第三方实现不改变本队对上层
+接口、并发语义和组合行为的实现责任。
+
+本地vendor目录中的代码可能同时包含上游代码和WaterOS维护修改。正式提交以各目录的
+README、LICENSE、Cargo清单和版本历史说明来源，不把维护分支整体描述为本队原创。
+
+\begin{longtable}{L{2.8cm}L{4.5cm}L{4.0cm}L{2.6cm}}
+  \caption{主要第三方依赖与用途}\label{tab:third-party}\\
+  \toprule
+  依赖 & 在本项目中的用途 & 引入方式 & 许可证或来源 \\
+  \midrule
+  \endfirsthead
+  \toprule
+  依赖 & 在本项目中的用途 & 引入方式 & 许可证或来源 \\
+  \midrule
+  \endhead
+  another\_ext4 & 默认ext4读写后端；由WaterOS继续维护写入、符号链接和一致性修复 & \code{os/vendor/another\_ext4} & 基于ext4\_rs，MIT \\
+  ext4\_rs 1.3.3 & ext4后端与对照实现 & \code{os/vendor/ext4\_rs} & 上游仓库，MIT \\
+  ext4plus 0.1.0-rc.2 & ext4备用实现路径 & \code{os/vendor/ext4plus} & MIT或Apache-2.0 \\
+  smoltcp 0.12.0 & TCP/UDP协议栈与socket后端基础 & crates.io锁定版本 & 见上游crate \\
+  virtio-drivers 0.12.0 & VirtIO块设备与网卡访问 & crates.io锁定版本 & 见上游crate \\
+  fdt 0.1.5 & 设备树解析 & crates.io锁定版本 & 见上游crate \\
+  sbi-rt 0.0.3 & RISC-V OpenSBI运行时调用 & crates.io锁定版本 & 见上游crate \\
+  riscv 0.16.0 & RISC-V CSR与架构辅助 & crates.io锁定版本 & 见上游crate \\
+  rlsf 0.2.2、linked-list-allocator 0.10.6 & 内核堆分配器后端 & crates.io锁定版本 & 见上游crate \\
+  \bottomrule
+\end{longtable}
+
+精确依赖闭包与传递版本以候选提交的\code{os/Cargo.lock}为准。用户空间中的BusyBox、
+Nano-X、mGBA、OpenJDK和其他软件包具有各自的上游来源和许可证，其构建描述位于
+\code{user/packages}和\code{user/vendor}，不计入内核自研代码。
+
+\section{AI工具使用说明}
+
+本队在开发过程中使用Claude Code、Codex、Cursor等AI辅助编程工具生成或改写部分
+内核实现、测试脚本和文档。凡由AI直接参与完成且需要披露的代码块，在源码中以“由AI
+完成”“本模块代码由AI完成”等注释标注；团队成员在合并前负责接口设计、语义审查、
+编译、定向测试和完整工作负载验证。标注用于追溯来源，不表示生成内容未经审查即可交付。
+
+项目的核心API、trait、数据结构边界、组件组合和并发不变量由团队确定。AI主要用于
+具体实现、重复性改写、错误路径补齐、测试与诊断辅助。调试过程中也使用AI批量插入过
+日志或诊断事件；正式候选版本移除高频临时输出，只保留默认关闭或低扰动的结构化诊断
+能力。
+
+AI也用于以下非代码工作：
+
+\begin{enumerate}
+  \item 检索源码中的AI标记并生成路径、行范围和代表片段清单；
+  \item 在不改变技术含义的前提下勘误、调整表述和统一LaTeX格式；
+  \item 初始化文档目录、生成重复表格和维护内部证据台账；
+  \item 协助分析串口日志、热点采样和测试失败，最终结论由团队结合源码和复现实验确认；
+  \item 演示材料中可能使用AI配音或语音校准，并在相应材料中单独说明。
+\end{enumerate}
+
+初赛文档曾根据当时源码统计AI参与代码占比。此后源码变化较大，不能直接沿用初赛的
+18.7\%或原有条目数量。最终候选提交冻结后，需要重新扫描并记录候选commit、纳入与
+排除目录、总代码行、AI标记范围、组件清单和统计命令。编辑器补全、调试日志、脚本和
+文档是否纳入也应明确说明。
+
+现有生成逻辑位于
+\path{docs/technical_document/wateros-latex/scripts/gen-ai-usage-tex.py}。候选提交冻结后，
+将其输入更新为当前源码清单并生成本文档使用的详细记录。AI工具不替代团队对代码
+许可、竞赛规则、并发安全和实验真实性的责任；无法解释或无法验证的生成代码不进入
+候选版本。
