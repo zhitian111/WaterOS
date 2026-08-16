@@ -25,7 +25,8 @@ make run ARCH=rv PROFILE=pre
 一次标准调用可以分成四步：
 
 1. `validate-config` 检查 `ARCH`、`PROFILE`、`MODE`、`SMP`、磁盘和调试参数；
-2. 根据 `ARCH` 与 `PROFILE` 选择 Cargo target、平台 feature 和比赛阶段 feature；
+2. 根据 `ARCH` 与 `PROFILE` 选择 Cargo target、平台 feature、比赛阶段 feature 和唯一的
+   编译期日志上限；
 3. 组合堆分配器、operator 模式、额外能力和 GDB feature；
 4. 构建命名明确的内核产物，并在需要时交给统一 QEMU 或调试入口。
 
@@ -47,6 +48,10 @@ Makefile 只暴露少量稳定参数，内部再转换为脚本环境变量和 C
 
 底层环境变量是脚本之间的接口，不是日常命令的首选接口。除非正在调试脚本本身，否则
 优先传 Make 参数。
+
+日志上限由平台 feature 固定选择：RISC-V64 当前转发 `runtime/impl-info`，LoongArch64
+转发 `runtime/impl-error`。两者最终启用对应的 `log/max_level_*` 编译期过滤，不能同时选择
+多个级别，也不能在 operator 启动后动态覆盖。
 
 ## 目标分层
 

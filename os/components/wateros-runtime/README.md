@@ -27,8 +27,9 @@
 - 输出面：`runtime-console` 的 `write_fmt` / `write_str` / `write_raw_bytes` 是唯一推荐的输出
   接口；它们不选择硬件，`impl-platform-console` 时整条输出进入 `platform::console`（持有跨
   CPU UART 锁）。调用输出前不得持有 scheduler、VFS、allocator 或 driver 层锁。
-- logging：`impl-trace` … `impl-error` 中选择日志最大级别，多个同时启用时取最详细一档；
-  `log::set_logger` 是全局一次性注册。
+- logging：`impl-trace` … `impl-error` 中只选择一个日志最大级别，并转发到
+  `log/max_level_*` 进行编译期裁剪；`log::set_logger` 是全局一次性注册，初始化后不再动态
+  修改级别。
 - heap：默认 `rlsf::Tlsf`（O(1) alloc/dealloc），`impl-linked-list-allocator` 可切回
   `LockedHeap`；堆大小与对齐来自 `base-config` 的 MM 配置；`interrupt_guard` 禁止本 CPU 中断
   重入；AP 使用堆前必须等待 BSP 单线程初始化完成。
@@ -69,8 +70,8 @@ alloc / dealloc
 
 ### runtime-logging / 日志
 
-- `lib.rs`：`init()` 注册全局 logger 并设置 `log::max_level`；`impl-trace`…`impl-error` 取最
-  详细一档。
+- `lib.rs`：`init()` 注册全局 logger；互斥的 `impl-trace`…`impl-error` 锁定编译期与初始化
+  后的运行时最大级别。
 - `logger.rs`：内部着色 logger，把记录转发到 runtime-console。
 
 ### runtime-panic / panic
@@ -96,6 +97,6 @@ alloc / dealloc
 ## Feature
 
 - `impl-platform-console`：连接真实 platform console（正常内核配置使用）。
-- `impl-trace` 至 `impl-error`：选择日志最大级别；多个同时启用时取最详细一档。
+- `impl-trace` 至 `impl-error`：互斥地选择一个编译期日志最大级别。
 - `heap-tlsf` / `heap-linked-list`：堆后端选择（互斥）；`heap-stress`：初始化时压力测试。
 - `serial-uart-virt`：导出 QEMU virt UART 字符设备 API。

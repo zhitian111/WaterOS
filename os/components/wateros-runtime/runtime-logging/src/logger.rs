@@ -2,7 +2,8 @@
 //!
 //! 仅由 crate 根 [`crate::init`] 调用 `init`；模块本身不对外公开。
 //!
-//! **不变量**：注册 logger 后 `log::max_level` 已设置，`to_level()` 在此路径下非 `Off`；否则 `unwrap` 会 panic。
+//! **不变量**：只有编译期最大级别非 `Off` 时才注册 logger，因此
+//! `log::STATIC_MAX_LEVEL.to_level()` 在此路径下不会返回 `None`。
 
 use console::println;
 use core::result::Result;
@@ -33,10 +34,10 @@ impl log::Log for WaterOSLogger {
         {
             return false;
         }
-        // `Off` 时无对应 `Level`，此处与 `log` 在已注册 logger 下的状态一致。
+        // 编译期上限为常量；这里不再读取运行时原子过滤器。
         metadata.level() <=
-        log::max_level().to_level()
-                        .unwrap()
+        log::STATIC_MAX_LEVEL.to_level()
+                             .unwrap()
     }
 
     #[inline]
@@ -69,10 +70,10 @@ impl log::Log for WaterOSLogger {
     fn flush(&self) {}
 }
 
-/// 注册静态 [`WaterOSLogger`] 并设置 `log` 全局最大级别。
+/// 注册静态 [`WaterOSLogger`] 并把 `log` 运行时过滤器初始化为编译期最大级别。
 ///
-/// RUNTIME_ORDER: 成功注册后才设 max level，避免在无 logger 时放行记录；失败时保持
-/// 既有 logger 和 max level 原样不变。
+/// RUNTIME_ORDER: 成功注册后才设 max level，避免在无 logger 时放行记录；初始化后不再
+/// 改变级别。失败时保持既有 logger 和 max level 原样不变。
 #[inline]
 #[allow(unused)]
 pub fn init(level : log::LevelFilter) -> Result<(), SetLoggerError> {

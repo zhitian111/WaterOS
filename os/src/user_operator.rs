@@ -7,7 +7,7 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
-use runtime::logging::{error, info, warn, LevelFilter};
+use runtime::logging::{error, info, warn};
 
 const LOG_TAG : &str = "operator";
 static CONSOLE_INPUT_TASK_STARTED : AtomicBool = AtomicBool::new(false);
@@ -43,7 +43,6 @@ struct BootPlan {
     script : Option<&'static str>,
     on_exit : ExitPolicy,
     tty : TtyMode,
-    log : Option<LevelFilter>,
 }
 
 impl BootPlan {
@@ -55,8 +54,7 @@ impl BootPlan {
                #[cfg(feature = "pre")]
                tty : TtyMode::Fixture,
                #[cfg(feature = "final_online")]
-               tty : TtyMode::Closed,
-               log : None }
+               tty : TtyMode::Closed }
     }
 
     fn selected_mode() -> OperatorMode {
@@ -87,14 +85,12 @@ fn build_plan() -> BootPlan {
             plan.mode = OperatorMode::Shell;
             plan.on_exit = ExitPolicy::Shell;
             plan.tty = TtyMode::Interactive;
-            plan.log = Some(LevelFilter::Warn);
             plan.shell = option_env!("WATEROS_OPERATOR_SHELL");
         }
         OperatorMode::Run => {
             plan.mode = OperatorMode::Run;
             plan.on_exit = ExitPolicy::Shutdown;
             plan.tty = TtyMode::Interactive;
-            plan.log = Some(LevelFilter::Warn);
             plan.script = option_env!("WATEROS_OPERATOR_SCRIPT");
         }
     }
@@ -212,9 +208,6 @@ extern "C" fn console_input_main(_arg : usize) -> ! {
 
 extern "C" fn operator_main(_arg : usize) -> ! {
     let plan = build_plan();
-    if let Some(level) = plan.log {
-        runtime::logging::set_max_level(level);
-    }
     configure_tty(plan.tty);
     info!("[{LOG_TAG}] plan={plan:?}");
 

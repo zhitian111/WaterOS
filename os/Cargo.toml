@@ -101,6 +101,7 @@
         # "runtime/impl-info",
         # "runtime/impl-debug",
         # "runtime/impl-warn",
+        # 编译期日志级别 feature 彼此互斥；本平台固定为 Error。
         "runtime/impl-error",
         # "dashboard-debug",
         "dep:klog",
@@ -142,11 +143,12 @@
         "mm/self_test-sv39",
         "platform/impl-qemu-riscv64-opensbi",
         # "runtime/impl-trace",
+        # 编译期日志级别 feature 彼此互斥；本平台固定为 Info。
         "runtime/impl-info",
+        # "runtime/impl-debug",
         # "runtime/impl-warn",
         "dep:klog",
         "klog/default",
-        "runtime/impl-error",
         "runtime/impl-platform-console",
         "runtime/impl-riscv64",
         "syscall/impl-kernel",
