@@ -14,8 +14,8 @@
 allocator 初始化完成时通过 `register_frame_source` + `activate_slab` 切换，
 小对象走 slab，大对象和早期启动分配仍走 boot TLSF。
 
-开启 `heap-slab` 后可通过 `heap_slab_stats()` 读取 slab 分配/释放计数；
-`heap_mem_stats()` 仍返回 boot TLSF 快照，slab 页占用统计在后续版本补齐。
+生产 `heap-slab` 不在 alloc/free 热路径维护全局统计；低扰动 slab 诊断由独立 feature
+提供。`heap_mem_stats()` 仍返回 boot TLSF 快照，slab 页占用统计在后续版本补齐。
 
 `HEAP_SPACE` 是链接脚本放入 `.kernel.heap` 的静态池。只有 BSP 可调用一次 `init()`；
 AP 必须在其后才可走可能分配的路径。每次分配在本 CPU 上临时关中断并以 `CpuLocal`

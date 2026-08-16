@@ -193,12 +193,6 @@ pub fn heap_mem_stats() -> HeapMemStats {
     interrupt_guard::with_allocator_interrupt_guard(|| backend::stats())
 }
 
-/// slab 路径分配/释放计数（`impl-slab` 关闭时返回零）。
-#[cfg(feature = "impl-slab")]
-pub fn heap_slab_stats() -> (usize, usize) {
-    slab::stats()
-}
-
 /// 堆分配失败路径：由内核 `#[alloc_error_handler]` 委托（见 `wateros` 根 crate），打印布局后 panic。
 pub fn handle_alloc_error(layout : core::alloc::Layout) -> ! {
     let stats = heap_mem_stats();
