@@ -7,6 +7,7 @@ pub mod irq;
 pub mod mmc;
 pub mod plic;
 pub mod rtc;
+pub mod syscrg;
 pub mod topology;
 pub mod uart;
 
@@ -99,6 +100,7 @@ impl MachineDriver for Machine {
             log::info!("[driver][visionfive2] topology={:?}; hardware MMIO/IRQ status=UNVERIFIED",
                        topology)
         });
+        syscrg::test();
         uart::test();
         rtc::test();
     }

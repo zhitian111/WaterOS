@@ -3,9 +3,9 @@
 //! Clock/reset/syscon descriptions belong to this board layer. Controller PIO
 //! and SD protocol logic live in `wateros-driver-block-impl-dw-mmc` so another
 //! platform can reuse them without importing JH7110 topology assumptions.
-use alloc::{boxed::Box, format, string::String, sync::Arc, vec::Vec};
+use alloc::{format, string::String, vec::Vec};
 use api_v0::MmioRegion;
-use block::{BlockDevice, DriverError, Lba, SharedBlockDevice, BLOCK_SIZE};
+use block::{DriverError, Lba, SharedBlockDevice, BLOCK_SIZE};
 
 pub use dw_mmc::mmc::{clock_divider, DwMmc, MmcError, MmioRegisters, RegisterIo};
 use dw_mmc::sd::SdCard;
@@ -18,6 +18,9 @@ pub enum MmcActivationBlocker {
     MissingBiuClock,
     MissingCiuClock,
     MissingReset,
+    MissingBiuClockMmio,
+    MissingCiuClockMmio,
+    MissingResetMmio,
     MissingSysreg,
     MissingTargetFrequency,
     MissingFifoDepth,
@@ -106,6 +109,8 @@ const SD_TRANSFER_HZ : u32 = 10_000_000;
 /// 尝试激活一个 MMC host 并注册只读块设备；失败带上下文返回，不阻断启动。
 pub fn activate_and_register_readonly(host : &MmcHostDescription)
                                       -> Result<usize, String> {
+    crate::syscrg::prepare_mmc_host(host, MMC_INPUT_FREQUENCY_HZ.into())
+        .map_err(|err| format!("syscrg: {err:?}"))?;
     // SAFETY: 平台 memory layout 恒等映射覆盖 JH7110 低地址 MMIO 窗口
     // （0x0100_0000..0x4000_0000），该实例独占访问控制器寄存器。
     let registers = unsafe { MmioRegisters::new(host.mmio) };
@@ -183,12 +188,14 @@ impl MmcBringUpPlan {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceSpecifier {
     pub provider : u32,
+    pub provider_mmio : Option<MmioRegion>,
     pub args : Vec<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SysregField {
     pub provider : u32,
+    pub provider_mmio : Option<MmioRegion>,
     pub offset : u32,
     pub shift : u8,
     pub mask : u32,
@@ -221,12 +228,18 @@ pub fn bring_up_plan(host : &MmcHostDescription) -> MmcBringUpPlan {
     }
     if host.biu_clock.provider == 0 || host.biu_clock.args.is_empty() {
         blockers.push(MmcActivationBlocker::MissingBiuClock);
+    } else if host.biu_clock.provider_mmio.is_none() {
+        blockers.push(MmcActivationBlocker::MissingBiuClockMmio);
     }
     if host.ciu_clock.provider == 0 || host.ciu_clock.args.is_empty() {
         blockers.push(MmcActivationBlocker::MissingCiuClock);
+    } else if host.ciu_clock.provider_mmio.is_none() {
+        blockers.push(MmcActivationBlocker::MissingCiuClockMmio);
     }
     if host.reset.provider == 0 || host.reset.args.is_empty() {
         blockers.push(MmcActivationBlocker::MissingReset);
+    } else if host.reset.provider_mmio.is_none() {
+        blockers.push(MmcActivationBlocker::MissingResetMmio);
     }
     if host.sysreg.is_none() {
         blockers.push(MmcActivationBlocker::MissingSysreg);
@@ -288,7 +301,8 @@ pub fn initialize_sd_card<R : RegisterIo>(plan : &MmcBringUpPlan,
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
+    use alloc::{boxed::Box, sync::Arc, vec};
+    use block::BlockDevice;
     use spin::Mutex;
     use super::*;
 
@@ -299,10 +313,29 @@ mod tests {
                               max_frequency_hz : Some(50_000_000),
                               fifo_depth : Some(32),
                               non_removable : false,
-                              biu_clock : ResourceSpecifier { provider : 1, args : vec![0] },
-                              ciu_clock : ResourceSpecifier { provider : 2, args : vec![1] },
-                              reset : ResourceSpecifier { provider : 3, args : vec![0] },
+                              biu_clock : ResourceSpecifier {
+                                  provider : 1,
+                                  provider_mmio : Some(MmioRegion { base : 0x1302_0000,
+                                                                     size : 0x10000 }),
+                                  args : vec![91],
+                              },
+                              ciu_clock : ResourceSpecifier {
+                                  provider : 1,
+                                  provider_mmio : Some(MmioRegion { base : 0x1302_0000,
+                                                                     size : 0x10000 }),
+                                  args : vec![93],
+                              },
+                              reset : ResourceSpecifier {
+                                  provider : 1,
+                                  provider_mmio : Some(MmioRegion { base : 0x1302_0000,
+                                                                     size : 0x10000 }),
+                                  args : vec![64],
+                              },
                               sysreg : Some(SysregField { provider : 4,
+                                                          provider_mmio : Some(MmioRegion {
+                                                              base : 0x1303_0000,
+                                                              size : 0x1000,
+                                                          }),
                                                           offset : 0x10,
                                                           shift : 0,
                                                           mask : 0x3 }) }

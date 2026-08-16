@@ -118,6 +118,7 @@ fn phandle_specifiers(fdt : &fdt::Fdt<'_>,
         let provider = dtb::read_be_u32(bytes, offset).ok_or(DriverError::InvalidDtb)?;
         offset += 4;
         let provider_node = fdt.find_phandle(provider).ok_or(DriverError::InvalidDtb)?;
+        let provider_mmio = dtb::first_mmio_region(provider_node);
         let cells = be32_property(&provider_node, provider_cells_property)
             .filter(|cells| *cells <= 8)
             .ok_or(DriverError::InvalidDtb)? as usize;
@@ -130,7 +131,7 @@ fn phandle_specifiers(fdt : &fdt::Fdt<'_>,
             args.push(dtb::read_be_u32(bytes, offset).ok_or(DriverError::InvalidDtb)?);
             offset += 4;
         }
-        result.push(ResourceSpecifier { provider, args });
+        result.push(ResourceSpecifier { provider, provider_mmio, args });
     }
     Ok(result)
 }
@@ -158,14 +159,15 @@ fn sysreg_field(fdt : &fdt::Fdt<'_>, node : &fdt::node::FdtNode<'_, '_>)
         return Err(DriverError::InvalidDtb);
     }
     let provider = dtb::read_be_u32(property.value, 0).ok_or(DriverError::InvalidDtb)?;
-    fdt.find_phandle(provider).ok_or(DriverError::InvalidDtb)?;
+    let provider_node = fdt.find_phandle(provider).ok_or(DriverError::InvalidDtb)?;
+    let provider_mmio = dtb::first_mmio_region(provider_node);
     let offset = dtb::read_be_u32(property.value, 4).ok_or(DriverError::InvalidDtb)?;
     let shift = dtb::read_be_u32(property.value, 8).ok_or(DriverError::InvalidDtb)?;
     let mask = dtb::read_be_u32(property.value, 12).ok_or(DriverError::InvalidDtb)?;
     if offset % 4 != 0 || shift >= 32 || mask == 0 || mask & ((1u32 << shift) - 1) != 0 {
         return Err(DriverError::InvalidDtb);
     }
-    Ok(Some(SysregField { provider, offset, shift : shift as u8, mask }))
+    Ok(Some(SysregField { provider, provider_mmio, offset, shift : shift as u8, mask }))
 }
 
 fn cpu_interrupt_controllers(fdt : &fdt::Fdt<'_>) -> Vec<(u32, usize)> {
