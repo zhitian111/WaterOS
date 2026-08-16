@@ -94,6 +94,16 @@ pub(super) fn peek_pending_signal_source(task_id : usize,
                           .unwrap_or_default()
 }
 
+fn take_delivery_signal_source(task_id : usize,
+                               process_pid : usize,
+                               signal : usize)
+                               -> PendingSignalSource {
+    let mut sources = PENDING_SIGNAL_SOURCES.lock();
+    sources.remove(&(PendingSignalOwner::Thread(task_id), signal))
+           .or_else(|| sources.remove(&(PendingSignalOwner::Process(process_pid), signal)))
+           .unwrap_or_default()
+}
+
 fn drop_thread_signal_sources(task_id : usize) {
     PENDING_SIGNAL_SOURCES.lock()
                           .retain(|(owner, _), _| *owner != PendingSignalOwner::Thread(task_id));
