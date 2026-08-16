@@ -549,8 +549,8 @@ mod loongson2k1000la {
                 options(nostack)
             );
         }
-        let _ = platform::console::console_write_raw_buffer(b"[2K1000] enter WaterOS Rust\r\n");
-        let _ = platform::console::console_flush();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"[2K1000] enter WaterOS Rust\r\n");
+        let _ = platform::active_impl::console::console_flush();
         let cpu_id = task::CpuId::from_raw(cpu_raw);
         mask_boot_interrupts();
         if BSP_CLAIMED.swap(true, Ordering::AcqRel) {
