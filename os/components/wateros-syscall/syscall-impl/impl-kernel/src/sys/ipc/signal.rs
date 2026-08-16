@@ -504,7 +504,8 @@ pub(crate) fn timer_tick(interrupted_user : bool) {
         Err(_) => return,
     };
     let now_u64 = u64::try_from(now).unwrap_or(u64::MAX);
-    let cpu_id = platform::arch::cpu::current_cpu_id().raw();
+    let current_cpu = platform::arch::cpu::current_cpu_id();
+    let cpu_id = current_cpu.raw();
     let previous = LAST_ACCOUNTING_NS[cpu_id].swap(now_u64, Ordering::Relaxed);
     let elapsed = if previous == 0 {
         (wateros_base_config::task::SCHED_TIMER_PERIOD_MS as u128) * 1_000_000
@@ -519,11 +520,13 @@ pub(crate) fn timer_tick(interrupted_user : bool) {
             generated.extend(cpu_signals);
         }
     }
-    let realtime = ipc::signal::expire_realtime(now);
-    generated.extend(realtime.into_iter()
-                             .map(|dispatch| (dispatch, ipc::signal::SIGALRM)));
-    if let Ok(realtime_now) = platform::wall_clock::realtime_ns() {
-        generated.extend(ipc::signal::expire_posix_timers(now, realtime_now));
+    if task::is_timekeeper_cpu(current_cpu) {
+        let realtime = ipc::signal::expire_realtime(now);
+        generated.extend(realtime.into_iter()
+                                 .map(|dispatch| (dispatch, ipc::signal::SIGALRM)));
+        if let Ok(realtime_now) = platform::wall_clock::realtime_ns() {
+            generated.extend(ipc::signal::expire_posix_timers(now, realtime_now));
+        }
     }
     for (dispatch, signal) in generated {
         apply_signal_dispatch(dispatch, signal);

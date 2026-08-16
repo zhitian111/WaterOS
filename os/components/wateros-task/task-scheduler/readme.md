@@ -162,6 +162,8 @@ CPU 的 current task 一致。
 
 - 聚合 TaskRegistry、WaitQueues、每 CPU 状态、任务放置轮转点、timekeeper CPU 和待重调度
   CPU mask。
+- timekeeper 身份由 `set_timekeeper_cpu` 在 scheduler 状态与只读原子快照中同时发布，timer
+  热路径可无锁判断；它仍是只写一次且不得迁移的调度器状态。
 - 在同一临界区完成任务状态转换、旧容器移除、新容器加入、CPU current 更新和重调度请求，
   防止任务同时处于两个队列或两个 CPU。
 - 根据 ScheduleReason 处理 tick、yield、block、sleep、wait、exit 和显式 reschedule；只有确实

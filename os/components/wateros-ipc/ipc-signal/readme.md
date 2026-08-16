@@ -142,6 +142,8 @@ timer 逻辑主要位于 `signal-impl/impl-core/src/timer.rs`。
 - POSIX timer 根据选择的时钟维护 deadline、interval、signal 和 overrun。
 - 调用者只能对实际运行的进程记 CPU 时间；多 CPU 同时运行同进程线程时必须分别累计真实
   消耗，不能用全局 wall tick 代替。
+- syscall 组合层在每个 CPU timer tick 上执行上述 CPU-time 计账，但只有 scheduler 发布的
+  timekeeper CPU 扫描 `ITIMER_REAL` 和 POSIX wall-clock timer，避免 SMP 重复全局扫描。
 - 到期函数只更新 signal 状态并返回 dispatch，不在 registry 锁内操作 task。
 
 ## Signal聚合层实现功能

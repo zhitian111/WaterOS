@@ -20,6 +20,8 @@ pub fn request_task_reschedule(task_id : TaskId) { scheduler::request_task_resch
 pub fn set_cpu_online(cpu_id : CpuId) { scheduler::set_cpu_online(cpu_id) }
 /// 指定唯一推进 sleep/wait timeout 的 BSP CPU。
 pub fn set_timekeeper_cpu(cpu_id : CpuId) { scheduler::set_timekeeper_cpu(cpu_id) }
+/// 判断指定 CPU 是否为全局 timekeeper。
+pub fn is_timekeeper_cpu(cpu_id : CpuId) -> bool { scheduler::is_timekeeper_cpu(cpu_id) }
 /// Snapshot of CPUs that have completed task-scheduler bring-up.
 pub fn online_cpu_mask() -> CpuMask { scheduler::online_cpu_mask() }
 

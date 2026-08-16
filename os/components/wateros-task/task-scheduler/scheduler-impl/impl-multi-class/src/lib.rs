@@ -65,6 +65,7 @@ static CURRENT_TASK_IDS : [AtomicUsize; MAX_CPUS] =
 static CURRENT_ASPACE_PTRS : [AtomicUsize; MAX_CPUS] =
     [const { AtomicUsize::new(0) }; MAX_CPUS];
 static CURRENT_TICK : AtomicU64 = AtomicU64::new(0);
+static TIMEKEEPER_CPU : AtomicUsize = AtomicUsize::new(NO_CURRENT_TASK);
 // ── scheduler cell 访问 ────────────────────────────────────────────
 #[inline(never)]
 fn scheduler_cell_inner(caller : &'static Location)
@@ -1202,6 +1203,13 @@ pub fn set_cpu_online(cpu_id : CpuId) {
 pub fn set_timekeeper_cpu(cpu_id : CpuId) {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.set_timekeeper_cpu(cpu_id));
+    TIMEKEEPER_CPU.store(cpu_id.raw(), Ordering::Release);
+}
+
+/// 无锁判断指定 CPU 是否为唯一推进全局时间状态的 timekeeper。
+#[inline]
+pub fn is_timekeeper_cpu(cpu_id : CpuId) -> bool {
+    TIMEKEEPER_CPU.load(Ordering::Acquire) == cpu_id.raw()
 }
 
 /// Snapshot of CPUs that completed scheduler bring-up.
