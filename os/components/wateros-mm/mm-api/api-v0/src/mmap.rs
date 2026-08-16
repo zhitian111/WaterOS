@@ -61,10 +61,20 @@ pub enum PageFaultAccess {
     Execute,
 }
 
+/// 懒加载 VMA 的后备类型，仅用于只读诊断，不改变装页语义。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DemandMappingKind {
+    Anonymous,
+    File,
+}
+
 /// 文件页懒加载器。实现者须自行持有 mmap 后仍可读取文件内容的状态。
 pub trait DemandPageLoader {
     /// 复制 loader；用于 fork 后父子地址空间都保留同一文件映射语义。
     fn duplicate_box(&self) -> MmResult<Box<dyn DemandPageLoader>>;
+
+    /// 标识该 loader 是匿名零页还是文件后备；默认实现保持文件语义。
+    fn mapping_kind(&self) -> DemandMappingKind { DemandMappingKind::File }
 
     /// 将文件偏移 `file_offset` 对应的一页加载到已清零的 `dst`。
     fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()>;
@@ -140,6 +150,13 @@ pub trait MmapOps: AddressSpaceOps {
                                                                  addr : VirtAddr,
                                                                  len : usize)
                                                                  -> MmResult<()>;
+
+    /// 解除一段由地址空间外部对象持有的物理页映射。
+    ///
+    /// 该接口用于 SysV SHM 等“物理页由独立注册表管理”的映射。实现只能删除
+    /// PTE 和对应 VMA 元数据，绝不能把叶子 PPN 交给通用帧分配器。调用方必须
+    /// 在确认该范围确实属于外部对象后使用它，并负责外部对象最终的生命周期。
+    fn munmap_external(&mut self, addr : VirtAddr, len : usize) -> MmResult<()>;
 
     /// 将范围内的可写共享文件映射同步到其文件后备。
     fn msync(&mut self, addr : VirtAddr, len : usize) -> MmResult<()>;

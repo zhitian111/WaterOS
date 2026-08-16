@@ -13,6 +13,8 @@ impl SingleRootReadView for FsBridge {
         match resolve_route(abs.as_str())? {
             FsRoute::PseudoProc { rel, .. } => proc_view().exists(rel.as_str())
                                                           .map_err(map_fs_err),
+            FsRoute::PseudoSys { rel, .. } => sys_view().exists(rel.as_str())
+                                                        .map_err(map_fs_err),
             FsRoute::PseudoSecurity { rel, .. } => Ok(securityfs_exists(rel.as_str())),
             FsRoute::Root { abs, .. } => {
                 let exists = root_rw()?.lock()
@@ -42,6 +44,9 @@ impl SingleRootReadView for FsBridge {
             FsRoute::PseudoProc { rel, identity } => map_meta(proc_view().metadata(rel.as_str())
                                                                          .map_err(map_fs_err)?,
                                                               identity),
+            FsRoute::PseudoSys { rel, identity } => map_meta(sys_view().metadata(rel.as_str())
+                                                                       .map_err(map_fs_err)?,
+                                                            identity),
             FsRoute::PseudoSecurity { rel, identity } => {
                 securityfs_metadata(rel.as_str(), identity)?
             }
@@ -85,6 +90,8 @@ impl SingleRootReadView for FsBridge {
         match resolve_route(abs.as_str())? {
             FsRoute::PseudoProc { rel, .. } => proc_view().read(rel.as_str())
                                                           .map_err(map_fs_err),
+            FsRoute::PseudoSys { rel, .. } => sys_view().read(rel.as_str())
+                                                        .map_err(map_fs_err),
             FsRoute::PseudoSecurity { .. } => Err(VfsError::NotFound),
             FsRoute::Root { abs, .. } => match root_rw()?.lock()
                                                          .read(abs.as_str())
@@ -120,6 +127,8 @@ impl SingleRootReadView for FsBridge {
         let entries_result = match resolve_route(abs.as_str())? {
             FsRoute::PseudoProc { rel, .. } => proc_view().read_dir(rel.as_str())
                                                           .map_err(map_fs_err)?,
+            FsRoute::PseudoSys { rel, .. } => sys_view().read_dir(rel.as_str())
+                                                        .map_err(map_fs_err)?,
             FsRoute::PseudoSecurity { rel, .. } => securityfs_read_dir(rel.as_str())?,
             FsRoute::Root { abs, .. } => {
                 match root_rw()?.lock().read_dir(abs.as_str()).map_err(map_fs_err) {
@@ -149,5 +158,4 @@ impl SingleRootReadView for FsBridge {
         // bring-up 单 RW 根卷：启动树打印仍可由 fs 层自检触发。
     }
 }
-
 

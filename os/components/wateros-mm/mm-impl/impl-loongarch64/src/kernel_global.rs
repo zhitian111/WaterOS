@@ -175,6 +175,9 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
     api_v0::user_aspace_lifecycle::register_drop_user_aspace_hook(crate::kernel_mm_impl::drop_user_aspace);
     api_v0::user_aspace_lifecycle::register_aspace_cpu_hooks(crate::user_aspace::mark_active,
                                                               crate::user_aspace::mark_inactive);
+    api_v0::user_mapping::register_snapshot_user_mappings_hook(
+        crate::user_aspace::snapshot_user_mappings,
+    );
 }
 
 /// 将 `[va_start, va_end)` 内每一虚拟页映射到 **恒等物理页**，并设置

@@ -46,6 +46,10 @@ pub fn self_test() {
 impl DemandPageLoader for ZeroAnonLoader {
     fn duplicate_box(&self) -> MmResult<Box<dyn DemandPageLoader>> { Ok(Box::new(ZeroAnonLoader)) }
 
+    fn mapping_kind(&self) -> api_v0::mmap::DemandMappingKind {
+        api_v0::mmap::DemandMappingKind::Anonymous
+    }
+
     fn load_page(&mut self, _file_offset : usize, _dst : &mut [u8]) -> MmResult<()> { Ok(()) }
 }
 

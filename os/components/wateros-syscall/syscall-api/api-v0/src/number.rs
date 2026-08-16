@@ -118,6 +118,7 @@ pub const SCHED_GET_PRIORITY_MIN : usize = 126;
 pub const YIELD : usize = 124;
 pub const GETCPU : usize = 168;
 pub const GET_TIME : usize = 169;
+pub const SETTIMEOFDAY : usize = 164;
 pub const CLOCK_SETTIME : usize = 112;
 pub const CLOCK_GETTIME : usize = 113;
 pub const CLOCK_GETRES : usize = 114;

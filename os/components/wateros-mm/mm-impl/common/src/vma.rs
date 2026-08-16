@@ -74,7 +74,8 @@ impl LazyFileVma {
                   perm : self.perm,
                   file_offset : self.file_offset,
                   file_size : self.file_size,
-                  backing : self.backing.duplicate()? })
+                  backing : self.backing
+                                .duplicate()? })
     }
 
     pub fn contains_page(&self, page : VirtAddr) -> bool {
@@ -114,11 +115,16 @@ impl SharedFileVma {
         Ok(Self { start : self.start,
                   end : self.end,
                   file_offset : self.file_offset,
-                  backing : self.backing.duplicate()? })
+                  backing : self.backing
+                                .duplicate()? })
     }
 
     pub fn overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
         start.0 < self.end.0 && end.0 > self.start.0
+    }
+
+    pub fn contains_page(&self, page : VirtAddr) -> bool {
+        page.0 >= self.start.0 && page.0 < self.end.0
     }
 }
 
@@ -161,13 +167,18 @@ impl LazyVmaSet {
     pub fn iter(&self) -> core::slice::Iter<'_, LazyFileVma> { self.inner.iter() }
 
     pub fn iter_mut(&mut self) -> core::slice::IterMut<'_, LazyFileVma> {
-        self.inner.iter_mut()
+        self.inner
+            .iter_mut()
     }
 
-    pub fn get(&self, index : usize) -> Option<&LazyFileVma> { self.inner.get(index) }
+    pub fn get(&self, index : usize) -> Option<&LazyFileVma> {
+        self.inner
+            .get(index)
+    }
 
     pub fn get_mut(&mut self, index : usize) -> Option<&mut LazyFileVma> {
-        self.inner.get_mut(index)
+        self.inner
+            .get_mut(index)
     }
 
     pub fn len(&self) -> usize { self.inner.len() }
@@ -182,13 +193,14 @@ impl LazyVmaSet {
     }
 
     pub fn partition_point<P>(&self, mut pred : P) -> usize
-        where P : FnMut(&LazyFileVma) -> bool
-    {
-        self.inner.partition_point(|vma| pred(vma))
+        where P : FnMut(&LazyFileVma) -> bool {
+        self.inner
+            .partition_point(|vma| pred(vma))
     }
 
     pub fn insert(&mut self, index : usize, vma : LazyFileVma) {
-        self.inner.insert(index, vma);
+        self.inner
+            .insert(index, vma);
     }
 
     pub fn sort(&mut self) { self.rebuild_order(); }
@@ -198,7 +210,10 @@ impl LazyVmaSet {
         let mut high = self.inner.len();
         while low < high {
             let mid = low + (high - low) / 2;
-            if self.inner[mid].end.0 <= page.0 {
+            if self.inner[mid].end
+                              .0 <=
+               page.0
+            {
                 low = mid + 1;
             } else {
                 high = mid;
@@ -245,23 +260,23 @@ impl LazyVmaSet {
                                         perm : vma.perm,
                                         file_offset : vma.file_offset,
                                         file_size : vma.file_size,
-                                        backing : vma.backing.duplicate()? });
+                                        backing : vma.backing
+                                                     .duplicate()? });
             }
             let mid_start = VirtAddr(core::cmp::max(start.0, vma.start.0));
             let mid_end = VirtAddr(core::cmp::min(end.0, vma.end.0));
             next.push(LazyFileVma { start : mid_start,
                                     end : mid_end,
                                     perm : vma.perm | perm,
-                                    file_offset : vma.file_offset +
-                                                  (mid_start.0 - vma.start.0),
+                                    file_offset : vma.file_offset + (mid_start.0 - vma.start.0),
                                     file_size : vma.file_size,
-                                    backing : vma.backing.duplicate()? });
+                                    backing : vma.backing
+                                                 .duplicate()? });
             if end.0 < vma.end.0 {
                 next.push(LazyFileVma { start : end,
                                         end : vma.end,
                                         perm : vma.perm,
-                                        file_offset : vma.file_offset +
-                                                      (end.0 - vma.start.0),
+                                        file_offset : vma.file_offset + (end.0 - vma.start.0),
                                         file_size : vma.file_size,
                                         backing : vma.backing });
             }
@@ -283,10 +298,12 @@ impl LazyVmaSet {
                                         perm : vma.perm,
                                         file_offset : vma.file_offset,
                                         file_size : vma.file_size,
-                                        backing : vma.backing.duplicate()? });
+                                        backing : vma.backing
+                                                     .duplicate()? });
             }
             if end.0 < vma.end.0 {
-                let delta = end.0.saturating_sub(vma.start.0);
+                let delta = end.0
+                               .saturating_sub(vma.start.0);
                 next.push(LazyFileVma { start : end,
                                         end : vma.end,
                                         perm : vma.perm,
@@ -315,23 +332,26 @@ impl LazyVmaSet {
         }
         let first_vma = &self.inner[first];
         let split_left = (start.0 > first_vma.start.0).then(|| {
-            Ok::<_, MmError>(LazyFileVma { start : first_vma.start,
-                                           end : start,
-                                           perm : first_vma.perm,
-                                           file_offset : first_vma.file_offset,
-                                           file_size : first_vma.file_size,
-                                           backing : first_vma.backing.duplicate()? })
-        }).transpose()?;
+                             Ok::<_, MmError>(LazyFileVma { start : first_vma.start,
+                                                            end : start,
+                                                            perm : first_vma.perm,
+                                                            file_offset : first_vma.file_offset,
+                                                            file_size : first_vma.file_size,
+                                                            backing : first_vma.backing
+                                                                               .duplicate()? })
+                         })
+                         .transpose()?;
         let last_vma = &self.inner[last - 1];
         let split_right = (end.0 < last_vma.end.0).then(|| {
-            Ok::<_, MmError>(LazyFileVma { start : end,
+                                                      Ok::<_, MmError>(LazyFileVma { start : end,
                                            end : last_vma.end,
                                            perm : last_vma.perm,
                                            file_offset : last_vma.file_offset +
                                                          (end.0 - last_vma.start.0),
                                            file_size : last_vma.file_size,
                                            backing : last_vma.backing.duplicate()? })
-        }).transpose()?;
+                                                  })
+                                                  .transpose()?;
 
         if split_left.is_some() {
             let first_vma = &mut self.inner[first];
@@ -345,24 +365,26 @@ impl LazyVmaSet {
             vma.perm = perm;
         }
         if let Some(right) = split_right {
-            self.inner.insert(last, right);
+            self.inner
+                .insert(last, right);
         }
         if let Some(left) = split_left {
-            self.inner.insert(first, left);
+            self.inner
+                .insert(first, left);
         }
         self.rebuild_order();
         Ok(())
     }
 
-    fn lookup_or_overlap_end(&self,
-                             start : VirtAddr,
-                             end : VirtAddr)
-                             -> Option<VirtAddr> {
+    fn lookup_or_overlap_end(&self, start : VirtAddr, end : VirtAddr) -> Option<VirtAddr> {
         let mut low = 0usize;
         let mut high = self.inner.len();
         while low < high {
             let mid = low + (high - low) / 2;
-            if self.inner[mid].end.0 <= start.0 {
+            if self.inner[mid].end
+                              .0 <=
+               start.0
+            {
                 low = mid + 1;
             } else {
                 high = mid;
@@ -380,10 +402,13 @@ impl LazyVmaSet {
     }
 
     fn rebuild_order(&mut self) {
-        self.inner.sort_by_key(|vma| vma.start);
+        self.inner
+            .sort_by_key(|vma| vma.start);
         #[cfg(debug_assertions)]
         {
-            for pair in self.inner.windows(2) {
+            for pair in self.inner
+                            .windows(2)
+            {
                 assert!(pair[0].end.0 <= pair[1].start.0,
                         "lazy VMA registry must remain ordered and non-overlapping");
             }

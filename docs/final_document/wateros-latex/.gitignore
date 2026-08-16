@@ -1,0 +1,24 @@
+# 编译产物（保留空目录占位）
+build/*
+!build/.gitkeep
+
+# 若在工程根目录误编译，忽略散落文件
+*.aux
+*.log
+*.pdf
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.xdv
+*.out
+*.toc
+*.thm
+missfont.log
+_minted/
+_minted-*/
+*.config.minted
+*.data.minted
+*.highlight.minted
+*.style.minted
+*.index.minted
+xelatex*.fls

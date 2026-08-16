@@ -270,6 +270,16 @@ pub fn set_process_caps(pid : ProcessId, caps : ProcessCaps) -> ProcessResult<()
     with_process_registry(|registry| registry.set_process_caps(pid, caps))
 }
 
+/// 查询进程 KEEPCAPS 标志（PR_GET_KEEPCAPS）。
+pub fn process_keep_caps(pid : ProcessId) -> Option<bool> {
+    with_process_registry(|registry| registry.process_keep_caps(pid))
+}
+
+/// 设置进程 KEEPCAPS 标志（PR_SET_KEEPCAPS）。
+pub fn set_process_keep_caps(pid : ProcessId, enabled : bool) -> ProcessResult<()> {
+    with_process_registry(|registry| registry.set_process_keep_caps(pid, enabled))
+}
+
 /// 列出 registry 中全部进程 pid。
 pub fn all_process_pids() -> Vec<ProcessId> {
     with_process_registry(|registry| registry.all_process_pids())

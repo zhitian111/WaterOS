@@ -630,23 +630,25 @@ impl SignalRegistry {
                                 .difference(thread.mask);
         let sig = deliverable.first_signal()?;
         let action = process.action(sig);
-        if self.threads
-               .get(&task_id)
-               .is_some_and(|thread| {
-                   thread.pending
-                         .contains(sig)
-               })
+        let scope = if self.threads
+                           .get(&task_id)
+                           .is_some_and(|thread| {
+                               thread.pending
+                                     .contains(sig)
+                           })
         {
             self.threads
                 .get_mut(&task_id)?
                 .pending
                 .remove(sig);
+            PendingSignalScope::Thread
         } else {
             self.processes
                 .get_mut(&thread.pid)?
                 .pending
                 .remove(sig);
-        }
+            PendingSignalScope::Process
+        };
         let delivery_mask = thread.mask;
         let previous_mask = thread.temporary_restore_mask
                                   .unwrap_or(delivery_mask);
@@ -695,6 +697,7 @@ impl SignalRegistry {
                 .actions[sig - 1] = SignalAction::default_action();
         }
         Some(SignalEffect::Handler(PendingSignal { signal : sig,
+                                                   scope,
                                                    action,
                                                    previous_mask }))
     }
@@ -775,6 +778,37 @@ mod tests {
                            .bits()
                            .count_ones(),
                    1);
+    }
+
+    #[test]
+    fn handler_effect_preserves_thread_or_process_pending_scope() {
+        let mut registry = registry_with_process();
+        let action = SignalAction { handler : 0x1000,
+                                    ..SignalAction::default_action() };
+        registry.set_action(100, SIGILL, action)
+                .unwrap();
+        registry.set_action(100, SIGSEGV, action)
+                .unwrap();
+
+        registry.send_thread(100, SIGILL)
+                .unwrap();
+        let thread_effect = registry.take_deliverable(100);
+        assert!(matches!(thread_effect,
+                         Some(SignalEffect::Handler(PendingSignal {
+                             signal: SIGILL,
+                             scope: PendingSignalScope::Thread,
+                             ..
+                         }))));
+
+        registry.send_process(10, SIGSEGV)
+                .unwrap();
+        let process_effect = registry.take_deliverable(100);
+        assert!(matches!(process_effect,
+                         Some(SignalEffect::Handler(PendingSignal {
+                             signal: SIGSEGV,
+                             scope: PendingSignalScope::Process,
+                             ..
+                         }))));
     }
 
     #[test]

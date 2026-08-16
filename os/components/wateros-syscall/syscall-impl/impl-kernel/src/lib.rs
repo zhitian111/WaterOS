@@ -39,7 +39,32 @@ pub fn self_test() {
 #[inline]
 pub fn dispatch_syscall_from_trap(syscall_nr : usize, syscall_args : SyscallArgs) -> isize {
     sys::record_syscall();
-    syscall_nr_dispatch::dispatch_syscall_by_nr(syscall_nr, syscall_args)
+    let result = syscall_nr_dispatch::dispatch_syscall_by_nr(syscall_nr, syscall_args);
+    if result >= 0 {
+        account_process_io(syscall_nr, result as u64);
+    }
+    result
+}
+
+/// 在 syscall 已完成且不再持有 VFS/设备锁后，统一维护 `/proc/<pid>/io`。
+fn account_process_io(syscall_nr : usize, bytes : u64) {
+    let direction = match syscall_nr {
+        api_v0::READ | api_v0::READV | api_v0::PREAD64 |
+        api_v0::PREADV | api_v0::PREADV2 => Some(true),
+        api_v0::WRITE | api_v0::WRITEV | api_v0::PWRITE64 |
+        api_v0::PWRITEV | api_v0::PWRITEV2 => Some(false),
+        // 这些内核内搬运接口同时产生一份读流量和一份写流量。
+        api_v0::SENDFILE | api_v0::SPLICE | api_v0::COPY_FILE_RANGE => {
+            let Some(task_id) = task::current_task_id() else { return; };
+            vfs::cwd::account_task_io(task_id, true, bytes);
+            vfs::cwd::account_task_io(task_id, false, bytes);
+            return;
+        }
+        _ => None,
+    };
+    let Some(read) = direction else { return; };
+    let Some(task_id) = task::current_task_id() else { return; };
+    vfs::cwd::account_task_io(task_id, read, bytes);
 }
 
 /// 当前 syscall 号是否在 EINTR 后可由 trap 层自动重启。

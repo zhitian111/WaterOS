@@ -349,6 +349,9 @@ pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFAULT);
     }
     let transfer_len = write_transfer_len(len);
+    if let Err(error) = check_fsize_rlimit(fd, transfer_len) {
+        return UserRet::from_error(error);
+    }
     let mut kbuf = match try_kbuf(transfer_len, SYSCALL_IO_MAX) {
         Ok(buf) => buf,
         Err(err) => return UserRet::from_error(err),
@@ -395,6 +398,33 @@ pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
 fn write_transfer_len(requested : usize) -> usize {
     requested.min(MAX_IO)
              .min(SYSCALL_IO_MAX)
+}
+
+/// Linux `RLIMIT_FSIZE`：写后文件结束偏移超过软限制时，若 `SIGXFSZ`
+/// 被忽略/捕获则返回 `EFBIG`（LTP llseek01）。默认限制为无穷大时该
+/// 检查零开销跳过。
+fn check_fsize_rlimit(fd : usize, write_len : usize) -> Result<(), ErrNo> {
+    let Some(pid) = task::current_process_task_snapshot().map(|snapshot| snapshot.pid) else {
+        return Ok(());
+    };
+    let Some(limit) = task::process_resource_limit(pid, super::truncate::RLIMIT_FSIZE) else {
+        return Ok(());
+    };
+    if limit.cur == u64::MAX {
+        return Ok(());
+    }
+    // 当前文件偏移（`SEEK_CUR` + 0 不改动位置）；pipe/socket 等不支持
+    // seek，视为无文件大小限制。
+    let offset = match vfs::fd::with_current_io_detached(fd, |handle| {
+              handle.seek(0, VfsSeekWhence::Cur)
+          }) {
+        Ok(offset) => offset,
+        Err(_) => return Ok(()),
+    };
+    if offset.saturating_add(write_len as u64) > limit.cur {
+        return Err(ErrNo::EFBIG);
+    }
+    Ok(())
 }
 
 // 本方法代码由AI完成

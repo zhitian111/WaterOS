@@ -213,6 +213,8 @@ pub enum PosixTimerClock {
 pub struct PendingSignal {
     /// 信号编号。
     pub signal : usize,
+    /// 信号来自线程 pending 还是进程 pending。
+    pub scope : PendingSignalScope,
     /// 交付时的 disposition 快照。
     pub action : SignalAction,
     /// 进入处理函数前应恢复的线程掩码。

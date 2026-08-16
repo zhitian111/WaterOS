@@ -8,7 +8,9 @@ use spin::Mutex;
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
-use ipc::signal::{SignalDelivery, SignalDispatch, SignalEffect, SignalError, SignalSet};
+use ipc::signal::{
+    PendingSignalScope, SignalDelivery, SignalDispatch, SignalEffect, SignalError, SignalSet,
+};
 use platform::arch::trap::ActiveTrapFrame;
 use task::{ProcessId, ThreadId};
 
@@ -39,56 +41,67 @@ pub(super) struct PendingSignalSource {
     fault_addr : usize,
 }
 
+/// pending 位图的所有者。线程定向信号必须使用 task ID，不能与同进程的
+/// 其它线程共用 PID 键。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum PendingSignalOwner {
+    Thread(usize),
+    Process(usize),
+}
+
 /// 补充 pending 位图不保存的 siginfo 来源：用户信号的 pid/uid，以及同步 CPU
 /// 异常的正 `si_code`/`si_addr`。
-static PENDING_SIGNAL_SOURCES : Mutex<BTreeMap<(usize, usize), PendingSignalSource>> =
+static PENDING_SIGNAL_SOURCES : Mutex<BTreeMap<(PendingSignalOwner, usize), PendingSignalSource>> =
     Mutex::new(BTreeMap::new());
 
-/// 同步异常是线程定向的；单独按 task 保存，避免同进程并发 fault 覆盖 `si_addr`。
-static PENDING_FAULT_SOURCES : Mutex<BTreeMap<(usize, usize), PendingSignalSource>> =
-    Mutex::new(BTreeMap::new());
-
-fn record_pending_signal_source(process_pid : usize, signal : usize, source : PendingSignalSource) {
+fn record_pending_signal_source(owner : PendingSignalOwner,
+                                signal : usize,
+                                source : PendingSignalSource) {
     if signal != 0 {
         PENDING_SIGNAL_SOURCES.lock()
-                              .insert((process_pid, signal), source);
+                              .insert((owner, signal), source);
     }
 }
 
-pub(super) fn take_pending_signal_source(process_pid : usize,
+fn pending_signal_owner(task_id : usize,
+                        process_pid : usize,
+                        scope : PendingSignalScope)
+                        -> PendingSignalOwner {
+    match scope {
+        PendingSignalScope::Thread => PendingSignalOwner::Thread(task_id),
+        PendingSignalScope::Process => PendingSignalOwner::Process(process_pid),
+    }
+}
+
+pub(super) fn take_pending_signal_source(task_id : usize,
+                                         process_pid : usize,
+                                         scope : PendingSignalScope,
                                          signal : usize)
                                          -> PendingSignalSource {
     PENDING_SIGNAL_SOURCES.lock()
-                          .remove(&(process_pid, signal))
+                          .remove(&(pending_signal_owner(task_id, process_pid, scope), signal))
                           .unwrap_or_default()
 }
 
-pub(super) fn peek_pending_signal_source(process_pid : usize,
+pub(super) fn peek_pending_signal_source(task_id : usize,
+                                         process_pid : usize,
+                                         scope : PendingSignalScope,
                                          signal : usize)
                                          -> PendingSignalSource {
     PENDING_SIGNAL_SOURCES.lock()
-                          .get(&(process_pid, signal))
+                          .get(&(pending_signal_owner(task_id, process_pid, scope), signal))
                           .copied()
                           .unwrap_or_default()
 }
 
-fn take_delivery_signal_source(task_id : usize,
-                               process_pid : usize,
-                               signal : usize)
-                               -> PendingSignalSource {
-    PENDING_FAULT_SOURCES.lock()
-                         .remove(&(task_id, signal))
-                         .unwrap_or_else(|| take_pending_signal_source(process_pid, signal))
-}
-
 fn drop_thread_signal_sources(task_id : usize) {
-    PENDING_FAULT_SOURCES.lock()
-                         .retain(|(source_task_id, _), _| *source_task_id != task_id);
+    PENDING_SIGNAL_SOURCES.lock()
+                          .retain(|(owner, _), _| *owner != PendingSignalOwner::Thread(task_id));
 }
 
 fn drop_process_signal_sources(process_pid : usize) {
     PENDING_SIGNAL_SOURCES.lock()
-                          .retain(|(source_pid, _), _| *source_pid != process_pid);
+                          .retain(|(owner, _), _| *owner != PendingSignalOwner::Process(process_pid));
 }
 
 #[cfg(target_arch = "riscv64")]
@@ -498,8 +511,8 @@ pub(crate) fn raise_current_fault_signal(signal : usize,
             SignalError::NoSuchTask | SignalError::NoSuchProcess => ErrNo::ESRCH,
             _ => ErrNo::EINVAL,
         })?;
-    PENDING_FAULT_SOURCES.lock()
-                         .insert((snapshot.task_id, signal),
+    record_pending_signal_source(PendingSignalOwner::Thread(snapshot.task_id),
+                                 signal,
                                  PendingSignalSource { code,
                                                        fault_addr,
                                                        ..PendingSignalSource::default() });
@@ -689,8 +702,10 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
                             .map(|sp| sp & !0xF)
                             .ok_or(ErrNo::EFAULT)?;
     let frame_on_alternate = already_on_alternate || switch_to_alternate;
-    let source =
-        take_delivery_signal_source(snapshot.task_id, snapshot.pid.raw(), pending.signal);
+    let source = take_pending_signal_source(snapshot.task_id,
+                                            snapshot.pid.raw(),
+                                            pending.scope,
+                                            pending.signal);
     let user_frame = build_user_signal_frame(user_siginfo(pending.signal, source),
                                                    signal_stack_for_user(alternate_stack,
                                                                          already_on_alternate),
@@ -960,9 +975,9 @@ pub(crate) fn sys_rt_sigtimedwait(args : SyscallArgs) -> UserRet {
         Some(now.saturating_add(duration))
     };
     let wait_queue = task::wait_queue::WaitQueue::new_named("sigtimedwait");
-    let sig = loop {
-        if let Some(sig) = ipc::signal::take_pending(task_id, wait_set) {
-            break sig;
+    let pending = loop {
+        if let Some(pending) = ipc::signal::take_pending_record(task_id, wait_set) {
+            break pending;
         }
         let ticks = match deadline {
             Some(deadline) => {
@@ -991,16 +1006,17 @@ pub(crate) fn sys_rt_sigtimedwait(args : SyscallArgs) -> UserRet {
         };
         let _ = ipc::signal::end_signal_wait(task_id);
         if wait_result == task::TaskWaitResult::Interrupted {
-            if let Some(sig) = ipc::signal::take_pending(task_id, wait_set) {
-                break sig;
+            if let Some(pending) = ipc::signal::take_pending_record(task_id, wait_set) {
+                break pending;
             }
             let _ = wait_queue.try_release_empty();
             return UserRet::from_error(ErrNo::EINTR);
         }
     };
     let _ = wait_queue.try_release_empty();
+    let sig = pending.signal;
+    let source = take_pending_signal_source(task_id, process_pid, pending.scope, sig);
     if info != 0 {
-        let source = take_pending_signal_source(process_pid, sig);
         let siginfo = user_siginfo(sig, source);
         if let Err(e) = copy_to_user_struct(info, &siginfo) {
             return UserRet::from_error(e);
@@ -1077,7 +1093,7 @@ pub(crate) fn sys_tkill(args : SyscallArgs) -> UserRet {
     if let Some(caller) = task::current_process_snapshot() {
         let uid = cred::current_credentials().effective_uid
                                              .0;
-        record_pending_signal_source(snapshot.pid.raw(),
+        record_pending_signal_source(PendingSignalOwner::Thread(task_id),
                                      signal,
                                      PendingSignalSource { pid : caller.pid.raw(),
                                                            uid,
@@ -1119,7 +1135,7 @@ pub(crate) fn sys_tgkill(args : SyscallArgs) -> UserRet {
     if let Some(caller) = task::current_process_snapshot() {
         let uid = cred::current_credentials().effective_uid
                                              .0;
-        record_pending_signal_source(snapshot.pid.raw(),
+        record_pending_signal_source(PendingSignalOwner::Thread(task_id),
                                      signal,
                                      PendingSignalSource { pid : caller.pid.raw(),
                                                            uid,
@@ -1214,7 +1230,7 @@ pub(crate) fn send_signal_to_process(process : ProcessId, sig : usize) -> Result
     if let Some(caller) = task::current_process_snapshot() {
         let uid = cred::current_credentials().effective_uid
                                              .0;
-        record_pending_signal_source(process.raw(),
+        record_pending_signal_source(PendingSignalOwner::Process(process.raw()),
                                      sig,
                                      PendingSignalSource { pid : caller.pid.raw(),
                                                            uid,
@@ -1387,5 +1403,67 @@ mod tests {
         assert_eq!(info.code, 0);
         assert_eq!(&info.payload[0..4], &42u32.to_ne_bytes());
         assert_eq!(&info.payload[4..8], &7u32.to_ne_bytes());
+    }
+
+    #[test]
+    fn same_process_thread_fault_sources_do_not_overwrite_each_other() {
+        let process_pid = usize::MAX - 10;
+        let first_task = usize::MAX - 11;
+        let second_task = usize::MAX - 12;
+        let first_address = 0x1111_2222usize;
+        let second_address = 0x3333_4444usize;
+
+        record_pending_signal_source(PendingSignalOwner::Thread(first_task),
+                                     ipc::signal::SIGSEGV,
+                                     PendingSignalSource { code : 1,
+                                                           fault_addr : first_address,
+                                                           ..PendingSignalSource::default() });
+        record_pending_signal_source(PendingSignalOwner::Thread(second_task),
+                                     ipc::signal::SIGSEGV,
+                                     PendingSignalSource { code : 1,
+                                                           fault_addr : second_address,
+                                                           ..PendingSignalSource::default() });
+
+        let first = take_pending_signal_source(first_task,
+                                               process_pid,
+                                               PendingSignalScope::Thread,
+                                               ipc::signal::SIGSEGV);
+        let second = take_pending_signal_source(second_task,
+                                                process_pid,
+                                                PendingSignalScope::Thread,
+                                                ipc::signal::SIGSEGV);
+        assert_eq!(first.code, 1);
+        assert_eq!(first.fault_addr, first_address);
+        assert_eq!(second.code, 1);
+        assert_eq!(second.fault_addr, second_address);
+    }
+
+    #[test]
+    fn thread_and_process_signal_sources_have_distinct_keys() {
+        let owner_id = usize::MAX - 20;
+        let signal = ipc::signal::SIGILL;
+        record_pending_signal_source(PendingSignalOwner::Thread(owner_id),
+                                     signal,
+                                     PendingSignalSource { code : 1,
+                                                           fault_addr : 0x5555,
+                                                           ..PendingSignalSource::default() });
+        record_pending_signal_source(PendingSignalOwner::Process(owner_id),
+                                     signal,
+                                     PendingSignalSource { pid : 99,
+                                                           uid : 7,
+                                                           ..PendingSignalSource::default() });
+
+        let thread = take_pending_signal_source(owner_id,
+                                                owner_id,
+                                                PendingSignalScope::Thread,
+                                                signal);
+        let process = take_pending_signal_source(owner_id,
+                                                 owner_id,
+                                                 PendingSignalScope::Process,
+                                                 signal);
+        assert_eq!(thread.code, 1);
+        assert_eq!(thread.fault_addr, 0x5555);
+        assert_eq!(process.pid, 99);
+        assert_eq!(process.uid, 7);
     }
 }

@@ -1,5 +1,8 @@
 //! 对外可见的 trap 与任务快照类型
-use crate::{CpuId, CpuMask, SchedPolicy, TaskId, TaskKind, TaskRuntimeStats, TaskState, VRunTime};
+use crate::{
+    CpuId, CpuMask, SchedPolicy, TaskId, TaskKind, TaskRuntimeStats, TaskState, UserImageInfo,
+    UserStack, VRunTime,
+};
 
 /// 对外暴露的 trap 语义快照。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -107,6 +110,10 @@ pub struct TaskSnapshot {
     pub affinity : CpuMask,
     /// 用户地址空间指针（内核任务为 0）。
     pub user_aspace_ptr : usize,
+    /// ELF 装载器记录的主程序映像区间；内核任务为 `None`。
+    pub user_image : Option<UserImageInfo>,
+    /// ELF 装载器预留的用户栈区间；内核任务为 `None`。
+    pub user_stack : Option<UserStack>,
     /// 用户地址空间 token（satp）；0 = 内核地址空间。
     pub user_address_space_token : usize,
     /// trap 返回时应恢复的地址空间 token。

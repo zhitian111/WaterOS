@@ -31,13 +31,13 @@ pub use api_v0::kernel_bringup::{
         { false }
     }
 
-    /// 在已装载 ELF 的用户栈上写入 argc/argv/envp/auxv，返回初始 `sp`。
+    /// 在已装载 ELF 的用户栈上写入 argc/argv/envp/auxv，并返回初始栈与 auxv 快照。
     #[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
     pub fn prepare_elf_user_stack(
         elf: &LoadedElf,
         argv: &[&str],
         envp: &[&str],
-    ) -> Result<usize, PrepareUserStackError> {
+    ) -> Result<api_v0::elf_user_stack::PreparedUserStack, PrepareUserStackError> {
         let ops = crate::ActiveUserMemoryOps::new(elf.user_aspace_ptr);
         api_v0::elf_user_stack::prepare_elf_user_stack(&ops, elf, argv, envp)
     }

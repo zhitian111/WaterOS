@@ -13,7 +13,7 @@ use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use cred::api::{Gid, Uid, SUPPLEMENTARY_GROUP_COUNT};
 
-use groups::{plan_getgroups, valid_setgroups_size, GetGroupsPlan};
+use groups::{plan_getgroups, GetGroupsPlan};
 use setid::{plan_set_id, plan_set_re_id, plan_set_res_id, IdTriplet};
 use task::ProcessCaps;
 
@@ -59,9 +59,33 @@ fn current_gid_triplet() -> (IdTriplet, bool) {
 }
 
 fn apply_uid_triplet(ids : IdTriplet) {
+    let old_euid = cred::current_credentials().effective_uid
+                                              .0;
     cred::set_resuid(Some(Uid(ids.real)),
                      Some(Uid(ids.effective)),
                      Some(Uid(ids.saved)));
+    let new_euid = ids.effective;
+    if old_euid == new_euid {
+        return;
+    }
+    // Linux setxuid 的 capability 转换规则：
+    // - euid 0 -> 非0：清 effective；未设 KEEPCAPS 时连 permitted 一起清。
+    // - euid 非0 -> 0：effective 恢复为 permitted。
+    let Some(pid) = task::current_process_task_snapshot().map(|snapshot| snapshot.pid) else {
+        return;
+    };
+    let Some(mut caps) = task::process_caps(pid) else {
+        return;
+    };
+    if old_euid == 0 {
+        caps.effective = 0;
+        if !task::process_keep_caps(pid).unwrap_or(false) {
+            caps.permitted = 0;
+        }
+    } else if new_euid == 0 {
+        caps.effective = caps.permitted;
+    }
+    let _ = task::set_process_caps(pid, caps);
 }
 
 fn apply_gid_triplet(ids : IdTriplet) {
@@ -121,10 +145,15 @@ pub(crate) fn sys_getgroups(args : SyscallArgs) -> UserRet {
     }
     UserRet::from_success(n)
 }
+/// Linux NGROUPS_MAX（setgroups 的 size 上限）。
+const NGROUPS_MAX : usize = 65536;
+
 pub(crate) fn sys_setgroups(args : SyscallArgs) -> UserRet {
     let size = args.arg(0);
     let list_ptr = args.arg(1);
-    if !valid_setgroups_size(size, SUPPLEMENTARY_GROUP_COUNT) {
+    // Linux：size > NGROUPS_MAX → EINVAL；size <= NGROUPS_MAX 时先拷贝，
+    // 指针无效返回 EFAULT（LTP setgroups03 传 65536+无效指针期望 EFAULT）。
+    if size > NGROUPS_MAX {
         return UserRet::from_error(ErrNo::EINVAL);
     }
     // root 或 effective 集合持有 CAP_SETGID（setpriv --clear-groups 在
@@ -136,18 +165,25 @@ pub(crate) fn sys_setgroups(args : SyscallArgs) -> UserRet {
     if count > 0 && list_ptr == 0 {
         return UserRet::from_error(ErrNo::EFAULT);
     }
-    let mut raw = alloc::vec![0u32; count];
-    if count > 0 {
+    // 先探测用户指针可读（无效地址 → EFAULT）；只拷 min(count, 上限+1)
+    // 个 u32，避免按 count 分配（count 可达 65536）。
+    let probe_len = core::cmp::min(count, SUPPLEMENTARY_GROUP_COUNT + 1);
+    let mut raw = alloc::vec![0u32; probe_len];
+    if probe_len > 0 {
         let raw_bytes = unsafe {
             core::slice::from_raw_parts_mut(raw.as_mut_ptr() as *mut u8,
-                                            count * core::mem::size_of::<u32>())
+                                            probe_len * core::mem::size_of::<u32>())
         };
         if let Err(e) = copy_from_user(raw_bytes, list_ptr) {
             return UserRet::from_error(e);
         }
     }
-    let groups : alloc::vec::Vec<Gid> = raw.iter()
-                                           .map(|v| Gid(*v))
+    // 超出我们存储上限（SUPPLEMENTARY_GROUP_COUNT）→ EINVAL（能力限制）。
+    if count > SUPPLEMENTARY_GROUP_COUNT {
+        return UserRet::from_error(ErrNo::EINVAL);
+    }
+    let groups : alloc::vec::Vec<Gid> = raw.into_iter()
+                                           .map(Gid)
                                            .collect();
     cred::set_supplementary_groups(groups.as_slice());
     UserRet::from_success(0)
@@ -169,12 +205,14 @@ pub(crate) fn sys_setgid(args : SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 pub(crate) fn sys_setreuid(args : SyscallArgs) -> UserRet {
-    let ruid = if args.arg(0) == !0usize {
+    // uid_t/gid_t 是 32 位，`-1` = 0xFFFFFFFF，按 ABI 零扩展进 64 位寄存器
+    // 后高位为 0，不能拿 `!0usize`（全 1）判断“不变”哨兵。
+    let ruid = if (args.arg(0) as u32) == u32::MAX {
         None
     } else {
         Some(Uid(args.arg(0) as u32))
     };
-    let euid = if args.arg(1) == !0usize {
+    let euid = if (args.arg(1) as u32) == u32::MAX {
         None
     } else {
         Some(Uid(args.arg(1) as u32))
@@ -191,12 +229,12 @@ pub(crate) fn sys_setreuid(args : SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 pub(crate) fn sys_setregid(args : SyscallArgs) -> UserRet {
-    let rgid = if args.arg(0) == !0usize {
+    let rgid = if (args.arg(0) as u32) == u32::MAX {
         None
     } else {
         Some(Gid(args.arg(0) as u32))
     };
-    let egid = if args.arg(1) == !0usize {
+    let egid = if (args.arg(1) as u32) == u32::MAX {
         None
     } else {
         Some(Gid(args.arg(1) as u32))
@@ -213,17 +251,17 @@ pub(crate) fn sys_setregid(args : SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 pub(crate) fn sys_setresuid(args : SyscallArgs) -> UserRet {
-    let ruid = if args.arg(0) == !0usize {
+    let ruid = if (args.arg(0) as u32) == u32::MAX {
         None
     } else {
         Some(Uid(args.arg(0) as u32))
     };
-    let euid = if args.arg(1) == !0usize {
+    let euid = if (args.arg(1) as u32) == u32::MAX {
         None
     } else {
         Some(Uid(args.arg(1) as u32))
     };
-    let suid = if args.arg(2) == !0usize {
+    let suid = if (args.arg(2) as u32) == u32::MAX {
         None
     } else {
         Some(Uid(args.arg(2) as u32))
@@ -241,17 +279,17 @@ pub(crate) fn sys_setresuid(args : SyscallArgs) -> UserRet {
     UserRet::from_success(0)
 }
 pub(crate) fn sys_setresgid(args : SyscallArgs) -> UserRet {
-    let rgid = if args.arg(0) == !0usize {
+    let rgid = if (args.arg(0) as u32) == u32::MAX {
         None
     } else {
         Some(Gid(args.arg(0) as u32))
     };
-    let egid = if args.arg(1) == !0usize {
+    let egid = if (args.arg(1) as u32) == u32::MAX {
         None
     } else {
         Some(Gid(args.arg(1) as u32))
     };
-    let sgid = if args.arg(2) == !0usize {
+    let sgid = if (args.arg(2) as u32) == u32::MAX {
         None
     } else {
         Some(Gid(args.arg(2) as u32))

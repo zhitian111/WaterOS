@@ -27,7 +27,11 @@ pub(crate) fn linux_mmap_prot_to_perm(prot: i32) -> mm::api::perm::PagePerm {
         p |= PagePerm::R;
     }
     if prot & 2 != 0 {
-        p |= PagePerm::W;
+        // Sv39 将 W=1、R=0 定义为保留的非法 PTE 组合。Linux 也允许
+        // PROT_WRITE 在这类硬件上隐含读取能力，因此在公共 syscall
+        // 边界统一规范化为 R|W；否则第一次写入 write-only mmap 就会
+        // 被硬件误报为 StorePageFault。
+        p |= PagePerm::R | PagePerm::W;
     }
     if prot & 4 != 0 {
         p |= PagePerm::X;
@@ -42,6 +46,7 @@ pub(crate) fn linux_mmap_flags_to_map_flags(flags: u32) -> mm::api::flags::MapFl
     const MAP_PRIVATE: u32 = 0x02;
     const MAP_FIXED: u32 = 0x10;
     const MAP_ANONYMOUS: u32 = 0x20;
+    const MAP_FIXED_NOREPLACE: u32 = 0x0010_0000;
     let mut mf = MapFlags::empty();
     if flags & MAP_SHARED != 0 {
         mf |= MapFlags::SHARED;
@@ -54,6 +59,9 @@ pub(crate) fn linux_mmap_flags_to_map_flags(flags: u32) -> mm::api::flags::MapFl
     }
     if flags & MAP_FIXED != 0 {
         mf |= MapFlags::FIXED;
+    }
+    if flags & MAP_FIXED_NOREPLACE != 0 {
+        mf |= MapFlags::FIXED_NOREPLACE;
     }
     mf
 }

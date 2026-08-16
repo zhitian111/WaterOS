@@ -120,12 +120,21 @@ fn usize_pair_to_bytes(pair : [usize; 2]) -> [u8; 16] {
     buf
 }
 
+/// 初始用户栈及内核保留的 auxv 快照。
+///
+/// `/proc/<pid>/auxv` 必须返回 exec 时的真实向量，而不能在读取时根据已经
+/// 变化的进程状态重新拼装，因此构造用户栈时同步保留一份原始字节。
+pub struct PreparedUserStack {
+    pub sp : usize,
+    pub auxv : Vec<u8>,
+}
+
 /// 在 `elf` 的用户栈上构造 argc/argv/envp/auxv，返回首次进入用户态时的 `sp`。
 pub fn prepare_elf_user_stack<Ops : UserMemoryOps>(ops : &Ops,
                                                    elf : &LoadedElf,
                                                    argv : &[&str],
                                                    envp : &[&str])
-                                                   -> Result<usize, PrepareUserStackError> {
+                                                   -> Result<PreparedUserStack, PrepareUserStackError> {
     if elf.user_aspace_ptr == 0 {
         return Err(PrepareUserStackError::NoUserAspace);
     }
@@ -155,6 +164,10 @@ pub fn prepare_elf_user_stack<Ops : UserMemoryOps>(ops : &Ops,
     push_to_user_stack(ops, &mut sp, &random)?;
     let random_addr = sp;
     let auxv = build_auxv(elf, random_addr);
+    let mut auxv_bytes = Vec::with_capacity(auxv.len() * core::mem::size_of::<usize>());
+    for word in &auxv {
+        auxv_bytes.extend_from_slice(&word.to_le_bytes());
+    }
     sp &= !15;
 
     let word_count = 1 + argv_addrs.len() + 1 + envp_addrs.len() + 1 + auxv.len();
@@ -188,7 +201,7 @@ pub fn prepare_elf_user_stack<Ops : UserMemoryOps>(ops : &Ops,
 
     push_user_word(ops, &mut sp, argv.len())?;
 
-    Ok(sp)
+    Ok(PreparedUserStack { sp, auxv : auxv_bytes })
 }
 
 #[cfg(test)]

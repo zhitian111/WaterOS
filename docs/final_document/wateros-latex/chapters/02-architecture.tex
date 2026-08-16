@@ -1,0 +1,190 @@
+\chapter{总体架构设计}
+
+\wateros{}采用组件化的单体内核结构。内核服务仍运行在同一地址空间中，但代码按照
+职责划分为若干\code{wateros-*} crate，并在组件内部进一步区分公共接口、通用实现和
+平台实现。总体架构关注的是组件边界及依赖关系；CPU启动、调度、页表维护等具体机制
+放在第3章对应模块中说明。
+
+\section{组件分层}
+
+从用户程序发起的系统调用向下经过ABI转换和内核服务，最终到达平台或设备实现。
+\code{wateros-base}、\code{wateros-utils}和\code{wateros-klog}等基础组件被多层复用，
+不单独承担业务流程。图\ref{fig:architecture}给出主要组件之间的分层关系。
+
+\begin{figure}[htbp]
+  \centering
+  \resizebox{0.94\textwidth}{!}{%
+  \begin{tikzpicture}[
+    node distance=5mm,
+    box/.style={draw=WaterBlue,rounded corners,fill=SoftBlue,align=center,text width=12cm,minimum height=9mm,font=\small},
+    arr/.style={-{Latex[length=2mm]},thick,draw=black!65}
+  ]
+    \node[box] (user) {用户程序与运行库};
+    \node[box,below=of user] (abi) {系统调用与ABI：\code{wateros-syscall}、\code{wateros-abi}};
+    \node[box,below=of abi] (service) {内核服务：\code{wateros-task}、\code{wateros-ipc}、\code{wateros-mm}、\code{wateros-vfs}、\code{wateros-fs}、\code{wateros-network}};
+    \node[box,below=of service] (support) {平台与设备：\code{wateros-platform}、\code{wateros-driver}、\code{wateros-runtime}};
+    \node[box,below=of support] (arch) {RISC-V64 / LoongArch64架构实现与QEMU virt平台};
+    \draw[arr] (user) -- (abi);
+    \draw[arr] (abi) -- (service);
+    \draw[arr] (service) -- (support);
+    \draw[arr] (support) -- (arch);
+  \end{tikzpicture}
+  }
+  \caption{WaterOS主要组件分层}
+  \label{fig:architecture}
+\end{figure}
+
+这种分层不表示调用只能逐层单向传递。例如，设备中断会由平台层进入任务或网络模块，
+文件映射会同时使用VFS与内存管理接口。分层的作用是确定状态归属：进程状态由任务组件
+维护，VMA和页表由内存组件维护，打开文件及挂载关系由VFS维护，架构组件不复制这些
+上层状态。
+
+\section{组件目录与职责}
+
+\begin{longtable}{L{3.7cm}L{9.6cm}}
+  \caption{主要组件及职责}\label{tab:component-responsibility}\\
+  \toprule
+  组件 & 主要职责 \\
+  \midrule
+  \endfirsthead
+  \toprule
+  组件 & 主要职责 \\
+  \midrule
+  \endhead
+  \code{wateros-platform} & 封装启动参数、CPU、时钟、中断、IPI、页表切换和复位等平台能力，并提供RISC-V64与LoongArch64实现。 \\
+  \code{wateros-driver} & 定义块、字符、网络、输入和显示设备接口，完成VirtIO-MMIO或VirtIO-PCI设备接入。 \\
+  \code{wateros-task} & 管理任务、进程、线程、调度、等待和退出回收，维护per-CPU运行状态。 \\
+  \code{wateros-mm} & 管理物理页帧、用户地址空间、VMA、页表、缺页处理、用户内存访问及ELF装载。 \\
+  \code{wateros-ipc} & 提供pipe、futex、signal、共享内存、事件和等待队列等进程间协作机制。 \\
+  \code{wateros-vfs} & 维护路径解析、挂载命名空间、打开文件描述、文件描述符会话和页缓存。 \\
+  \code{wateros-fs} & 提供文件系统后端接口及rootfs、ext4、procfs和devfs等具体文件系统能力。 \\
+  \code{wateros-network} & 管理协议栈、socket对象、连接状态和网络事件，并通过统一网卡接口收发数据。 \\
+  \code{wateros-syscall} & 解析系统调用号和参数，执行用户内存拷贝、权限检查、错误码转换及子系统调用。 \\
+  \code{wateros-abi}、\code{wateros-cred}、\code{wateros-tty} & 分别维护ABI类型与常量、进程凭证及终端语义。 \\
+  \code{wateros-base}、\code{wateros-utils}、\code{wateros-klog} & 提供CPU编号、同步与通用数据结构、日志等跨组件基础能力。 \\
+  \bottomrule
+\end{longtable}
+
+顶层内核crate负责选择组件并组织初始化，不在顶层重新实现页表、调度器或文件系统逻辑。
+因此，阅读某项功能时可以先从顶层调用点确定入口，再进入对应组件查看状态和实现。
+
+\section{接口与实现分离}
+
+多数核心组件采用“API crate、实现crate、聚合crate”的组织方式。API crate只公开跨组件
+需要的trait、参数类型、错误类型和快照结构；实现crate持有锁、队列、缓存及硬件对象；
+聚合crate选择具体实现并向内核其他部分提供稳定入口。典型目录关系如下：
+
+\begin{textcode}
+wateros-<component>/
+|-- <component>-api/api-v0/       公共接口与数据类型
+|-- <component>-impl/impl-*/      通用或平台相关实现
+`-- src/                          实现选择与对外导出
+\end{textcode}
+
+接口并不要求所有组件都强行抽象为单一trait。设备、文件系统和地址空间需要替换具体后端，
+分别定义\code{BlockDevice}、\code{ReadWriteFs}、\code{AddressSpaceOps}等trait；任务和
+系统调用组件则以明确的数据类型和函数入口为主。这样可以避免仅为形式统一而增加无实际
+替换需求的抽象层。
+
+跨组件读取运行状态时优先使用快照或稳定句柄。例如任务组件导出\code{TaskSnapshot}，
+网络组件导出\code{NetworkSocketSnapshot}，VFS以打开文件描述持有对象。调用者不会把
+实现内部的可变引用带出锁保护范围。
+
+\section{组件依赖与调用关系}
+
+系统调用层是用户态语义与内核机制之间的主要连接点。它负责参数校验和Linux errno
+转换，但对象生命周期仍由对应组件决定。几类主要调用关系见表\ref{tab:component-call}。
+
+\begin{table}[htbp]
+  \centering
+  \caption{主要组件调用关系}
+  \label{tab:component-call}
+  \begin{tabularx}{\textwidth}{L{3.0cm}L{4.3cm}Y}
+    \toprule
+    入口 & 使用的组件 & 状态归属 \\
+    \midrule
+    \syscall{fork}/\syscall{clone} & task、MM、VFS、signal & 任务组件提交进程关系；MM和VFS分别处理地址空间及文件对象共享。 \\
+    \syscall{execve} & VFS、MM、task、ABI & VFS解析可执行文件，MM建立新映像，task提交进程状态转换。 \\
+    \syscall{mmap}/缺页 & MM、VFS、platform & MM维护VMA和PTE，文件页由VFS提供，架构层执行TLB操作。 \\
+    文件读写 & syscall、VFS、FS、driver & VFS维护fd与缓存，文件系统维护元数据，块设备完成最终I/O。 \\
+    socket与poll & network、driver、IPC、task & network维护socket状态，等待和唤醒使用IPC与任务接口。 \\
+    signal/futex & IPC、task、MM、platform & IPC维护等待或pending状态，MM安全访问用户地址，task完成阻塞与唤醒。 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+初始化依赖也遵守同样的状态归属。顶层只保证依赖已经可用，例如块设备注册后再挂载
+rootfs、VFS就绪后再装载用户程序；组件内部的注册表和对象仍由组件自身维护。本设计使
+调用关系能够从Cargo依赖和接口类型中直接追踪，减少隐式的跨模块全局状态访问。
+
+\section{SMP执行模型}
+
+WaterOS采用对称多处理（Symmetric Multiprocessing，SMP）执行模型。所有已上线CPU
+共享内核地址空间、任务和进程对象、用户地址空间、文件系统及设备资源，同时维护独立的
+per-CPU运行状态。SMP在这里不是单独的内核组件，而是平台、任务、内存和IPC组件共同
+遵守的执行约束；各类状态仍由原组件负责，不另设一份“多核状态”。
+
+启动CPU负责堆、共享页表、任务系统、驱动和文件系统等全局资源的一次性初始化。其他CPU
+使用各自的启动栈进入内核，完成本地trap、timer、IPI接收、CPU-local槽位和idle task
+初始化后，才加入online集合并参与调度。当前比赛配置使用8个虚拟CPU，但CPU数量属于
+运行参数，不改变上述状态划分。
+
+\begin{table}[htbp]
+  \centering
+  \caption{SMP状态划分与核间协作}
+  \begin{tabularx}{\textwidth}{L{2.6cm}L{4.2cm}L{3.4cm}Y}
+    \toprule
+    组件 & 共享状态 & CPU本地状态 & 核间协作 \\
+    \midrule
+    platform & CPU拓扑与online集合 & trap、timer和IPI接收状态 & 从核启动、IPI与远端TLB失效 \\
+    task & 任务、进程关系与就绪状态 & current task、idle task与重调度状态 & 跨核唤醒、任务迁移与重调度通知 \\
+    MM & 地址空间、VMA与页表 & 当前地址空间token和本地TLB & 页表更新后的TLB shootdown \\
+    IPC & 等待队列、futex及信号状态 & 当前线程的阻塞与投递状态 & 唤醒目标任务并通知其所在CPU \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+调度器保证同一任务在任意时刻至多由一个CPU执行。任务状态、CPU归属和就绪结构在同一
+调度边界内更新；目标任务位于其他CPU时，先发布软件状态，再发送重调度IPI。地址空间
+同样可能被多个CPU上的线程共享，修改页表后需要先保证页表项对其他CPU可见，再向相关
+CPU发起TLB shootdown，完成失效后才能回收旧映射。
+
+短临界区使用自旋锁或原子状态保护，可能等待较长时间的操作通过等待队列让出CPU。
+平台层只提供CPU启动、核间通知和本地架构操作，不持有任务、VMA或文件对象；上层组件
+也不直接操作架构中断控制器。具体接口、数据结构和执行顺序分别在第3章的平台、任务、
+内存及IPC部分说明。
+
+\section{双架构适配边界}
+
+RISC-V64与LoongArch64共享任务、IPC、MM上层语义、VFS、文件系统、网络和系统调用实现；
+启动协议、trap frame、页表格式、TLB操作、核间中断及设备总线由平台和驱动实现隔离。
+
+\begin{table}[htbp]
+  \centering
+  \caption{双架构实现边界}
+  \begin{tabularx}{\textwidth}{L{3.0cm}Y Y}
+    \toprule
+    项目 & RISC-V64 & LoongArch64 \\
+    \midrule
+    启动环境 & QEMU virt与OpenSBI & QEMU virt平台入口 \\
+    从核与IPI & SBI HSM及SBI IPI & LoongArch启动路径及IOCSR核间中断 \\
+    页表与TLB & Sv39及RISC-V TLB操作 & LoongArch页表及TLB操作 \\
+    VirtIO总线 & MMIO & PCI \\
+    对上接口 & \multicolumn{2}{p{9.0cm}}{CPU编号、启动参数、中断、时间、页表切换、TLB失效及统一设备trait} \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+上层代码不根据指令集名称修改业务语义。例如调度器只使用CPU编号与核间通知接口，MM
+只通过架构页表与TLB接口提交映射变化，网络层只持有\code{NetworkDevice}对象。新增平台
+时应实现这些边界，而不在task、VFS或syscall中加入平台分支。
+
+\section{构建期组合}
+
+架构、平台、阶段和附加能力由\code{os/Makefile}与Cargo feature在编译期确定。
+\code{ARCH=rv|la}选择目标架构，\code{PROFILE=pre|final}选择用户态工作负载配置，
+\code{EXTRA\_FEATURES}用于显式增加诊断、网络或图形能力。每个目标只链接对应的平台、
+页表和驱动实现，不在运行时保留另一架构代码。
+
+构建配置的职责是选择实现，不改变公共接口的含义。配置解析结果可通过
+\code{make show-config}检查；完整的构建、运行及专项工具用法见第4章。

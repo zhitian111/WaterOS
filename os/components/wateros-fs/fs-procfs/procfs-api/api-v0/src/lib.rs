@@ -20,13 +20,27 @@ pub struct ProcMountLine {
     pub mount_point: String,
     /// `mnt_type`（第 3 列）。
     pub fstype: String,
+    /// 当前挂载是否只读；用于生成与实际写权限一致的 `/proc/mounts`。
+    pub readonly: bool,
 }
 
 /// 按 leader task id 查询 argv。
 pub type TaskArgvLookup = fn(TaskId) -> Option<Vec<String>>;
 
+/// 按 leader task id 查询 exec 时的环境向量。
+pub type TaskEnvLookup = fn(TaskId) -> Option<Vec<String>>;
+
+/// 按 leader task id 查询 exec 时保存的 auxv 原始字节。
+pub type TaskAuxvLookup = fn(TaskId) -> Option<Vec<u8>>;
+
+/// 返回 `[rchar, wchar, syscr, syscw]` 字符 I/O 计数。
+pub type TaskIoLookup = fn(TaskId) -> Option<[u64; 4]>;
+
 /// 按 leader task id 查询 exe 路径。
 pub type TaskExeLookup = fn(TaskId) -> Option<String>;
+
+/// 按 task id 查询 cwd 或进程根目录等路径。
+pub type TaskPathLookup = fn(TaskId) -> Option<String>;
 
 /// 按 task id 枚举当前打开的文件描述符。
 pub type TaskFdLookup = fn(TaskId) -> Vec<usize>;
@@ -45,6 +59,17 @@ pub type UptimeLookup = fn() -> u128;
 
 /// 查询所有 CPU 聚合 idle 时间，单位纳秒。
 pub type IdleTimeLookup = fn() -> u128;
+
+/// `/proc/sysvipc` 中的 Linux SysV IPC 表类型。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SysVIpcTable {
+    Shm,
+    Msg,
+    Sem,
+}
+
+/// 查询一张 SysV IPC 文本表；回调方负责从对应注册表生成一致快照。
+pub type SysVIpcTableLookup = fn(SysVIpcTable) -> Vec<u8>;
 
 /// procfs 只读路径操作；`rel_path` 为相对 `/proc` 的路径（可带或不带前导 `/`）。
 pub trait ProcFsView {

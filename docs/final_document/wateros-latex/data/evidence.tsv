@@ -1,0 +1,7 @@
+claim_id	chapter	claim	status	source	candidate_action
+E-001	成果总览	RISC-V64 与 LoongArch64 均有 8 核 Final 完整运行记录	historical-verified	docs/tasks/known-issues/closed-fixes/history/final-after-epoll-20260808.md	候选提交双架构复跑
+E-002	成果总览	CAgent 连续三轮 10/10	historical-verified	docs/tasks/cross-task-reports/reports/cagent-kernel-adaptation-summary.md	候选提交至少连续三轮复跑
+E-003	决赛负载	双架构 BuildStorm mode=multi ok=true	historical-verified	docs/tasks/known-issues/closed-fixes/history/k22-dual-arch-final-buildstorm-20260805.md	候选提交双架构复跑
+E-006	验证	BuildStorm 写负载后 e2fsck -fn 五阶段通过	historical-verified	docs/tasks/cross-task-reports/reports/buildstorm-kernel-adaptation-summary.md	候选 overlay 复跑
+E-007	验证	初赛 basic/busybox/LTP 无新增回归	candidate-rerun	docs/tasks/known-issues/10-final-regression-delivery/task.md	按最终门禁执行并回填
+E-008	AI说明	AI 参与代码已按源码标记并生成清单	candidate-rerun	docs/technical_document/wateros-latex/scripts/gen-ai-usage-tex.py	候选提交重新扫描和统计

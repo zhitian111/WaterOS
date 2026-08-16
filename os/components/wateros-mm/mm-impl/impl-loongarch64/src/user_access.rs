@@ -1,10 +1,11 @@
 //! 本模块代码由AI完成
 //! LoongArch64 用户缓冲区 [`api_v0::user_access::UserMemoryOps`]。
 
-use api_v0::addr::{VirtAddr, PAGE_SIZE};
+use api_v0::addr::{PhysAddr, VirtAddr, PAGE_SIZE};
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::error::{MmError, MmResult};
 use api_v0::mmap::{MmapOps, PageFaultAccess};
+use api_v0::perm::PagePerm;
 use api_v0::user_access::{FutexMappingIdentity, UserCopyProgress, UserMemoryOps};
 use core::sync::atomic::{AtomicU32, Ordering};
 use frame_alloctor::GlobalPhysFrameAllocator;
@@ -47,6 +48,37 @@ impl UserMemoryOps for LoongArch64UserMemoryOps {
                                   -> MmResult<FutexMappingIdentity> {
         futex_mapping_identity_user_u32(self.handle, src)
     }
+}
+
+/// 诊断未处理用户缺页：同时报告驻留 PTE 与 lazy VMA 权限。
+pub fn debug_probe_user_virt(handle : usize, va : VirtAddr) -> MmResult<UserVirtProbe> {
+    user_aspace::with_user_aspace_mut(handle, |aspace| {
+        let pa = aspace.translate_addr(va)?;
+        let perm = aspace.leaf_page_perm(va.floor_page())?;
+        let page = va.floor_page().start_addr();
+        let lazy_perm = aspace.lazy_file_vmas
+                               .iter()
+                               .find(|vma| vma.contains_page(page))
+                               .map(|vma| vma.perm);
+        Ok(UserVirtProbe { pa,
+                           perm,
+                           lazy_perm,
+                           in_brk : va.0 >= aspace.user_brk_start.0 &&
+                                     va.0 < aspace.user_brk_current_end.0,
+                           in_stack : va.0 >= aspace.user_stack_bottom.0 &&
+                                       va.0 < aspace.user_stack_top.0,
+                           aspace_satp : aspace.satp_value() })
+    })
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct UserVirtProbe {
+    pub pa : Option<PhysAddr>,
+    pub perm : Option<PagePerm>,
+    pub lazy_perm : Option<PagePerm>,
+    pub in_brk : bool,
+    pub in_stack : bool,
+    pub aspace_satp : usize,
 }
 
 fn validate_atomic_u32_addr(user_addr : VirtAddr) -> MmResult<()> {

@@ -107,6 +107,21 @@ fn log_unhandled_user_fault_probe(cx : &TrapContext, trap_cause : TrapCause, raw
            cx.user_tls(),
            cx.return_address_space_token(),
            task::current_task_user_aspace_ptr());
+    match mm::user_access::debug_probe_user_virt(task::current_task_user_aspace_ptr(),
+                                                  mm::api::addr::VirtAddr(cx.fault_addr()))
+    {
+        Ok(probe) => warn!("[trap][probe] user VA={:#x} pa={:?} pte_perm={:?} lazy_perm={:?} \
+                           in_brk={} in_stack={} aspace_satp={:#x}",
+                          cx.fault_addr(),
+                          probe.pa,
+                          probe.perm,
+                          probe.lazy_perm,
+                          probe.in_brk,
+                          probe.in_stack,
+                          probe.aspace_satp),
+        Err(error) => warn!("[trap][probe] failed to inspect user VA={:#x}: {:?}",
+                            cx.fault_addr(), error),
+    }
 }
 
 /// 记录用户任务 trap 杀进程上下文并终止当前进程。

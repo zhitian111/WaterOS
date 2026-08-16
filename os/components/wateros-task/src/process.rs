@@ -3,8 +3,8 @@
 use alloc::vec::Vec;
 
 use crate::{
-    active_impl, scheduler, ExitedTask, ProcessCaps, ProcessId, ProcessSnapshot, ProcessState,
-    ProcessResult, ProcessTaskSnapshot, ResourceLimit, TaskClearTid, TaskId, TaskState,
+    active_impl, scheduler, ExitedTask, ProcessCaps, ProcessId, ProcessResult, ProcessSnapshot,
+    ProcessState, ProcessTaskSnapshot, ResourceLimit, TaskClearTid, TaskId, TaskState,
     TaskWaitTarget, ThreadId,
 };
 
@@ -35,9 +35,7 @@ pub fn process_task_snapshot(task_id : TaskId) -> Option<ProcessTaskSnapshot> {
 }
 
 /// 按用户态 tid 反查调度器内部 task id。
-pub fn task_id_for_thread(tid : ThreadId) -> Option<TaskId> {
-    active_impl::task_id_for_thread(tid)
-}
+pub fn task_id_for_thread(tid : ThreadId) -> Option<TaskId> { active_impl::task_id_for_thread(tid) }
 
 /// 当前运行任务对应的进程归属快照；未接入真实 spawn 前可能为 `None`。
 pub fn current_process_task_snapshot() -> Option<ProcessTaskSnapshot> {
@@ -219,9 +217,9 @@ pub fn continue_process_tasks(pid : ProcessId) {
     };
     for task_id in task_ids {
         if scheduler::task_snapshot(task_id).is_some_and(|snapshot| {
-                                               snapshot.state ==
-                                               TaskState::Blocking(TaskWaitTarget::Manual)
-                                           })
+                                                snapshot.state ==
+                                                TaskState::Blocking(TaskWaitTarget::Manual)
+                                            })
         {
             let _ = scheduler::wake_task(task_id);
         }
@@ -275,6 +273,14 @@ pub fn process_caps(pid : ProcessId) -> Option<ProcessCaps> { active_impl::proce
 /// 设置进程 capability 三集合。
 pub fn set_process_caps(pid : ProcessId, caps : ProcessCaps) -> ProcessResult<()> {
     active_impl::set_process_caps(pid, caps)
+}
+
+/// 查询进程 KEEPCAPS 标志。
+pub fn process_keep_caps(pid : ProcessId) -> Option<bool> { active_impl::process_keep_caps(pid) }
+
+/// 设置进程 KEEPCAPS 标志。
+pub fn set_process_keep_caps(pid : ProcessId, enabled : bool) -> ProcessResult<()> {
+    active_impl::set_process_keep_caps(pid, enabled)
 }
 
 /// 判断当前进程是否仍有子进程。
@@ -367,9 +373,11 @@ pub fn reap_all_exited_processes() -> usize {
 /// 回收已退出进程的所有线程 task 与 process registry 记录。
 pub fn reap_exited_process(pid : ProcessId) -> Option<Vec<ExitedTask>> {
     let task_ids = active_impl::task_ids_for_process(pid)?;
-    if task_ids
-        .iter()
-        .any(|task_id| !matches!(scheduler::task_state(*task_id), Some(TaskState::Exited(_))))
+    if task_ids.iter()
+               .any(|task_id| {
+                   !matches!(scheduler::task_state(*task_id),
+                             Some(TaskState::Exited(_)))
+               })
     {
         return None;
     }

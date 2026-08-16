@@ -132,6 +132,23 @@ pub enum VfsSpecialDeviceInfo {
     Terminal(VfsTerminalInfo),
 }
 
+/// Linux namespace magic-link 句柄的类型。
+///
+/// VFS 只描述对象类型；`NS_GET_*` ioctl 的 Linux ABI 编号及返回方式由
+/// syscall 层翻译。当前 WaterOS 只有一组初始 namespace，但保留该枚举可
+/// 避免用户工具依赖伪造的普通文件名。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VfsNamespaceKind {
+    Cgroup,
+    Ipc,
+    Mount,
+    Network,
+    Pid,
+    Time,
+    User,
+    Uts,
+}
+
 /// VFS 层的设备内存生命周期令牌。
 pub trait VfsDeviceMappingLease: Send + Sync {}
 impl<T : Send + Sync + ?Sized> VfsDeviceMappingLease for T {}
@@ -490,6 +507,9 @@ pub trait VfsIoHandle: Send + VfsHandleAny {
 
     /// 查询 framebuffer/evdev 等需由 syscall 层翻译 Linux ABI 的设备。
     fn special_device_info(&self) -> Option<VfsSpecialDeviceInfo> { None }
+
+    /// 若句柄来自 `/proc/<pid>/ns/*`，返回其 namespace 类型。
+    fn namespace_kind(&self) -> Option<VfsNamespaceKind> { None }
 
     /// 查询可 mmap 的设备物理内存。
     fn device_mapping(&self) -> VfsResult<VfsDeviceMapping> { Err(VfsError::Unsupported) }

@@ -137,6 +137,7 @@ arg_syscalls! {
     api_v0::SEMTIMEDOP => sys::sys_semtimedop,
     api_v0::SEMOP => sys::sys_semop,
     api_v0::GET_TIME => sys::sys_gettimeofday,
+    api_v0::SETTIMEOFDAY => sys::sys_settimeofday,
     api_v0::CLOCK_SETTIME => sys::sys_clock_settime,
     api_v0::CLOCK_GETTIME => sys::sys_clock_gettime,
     api_v0::CLOCK_GETRES => sys::sys_clock_getres,

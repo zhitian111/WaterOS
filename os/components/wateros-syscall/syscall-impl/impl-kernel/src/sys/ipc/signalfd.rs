@@ -228,7 +228,10 @@ impl SignalFdReadLease {
             return Err(VfsError::NoMemory);
         }
         for record in &records {
-            let source = peek_pending_signal_source(record.process_pid, record.pending.signal);
+            let source = peek_pending_signal_source(task_id,
+                                                    record.process_pid,
+                                                    record.pending.scope,
+                                                    record.pending.signal);
             let info = SignalFdSigInfo { signo : record.pending.signal as u32,
                                          pid : source.pid as u32,
                                          uid : source.uid,
@@ -265,7 +268,10 @@ impl VfsReadLease for SignalFdReadLease {
             progress.copied / SIGNALFD_SIGINFO_SIZE
         };
         for record in self.records.iter().take(committed) {
-            let _ = take_pending_signal_source(record.process_pid, record.pending.signal);
+            let _ = take_pending_signal_source(self.task_id,
+                                               record.process_pid,
+                                               record.pending.scope,
+                                               record.pending.signal);
         }
         self.restore_from(committed);
         self.finished = true;

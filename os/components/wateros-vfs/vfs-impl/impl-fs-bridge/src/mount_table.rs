@@ -1,4 +1,4 @@
-//! 辅助卷挂载表（最长前缀路由）；支持 RW、RO、procfs 伪挂载、bind 与传播类型。
+//! 辅助卷挂载表（最长前缀路由）；支持 RW、RO、procfs/sysfs 伪挂载、bind 与传播类型。
 //! 本模块代码由AI完成
 
 extern crate alloc;
@@ -19,12 +19,13 @@ use wateros_base_config::fs::BOOTSTRAP_TMPFS_LIMIT_BYTES;
 
 use crate::mount_ns::PerTaskMountNsRegistry;
 
-/// 辅助挂载句柄：RW、RO、procfs/securityfs 伪挂载或 bind 别名。
+/// 辅助挂载句柄：RW、RO、procfs/sysfs/securityfs 伪挂载或 bind 别名。
 #[derive(Clone)]
 pub(crate) enum AuxMount {
     Rw(SharedRwFs),
     Ro(SharedFs),
     PseudoProc,
+    PseudoSys,
     PseudoSecurity,
     Bind { source : String },
 }
@@ -177,7 +178,8 @@ fn mount_namespace_snapshot() -> MountNamespace {
 // 本方法代码由AI完成
 fn assert_mount_point_directory_in(ns : &MountNamespace, path : &str) -> VfsResult<()> {
     match resolve_material_route(ns, path)? {
-        FsRoute::PseudoProc { .. } | FsRoute::PseudoSecurity { .. } => Err(VfsError::NotAFile),
+        FsRoute::PseudoProc { .. } | FsRoute::PseudoSys { .. } |
+        FsRoute::PseudoSecurity { .. } => Err(VfsError::NotAFile),
         FsRoute::Root { abs, .. } => {
             let meta = super::root_rw()?.lock()
                                         .metadata(abs.as_str())
@@ -268,6 +270,10 @@ pub(crate) enum FsRoute {
         rel : String,
         identity : MountIdentity,
     },
+    PseudoSys {
+        rel : String,
+        identity : MountIdentity,
+    },
     PseudoSecurity {
         rel : String,
         identity : MountIdentity,
@@ -307,6 +313,7 @@ impl AuxMount {
             Self::Rw(fs) => Self::Rw(fs.clone()),
             Self::Ro(fs) => Self::Ro(fs.clone()),
             Self::PseudoProc => Self::PseudoProc,
+            Self::PseudoSys => Self::PseudoSys,
             Self::PseudoSecurity => Self::PseudoSecurity,
             Self::Bind { source } => Self::Bind { source : source.clone() },
         }
@@ -421,6 +428,10 @@ fn resolve_material_route(ns : &MountNamespace, abs : &str) -> VfsResult<FsRoute
                 return Ok(FsRoute::PseudoProc { rel,
                                                 identity : ent.identity });
             }
+            AuxMount::PseudoSys => {
+                return Ok(FsRoute::PseudoSys { rel,
+                                               identity : ent.identity });
+            }
             AuxMount::PseudoSecurity => {
                 return Ok(FsRoute::PseudoSecurity { rel,
                                                     identity : ent.identity });
@@ -484,6 +495,7 @@ pub fn assert_path_writable(path : &str) -> VfsResult<()> {
         FsRoute::AuxRw { readonly: true, .. } |
         FsRoute::AuxRo { .. } |
         FsRoute::PseudoProc { .. } |
+        FsRoute::PseudoSys { .. } |
         FsRoute::PseudoSecurity { .. } => Err(VfsError::ReadOnlyFs),
         _ => Ok(()),
     }
@@ -768,6 +780,7 @@ pub fn mount_statfs_magic(abs : &str) -> Option<isize> {
         "cgroup" => 0x0027_E0EB,
         "cgroup2" => 0x6367_7270,
         "proc" => 0x9FA0,
+        "sysfs" => 0x6265_6572,
         "securityfs" => 0x7363_6673,
         "bind" => mount_statfs_magic_for_path(ns, abs.as_str()).unwrap_or(0xEF53),
         _ => 0xEF53,
@@ -781,6 +794,7 @@ fn mount_statfs_magic_for_path(ns : &MountNamespace, abs : &str) -> Option<isize
         FsRoute::Root { abs, .. } => abs,
         FsRoute::AuxRw { .. } | FsRoute::AuxRo { .. } => return Some(0xEF53),
         FsRoute::PseudoProc { .. } => return Some(0x9FA0),
+        FsRoute::PseudoSys { .. } => return Some(0x6265_6572),
         FsRoute::PseudoSecurity { .. } => return Some(0x7363_6673),
     };
     mount_statfs_magic(path.as_str())
@@ -816,6 +830,20 @@ pub fn mount_aux_proc_at(mount_point : &str) -> VfsResult<()> {
     Ok(())
 }
 
+/// 在当前挂载命名空间中挂载 sysfs。
+pub fn mount_aux_sys_at(mount_point : &str) -> VfsResult<()> {
+    with_current_namespace(|ns| {
+        mount_aux_common(ns,
+                         mount_point,
+                         AuxMount::PseudoSys,
+                         "sysfs",
+                         "sysfs",
+                         true)
+    })?;
+    bump_mount_generation_after_cache_flush();
+    Ok(())
+}
+
 /// 在 bootstrap namespace 中挂载 procfs，供之后创建的内核/用户任务继承。
 pub fn mount_bootstrap_proc_at(mount_point : &str) -> VfsResult<()> {
     {
@@ -825,6 +853,21 @@ pub fn mount_bootstrap_proc_at(mount_point : &str) -> VfsResult<()> {
                          AuxMount::PseudoProc,
                          "proc",
                          "proc",
+                         true)?;
+    }
+    bump_mount_generation_after_cache_flush();
+    Ok(())
+}
+
+/// 在 bootstrap namespace 中挂载 sysfs，供之后创建的任务继承。
+pub fn mount_bootstrap_sys_at(mount_point : &str) -> VfsResult<()> {
+    {
+        let mut ns = BOOTSTRAP_MOUNT_NS.lock();
+        mount_aux_common(&mut ns,
+                         mount_point,
+                         AuxMount::PseudoSys,
+                         "sysfs",
+                         "sysfs",
                          true)?;
     }
     bump_mount_generation_after_cache_flush();
@@ -864,6 +907,7 @@ fn fstype_for(entry : &MountEntry) -> &'static str { entry.fstype }
 fn device_for(entry : &MountEntry) -> String {
     match entry.fs {
         AuxMount::PseudoProc => String::from("proc"),
+        AuxMount::PseudoSys => String::from("sysfs"),
         AuxMount::PseudoSecurity => String::from("securityfs"),
         AuxMount::Bind { ref source } => source.clone(),
         AuxMount::Rw(_) | AuxMount::Ro(_) => entry.mount_point
@@ -882,7 +926,8 @@ pub fn list_proc_mount_lines() -> Vec<ProcMountLine> {
     if fs::rootfs::active_impl::root_rw_fs().is_some() {
         out.push(ProcMountLine { device : root_mount_device(),
                                  mount_point : String::from("/"),
-                                 fstype : String::from("ext4") });
+                                 fstype : String::from("ext4"),
+                                 readonly : false });
     }
     if let Some(task_id) = task::current_task_id() {
         let reg = registry().exclusive_access();
@@ -891,7 +936,8 @@ pub fn list_proc_mount_lines() -> Vec<ProcMountLine> {
                 out.push(ProcMountLine { device : device_for(ent),
                                          mount_point : ent.mount_point
                                                           .clone(),
-                                         fstype : String::from(fstype_for(ent)) });
+                                         fstype : String::from(fstype_for(ent)),
+                                         readonly : ent.readonly });
             }
             return out;
         }
@@ -903,7 +949,8 @@ pub fn list_proc_mount_lines() -> Vec<ProcMountLine> {
         out.push(ProcMountLine { device : device_for(ent),
                                  mount_point : ent.mount_point
                                                   .clone(),
-                                 fstype : String::from(fstype_for(ent)) });
+                                 fstype : String::from(fstype_for(ent)),
+                                 readonly : ent.readonly });
     }
     out
 }

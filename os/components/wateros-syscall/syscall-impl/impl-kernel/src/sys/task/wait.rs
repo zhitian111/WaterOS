@@ -150,6 +150,8 @@ fn drop_exited_task_resources(exited : &task::ExitedTask) {
                        .map(|frame| frame.user_aspace_ptr())
                        .unwrap_or(0);
     drop_task_runtime_resources_with_aspace(exited.id, aspace);
+    // 凭证作为 zombie 状态的一部分保留到 reap；这里做最终幂等清理。
+    cred::drop_task_cred(exited.id);
 }
 
 pub(crate) fn drop_task_runtime_resources(task_id : task::TaskId) {
@@ -177,7 +179,9 @@ pub(crate) fn drop_task_runtime_resources_with_aspace(task_id : task::TaskId, as
     }
     crate::epoll_fd::drop_task(task_id);
     crate::unix_sock::drop_task(task_id);
-    cred::drop_task_cred(task_id);
+    // 不在这里删除凭证。这个函数也由“当前线程正在退出”的路径调用，
+    // 后续退出收尾（信号、vfork、记账）仍可能查询 current credentials。
+    // 凭证由 reap/rollback 路径回收。
 }
 
 pub(crate) fn reap_exited_member_threads_runtime_resources(pid : task::ProcessId) {
@@ -195,6 +199,7 @@ pub(crate) fn drop_reaped_task_runtime_resources(task_id : task::TaskId, aspace 
     crate::sys::ipc::robust::drop_robust_state(task_id);
     crate::sys::ipc::signal::drop_thread_state(task_id);
     drop_task_runtime_resources_with_aspace(task_id, aspace);
+    cred::drop_task_cred(task_id);
 }
 
 // ── 子进程等待辅助 ─────────────────────────────────────────────
