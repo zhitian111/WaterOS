@@ -294,6 +294,45 @@ pub(crate) fn copy_from_user_struct<T : Copy>(ptr : usize) -> Result<T, ErrNo> {
     Ok(unsafe { value.assume_init() })
 }
 
+/// 一次导入连续的用户结构数组，避免逐项重新捕获当前地址空间。
+pub(crate) fn copy_from_user_array<T : Copy>(ptr : usize,
+                                             count : usize)
+                                             -> Result<Vec<T>, ErrNo> {
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    if ptr == 0 {
+        return Err(ErrNo::EFAULT);
+    }
+    let element_size = core::mem::size_of::<T>();
+    let byte_len = element_size.checked_mul(count).ok_or(ErrNo::EFAULT)?;
+    if byte_len > 0 {
+        ptr.checked_add(byte_len - 1).ok_or(ErrNo::EFAULT)?;
+    }
+
+    let mut values = Vec::<core::mem::MaybeUninit<T>>::new();
+    values.try_reserve_exact(count).map_err(|_| ErrNo::ENOMEM)?;
+    unsafe {
+        values.set_len(count);
+    }
+    let bytes = unsafe {
+        core::slice::from_raw_parts_mut(values.as_mut_ptr() as *mut u8, byte_len)
+    };
+    let copied = copy_from_user(bytes, ptr)?;
+    if copied != byte_len {
+        return Err(ErrNo::EFAULT);
+    }
+
+    let result = unsafe {
+        let result = Vec::from_raw_parts(values.as_mut_ptr() as *mut T,
+                                         values.len(),
+                                         values.capacity());
+        core::mem::forget(values);
+        result
+    };
+    Ok(result)
+}
+
 pub(crate) fn copy_from_user_struct_in_aspace<T : Copy>(handle : usize,
                                                         ptr : usize)
                                                         -> Result<T, ErrNo> {

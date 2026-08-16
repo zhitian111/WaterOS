@@ -12,7 +12,8 @@ use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_fd;
 use crate::user_copy::{
-    copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_progress, copy_to_user_struct,
+    copy_from_user, copy_from_user_array, copy_from_user_struct, copy_to_user,
+    copy_to_user_progress, copy_to_user_struct,
 };
 
 #[repr(C)]
@@ -274,15 +275,12 @@ fn sendmsg_one(fd : usize, msg_ptr : usize, flags : usize) -> Result<usize, ErrN
     }
 
     // 读取 iovec 数组并收集数据
-    let iov_size = core::mem::size_of::<IoVec>();
     let mut total_len : usize = 0;
-    let mut iovs : alloc::vec::Vec<IoVec> = alloc::vec![];
-
-    for i in 0..msg.msg_iovlen {
-        let iov : IoVec = match copy_from_user_struct(msg.msg_iov + i * iov_size) {
-            Ok(v) => v,
-            Err(_) => return Err(ErrNo::EFAULT),
-        };
+    let iovs = match copy_from_user_array::<IoVec>(msg.msg_iov, msg.msg_iovlen) {
+        Ok(iovs) => iovs,
+        Err(_) => return Err(ErrNo::EFAULT),
+    };
+    for iov in &iovs {
         total_len = match total_len.checked_add(iov.iov_len) {
             Some(total) => total,
             None => return Err(ErrNo::EINVAL),
@@ -290,7 +288,6 @@ fn sendmsg_one(fd : usize, msg_ptr : usize, flags : usize) -> Result<usize, ErrN
         if total_len > SYSCALL_IO_MAX {
             return Err(ErrNo::EMSGSIZE);
         }
-        iovs.push(iov);
     }
 
     if total_len == 0 {
@@ -372,20 +369,16 @@ pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
     }
 
     // 读取 iovec 数组并计算总接收空间
-    let iov_size = core::mem::size_of::<IoVec>();
     let mut total_len : usize = 0;
-    let mut iovs : alloc::vec::Vec<IoVec> = alloc::vec![];
-
-    for i in 0..msg.msg_iovlen {
-        let iov : IoVec = match copy_from_user_struct(msg.msg_iov + i * iov_size) {
-            Ok(v) => v,
-            Err(_) => return UserRet::from_error(ErrNo::EFAULT),
-        };
+    let iovs = match copy_from_user_array::<IoVec>(msg.msg_iov, msg.msg_iovlen) {
+        Ok(iovs) => iovs,
+        Err(_) => return UserRet::from_error(ErrNo::EFAULT),
+    };
+    for iov in &iovs {
         total_len = match total_len.checked_add(iov.iov_len) {
             Some(total) if total <= SYSCALL_IO_MAX => total,
             _ => return UserRet::from_error(ErrNo::EINVAL),
         };
-        iovs.push(iov);
     }
 
     if total_len == 0 {

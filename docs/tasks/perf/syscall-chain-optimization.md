@@ -87,6 +87,13 @@ handle 查询；等待路径仍使用 detached handle，不能把共享 fd 槽�
 
 ### T4：批量导入 iovec 元数据
 
+状态：已完成，提交为 `[perf] batch import user iovec metadata`。
+
+实现结果：新增 checked 连续结构数组导入助手，`readv/writev/preadv/pwritev` 与
+`sendmsg/recvmsg` 的 iovec 元数据由逐项用户复制改为一次整体复制。`vmsplice` 仍按项读取，
+因为它会在读取后续元数据前写入先前 iovec；提前整体导入会破坏后续 fault 时的部分成功
+语义。`rv_check` 已通过（`CARGO_NET_OFFLINE=true make rv_check`）。
+
 现状：`readv/writev/preadv/pwritev/vmsplice/sendmsg/recvmsg` 等路径逐个复制用户 iovec
 结构，每项都重新获取当前地址空间 handle。
 
