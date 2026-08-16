@@ -44,9 +44,9 @@ make run ARCH=rv PROFILE=final SDCARD=/path/to/rootfs.img
 [`构建配置`](../README.md#构建配置)。Makefile 的参数传播、目标分层和扩展约定见
 [`docs/tools/makefile.md`](../docs/tools/makefile.md)。
 
-平台 feature 还会互斥地选择一档编译期日志上限（RISC-V64 为 `Info`，LoongArch64 为
-`Error`）。`log` 会在编译期裁掉更详细的日志调用及参数求值，operator 模式不会在启动后
-重新调整级别。
+平台 feature 还会互斥地选择一档编译期日志上限；RISC-V64 与 LoongArch64 的正式 profile
+均为 `Error`。`log` 会在编译期裁掉更详细的日志调用及参数求值，operator 模式不会在启动后
+重新调整级别。性能测试不得使用启用 `Info`/`Debug` 热路径日志的诊断构建。
 
 ## 常见开发场景
 

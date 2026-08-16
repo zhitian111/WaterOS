@@ -91,6 +91,7 @@ FPU/LSX 污染、镜像损坏或结果 marker 缺失。
 | `01-riscv-deduplicate-fpu-restore.md` | 去掉 RISC-V 用户返回重复 FPU restore | 低，批次 A |
 | `02-coalesce-return-process-query.md` | 合并用户返回的重复进程状态查询 | 低，批次 A |
 | `03-timekeeper-global-signal-timers.md` | 全局 signal timer 仅由 timekeeper 到期 | 低，批次 A |
+| `04a-riscv-release-error-log-level.md` | RISC-V 正式构建裁掉 Info 热路径日志 | 低，性能前置修正 |
 | `04-low-risk-batch-validation.md` | 批次 A 双架构功能/性能验收 | 验收提交 |
 | `05-signal-lifecycle-invariant.md` | 消除返回路径的 signal state ensure | 中，批次 B |
 | `06-signal-pending-hint.md` | 无 pending signal 时跳过 registry | 中，批次 B |
