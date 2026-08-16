@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 use api_v0::executable::{self, ExecResolveError, MAX_INTERPRETER_RECURSION};
 use api_v0::kernel_bringup::{LoadProgramError, LoadedProgram};
 
-use crate::kernel_elf::from_elf_path;
+use crate::kernel_elf::from_elf_path_with_prefix;
 
 /// 装载 `path` 指向的程序：ELF 直载，或解析 shebang 后递归加载解释器。
 ///
@@ -39,7 +39,8 @@ fn load_program_from_path_rec(path : &str,
 
     if executable::is_elf_prefix(&prefix) {
         let final_argv = argv_vec(path, argv);
-        let loaded = from_elf_path(resolved_path.as_str()).map_err(LoadProgramError::Elf)?;
+        let loaded = from_elf_path_with_prefix(resolved_path.as_str(), &prefix)
+            .map_err(LoadProgramError::Elf)?;
         return Ok(LoadedProgram { elf : loaded,
                                   argv : final_argv,
                                   executable_path : resolved_path });

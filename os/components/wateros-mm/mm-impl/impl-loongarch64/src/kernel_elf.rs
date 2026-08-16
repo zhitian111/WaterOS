@@ -1094,10 +1094,27 @@ fn resolve_interp_path(program_path : &str, interp : &str) -> Result<String, Loa
 pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
     let resolved_path = resolve_elf_path(path)?;
     let path = resolved_path.as_str();
-    runtime::logging::trace!("[elf-load] from_elf_path begin path={}",
-                             path);
     let mut ehdr = [0u8; 64];
     read_path_exact(path, 0, &mut ehdr)?;
+    from_elf_path_resolved_with_header(path, &ehdr)
+}
+
+/// 使用可执行格式探测阶段已读取的前缀装载 ELF；`path` 必须已经完成 VFS 路径解析。
+pub(crate) fn from_elf_path_with_prefix(path : &str,
+                                        prefix : &[u8])
+                                        -> Result<LoadedElf, LoadElfError> {
+    let ehdr : &[u8; 64] = prefix.get(..64)
+                                  .ok_or(LoadElfError::TooSmall)?
+                                  .try_into()
+                                  .map_err(|_| LoadElfError::TooSmall)?;
+    from_elf_path_resolved_with_header(path, ehdr)
+}
+
+fn from_elf_path_resolved_with_header(path : &str,
+                                      ehdr : &[u8; 64])
+                                      -> Result<LoadedElf, LoadElfError> {
+    runtime::logging::trace!("[elf-load] from_elf_path begin path={}",
+                             path);
     if &ehdr[0..4] != b"\x7FELF" {
         runtime::logging::trace!("[elf-load] abort: BadMagic head={:02x?}",
                                  &ehdr[..4]);
@@ -1114,7 +1131,7 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
                                  ehdr.get(5));
         return Err(LoadElfError::BadEndian);
     }
-    let e_machine = rd_u16(&ehdr, 18).ok_or(LoadElfError::TooSmall)?;
+    let e_machine = rd_u16(ehdr, 18).ok_or(LoadElfError::TooSmall)?;
     if e_machine != EM_LOONGARCH {
         runtime::logging::trace!("[elf-load] abort: BadMachine e_machine={} (expect \
                                   EM_LOONGARCH={})",
@@ -1122,10 +1139,10 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
                                  EM_LOONGARCH);
         return Err(LoadElfError::BadMachine);
     }
-    let e_entry = rd_u64(&ehdr, 0x18).ok_or(LoadElfError::TooSmall)? as usize;
-    let e_phoff = rd_u64(&ehdr, 0x20).ok_or(LoadElfError::TooSmall)? as usize;
-    let e_phentsize = rd_u16(&ehdr, 0x36).ok_or(LoadElfError::TooSmall)? as usize;
-    let e_phnum = rd_u16(&ehdr, 0x38).ok_or(LoadElfError::TooSmall)? as usize;
+    let e_entry = rd_u64(ehdr, 0x18).ok_or(LoadElfError::TooSmall)? as usize;
+    let e_phoff = rd_u64(ehdr, 0x20).ok_or(LoadElfError::TooSmall)? as usize;
+    let e_phentsize = rd_u16(ehdr, 0x36).ok_or(LoadElfError::TooSmall)? as usize;
+    let e_phnum = rd_u16(ehdr, 0x38).ok_or(LoadElfError::TooSmall)? as usize;
     if e_phentsize < 56 || e_phnum == 0 {
         runtime::logging::trace!("[elf-load] abort: Parse bad ph e_phentsize={} e_phnum={}",
                                  e_phentsize,
