@@ -321,7 +321,9 @@ impl VfsIoHandle for NullDeviceHandle {
     }
 
     // 本方法代码由AI完成
-    fn metadata(&self) -> VfsResult<VfsMetadata> { Ok(special_meta(0o20666, self.inode)) }
+    fn metadata(&self) -> VfsResult<VfsMetadata> {
+        Ok(special_dev_meta(0o20666, self.inode, 1, 3))
+    }
 
     // 本方法代码由AI完成
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> { Ok(Box::new(*self)) }
@@ -369,7 +371,9 @@ impl VfsIoHandle for ZeroDeviceHandle {
     }
 
     // 本方法代码由AI完成
-    fn metadata(&self) -> VfsResult<VfsMetadata> { Ok(special_meta(0o20666, self.inode)) }
+    fn metadata(&self) -> VfsResult<VfsMetadata> {
+        Ok(special_dev_meta(0o20666, self.inode, 1, 5))
+    }
 
     // 本方法代码由AI完成
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> { Ok(Box::new(*self)) }
@@ -419,7 +423,9 @@ impl VfsIoHandle for CpuDmaLatencyDeviceHandle {
     }
 
     // 本方法代码由AI完成
-    fn metadata(&self) -> VfsResult<VfsMetadata> { Ok(special_meta(0o20600, self.inode)) }
+    fn metadata(&self) -> VfsResult<VfsMetadata> {
+        Ok(special_dev_meta(0o20600, self.inode, 10, 233))
+    }
 
     // 本方法代码由AI完成
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> { Ok(Box::new(*self)) }
@@ -486,13 +492,27 @@ impl VfsIoHandle for UrandomDeviceHandle {
     }
 
     // 本方法代码由AI完成
-    fn metadata(&self) -> VfsResult<VfsMetadata> { Ok(special_meta(0o20666, self.inode)) }
+    fn metadata(&self) -> VfsResult<VfsMetadata> {
+        Ok(special_dev_meta(0o20666, self.inode, 1, 9))
+    }
 
     // 本方法代码由AI完成
     fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> { Ok(Box::new(*self)) }
 }
 
 pub(crate) fn read_lease_self_test() {
+    let null_meta = NullDeviceHandle::default().metadata().expect("stat /dev/null");
+    assert_eq!((null_meta.device_major, null_meta.device_minor), (1, 3));
+    let zero_meta = ZeroDeviceHandle::default().metadata().expect("stat /dev/zero");
+    assert_eq!((zero_meta.device_major, zero_meta.device_minor), (1, 5));
+    let cpu_dma_latency_meta = CpuDmaLatencyDeviceHandle::default()
+        .metadata()
+        .expect("stat /dev/cpu_dma_latency");
+    assert_eq!((cpu_dma_latency_meta.device_major, cpu_dma_latency_meta.device_minor),
+               (10, 233));
+    let urandom_meta = UrandomDeviceHandle::default().metadata().expect("stat /dev/urandom");
+    assert_eq!((urandom_meta.device_major, urandom_meta.device_minor), (1, 9));
+
     let mut zero = ZeroDeviceHandle::default();
     let lease = zero.prepare_read(3)
                     .expect("prepare zero read")
