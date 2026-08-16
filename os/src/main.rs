@@ -589,8 +589,7 @@ mod loongson2k1000la {
                                                                                  LoongArch CPU \
                                                                                  topology");
         let _ = platform::active_impl::console::console_write_raw_buffer(b"M17\r\n");
-        info!("[boot] 2K1000 configured CPU mask={:#x}",
-              configured.bits());
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"configured cpu mask ready\r\n");
         let memory_end = platform::physical_ram_end_exclusive();
         let _ = platform::active_impl::console::console_write_raw_buffer(b"M18\r\n");
         init_after_boot(dtb_pa, memory_end, cpu_id);
