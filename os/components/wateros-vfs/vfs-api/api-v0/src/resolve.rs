@@ -3,6 +3,7 @@
 extern crate alloc;
 
 use alloc::{string::String, vec::Vec};
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::error::{VfsError, VfsResult};
 use crate::path::normalize_absolute_path;
@@ -25,16 +26,18 @@ pub fn resolve_against_cwd(cwd: &str, path: Option<&str>) -> VfsResult<String> {
 /// 可选：`open` 前将用户路径解析为绝对路径（由聚合层注册，可含 per-task cwd）。
 type OpenPathResolverFn = fn(&str) -> VfsResult<String>;
 
-static OPEN_PATH_RESOLVER: spin::Mutex<Option<OpenPathResolverFn>> = spin::Mutex::new(None);
+static OPEN_PATH_RESOLVER : AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
 /// 注册 `open` 路径解析钩子（单核启动期调用一次即可）。
 pub fn register_open_path_resolver(resolver: OpenPathResolverFn) {
-    *OPEN_PATH_RESOLVER.lock() = Some(resolver);
+    OPEN_PATH_RESOLVER.store(resolver as *mut (), Ordering::Release);
 }
 
 /// 解析 `open`/`openat` 传入的路径：已注册则走 per-task cwd，否则相对 `/`。
 pub fn resolve_open_path(path: &str) -> VfsResult<String> {
-    if let Some(resolver) = *OPEN_PATH_RESOLVER.lock() {
+    let raw = OPEN_PATH_RESOLVER.load(Ordering::Acquire);
+    if !raw.is_null() {
+        let resolver : OpenPathResolverFn = unsafe { core::mem::transmute(raw) };
         return resolver(path);
     }
     resolve_against_cwd("/", Some(path))
