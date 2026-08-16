@@ -217,6 +217,10 @@ pub(crate) fn poll_socket_revents(fd : usize, events : i16) -> i16 {
     let Some(socket) = socket_fd::lookup(fd) else {
         return 0;
     };
+    poll_socket_revents_for_ref(&socket, events)
+}
+
+fn poll_socket_revents_for_ref(socket : &network::SocketRef, events : i16) -> i16 {
     let mut revents = 0i16;
     let Ok(snapshot) = socket.poll_snapshot() else {
         return POLLNVAL;
@@ -279,8 +283,15 @@ pub(crate) fn poll_socket_revents(fd : usize, events : i16) -> i16 {
 
 // 本方法代码由AI完成
 pub(crate) fn poll_revents_fd(fd : usize, events : i16) -> i16 {
-    if socket_fd::lookup(fd).is_some() {
-        return poll_socket_revents(fd, events);
+    poll_revents_fd_with_socket(fd, events, socket_fd::lookup(fd))
+}
+
+fn poll_revents_fd_with_socket(fd : usize,
+                               events : i16,
+                               socket : Option<network::SocketRef>)
+                               -> i16 {
+    if let Some(socket) = socket {
+        return poll_socket_revents_for_ref(&socket, events);
     }
     match vfs::fd::with_current_io(fd, |handle| handle.poll_revents(events)) {
         Ok(r) => r,
@@ -303,11 +314,12 @@ fn scan_pollfds(pollfds : &PollSet, writeback : bool) -> Result<usize, ErrNo> {
         }
 
         let fd = pfd.fd as usize;
-        if !network_driven && socket_fd::lookup(fd).is_some() {
+        let socket = socket_fd::lookup(fd);
+        if !network_driven && socket.is_some() {
             drive_network_stack();
             network_driven = true;
         }
-        let revents = poll_revents_fd(fd, pfd.events);
+        let revents = poll_revents_fd_with_socket(fd, pfd.events, socket);
         if revents & POLLNVAL != 0 {
             pfd.revents = POLLNVAL;
             ready_count += 1;
@@ -599,11 +611,12 @@ fn scan_fd_sets_inner(inputs : &FdSetInputs,
         if events == 0 {
             continue;
         }
-        if !network_driven && socket_fd::lookup(fd).is_some() {
+        let socket = socket_fd::lookup(fd);
+        if !network_driven && socket.is_some() {
             drive_network_stack();
             network_driven = true;
         }
-        let revents = poll_revents_fd(fd, events);
+        let revents = poll_revents_fd_with_socket(fd, events, socket);
         if revents & POLLNVAL != 0 {
             return Err(ErrNo::EBADF);
         }

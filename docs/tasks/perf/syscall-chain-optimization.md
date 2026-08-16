@@ -57,6 +57,12 @@ trap_handler
 
 ### T2：合并 poll 路径的 socket 分类查找
 
+状态：已完成，提交为 `[perf] reuse classified sockets during poll scans`。
+
+实现结果：每次就绪扫描只重新分类一次 fd；已识别的 `SocketRef` 直接传入 readiness 计算，
+不再重复经过 fd registry。普通 fd、无效 fd 和跨等待轮次的重新分类保持原有路径。`rv_check`
+已通过（`CARGO_NET_OFFLINE=true make rv_check`）。
+
 现状：同一轮 socket readiness 检查可能经过 `scan_pollfds -> socket_fd::lookup ->
 poll_revents_fd -> socket_fd::lookup -> poll_socket_revents -> socket_fd::lookup`。
 
