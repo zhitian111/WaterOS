@@ -501,8 +501,8 @@ packages/<name>/
 | `busybox` | 静态 shell 与常用 applet | RV、LA |
 | `operator-tools` | WaterOS 现场诊断脚本 | RV、LA |
 | `microwindows` | Nano-X、演示程序、Doom | RV、LA |
-| `mgba` | mGBA 模拟器及示例 ROM | RV |
-| `waterfm` | Nano-X 文件管理器 | RV |
+| `mgba` | mGBA 模拟器及示例 ROM | RV、LA |
+| `waterfm` | Nano-X 文件管理器 | RV、LA |
 | `openjdk21` | OpenJDK 21 headless、zlib 与 JVM 冒烟探针 | RV、LA |
 | `minecraft-server` | Minecraft Java 1.21.11 服务端与启动验收脚本 | RV、LA（显式选择） |
 
@@ -636,14 +636,16 @@ Arch 的 `riscv64-gnu-toolchain-musl-bin` 通常只以 `riscv64-linux-musl-` 前
 `user/build/toolchains/rv/archlinux-compat/bin/` 生成私有兼容前缀；无需手动设置
 `RV_CROSS_COMPILE`。
 
-构建当前图形用户空间（mGBA 与 WaterFM，且避开 OpenJDK）使用：
+构建当前图形用户空间（Nano-X、mGBA 与 WaterFM，且避开 OpenJDK）使用：
 
 ```bash
 make image ARCH=rv PACKAGE=waterfm JOBS=4
 ```
 
+将 `ARCH=rv` 改为 `ARCH=la` 即可构建 LoongArch 图形用户空间；两个架构都会安装
+`/usr/bin/start-nanox`，并由启动器根据实际安装的 `waterfm`/`water-mgba` 保留对应菜单项。
 `PACKAGE=waterfm` 会自动包含 `mgba`、Nano-X 和它们的基础依赖。显式设置
-`RV_CROSS_COMPILE` 时仍完全由该环境变量接管。
+`RV_CROSS_COMPILE` 或 `LA_CROSS_COMPILE` 时仍完全由对应环境变量接管。
 
 ## Minecraft Java 服务端
 

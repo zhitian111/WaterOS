@@ -1,7 +1,7 @@
 [package]
 name = "waterfm"
 version = "0.1.0"
-architectures = ["rv"]
+architectures = ["rv", "la"]
 dependencies = ["mgba"]
 build = "build.py"
 install_prefix = "/usr"
