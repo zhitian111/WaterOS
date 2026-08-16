@@ -44,7 +44,7 @@ pub fn realtime_ns(dtb_pa : usize) -> DriverResult<u64> {
                  .filter(|region| region.size >= SYS_RTCTRIM + core::mem::size_of::<u32>())
                  .ok_or(DriverError::NotFound)?;
 
-    let unix_timestamp = read_unix_timestamp(rtc.base)?;
+    let unix_timestamp = read_unix_timestamp(rtc.base);
     if unix_timestamp == 0 {
         Err(DriverError::IoError)
     } else {
@@ -164,7 +164,7 @@ pub fn test() {
         let toy_high = 125;
         let toy_low = (6 << 26) | (12 << 21) | (8 << 16) | (34 << 10) | (56 << 4);
         assert_eq!(toy_to_unix_timestamp(toy_high, toy_low),
-                   Some(1_749_717_296));
+                   Some(1_749_717_296_000_000_000));
     }
 }
 

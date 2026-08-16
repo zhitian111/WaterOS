@@ -106,10 +106,10 @@ fn is_leap_year(year : i32) -> bool { (year % 4 == 0 && year % 100 != 0) || year
 
 /// 纯函数自检：验证 JH7110 RTC 的位域解码。
 pub fn test() {
-    let time_reg = 8 | (34 << 7) | (56 << 14);
+    let time_reg = 56 | (34 << 7) | (8 << 14);
     let date_reg = 12 | (6 << 6) | (25 << 11);
     assert_eq!(decode_rtc_datetime(time_reg, date_reg),
-               Some(1_749_717_296));
+               Some(1_749_717_296_000_000_000));
 }
 
 #[cfg(test)]
