@@ -537,6 +537,18 @@ mod loongson2k1000la {
     /// `a0` = 逻辑 CPU id；`a1/a2/a3` 为 PMON 透传（非 UEFI argc/argv/envp），忽略。
     #[unsafe(no_mangle)]
     pub fn wateros_kernel_main_rust(cpu_raw : usize, _argc : usize, _argv : usize, _envp : usize) -> ! {
+        unsafe {
+            core::arch::asm!(
+                "li.d $t0, 0x800000001fe20000",
+                "1:",
+                "ld.bu $t1, $t0, 5",
+                "andi $t1, $t1, 0x20",
+                "beqz $t1, 1b",
+                "ori $t1, $zero, 0x54",
+                "st.b $t1, $t0, 0",
+                options(nostack)
+            );
+        }
         let _ = platform::console::console_write_raw_buffer(b"[2K1000] enter WaterOS Rust\r\n");
         let _ = platform::console::console_flush();
         let cpu_id = task::CpuId::from_raw(cpu_raw);
