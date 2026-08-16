@@ -25,15 +25,6 @@ const AT_STATX_FORCE_SYNC: u32 = 0x2000;
 const AT_STATX_DONT_SYNC: u32 = 0x4000;
 const AT_STATX_SYNC_TYPE: u32 = AT_STATX_FORCE_SYNC | AT_STATX_DONT_SYNC;
 const STATX_RESERVED: u32 = 0x8000_0000;
-const NAME_MAX: usize = 255;
-
-fn reject_long_path_component(path: &str) -> Result<(), ErrNo> {
-    if path.split('/').any(|component| component.len() > NAME_MAX) {
-        return Err(ErrNo::ENAMETOOLONG);
-    }
-    Ok(())
-}
-
 fn check_stat_parent_search(path: &str, cred: &ProcessCredentials) -> Result<(), ErrNo> {
     if cred.effective_uid.0 == 0 {
         return Ok(());
@@ -183,10 +174,6 @@ pub(crate) fn sys_statx(args: SyscallArgs) -> UserRet {
             Err(e) => return UserRet::from_error(e),
         }
     };
-    if let Err(e) = reject_long_path_component(path.as_str()) {
-        return UserRet::from_error(e);
-    }
-
     let statx = if path.is_empty() && (flags & AT_EMPTY_PATH) != 0 && dirfd >= 0 {
         match vfs::fd::with_current_io(dirfd as usize, |handle| {
             let meta = handle.metadata()?;
