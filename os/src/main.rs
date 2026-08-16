@@ -559,11 +559,21 @@ mod loongson2k1000la {
             panic!("[boot] 2K1000 SMP AP entry not supported yet");
         }
 
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M2\r\n");
         runtime::init_console();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M3\r\n");
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M4\r\n");
         runtime::showlogo();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M5\r\n");
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M6\r\n");
         klog::init();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M7\r\n");
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M8\r\n");
         runtime::logging::init();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M9\r\n");
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M10\r\n");
         runtime::heap_allocator::init();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M11\r\n");
         platform::arch::cpu::init_current_cpu(cpu_id).expect("BSP init current CPU");
         platform::arch::init();
         let _ = platform::smp::init_ipi();
