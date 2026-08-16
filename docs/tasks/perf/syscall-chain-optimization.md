@@ -74,6 +74,12 @@ handle 查询；等待路径仍使用 detached handle，不能把共享 fd 槽�
 
 ### T3：路径 C 字符串按块复制
 
+状态：已完成，提交为 `[perf] copy user paths in bounded chunks`。
+
+实现结果：`copy_user_path_cstr` 以 64 字节块读取，正常路径每块只做一次用户地址空间访问；
+块复制遇到跨页错误时回退到该块的逐字节读取，保留有效前缀中的 NUL、`EFAULT` 和边界语义。
+`rv_check` 已通过（`CARGO_NET_OFFLINE=true make rv_check`）。
+
 现状：`copy_user_path_cstr` 每次只复制 1 字节，最长路径最多进行 4096 次 MM copy。
 
 方案：按固定小块复制到内核临时缓冲，在内核中寻找 NUL；最后一个块允许提前结束。保持

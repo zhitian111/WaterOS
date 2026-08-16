@@ -192,19 +192,41 @@ pub(crate) fn copy_user_path_cstr(ptr : usize, max : usize) -> Result<String, Er
     if max == 0 {
         return Err(ErrNo::EINVAL);
     }
+    const PATH_COPY_CHUNK : usize = 64;
     let mut raw = Vec::with_capacity(max.min(256));
-    raw.resize(max, 0);
     let ops = user_aspace_required()?;
     let mut len = 0usize;
     while len < max {
-        let mut byte = [0u8; 1];
-        ops.copy_from_user(&mut byte, VirtAddr(ptr + len))
-           .map_err(mm_user_copy_errno)?;
-        if byte[0] == 0 {
-            break;
+        let chunk_len = (max - len).min(PATH_COPY_CHUNK);
+        let chunk_ptr = ptr.checked_add(len).ok_or(ErrNo::EFAULT)?;
+        let mut chunk = [0u8; PATH_COPY_CHUNK];
+        match ops.copy_from_user(&mut chunk[..chunk_len], VirtAddr(chunk_ptr)) {
+            Ok(copied) if copied == chunk_len => {
+                let end = chunk[..chunk_len].iter().position(|byte| *byte == 0);
+                let data_len = end.unwrap_or(chunk_len);
+                raw.extend_from_slice(&chunk[..data_len]);
+                len += data_len;
+                if end.is_some() {
+                    break;
+                }
+            }
+            Ok(_) | Err(_) => {
+                // A block may straddle an invalid page even when a NUL appears
+                // in the valid prefix. Fall back to the byte semantics for this
+                // chunk so that the fault boundary remains unchanged.
+                for byte_offset in 0..chunk_len {
+                    let byte_ptr = chunk_ptr.checked_add(byte_offset).ok_or(ErrNo::EFAULT)?;
+                    let mut byte = [0u8; 1];
+                    ops.copy_from_user(&mut byte, VirtAddr(byte_ptr))
+                       .map_err(mm_user_copy_errno)?;
+                    if byte[0] == 0 {
+                        return String::from_utf8(raw).map_err(|_| ErrNo::EINVAL);
+                    }
+                    raw.push(byte[0]);
+                    len += 1;
+                }
+            }
         }
-        raw[len] = byte[0];
-        len += 1;
     }
     if len >= max {
         return Err(ErrNo::ENAMETOOLONG);
