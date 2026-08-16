@@ -575,19 +575,28 @@ mod loongson2k1000la {
         // heap init 单独定位。
         let _ = platform::active_impl::console::console_write_raw_buffer(b"M11\r\n");
         platform::arch::cpu::init_current_cpu(cpu_id).expect("BSP init current CPU");
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M12\r\n");
         platform::arch::init();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M13\r\n");
         let _ = platform::smp::init_ipi();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M14\r\n");
         let dtb_pa = platform::active_impl::boot::device_tree_phys_addr();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M15\r\n");
         init_when_boot(dtb_pa);
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M16\r\n");
         let configured =
             platform::active_impl::smp::init_configured_cpu_mask(dtb_pa).expect("initialize \
                                                                                  LoongArch CPU \
                                                                                  topology");
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M17\r\n");
         info!("[boot] 2K1000 configured CPU mask={:#x}",
               configured.bits());
         let memory_end = platform::physical_ram_end_exclusive();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M18\r\n");
         init_after_boot(dtb_pa, memory_end, cpu_id);
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M19\r\n");
         task::set_cpu_online(cpu_id);
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"M20\r\n");
         platform::arch::paging::init_paging_disable_mmu();
 
         // PM 控制器：DTB 优先，PMON 无 DTB 时回退板级固定基址（0x1FE2_7000）。
