@@ -15,7 +15,7 @@ use api_v0::flags::MapFlags;
 use api_v0::frame_allocator::PhysicalFrameAllocator;
 
 use api_v0::mmap::{
-    DemandPageLoader, DeviceMapping, MmapKind, MmapOps, MmapRequest, PageFaultAccess,
+    DemandPageLoader, DeviceMapping, MmapKind, MmapOps, MmapRequest, PageFaultAccess, PteChange,
 };
 use api_v0::perm::PagePerm;
 use impl_common::{
@@ -584,7 +584,7 @@ impl MmapOps for LoongArch64AddressSpace {
                                                                  allocator : &mut A,
                                                                  addr : VirtAddr,
                                                                  len : usize)
-                                                                 -> MmResult<()> {
+                                                                 -> MmResult<PteChange> {
         if len == 0 {
             return Err(MmError::InvalidAddress);
         }
@@ -599,7 +599,7 @@ impl MmapOps for LoongArch64AddressSpace {
         let page_end = end.ceil_page()
                           .start_addr();
         self.sync_shared_file_vmas(page_start, page_end)?;
-        self.unmap_mmap_range(allocator, addr, end)?;
+        let changed = self.unmap_mmap_range(allocator, addr, end)?;
         self.remove_lazy_file_vmas(addr.floor_page()
                                        .start_addr(),
                                    end.ceil_page()
@@ -610,11 +610,10 @@ impl MmapOps for LoongArch64AddressSpace {
                                         .start_addr());
         self.remove_shared_file_vmas(page_start, page_end)?;
         self.remove_device_vmas(page_start, page_end);
-        fence_user_ptes();
-        Ok(())
+        Ok(if changed { PteChange::Changed } else { PteChange::None })
     }
 
-    fn munmap_external(&mut self, addr : VirtAddr, len : usize) -> MmResult<()> {
+    fn munmap_external(&mut self, addr : VirtAddr, len : usize) -> MmResult<PteChange> {
         if len == 0 {
             return Err(MmError::InvalidAddress);
         }
@@ -628,19 +627,19 @@ impl MmapOps for LoongArch64AddressSpace {
                              .start_addr();
         let page_end = end.ceil_page()
                           .start_addr();
+        let mut changed = false;
         let mut vpn = page_start.floor_page();
         let vpn_end = page_end.floor_page();
         while vpn.0 < vpn_end.0 {
             // 外部对象仍持有 PPN；这里故意丢弃返回值而不调用 frame_dealloc。
-            let _ = self.unmap_page_to_ppn(vpn)?;
+            changed |= self.unmap_page_to_ppn(vpn)?.is_some();
             vpn = VirtPageNum(vpn.0 + 1);
         }
         self.remove_lazy_file_vmas(page_start, page_end)?;
         self.remove_shared_anon_vmas(page_start, page_end);
         self.remove_shared_file_vmas(page_start, page_end)?;
         self.remove_device_vmas(page_start, page_end);
-        fence_user_ptes();
-        Ok(())
+        Ok(if changed { PteChange::Changed } else { PteChange::None })
     }
 
     fn msync(&mut self, addr : VirtAddr, len : usize) -> MmResult<()> {

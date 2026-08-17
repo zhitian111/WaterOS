@@ -238,10 +238,11 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
                             kind };
 
     match file_fd {
-        None => match mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
+        None => match mm::user_aspace::with_user_aspace_mut_and_flush_if_changed(handle, |aspace| {
                   let mut alloc = GlobalPhysFrameAllocator;
                   let base = MmapOps::mmap(aspace, &mut alloc, req, None)?;
-                  Ok(base.0)
+                  let changed = mf.contains(MapFlags::SHARED) || mf.contains(MapFlags::FIXED);
+                  Ok((base.0, changed))
               }) {
             Ok(base) => UserRet::from_success(base),
             Err(e) => {
@@ -272,14 +273,14 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
             // Writable shared mappings need stable frames across fork. Read-only shared mappings
             // can retain file-backed lazy faults without changing observable sharing semantics.
             let eager_shared = mf.contains(MapFlags::SHARED) && perm.writable();
-            match mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
+            match mm::user_aspace::with_user_aspace_mut_and_flush_if_changed(handle, |aspace| {
                       let mut alloc = GlobalPhysFrameAllocator;
                       let base = if eager_shared {
                           MmapOps::mmap_file_shared(aspace, &mut alloc, req, loader)?
                       } else {
                           MmapOps::mmap_file_lazy(aspace, &mut alloc, req, file_size, loader)?
                       };
-                      Ok(base.0)
+                      Ok((base.0, eager_shared || mf.contains(MapFlags::FIXED)))
                   }) {
                 Ok(base) => UserRet::from_success(base),
                 Err(e) => {
@@ -328,9 +329,10 @@ pub(crate) fn sys_munmap(args : SyscallArgs) -> UserRet {
     use mm::frame_alloctor::GlobalPhysFrameAllocator;
     let addr = args.arg(0);
     let len = args.arg(1);
-    match mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
+    match mm::user_aspace::with_user_aspace_mut_and_flush_if_changed(handle, |aspace| {
               let mut alloc = GlobalPhysFrameAllocator;
-              MmapOps::munmap(aspace, &mut alloc, VirtAddr(addr), len)
+              let changed = MmapOps::munmap(aspace, &mut alloc, VirtAddr(addr), len)?;
+              Ok(((), changed.changed()))
           }) {
         Ok(()) => UserRet::from_success(0),
         Err(e) => UserRet::from_error(mm_err_to_errno(e)),

@@ -68,6 +68,17 @@ pub enum DemandMappingKind {
     File,
 }
 
+/// Summary of whether an address-space operation changed any resident leaf PTE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PteChange {
+    None,
+    Changed,
+}
+
+impl PteChange {
+    pub const fn changed(self) -> bool { matches!(self, Self::Changed) }
+}
+
 /// 文件页懒加载器。实现者须自行持有 mmap 后仍可读取文件内容的状态。
 pub trait DemandPageLoader {
     /// 复制 loader；用于 fork 后父子地址空间都保留同一文件映射语义。
@@ -149,14 +160,14 @@ pub trait MmapOps: AddressSpaceOps {
                                                                  allocator : &mut A,
                                                                  addr : VirtAddr,
                                                                  len : usize)
-                                                                 -> MmResult<()>;
+                                                                 -> MmResult<PteChange>;
 
     /// 解除一段由地址空间外部对象持有的物理页映射。
     ///
     /// 该接口用于 SysV SHM 等“物理页由独立注册表管理”的映射。实现只能删除
     /// PTE 和对应 VMA 元数据，绝不能把叶子 PPN 交给通用帧分配器。调用方必须
     /// 在确认该范围确实属于外部对象后使用它，并负责外部对象最终的生命周期。
-    fn munmap_external(&mut self, addr : VirtAddr, len : usize) -> MmResult<()>;
+    fn munmap_external(&mut self, addr : VirtAddr, len : usize) -> MmResult<PteChange>;
 
     /// 将范围内的可写共享文件映射同步到其文件后备。
     fn msync(&mut self, addr : VirtAddr, len : usize) -> MmResult<()>;
