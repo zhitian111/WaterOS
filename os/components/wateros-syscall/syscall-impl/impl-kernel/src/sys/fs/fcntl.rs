@@ -24,6 +24,10 @@ const F_SETPIPE_SZ : usize = 1031;
 const F_GETPIPE_SZ : usize = 1032;
 const F_ADD_SEALS : usize = 1033;
 const F_GET_SEALS : usize = 1034;
+/// Linux `F_OFD_SETLK`（Open File Description 锁）。
+const F_OFD_SETLK : usize = 37;
+/// Linux `F_OFD_SETLKW`。
+const F_OFD_SETLKW : usize = 38;
 
 const FD_CLOEXEC : usize = 1;
 const O_RDWR : usize = 2;
@@ -54,6 +58,8 @@ pub(crate) fn sys_fcntl(args : SyscallArgs) -> UserRet {
         F_GETLK => fcntl_getlk(fd, arg),
         F_SETLK => fcntl_setlk(fd, arg, false),
         F_SETLKW => fcntl_setlk(fd, arg, true),
+        F_OFD_SETLK => fcntl_setlk(fd, arg, false),
+        F_OFD_SETLKW => fcntl_setlk(fd, arg, true),
         F_GETPIPE_SZ => fcntl_getpipe_sz(fd),
         F_SETPIPE_SZ => fcntl_setpipe_sz(fd, arg),
         F_ADD_SEALS => super::memfd::fcntl_add_seals(fd, arg as u32),
@@ -185,8 +191,10 @@ fn normalize_pipe_size(size : usize) -> Result<usize, ErrNo> {
     }
     let pages = size.max(1)
                     .div_ceil(PAGE_SIZE);
-    let rounded_pages = pages.checked_next_power_of_two().ok_or(ErrNo::EPERM)?;
-    let capacity = rounded_pages.checked_mul(PAGE_SIZE).ok_or(ErrNo::EPERM)?;
+    let rounded_pages = pages.checked_next_power_of_two()
+                             .ok_or(ErrNo::EPERM)?;
+    let capacity = rounded_pages.checked_mul(PAGE_SIZE)
+                                .ok_or(ErrNo::EPERM)?;
     if capacity > MAX_PIPE_SIZE {
         return Err(ErrNo::EPERM);
     }
@@ -258,13 +266,17 @@ mod tests {
     fn pipe_size_rounds_to_page_power_of_two() {
         assert_eq!(normalize_pipe_size(0), Ok(PAGE_SIZE));
         assert_eq!(normalize_pipe_size(1), Ok(PAGE_SIZE));
-        assert_eq!(normalize_pipe_size(PAGE_SIZE), Ok(PAGE_SIZE));
-        assert_eq!(normalize_pipe_size(PAGE_SIZE + 1), Ok(PAGE_SIZE * 2));
-        assert_eq!(normalize_pipe_size(PAGE_SIZE * 3), Ok(PAGE_SIZE * 4));
+        assert_eq!(normalize_pipe_size(PAGE_SIZE),
+                   Ok(PAGE_SIZE));
+        assert_eq!(normalize_pipe_size(PAGE_SIZE + 1),
+                   Ok(PAGE_SIZE * 2));
+        assert_eq!(normalize_pipe_size(PAGE_SIZE * 3),
+                   Ok(PAGE_SIZE * 4));
     }
 
     #[test]
     fn pipe_size_rejects_over_limit() {
-        assert_eq!(normalize_pipe_size(MAX_PIPE_SIZE + 1), Err(ErrNo::EPERM));
+        assert_eq!(normalize_pipe_size(MAX_PIPE_SIZE + 1),
+                   Err(ErrNo::EPERM));
     }
 }

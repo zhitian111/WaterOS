@@ -118,10 +118,10 @@ impl PageCacheIo for FsPageIo {
             FsRoute::AuxRw { fs, rel, .. } => fs.lock()
                                                 .write_range(rel.as_str(), offset, data)
                                                 .map_err(map_fs_err),
-            FsRoute::AuxRo { .. } | FsRoute::PseudoProc { .. } | FsRoute::PseudoSys { .. } |
-            FsRoute::PseudoSecurity { .. } => {
-                Err(VfsError::ReadOnlyFs)
-            }
+            FsRoute::AuxRo { .. } |
+            FsRoute::PseudoProc { .. } |
+            FsRoute::PseudoSys { .. } |
+            FsRoute::PseudoSecurity { .. } => Err(VfsError::ReadOnlyFs),
         }
     }
 }
@@ -140,6 +140,7 @@ pub struct PagedFileHandle {
     open_ref_held : bool,
     anonymous : bool,
     tmpfile_linkable : bool,
+    tmpfile_linked_path : Mutex<Option<String>>,
     flock_owner_id : u64,
 }
 
@@ -163,6 +164,9 @@ impl Clone for PagedFileHandle {
                open_ref_held : self.open_ref_held,
                anonymous : self.anonymous,
                tmpfile_linkable : self.tmpfile_linkable,
+               tmpfile_linked_path : Mutex::new(self.tmpfile_linked_path
+                                                    .lock()
+                                                    .clone()),
                flock_owner_id : self.flock_owner_id }
     }
 }
@@ -259,6 +263,7 @@ impl PagedFileHandle {
                   open_ref_held : true,
                   anonymous : false,
                   tmpfile_linkable : false,
+                  tmpfile_linked_path : Mutex::new(None),
                   flock_owner_id : NEXT_FLOCK_OWNER_ID.fetch_add(1, Ordering::Relaxed) })
     }
 
@@ -306,6 +311,7 @@ impl PagedFileHandle {
                   open_ref_held : true,
                   anonymous : true,
                   tmpfile_linkable : linkable,
+                  tmpfile_linked_path : Mutex::new(None),
                   flock_owner_id : NEXT_FLOCK_OWNER_ID.fetch_add(1, Ordering::Relaxed) })
     }
 
@@ -549,7 +555,11 @@ impl VfsIoHandle for PagedFileHandle {
         if n != 0 {
             self.mark_content_changed();
             const O_SYNC : u32 = 0o4_010_000;
-            if self.description.status_flags() & O_SYNC != 0 {
+            if self.description
+                   .status_flags() &
+               O_SYNC !=
+               0
+            {
                 self.sync_dirty()?;
             }
         }
@@ -616,7 +626,11 @@ impl VfsIoHandle for PagedFileHandle {
         if n != 0 {
             self.mark_content_changed();
             const O_SYNC : u32 = 0o4_010_000;
-            if self.description.status_flags() & O_SYNC != 0 {
+            if self.description
+                   .status_flags() &
+               O_SYNC !=
+               0
+            {
                 self.sync_dirty()?;
             }
         }
@@ -663,13 +677,23 @@ impl VfsIoHandle for PagedFileHandle {
     // 本方法代码由AI完成
     fn backing_path(&self) -> Option<&str> { (!self.anonymous).then_some(self.path.as_str()) }
 
+    // 本方法代码由AI完成
+    fn linked_tmpfile_path(&self) -> Option<String> {
+        self.tmpfile_linked_path
+            .lock()
+            .clone()
+    }
+
     fn link_at_empty_path(&self, new_path : &str) -> VfsResult<()> {
         if self.anonymous && !self.tmpfile_linkable {
             return Err(VfsError::OperationNotPermitted);
         }
         self.stable_node()
             .ok_or(VfsError::Io)?
-            .link_tmpfile(new_path)
+            .link_tmpfile(new_path)?;
+        *self.tmpfile_linked_path
+             .lock() = Some(String::from(new_path));
+        Ok(())
     }
 
     // 本方法代码由AI完成

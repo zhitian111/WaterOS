@@ -49,7 +49,9 @@ pub(crate) fn sys_fchmodat(args : SyscallArgs) -> UserRet {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
-    if let Err(error) = check_parent_search(resolved.as_str(), &cred::current_credentials()) {
+    if let Err(error) = check_parent_search(resolved.as_str(),
+                                            &cred::current_credentials())
+    {
         return UserRet::from_error(error);
     }
 
@@ -64,7 +66,8 @@ pub(crate) fn sys_fchmodat(args : SyscallArgs) -> UserRet {
 
     match vfs::chmod_absolute(resolved.as_str(), mode) {
         Ok(()) => {
-            super::inotify::notify_attrib(resolved.as_str(), meta.node_type == VfsNodeType::Directory);
+            super::inotify::notify_attrib(resolved.as_str(),
+                                          meta.node_type == VfsNodeType::Directory);
             UserRet::from_success(0)
         }
         Err(VfsError::Unsupported) => UserRet::from_error(ErrNo::EPERM),
@@ -85,8 +88,9 @@ pub(crate) fn sys_fchmod(args : SyscallArgs) -> UserRet {
 
     let (path, meta) = match vfs::fd::with_current_io(fd, |handle| {
               let path = handle.backing_path()
-                               .ok_or(vfs::api::VfsError::Unsupported)?
-                               .to_string();
+                               .map(ToString::to_string)
+                               .or_else(|| handle.linked_tmpfile_path())
+                               .ok_or(vfs::api::VfsError::Unsupported)?;
               let meta = handle.metadata()?;
               Ok((path, meta))
           }) {
@@ -109,7 +113,8 @@ pub(crate) fn sys_fchmod(args : SyscallArgs) -> UserRet {
 
     match vfs::chmod_absolute(path.as_str(), mode) {
         Ok(()) => {
-            super::inotify::notify_attrib(path.as_str(), meta.node_type == VfsNodeType::Directory);
+            super::inotify::notify_attrib(path.as_str(),
+                                          meta.node_type == VfsNodeType::Directory);
             UserRet::from_success(0)
         }
         Err(VfsError::Unsupported) => UserRet::from_error(ErrNo::EPERM),
@@ -156,14 +161,6 @@ pub(crate) fn sys_fchownat(args : SyscallArgs) -> UserRet {
     if flags & !FCHOWNAT_VALID_FLAGS != 0 {
         return UserRet::from_error(ErrNo::EINVAL);
     }
-    if flags & AT_EMPTY_PATH != 0 {
-        return UserRet::from_error(ErrNo::EINVAL);
-    }
-    let final_mode = if flags & AT_SYMLINK_NOFOLLOW != 0 {
-        FinalSymlink::NoFollow
-    } else {
-        FinalSymlink::Follow
-    };
 
     let path = match copy_user_path_cstr(path_ptr,
                                          crate::user_copy::USER_PATH_MAX)
@@ -171,6 +168,32 @@ pub(crate) fn sys_fchownat(args : SyscallArgs) -> UserRet {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
     };
+
+    // `fchownat(fd, "", …, AT_EMPTY_PATH)` 等价 `fchown(fd)`：对 fd 指向的
+    // 文件本身操作（O_TMPFILE 已链接文件同样适用）。
+    if flags & AT_EMPTY_PATH != 0 && path.is_empty() {
+        let fd = dirfd;
+        if fd < 0 {
+            return UserRet::from_error(ErrNo::EBADF);
+        }
+        let target = match vfs::fd::with_current_io(fd as usize, |handle| {
+                  handle.backing_path()
+                        .map(|p| p.to_string())
+                        .or_else(|| handle.linked_tmpfile_path())
+                        .ok_or(VfsError::Unsupported)
+              }) {
+            Ok(p) => p,
+            Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
+        };
+        return chown_path(target.as_str(), uid, gid);
+    }
+
+    let final_mode = if flags & AT_SYMLINK_NOFOLLOW != 0 {
+        FinalSymlink::NoFollow
+    } else {
+        FinalSymlink::Follow
+    };
+
     let resolved = match resolve_path_at(dirfd, path.as_str()) {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
@@ -179,7 +202,9 @@ pub(crate) fn sys_fchownat(args : SyscallArgs) -> UserRet {
         Ok(path) => path,
         Err(e) => return UserRet::from_error(e),
     };
-    if let Err(error) = check_parent_search(resolved.as_str(), &cred::current_credentials()) {
+    if let Err(error) = check_parent_search(resolved.as_str(),
+                                            &cred::current_credentials())
+    {
         return UserRet::from_error(error);
     }
 
@@ -189,25 +214,34 @@ pub(crate) fn sys_fchownat(args : SyscallArgs) -> UserRet {
 /// 检查路径前缀目录的搜索（执行）权限。必须先于目标 inode 的 owner/
 /// capability 检查，否则无权穿越目录的调用会错误返回 EPERM。
 fn check_parent_search(path : &str, credentials : &ProcessCredentials) -> Result<(), ErrNo> {
-    if credentials.effective_uid.0 == 0 {
+    if credentials.effective_uid
+                  .0 ==
+       0
+    {
         return Ok(());
     }
     let components : alloc::vec::Vec<&str> = path.trim_start_matches('/')
-                                                        .split('/')
-                                                        .filter(|part| !part.is_empty())
-                                                        .collect();
+                                                 .split('/')
+                                                 .filter(|part| !part.is_empty())
+                                                 .collect();
     let mut current = alloc::string::String::from("/");
-    for component in components.iter().take(components.len().saturating_sub(1)) {
+    for component in components.iter()
+                               .take(components.len()
+                                               .saturating_sub(1))
+    {
         if current != "/" {
             current.push('/');
         }
         current.push_str(component);
         let metadata = active_impl::backend().metadata(current.as_str())
-                                          .map_err(vfs_error_to_errno)?;
+                                             .map_err(vfs_error_to_errno)?;
         if metadata.node_type != VfsNodeType::Directory {
             return Err(ErrNo::ENOTDIR);
         }
-        let search_bit = if credentials.effective_uid.0 == metadata.uid {
+        let search_bit = if credentials.effective_uid
+                                       .0 ==
+                            metadata.uid
+        {
             0o100
         } else if cred_has_group(credentials, Gid(metadata.gid)) {
             0o010
@@ -236,6 +270,7 @@ pub(crate) fn sys_fchown(args : SyscallArgs) -> UserRet {
     let path = match vfs::fd::with_current_io(fd, |handle| {
               handle.backing_path()
                     .map(|path| path.to_string())
+                    .or_else(|| handle.linked_tmpfile_path())
                     .ok_or(VfsError::Unsupported)
           }) {
         Ok(path) => path,
@@ -282,8 +317,8 @@ fn chown_path(path : &str, uid : Option<u32>, gid : Option<u32>) -> UserRet {
     match vfs::chown_absolute(path, uid, gid) {
         Ok(()) => {
             let is_dir = active_impl::backend().metadata(path)
-                                    .map(|meta| meta.node_type == VfsNodeType::Directory)
-                                    .unwrap_or(false);
+                                               .map(|meta| meta.node_type == VfsNodeType::Directory)
+                                               .unwrap_or(false);
             super::inotify::notify_attrib(path, is_dir);
             UserRet::from_success(0)
         }
@@ -369,7 +404,8 @@ pub(crate) fn sys_utimensat(args : SyscallArgs) -> UserRet {
     // the existing inode-keyed syscall sidecar so stat/statx observe Linux
     // utimensat semantics without coupling this syscall to an ext4 backend.
     stat_times::set(&meta, atime, mtime);
-    super::inotify::notify_attrib(_path.as_str(), meta.node_type == VfsNodeType::Directory);
+    super::inotify::notify_attrib(_path.as_str(),
+                                  meta.node_type == VfsNodeType::Directory);
     UserRet::from_success(0)
 }
 
@@ -442,6 +478,7 @@ fn resolve_utimens_target(dirfd : isize,
         return vfs::fd::with_current_io(dirfd as usize, |handle| {
                    let path = handle.backing_path()
                                     .map(ToString::to_string)
+                                    .or_else(|| handle.linked_tmpfile_path())
                                     .ok_or(VfsError::Unsupported)?;
                    Ok((path, handle.metadata()?))
                }).map_err(vfs_error_to_errno);
@@ -458,6 +495,7 @@ fn resolve_utimens_target(dirfd : isize,
         return vfs::fd::with_current_io(dirfd as usize, |handle| {
                    let path = handle.backing_path()
                                     .map(ToString::to_string)
+                                    .or_else(|| handle.linked_tmpfile_path())
                                     .ok_or(VfsError::Unsupported)?;
                    Ok((path, handle.metadata()?))
                }).map_err(vfs_error_to_errno);
@@ -526,9 +564,7 @@ mod tests {
                                         NOW),
                    Ok(RequestedTime::Value(StatTime { sec : -10,
                                                       nsec : 999_999_999 })));
-        assert_eq!(parse_requested_time(UserTimespec { sec : 0,
-                                                       nsec : -1 },
-                                        NOW),
+        assert_eq!(parse_requested_time(UserTimespec { sec : 0, nsec : -1 }, NOW),
                    Err(ErrNo::EINVAL));
         assert_eq!(parse_requested_time(UserTimespec { sec : 0,
                                                        nsec : 1_000_000_000 },

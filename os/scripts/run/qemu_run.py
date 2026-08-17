@@ -152,13 +152,17 @@ def build_qemu_launch(
         drive_spec = f"file={sdcard},if=none,format=raw,id=x0"
         if drive_options:
             drive_spec += f",{drive_options}"
+        netdev_net = "user,id=net"
+        hostfwd = _value(env, "WOS_QEMU_HOSTFWD", "tcp:127.0.0.1:2222-:22")
+        if hostfwd:
+            netdev_net += f",hostfwd={hostfwd}"
         argv = [
             "qemu-system-riscv64", "-machine", "virt", "-kernel", str(kernel),
             "-m", memory, *console_args, "-smp", smp, "-bios", "default",
             "-drive", drive_spec,
             "-device", "virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0",
             "-no-reboot", "-device", "virtio-net-device,netdev=net",
-            "-netdev", "user,id=net", "-rtc", "base=utc",
+            "-netdev", netdev_net, "-rtc", "base=utc",
         ]
         if graphics:
             argv.extend([
@@ -167,12 +171,16 @@ def build_qemu_launch(
                 "-device", "virtio-tablet-device",
             ])
     else:
+        netdev_net = "user,id=net0"
+        hostfwd = _value(env, "WOS_QEMU_HOSTFWD", "tcp:127.0.0.1:2222-:22")
+        if hostfwd:
+            netdev_net += f",hostfwd={hostfwd}"
         argv = [
             "qemu-system-loongarch64", "-kernel", str(kernel), "-m", memory,
             *console_args, "-smp", smp,
             "-drive", f"file={sdcard},if=none,format=raw,id=x0",
             "-device", "virtio-blk-pci,drive=x0", "-no-reboot",
-            "-device", "virtio-net-pci,netdev=net0", "-netdev", "user,id=net0",
+            "-device", "virtio-net-pci,netdev=net0", "-netdev", netdev_net,
             "-rtc", "base=utc",
         ]
         if graphics:
@@ -223,6 +231,9 @@ def main() -> int:
   WOS_QEMU_GDB_PORT          GDB 端口，默认为 1234
   WOS_TASKSET_CPUS           绑定的宿主 CPU 列表，例如 0-3
   WOS_QEMU_IMAGE_DRIVE_OPTIONS  追加到 RISC-V 镜像 drive 的选项
+  WOS_QEMU_HOSTFWD           追加到 user netdev 的 hostfwd 规则，默认
+                             tcp:127.0.0.1:2222-:22（host 2222 端口转发到
+                             guest 22 端口，供 SSH 使用；设为空串禁用）
 """,
     )
     parser.add_argument(

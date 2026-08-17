@@ -478,6 +478,10 @@ pub trait VfsIoHandle: Send + VfsHandleAny {
         None
     }
 
+    /// 若本句柄是已通过 `linkat(AT_EMPTY_PATH)` 发布目录项的 tmpfile，返回其真实路径。
+    /// 供 `/proc/self/fd/N` readlink 返回绝对路径；systemd 等依赖该链接做目录 fsync。
+    fn linked_tmpfile_path(&self) -> Option<String> { None }
+
     /// 按打开的稳定 inode 为 `linkat(AT_EMPTY_PATH)` 创建新目录项。
     /// 以 `O_TMPFILE | O_EXCL` 创建的匿名文件不得发布。
     fn link_at_empty_path(&self, new_path: &str) -> VfsResult<()> {

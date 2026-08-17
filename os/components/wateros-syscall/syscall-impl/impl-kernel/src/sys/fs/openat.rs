@@ -8,44 +8,54 @@ use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use cred::api::{Gid, ProcessCredentials};
 use vfs::active_impl;
-use vfs::api::{
-    FinalSymlink, SingleRootReadView, VfsError, VfsMetadata, VfsNodeType, VfsOpenOps,
-};
+use vfs::api::{FinalSymlink, SingleRootReadView, VfsError, VfsMetadata, VfsNodeType, VfsOpenOps};
 
 use super::path_at::{resolve_path_at, resolve_symlinks};
 use crate::user_copy::copy_user_path_cstr;
 use crate::vfs_util::{linux_open_flags_to_vfs, vfs_error_to_errno};
 
-const O_ACCMODE: u32 = 3;
-const O_WRONLY: u32 = 1;
-const O_RDWR: u32 = 2;
-const O_CLOEXEC: u32 = 0o2000000;
-const O_PATH: u32 = 0o10000000;
-const O_NOCTTY: u32 = 0o400;
+const O_ACCMODE : u32 = 3;
+const O_WRONLY : u32 = 1;
+const O_RDWR : u32 = 2;
+const O_CLOEXEC : u32 = 0o2000000;
+const O_PATH : u32 = 0o10000000;
+const O_NOCTTY : u32 = 0o400;
 // asm-generic (and therefore RISC-V/LoongArch): O_LARGEFILE is 0100000,
 // while O_NOFOLLOW is 0400000.  musl includes O_LARGEFILE in ordinary
 // 64-bit opens, so conflating the two makes every shared-library symlink
 // fail with ELOOP.
-const O_NOFOLLOW: u32 = 0o400_000;
-const O_EXCL: u32 = 0o200;
-const O_CREAT: u32 = 0o100;
-const O_TRUNC: u32 = 0o1000;
-const FD_CLOEXEC: usize = 1;
+const O_NOFOLLOW : u32 = 0o400_000;
+const O_EXCL : u32 = 0o200;
+const O_CREAT : u32 = 0o100;
+const O_TRUNC : u32 = 0o1000;
+const FD_CLOEXEC : usize = 1;
 
-const O_APPEND: u32 = 0o2000;
-const O_NONBLOCK: u32 = 0o4000;
-const O_LARGEFILE: u32 = 0o100_000;
-const O_DIRECTORY: u32 = 0o200_000;
-const O_DSYNC: u32 = 0o10_000;
-const O_SYNC: u32 = 0o4_010_000;
-const SUPPORTED_OPEN_FLAGS: u32 = O_ACCMODE | O_CREAT | O_EXCL | O_NOCTTY | O_TRUNC |
-                                  O_APPEND | O_NONBLOCK | O_LARGEFILE | O_DIRECTORY |
-                                  O_NOFOLLOW | O_CLOEXEC | O_PATH | O_DSYNC | O_SYNC;
-const O_ASYNC: u32 = 0o20_000;
-const O_DIRECT: u32 = 0o40_000;
-const O_NOATIME: u32 = 0o1_000_000;
-const O_TMPFILE: u32 = 0o20_200_000;
-const KNOWN_UNSUPPORTED_OPEN_FLAGS: u32 = O_ASYNC | O_DIRECT | O_NOATIME;
+const O_APPEND : u32 = 0o2000;
+const O_NONBLOCK : u32 = 0o4000;
+const O_LARGEFILE : u32 = 0o100_000;
+const O_DIRECTORY : u32 = 0o200_000;
+const O_DSYNC : u32 = 0o10_000;
+const O_SYNC : u32 = 0o4_010_000;
+const SUPPORTED_OPEN_FLAGS : u32 = O_ACCMODE |
+                                   O_CREAT |
+                                   O_EXCL |
+                                   O_NOCTTY |
+                                   O_TRUNC |
+                                   O_APPEND |
+                                   O_NONBLOCK |
+                                   O_LARGEFILE |
+                                   O_DIRECTORY |
+                                   O_NOFOLLOW |
+                                   O_CLOEXEC |
+                                   O_PATH |
+                                   O_DSYNC |
+                                   O_SYNC |
+                                   O_NOATIME;
+const O_ASYNC : u32 = 0o20_000;
+const O_DIRECT : u32 = 0o40_000;
+const O_NOATIME : u32 = 0o1_000_000;
+const O_TMPFILE : u32 = 0o20_200_000;
+const KNOWN_UNSUPPORTED_OPEN_FLAGS : u32 = O_ASYNC | O_DIRECT;
 
 // 本方法代码由AI完成
 pub(crate) fn sys_openat(args : SyscallArgs) -> UserRet {
@@ -54,7 +64,9 @@ pub(crate) fn sys_openat(args : SyscallArgs) -> UserRet {
     let flags = args.arg(2) as u32;
     let mode = (args.arg(3) as u32) & 0o7777;
 
-    let path = match copy_user_path_cstr(path_ptr, crate::user_copy::USER_PATH_MAX) {
+    let path = match copy_user_path_cstr(path_ptr,
+                                         crate::user_copy::USER_PATH_MAX)
+    {
         Ok(p) => p,
         Err(e) => return UserRet::from_error(e),
     };
@@ -83,8 +95,8 @@ pub(crate) fn open_resolved_path(resolved : &str, flags : u32, mode : u32) -> Us
 }
 
 fn validate_open_flags(flags : u32) -> Result<(), ErrNo> {
-    if flags & O_ACCMODE == O_ACCMODE || flags & !(SUPPORTED_OPEN_FLAGS | O_TMPFILE |
-                                                    KNOWN_UNSUPPORTED_OPEN_FLAGS) != 0
+    if flags & O_ACCMODE == O_ACCMODE ||
+       flags & !(SUPPORTED_OPEN_FLAGS | O_TMPFILE | KNOWN_UNSUPPORTED_OPEN_FLAGS) != 0
     {
         return Err(ErrNo::EINVAL);
     }
@@ -120,14 +132,15 @@ fn open_resolved_path_unchecked(resolved : &str, flags : u32, mode : u32) -> Use
             Err(e) => return UserRet::from_error(vfs_error_to_errno(e)),
         }
     }
-    let creates_new_file = flags & O_CREAT != 0
-        && matches!(
-            active_impl::backend().metadata(open_path.as_str()),
-            Err(VfsError::NotFound)
-        );
+    let creates_new_file = flags & O_CREAT != 0 &&
+                           matches!(active_impl::backend().metadata(open_path.as_str()),
+                                    Err(VfsError::NotFound));
 
     let vf = linux_open_flags_to_vfs(flags);
-    if let Err(e) = check_existing_open_permission(open_path.as_str(), flags, creates_new_file) {
+    if let Err(e) = check_existing_open_permission(open_path.as_str(),
+                                                   flags,
+                                                   creates_new_file)
+    {
         return UserRet::from_error(e);
     }
 
@@ -138,11 +151,10 @@ fn open_resolved_path_unchecked(resolved : &str, flags : u32, mode : u32) -> Use
     };
     if creates_new_file {
         let cred = cred::current_credentials();
-        if let Err(e) = vfs::chown_absolute(
-            open_path.as_str(),
-            Some(cred.effective_uid.0),
-            Some(cred.effective_gid.0),
-        ) {
+        if let Err(e) = vfs::chown_absolute(open_path.as_str(),
+                                            Some(cred.effective_uid.0),
+                                            Some(cred.effective_gid.0))
+        {
             return UserRet::from_error(vfs_error_to_errno(e));
         }
         let create_mode = mode & !super::super::task::current_umask();
@@ -160,7 +172,8 @@ fn open_resolved_path_unchecked(resolved : &str, flags : u32, mode : u32) -> Use
                     (vfs::fd::current_pty_endpoint(fd), task::current_process_snapshot())
                 {
                     if endpoint.endpoint() == tty::TerminalEndpoint::PtySlave &&
-                       process.pid == process.sid && endpoint.controlling_sid() == 0
+                       process.pid == process.sid &&
+                       endpoint.controlling_sid() == 0
                     {
                         let _ = tty::attach_session(&endpoint,
                                                     process.sid.raw(),
@@ -190,8 +203,8 @@ fn open_resolved_path_unchecked(resolved : &str, flags : u32, mode : u32) -> Use
                 }
             }
             let is_dir = active_impl::backend().metadata(open_path.as_str())
-                                    .map(|meta| meta.node_type == VfsNodeType::Directory)
-                                    .unwrap_or(false);
+                                               .map(|meta| meta.node_type == VfsNodeType::Directory)
+                                               .unwrap_or(false);
             if creates_new_file {
                 super::inotify::notify_create(open_path.as_str(), false);
             } else {
@@ -221,14 +234,13 @@ fn open_tmpfile(directory : &str, flags : u32, mode : u32) -> UserRet {
     } else {
         cred.effective_gid.0
     };
-    let handle = match vfs::open_tmpfile_absolute(
-        directory,
-        linux_open_flags_to_vfs(flags),
-        create_mode,
-        cred.effective_uid.0,
-        gid,
-        flags & O_EXCL == 0,
-    ) {
+    let handle = match vfs::open_tmpfile_absolute(directory,
+                                                  linux_open_flags_to_vfs(flags),
+                                                  create_mode,
+                                                  cred.effective_uid.0,
+                                                  gid,
+                                                  flags & O_EXCL == 0)
+    {
         Ok(handle) => handle,
         Err(error) => return UserRet::from_error(vfs_error_to_errno(error)),
     };
@@ -254,7 +266,7 @@ fn open_tmpfile(directory : &str, flags : u32, mode : u32) -> UserRet {
     UserRet::from_success(fd)
 }
 
-fn prepare_open_path(resolved: &str, flags: u32) -> Result<String, ErrNo> {
+fn prepare_open_path(resolved : &str, flags : u32) -> Result<String, ErrNo> {
     let final_mode = final_symlink_mode(flags);
     let resolved = match resolve_symlinks(resolved, final_mode) {
         Ok(path) => path,
@@ -267,6 +279,11 @@ fn prepare_open_path(resolved: &str, flags: u32) -> Result<String, ErrNo> {
     if flags & O_NOFOLLOW != 0 {
         match active_impl::backend().metadata(resolved.as_str()) {
             Ok(meta) if meta.node_type == vfs::api::VfsNodeType::Symlink => {
+                // Linux：`O_PATH|O_NOFOLLOW` 打开符号链接节点本身（systemd-tmpfiles
+                // 用该 fd 做 fstat/readlinkat(fd, "")/fchownat(AT_EMPTY_PATH)）。
+                if flags & O_PATH != 0 {
+                    return Ok(resolved);
+                }
                 return Err(ErrNo::ELOOP);
             }
             Ok(_) => return Ok(resolved),
@@ -277,7 +294,7 @@ fn prepare_open_path(resolved: &str, flags: u32) -> Result<String, ErrNo> {
     Ok(resolved)
 }
 
-fn final_symlink_mode(flags: u32) -> FinalSymlink {
+fn final_symlink_mode(flags : u32) -> FinalSymlink {
     if flags & O_NOFOLLOW != 0 {
         FinalSymlink::NoFollow
     } else {
@@ -287,20 +304,24 @@ fn final_symlink_mode(flags: u32) -> FinalSymlink {
 
 #[cfg(test)]
 mod tests {
-    use super::{final_symlink_mode, validate_open_flags, O_ASYNC, O_DIRECT, O_DSYNC,
-                O_NOATIME, O_NOFOLLOW, O_SYNC, O_WRONLY};
+    use super::{
+        final_symlink_mode, validate_open_flags, O_ASYNC, O_DIRECT, O_DSYNC, O_NOATIME, O_NOFOLLOW,
+        O_SYNC, O_WRONLY,
+    };
     use vfs::api::FinalSymlink;
 
     #[test]
     fn largefile_does_not_disable_final_symlink_following() {
-        const O_LARGEFILE: u32 = 0o100_000;
-        assert_eq!(final_symlink_mode(O_LARGEFILE), FinalSymlink::Follow);
+        const O_LARGEFILE : u32 = 0o100_000;
+        assert_eq!(final_symlink_mode(O_LARGEFILE),
+                   FinalSymlink::Follow);
     }
 
     #[test]
     fn nofollow_uses_asm_generic_flag_value() {
         assert_eq!(O_NOFOLLOW, 0o400_000);
-        assert_eq!(final_symlink_mode(O_NOFOLLOW), FinalSymlink::NoFollow);
+        assert_eq!(final_symlink_mode(O_NOFOLLOW),
+                   FinalSymlink::NoFollow);
     }
 
     #[test]
@@ -317,7 +338,25 @@ mod tests {
     }
 }
 
-fn check_existing_open_permission(path: &str, flags: u32, creates_new_file: bool) -> Result<(), ErrNo> {
+fn check_existing_open_permission(path : &str,
+                                  flags : u32,
+                                  creates_new_file : bool)
+                                  -> Result<(), ErrNo> {
+    if flags & O_NOATIME != 0 {
+        // Linux：`O_NOATIME` 仅限属主或 `CAP_FOWNER`（root 放行）。systemd-tmpfiles
+        // 通过 `fd_reopen`（open /proc/self/fd/N）带该标志重新打开文件设置属性。
+        let cred = cred::current_credentials();
+        let owner = active_impl::backend().metadata(path)
+                                          .map(|meta| meta.uid)
+                                          // 目标尚不存在：新建文件属主即调用者。
+                                          .unwrap_or(cred.effective_uid.0);
+        if cred.effective_uid.0 != 0 &&
+           cred.effective_uid.0 != owner &&
+           !cred::has_cap(&cred, cred::Capability::Fowner)
+        {
+            return Err(ErrNo::EPERM);
+        }
+    }
     if creates_new_file || flags & O_PATH != 0 {
         return Ok(());
     }
@@ -343,12 +382,11 @@ fn check_existing_open_permission(path: &str, flags: u32, creates_new_file: bool
     }
 }
 
-fn can_access_existing(
-    meta: &VfsMetadata,
-    cred: &ProcessCredentials,
-    wants_read: bool,
-    wants_write: bool,
-) -> bool {
+fn can_access_existing(meta : &VfsMetadata,
+                       cred : &ProcessCredentials,
+                       wants_read : bool,
+                       wants_write : bool)
+                       -> bool {
     if cred.effective_uid.0 == 0 {
         return true;
     }
@@ -363,11 +401,10 @@ fn can_access_existing(
     (!wants_read || mode & read_bit != 0) && (!wants_write || mode & write_bit != 0)
 }
 
-fn cred_has_group(cred: &ProcessCredentials, gid: Gid) -> bool {
-    cred.effective_gid == gid
-        || cred
-            .supplementary_groups
-            .iter()
-            .take(cred.supplementary_group_len)
-            .any(|group| *group == gid)
+fn cred_has_group(cred : &ProcessCredentials, gid : Gid) -> bool {
+    cred.effective_gid == gid ||
+    cred.supplementary_groups
+        .iter()
+        .take(cred.supplementary_group_len)
+        .any(|group| *group == gid)
 }
