@@ -9,25 +9,21 @@
 #![no_std]
 extern crate alloc;
 
-use alloc::vec::Vec;
-use core::ptr;
 use core::ptr::NonNull;
 
 use api_v0::{BlockDevice, DriverError, DriverResult, Lba};
+use common::virtio_hal::VirtioHal;
 use driver_api::MmioRegion;
-use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
-use mm_api::addr::PhysPageNum;
 use virtio_drivers::device::blk::VirtIOBlk;
 use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
-use virtio_drivers::{BufferDirection, Hal, PhysAddr, PAGE_SIZE};
+use virtio_drivers::PAGE_SIZE;
 
 const _ : () = assert!(PAGE_SIZE == mm_api::addr::PAGE_SIZE);
 const IOZONE_PROBE_MIN_WRITE_BYTES : usize = 4096;
 
 /// 将内核帧分配器接到 `virtio-drivers` 的 [`Hal`]：恒等映射下返回的 `PhysAddr` 与可写虚拟指针相同。
-struct VirtioMmioHal;
-
-unsafe impl Hal for VirtioMmioHal {
+/* Shared HAL is provided by driver-impl-common. */
+/*
     /// 按页数向帧池要连续物理页；失败时释放已拿页并返回空指针对，由上层映射为 [`DriverError`]。
     fn dma_alloc(pages : usize, _direction : BufferDirection) -> (PhysAddr, NonNull<u8>) {
         if pages == 0 {
@@ -104,11 +100,12 @@ unsafe impl Hal for VirtioMmioHal {
 
     unsafe fn unshare(_paddr : PhysAddr, _buffer : NonNull<[u8]>, _direction : BufferDirection) {}
 }
+*/
 
 /// VirtIO-MMIO 上的块设备（`virtio-blk`）。
 pub struct VirtioBlkDevice {
     /// `virtio-drivers` 侧已握手的传输与队列状态。
-    inner : VirtIOBlk<VirtioMmioHal, MmioTransport<'static>>,
+    inner : VirtIOBlk<VirtioHal, MmioTransport<'static>>,
 }
 
 impl VirtioBlkDevice {
@@ -120,9 +117,9 @@ impl VirtioBlkDevice {
         let transport =
             unsafe { MmioTransport::new(header, mmio.size) }.map_err(|_| DriverError::Unsupported)?;
         let inner =
-            VirtIOBlk::<VirtioMmioHal, MmioTransport>::new(transport).map_err(|_| {
-                                                                         DriverError::Unsupported
-                                                                     })?;
+            VirtIOBlk::<VirtioHal, MmioTransport>::new(transport).map_err(|_| {
+                                                                     DriverError::Unsupported
+                                                                 })?;
         Ok(Self { inner })
     }
 }
