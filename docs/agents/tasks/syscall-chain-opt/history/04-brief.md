@@ -23,7 +23,7 @@ read/write 系 syscall 不再进入 CWD registry 或查询其 owner/BTreeMap。
 - `os/components/wateros-vfs/{src/cwd.rs,src/lib.rs}` 与
   `vfs-impl/impl-fd-session/src/cwd.rs`
   - 删除 CWD owner 表中的 IO 计数及转发；procfs callback 改读 PCB 原子快照。
-- `os/components/wateros-task/readme.md`
+- `os/components/wateros-task/README.md`
   - 同步计数的并发与 fork/clone/exec 生命周期契约。
 
 任务切换后该 CPU 第一次计数仍需一次 process registry 查询以刷新 cache；同一调度片内后续
@@ -63,4 +63,4 @@ QEMU 中验证 `/proc/self/io`、线程共享、fork 清零和 exec 保留。原
 
 ## 文档同步
 
-已同步 `os/components/wateros-task/readme.md`；未改变公开构建命令或 feature。
+已同步 `os/components/wateros-task/README.md`；未改变公开构建命令或 feature。

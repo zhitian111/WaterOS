@@ -1,0 +1,90 @@
+<mxfile host="Electron">
+  <diagram name="WaterOS 任务状态机" id="wateros-task-state">
+    <mxGraphModel dx="903" dy="1398" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="720" background="light-dark(#ffffff, #121212)" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="t1" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;" value="" vertex="1">
+          <mxGeometry height="30" width="50" x="430" y="-20" as="geometry" />
+        </mxCell>
+        <mxCell id="tA1" edge="1" parent="1" source="t1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;exitDx=0;exitDy=0;" target="t2" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;spawn / fork / clone&lt;/font&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="t2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;Ready（就绪）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="60" width="170" x="370" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="t3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;Running（运行）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="60" width="170" x="370" y="270" as="geometry" />
+        </mxCell>
+        <mxCell id="t4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;Blocking（阻塞）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="60" width="170" x="150" y="390" as="geometry" />
+        </mxCell>
+        <mxCell id="HuEZCIosFiw2_yMbp3jX-2" edge="1" parent="1" source="t5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="t7" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="t5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;Exited（退出）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="60" width="170" x="370" y="390" as="geometry" />
+        </mxCell>
+        <mxCell id="t6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;Sleeping（睡眠）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="60" width="170" x="580" y="390" as="geometry" />
+        </mxCell>
+        <mxCell id="t7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e6e6e6;strokeColor=#999999;dashed=1;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;回收（drop TCB）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="50" width="170" x="370" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="tA2" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;被选中&lt;/font&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint as="offset" />
+            <mxPoint x="410" y="120" as="sourcePoint" />
+            <mxPoint x="410" y="270.0000000000001" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tA3" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;yield/被抢占&lt;/font&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint as="offset" />
+            <mxPoint x="490" y="270" as="sourcePoint" />
+            <mxPoint x="490" y="120" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tA4" edge="1" parent="1" source="t3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;entryX=0.5;entryY=0;exitDx=0;exitDy=0;" target="t4" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;阻塞或等待&lt;/font&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tA5" edge="1" parent="1" source="t3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0.5;entryY=0;exitDx=0;exitDy=0;" target="t6" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;睡眠&lt;/font&gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tA6" edge="1" parent="1" source="t3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="t5" value="&lt;font style=&quot;font-size: 19px;&quot;&gt;退出&lt;/font&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tA7" edge="1" parent="1" source="t4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;" target="t2" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;唤醒 / 超时 / 被打断&lt;/font&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="130" y="420" />
+              <mxPoint x="130" y="90" />
+            </Array>
+            <mxPoint x="70" y="490" as="sourcePoint" />
+            <mxPoint x="370" y="110" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tA8" edge="1" parent="1" source="t6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=1;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;" target="t2" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;到期唤醒&lt;/font&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="770" y="420" />
+              <mxPoint x="770" y="90" />
+            </Array>
+            <mxPoint x="840" y="490" as="sourcePoint" />
+            <mxPoint x="540" y="110" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="t8" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;fontSize=13;" value="Blocking 细节：Waiting（wait_queues 显式等待）/ TaskExit / ChildExit / Manual&lt;br&gt;wake 与超时都经 activate_ready_task(LastCpu)；interrupt → Interrupted，超时 → TimedOut" vertex="1">
+          <mxGeometry height="40" width="700" x="70" y="670" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

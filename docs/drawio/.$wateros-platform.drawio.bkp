@@ -1,0 +1,100 @@
+<mxfile host="Electron">
+  <diagram name="WaterOS 平台层" id="wateros-platform">
+    <mxGraphModel dx="1381" dy="1038" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="1050" background="light-dark(#ffffff, #121212)" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="plat1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;align=center;spacingTop=4;" value="&lt;font style=&quot;font-size: 18px;&quot;&gt;内核上层调用者&lt;/font&gt;" vertex="1">
+          <mxGeometry height="120" width="820" x="40" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="plat2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;调度器&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;IPI / 重调度&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="190" x="55" y="85" as="geometry" />
+        </mxCell>
+        <mxCell id="plat3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;内存管理&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;RAM 上界 / 分页&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="190" x="255" y="85" as="geometry" />
+        </mxCell>
+        <mxCell id="plat4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;控制台 / 定时器&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;输出 / 时钟中断&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="190" x="455" y="85" as="geometry" />
+        </mxCell>
+        <mxCell id="plat5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;引导&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;boot 参数&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="190" x="655" y="85" as="geometry" />
+        </mxCell>
+        <mxCell id="platA1" edge="1" parent="1" source="plat1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="plat6" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="plat6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;verticalAlign=top;align=center;spacingTop=4;" value="&lt;font style=&quot;font-size: 18px;&quot;&gt;聚合门面（src）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="160" width="820" x="40" y="190" as="geometry" />
+        </mxCell>
+        <mxCell id="plat7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;统一入口&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;init_when_boot / dtb_pa&lt;br&gt;physical_ram_end_exclusive&lt;/font&gt;" vertex="1">
+          <mxGeometry height="70" width="250" x="55" y="235" as="geometry" />
+        </mxCell>
+        <mxCell id="plat8" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;SMP / IPI&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;send_ipi / clear_ipi / take_pending_ipi&lt;/font&gt;" vertex="1">
+          <mxGeometry height="70" width="250" x="315" y="235" as="geometry" />
+        </mxCell>
+        <mxCell id="plat9" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;时间&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;平台频率注入 / 换算&lt;/font&gt;" vertex="1">
+          <mxGeometry height="70" width="250" x="575" y="235" as="geometry" />
+        </mxCell>
+        <mxCell id="platA2" edge="1" parent="1" source="plat6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="plat10" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="plat10" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;verticalAlign=top;align=center;spacingTop=4;" value="&lt;font style=&quot;font-size: 18px;&quot;&gt;平台 API + 架构 API&lt;/font&gt;" vertex="1">
+          <mxGeometry height="170" width="820" x="40" y="380" as="geometry" />
+        </mxCell>
+        <mxCell id="plat11" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;verticalAlign=top;align=center;spacingTop=4;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;平台 API（platform-api）&lt;/b&gt;&lt;/font&gt;" vertex="1">
+          <mxGeometry height="110" width="390" x="55" y="425" as="geometry" />
+        </mxCell>
+        <mxCell id="plat13" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5fff0;strokeColor=#82b366;" value="&lt;font style=&quot;font-size: 14px;&quot;&gt;boot · time · smp&lt;br&gt;console · timer · reset&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="340" x="80" y="465" as="geometry" />
+        </mxCell>
+        <mxCell id="plat12" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;verticalAlign=top;align=center;spacingTop=4;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;架构 API（arch-api）&lt;/b&gt;&lt;/font&gt;" vertex="1">
+          <mxGeometry height="110" width="380" x="465" y="425" as="geometry" />
+        </mxCell>
+        <mxCell id="plat14" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5fff0;strokeColor=#82b366;" value="&lt;font style=&quot;font-size: 14px;&quot;&gt;cpu · interrupt · trap&lt;br&gt;paging · task · time&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="330" x="490" y="465" as="geometry" />
+        </mxCell>
+        <mxCell id="platA3" edge="1" parent="1" source="plat10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="plat15" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="plat15" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;verticalAlign=top;align=center;spacingTop=4;" value="&lt;font style=&quot;font-size: 18px;&quot;&gt;平台实现 + 架构实现&lt;/font&gt;" vertex="1">
+          <mxGeometry height="180" width="820" x="40" y="580" as="geometry" />
+        </mxCell>
+        <mxCell id="plat16" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;verticalAlign=top;align=center;spacingTop=4;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;平台实现（platform-impl）&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;换板子改这里&lt;/font&gt;&lt;/font&gt;" vertex="1">
+          <mxGeometry height="120" width="390" x="55" y="625" as="geometry" />
+        </mxCell>
+        <mxCell id="plat18" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#faf0fb;strokeColor=#9673a6;" value="&lt;font style=&quot;font-size: 15px;&quot;&gt;&lt;b&gt;QEMU RISC-V OpenSBI&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;HSM / IPI / timer / reset&lt;/font&gt;" vertex="1">
+          <mxGeometry height="60" width="175" x="65" y="660" as="geometry" />
+        </mxCell>
+        <mxCell id="plat19" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#faf0fb;strokeColor=#9673a6;" value="&lt;font style=&quot;font-size: 15px;&quot;&gt;&lt;b&gt;QEMU LoongArch64&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;mailbox / IPI 运输&lt;/font&gt;" vertex="1">
+          <mxGeometry height="60" width="185" x="250" y="660" as="geometry" />
+        </mxCell>
+        <mxCell id="plat17" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;verticalAlign=top;align=center;spacingTop=4;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;架构实现（arch-impl）&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;换 ISA 改这里&lt;/font&gt;&lt;/font&gt;" vertex="1">
+          <mxGeometry height="120" width="380" x="465" y="625" as="geometry" />
+        </mxCell>
+        <mxCell id="plat20" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#faf0fb;strokeColor=#9673a6;" value="&lt;font style=&quot;font-size: 15px;&quot;&gt;&lt;b&gt;RISC-V&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;sie / satp / sfence / time CSR&lt;/font&gt;" vertex="1">
+          <mxGeometry height="60" width="175" x="475" y="660" as="geometry" />
+        </mxCell>
+        <mxCell id="plat21" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#faf0fb;strokeColor=#9673a6;" value="&lt;font style=&quot;font-size: 15px;&quot;&gt;&lt;b&gt;LoongArch64&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;IOCSR pending 清除 / 中断&lt;/font&gt;" vertex="1">
+          <mxGeometry height="60" width="175" x="660" y="660" as="geometry" />
+        </mxCell>
+        <mxCell id="platA4" edge="1" parent="1" source="plat15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="plat22" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="plat22" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;verticalAlign=top;align=center;spacingTop=4;" value="&lt;font style=&quot;font-size: 18px;&quot;&gt;硬件 / 固件&lt;/font&gt;" vertex="1">
+          <mxGeometry height="120" width="820" x="40" y="790" as="geometry" />
+        </mxCell>
+        <mxCell id="plat23" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;OpenSBI 固件&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;HSM / IPI / timer / reset&lt;/font&gt;" vertex="1">
+          <mxGeometry height="60" width="250" x="55" y="835" as="geometry" />
+        </mxCell>
+        <mxCell id="plat24" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;本地 CSR / IOCSR&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;sip / sie / satp / time&lt;/font&gt;" vertex="1">
+          <mxGeometry height="60" width="250" x="315" y="835" as="geometry" />
+        </mxCell>
+        <mxCell id="plat25" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;本地 trap / 中断&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;stvec / 中断使能&lt;/font&gt;" vertex="1">
+          <mxGeometry height="60" width="250" x="575" y="835" as="geometry" />
+        </mxCell>
+        <mxCell id="plat26" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e6e6e6;strokeColor=#999999;" value="&lt;font style=&quot;font-size: 13px;&quot;&gt;分层规则：换板子改 platform-impl，换 ISA 改 platform-arch；active_impl 二选一（RISC-V OpenSBI 或 LoongArch64 virt）。职责分离：发 IPI 走 profile 固件（SBI/IOCSR），清本地 pending 走 arch（CSR/IOCSR 中断原语）。&lt;/font&gt;" vertex="1">
+          <mxGeometry height="45" width="820" x="40" y="940" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

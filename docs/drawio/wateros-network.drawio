@@ -1,0 +1,91 @@
+<mxfile host="Electron">
+  <diagram name="WaterOS 网络协议栈" id="wateros-network">
+    <mxGraphModel dx="1381" dy="1038" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="1100" background="light-dark(#ffffff, #121212)" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="net1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;align=center;spacingTop=4;" value="&lt;font style=&quot;font-size: 18px;&quot;&gt;用户态&lt;/font&gt;" vertex="1">
+          <mxGeometry height="100" width="820" x="40" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="net2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;客户端进程&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;connect → send / recv&lt;/font&gt;" vertex="1">
+          <mxGeometry height="50" width="230" x="120" y="82" as="geometry" />
+        </mxCell>
+        <mxCell id="net3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;服务器进程&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;bind → listen → accept&lt;/font&gt;" vertex="1">
+          <mxGeometry height="50" width="300" x="550" y="82" as="geometry" />
+        </mxCell>
+        <mxCell id="net4" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;fontSize=15;" value="socket 流" vertex="1">
+          <mxGeometry height="30" width="120" x="410" y="82" as="geometry" />
+        </mxCell>
+        <mxCell id="netA1" edge="1" parent="1" source="net2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;endArrow=classic;" target="net3" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="netA2" edge="1" parent="1" source="net1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="net5" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="net5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;verticalAlign=top;align=center;spacingTop=4;" value="&lt;font style=&quot;font-size: 18px;&quot;&gt;系统调用层（syscall）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="150" width="820" x="40" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="net6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;socket 系统调用&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;socket / bind / listen / connect / accept&lt;/font&gt;" vertex="1">
+          <mxGeometry height="70" width="260" x="55" y="220" as="geometry" />
+        </mxCell>
+        <mxCell id="net7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;socket 共享句柄&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;协议栈句柄封装&lt;/font&gt;" vertex="1">
+          <mxGeometry height="70" width="200" x="335" y="220" as="geometry" />
+        </mxCell>
+        <mxCell id="net8" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;TCP/UDP socket 句柄&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;即 VFS 的 fd&lt;/font&gt;" vertex="1">
+          <mxGeometry height="70" width="290" x="555" y="220" as="geometry" />
+        </mxCell>
+        <mxCell id="netA3" edge="1" parent="1" source="net5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="net10" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="net10" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;verticalAlign=top;align=center;spacingTop=4;" value="&lt;font style=&quot;font-size: 18px;&quot;&gt;语义层（network-api）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="200" width="820" x="40" y="350" as="geometry" />
+        </mxCell>
+        <mxCell id="net11" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;socket 类型&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;TCP（流）/ UDP（数据报）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="250" x="55" y="400" as="geometry" />
+        </mxCell>
+        <mxCell id="net12" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;socket 状态机&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;创建→绑定→监听/连接→已连接→关闭&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="370" x="325" y="400" as="geometry" />
+        </mxCell>
+        <mxCell id="net13" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;IPv4 地址端口&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;地址 + 端口&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="250" x="55" y="465" as="geometry" />
+        </mxCell>
+        <mxCell id="net14" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;网络配置&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;IP / 掩码 / 网关&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="370" x="325" y="465" as="geometry" />
+        </mxCell>
+        <mxCell id="netA4" edge="1" parent="1" source="net10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="net15" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="net15" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;verticalAlign=top;align=center;spacingTop=4;" value="&lt;font style=&quot;font-size: 18px;&quot;&gt;协议栈实现层（smoltcp）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="200" width="820" x="40" y="580" as="geometry" />
+        </mxCell>
+        <mxCell id="net16" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;初始化 / 轮询&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;按时钟轮询收发包&lt;/font&gt;" vertex="1">
+          <mxGeometry height="70" width="260" x="55" y="630" as="geometry" />
+        </mxCell>
+        <mxCell id="net17" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;预约接收&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;先借缓冲，用完提交&lt;/font&gt;" vertex="1">
+          <mxGeometry height="70" width="280" x="335" y="630" as="geometry" />
+        </mxCell>
+        <mxCell id="net18" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;TCP / UDP 传输层&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;流 / 数据报语义&lt;/font&gt;" vertex="1">
+          <mxGeometry height="70" width="210" x="635" y="630" as="geometry" />
+        </mxCell>
+        <mxCell id="net19" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;网卡适配&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;驱动收发帧，协议栈管 IP/TCP/UDP&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="790" x="55" y="710" as="geometry" />
+        </mxCell>
+        <mxCell id="netA5" edge="1" parent="1" source="net15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="net20" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="net20" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;verticalAlign=top;align=center;spacingTop=4;" value="&lt;font style=&quot;font-size: 18px;&quot;&gt;底层依赖&lt;/font&gt;" vertex="1">
+          <mxGeometry height="120" width="820" x="40" y="810" as="geometry" />
+        </mxCell>
+        <mxCell id="net21" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;网卡驱动&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;硬件收发网络帧&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="370" x="55" y="855" as="geometry" />
+        </mxCell>
+        <mxCell id="net22" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;VFS 统一 fd 表&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot;&gt;read/write/poll 通吃文件与 socket&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="400" x="445" y="855" as="geometry" />
+        </mxCell>
+        <mxCell id="net23" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e6e6e6;strokeColor=#999999;" value="&lt;font style=&quot;font-size: 13px;&quot;&gt;注：协议栈按时钟轮询处理，非每字节中断；socket 即 fd；接收用预约模型（借缓冲→提交），非阻塞映射 EAGAIN。&lt;/font&gt;" vertex="1">
+          <mxGeometry height="45" width="820" x="40" y="960" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

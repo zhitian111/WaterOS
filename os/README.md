@@ -182,7 +182,7 @@ wateros-example/
 | `wateros-base` | 基础类型、CPU 标识、同步与集中配置 | [`README`](./components/wateros-base/README.md) |
 | `wateros-platform` | ISA、Trap、上下文切换、板级平台与 SMP | [`README`](./components/wateros-platform/README.md) |
 | `wateros-runtime` | 控制台、日志、堆、串口与 panic | [`README`](./components/wateros-runtime/README.md) |
-| `wateros-task` | 进程线程生命周期、调度与等待 | [`README`](./components/wateros-task/readme.md) |
+| `wateros-task` | 进程线程生命周期、调度与等待 | [`README`](./components/wateros-task/README.md) |
 | `wateros-mm` | 地址空间、页表、物理帧与映射 | 源码目录 |
 | `wateros-vfs` | 路径、FD、FS bridge 与页缓存 | 源码目录 |
 | `wateros-fs` | 根文件系统、伪文件系统与 ext4 后端 | 源码目录 |
