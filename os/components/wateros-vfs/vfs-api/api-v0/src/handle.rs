@@ -415,8 +415,34 @@ impl<T: Any> VfsHandleAny for T {
     }
 }
 
+/// FD 安装时缓存的稳定资源分类；不暴露具体实现类型。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VfsResourceKind {
+    Regular,
+    Directory,
+    Pipe,
+    Socket,
+    Terminal,
+    Unix,
+    Epoll,
+    Other,
+}
+
 /// 流式读写的已打开对象（pipe、控制台、文件会话等）。
 pub trait VfsIoHandle: Send + VfsHandleAny {
+    /// 返回打开对象的稳定资源分类。FD slot 在安装时缓存该值。
+    fn resource_kind(&self) -> VfsResourceKind {
+        if self.is_tty_char_device() {
+            VfsResourceKind::Terminal
+        } else if self.pipe_capacity().is_some() {
+            VfsResourceKind::Pipe
+        } else if self.directory_path().is_some() {
+            VfsResourceKind::Directory
+        } else {
+            VfsResourceKind::Other
+        }
+    }
+
     /// Capture owned state for a sequential read without waiting or doing I/O.
     fn prepare_read(&mut self, _max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
         Err(VfsError::Unsupported)

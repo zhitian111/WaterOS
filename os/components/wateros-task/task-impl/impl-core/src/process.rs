@@ -4,7 +4,9 @@
 //! `ProcessRegistry` 只维护 process 对共享资源的归属，以及 process 下有哪些 task。
 
 use alloc::collections::{BTreeMap, VecDeque};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use api_v0::{
     AddressSpaceRef, CloneFlags, ProcessCaps, ProcessError, ProcessId, ProcessResult,
@@ -44,6 +46,45 @@ pub struct TaskExitResult {
     pub parent_death_notifications : Vec<ParentDeathNotification>,
 }
 
+/// Linux `/proc/<pid>/io` 中按进程共享的字符 I/O 计数。
+#[derive(Debug, Default)]
+pub struct ProcessIoCounters {
+    rchar : AtomicU64,
+    wchar : AtomicU64,
+    syscr : AtomicU64,
+    syscw : AtomicU64,
+}
+
+impl ProcessIoCounters {
+    fn saturating_add(counter : &AtomicU64, value : u64) {
+        let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                           Some(current.saturating_add(value))
+                       });
+    }
+
+    pub fn account(&self, read : bool, bytes : u64) {
+        if read {
+            Self::saturating_add(&self.syscr, 1);
+            Self::saturating_add(&self.rchar, bytes);
+        } else {
+            Self::saturating_add(&self.syscw, 1);
+            Self::saturating_add(&self.wchar, bytes);
+        }
+    }
+
+    pub fn account_transfer(&self, bytes : u64) {
+        self.account(true, bytes);
+        self.account(false, bytes);
+    }
+
+    pub fn snapshot(&self) -> [u64; 4] {
+        [self.rchar.load(Ordering::Relaxed),
+         self.wchar.load(Ordering::Relaxed),
+         self.syscr.load(Ordering::Relaxed),
+         self.syscw.load(Ordering::Relaxed)]
+    }
+}
+
 impl ProcessTask {
     fn snapshot(&self,
                 task_id : TaskId,
@@ -74,6 +115,8 @@ pub struct ProcessControlBlock {
     /// 进程组 id；fork 继承，由 `setpgid` 更新。
     pgid : ProcessId,
     tasks : BTreeMap<TaskId, ProcessTask>,
+    /// 线程共享、fork 清零、exec 保留；原子更新不需要 process registry 锁。
+    io_counters : Arc<ProcessIoCounters>,
 
     /// 已退出的非 leader 线程。退出路径只向这里登记；维护路径按此队列精确
     /// 回收，避免每次 `exit` 都扫描整个 `tasks` 映射。
@@ -288,6 +331,7 @@ impl ProcessRegistry {
                                             rlimits : BTreeMap::new(),
                                             pgid : pid,
                                             tasks : map,
+                                            io_counters : Arc::new(ProcessIoCounters::default()),
                                             exited_member_task_ids : VecDeque::new(),
                                             exec_in_progress : false,
                                             state : ProcessState::Running,
@@ -827,6 +871,15 @@ impl ProcessRegistry {
         Some((pid, parent_pid))
     }
 
+    pub fn process_io_for_task(&self, task_id : TaskId) -> Option<Arc<ProcessIoCounters>> {
+        let pid = self.pid_for_task.get(&task_id)?;
+        self.processes.get(pid).map(|process| process.io_counters.clone())
+    }
+
+    pub fn process_io_snapshot(&self, task_id : TaskId) -> Option<[u64; 4]> {
+        self.process_io_for_task(task_id).map(|counters| counters.snapshot())
+    }
+
     pub fn task_id_for_thread(&self, tid : ThreadId) -> Option<TaskId> {
         self.task_for_thread
             .get(&tid)
@@ -1213,9 +1266,32 @@ impl ProcessRegistry {
 
 #[cfg(test)]
 mod tests {
+    use alloc::sync::Arc;
     use api_v0::{CloneFlags, ProcessId, ProcessState};
 
     use super::ProcessRegistry;
+
+    #[test]
+    fn process_io_is_shared_by_threads_and_cleared_on_fork() {
+        let mut registry = ProcessRegistry::new();
+        let parent = registry.create_process_for_task(10, None, None).unwrap();
+        registry.add_task_to_process(parent,
+                                     10,
+                                     12,
+                                     CloneFlags::CLONE_THREAD,
+                                     0,
+                                     None)
+                .unwrap();
+        let leader_io = registry.process_io_for_task(10).unwrap();
+        let thread_io = registry.process_io_for_task(12).unwrap();
+        assert!(Arc::ptr_eq(&leader_io, &thread_io));
+        leader_io.account(true, 7);
+        thread_io.account(false, 11);
+        assert_eq!(registry.process_io_snapshot(10), Some([7, 11, 1, 1]));
+
+        registry.create_process_like_fork(parent, 10, 13, None).unwrap();
+        assert_eq!(registry.process_io_snapshot(13), Some([0, 0, 0, 0]));
+    }
 
     #[test]
     fn fork_clears_parent_death_signal() {

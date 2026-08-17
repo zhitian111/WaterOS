@@ -4,13 +4,14 @@
 extern crate alloc;
 
 use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
 
 use super::mount_table::MountNamespace;
 
 /// 全局 per-task mount namespace 表。
 // 本结构代码由AI完成
 pub struct PerTaskMountNsRegistry {
-    namespaces: BTreeMap<task::TaskId, MountNamespace>,
+    namespaces: BTreeMap<task::TaskId, Arc<MountNamespace>>,
     owners: BTreeMap<task::TaskId, task::TaskId>,
     ref_counts: BTreeMap<task::TaskId, usize>,
 }
@@ -58,7 +59,7 @@ impl PerTaskMountNsRegistry {
 
     /// 只读访问任务挂载命名空间；未初始化时 `None`。
 // 本方法代码由AI完成
-    pub fn namespace_for(&self, task_id: task::TaskId) -> Option<&MountNamespace> {
+    pub fn namespace_for(&self, task_id: task::TaskId) -> Option<&Arc<MountNamespace>> {
         let owner = self.effective_owner(task_id);
         self.namespaces.get(&owner)
     }
@@ -68,9 +69,9 @@ impl PerTaskMountNsRegistry {
     pub fn namespace_for_mut(&mut self, task_id: task::TaskId) -> &mut MountNamespace {
         self.init_task_mount_ns(task_id);
         let owner = self.effective_owner(task_id);
-        self.namespaces
-            .get_mut(&owner)
-            .expect("mount namespace must exist after init")
+        Arc::make_mut(self.namespaces
+                          .get_mut(&owner)
+                          .expect("mount namespace must exist after init"))
     }
 
 // 本方法代码由AI完成
@@ -86,13 +87,12 @@ impl PerTaskMountNsRegistry {
         }
     }
 
-    /// fork 时深拷贝父任务挂载表。
+    /// fork/`CLONE_NEWNS` 时共享只读快照，首次修改再 COW。
 // 本方法代码由AI完成
     pub fn copy_mount_ns_from_parent(&mut self, child: task::TaskId, parent: task::TaskId) {
-        let parent_ns = self
-            .namespace_for(parent)
-            .cloned()
-            .unwrap_or_else(|| crate::mount_table::bootstrap_mount_namespace_snapshot());
+        let parent_ns = self.namespace_for(parent)
+                            .cloned()
+                            .unwrap_or_else(crate::mount_table::bootstrap_mount_namespace_snapshot);
         if self.owners.contains_key(&child) {
             self.drop_task(child);
         }
@@ -116,25 +116,99 @@ impl PerTaskMountNsRegistry {
 // 本方法代码由AI完成
     pub fn unshare_mount_ns(&mut self, task_id: task::TaskId) {
         let owner = self.effective_owner(task_id);
-        let shared = self
-            .ref_counts
-            .get(&owner)
-            .copied()
-            .unwrap_or(1) > 1
-            || self
-                .owners
-                .iter()
-                .any(|(tid, o)| *o == owner && *tid != task_id);
-        if !shared {
+        let count = self.ref_counts.get(&owner).copied().unwrap_or(1);
+        if count <= 1 {
             return;
         }
-        let ns = self
-            .namespaces
-            .get(&owner)
-            .cloned()
-            .unwrap_or_default();
-        self.owners.insert(task_id, task_id);
+        let ns = self.namespaces.get(&owner).cloned().unwrap_or_default();
+
+        if task_id != owner {
+            self.owners.insert(task_id, task_id);
+            self.ref_counts.insert(owner, count - 1);
+            self.ref_counts.insert(task_id, 1);
+            self.namespaces.insert(task_id, ns);
+            return;
+        }
+
+        // The owner cannot leave its own slot while the remaining tasks still point at it.
+        // Re-home those tasks under one of their members, then retain the old slot for task_id.
+        let new_owner = self.owners
+                            .iter()
+                            .find_map(|(tid, current_owner)| {
+                                (*tid != task_id && *current_owner == owner).then_some(*tid)
+                            })
+                            .expect("shared mount namespace must have another member");
+        for (tid, current_owner) in self.owners.iter_mut() {
+            if *tid != task_id && *current_owner == owner {
+                *current_owner = new_owner;
+            }
+        }
+        self.namespaces.insert(new_owner, ns.clone());
+        self.ref_counts.insert(new_owner, count - 1);
         self.ref_counts.insert(task_id, 1);
         self.namespaces.insert(task_id, ns);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::sync::Arc;
+
+    use super::PerTaskMountNsRegistry;
+
+    #[test]
+    fn copied_namespace_is_lazy_cow() {
+        let mut registry = PerTaskMountNsRegistry::new();
+        registry.init_task_mount_ns(1);
+        registry.copy_mount_ns_from_parent(2, 1);
+        assert!(Arc::ptr_eq(registry.namespace_for(1).unwrap(),
+                            registry.namespace_for(2).unwrap()));
+
+        let _ = registry.namespace_for_mut(2);
+        assert!(!Arc::ptr_eq(registry.namespace_for(1).unwrap(),
+                             registry.namespace_for(2).unwrap()));
+    }
+
+    #[test]
+    fn shared_namespace_keeps_one_owner_slot() {
+        let mut registry = PerTaskMountNsRegistry::new();
+        registry.init_task_mount_ns(1);
+        registry.share_mount_ns_from_parent(2, 1);
+        let _ = registry.namespace_for_mut(2);
+        assert!(Arc::ptr_eq(registry.namespace_for(1).unwrap(),
+                            registry.namespace_for(2).unwrap()));
+    }
+
+    #[test]
+    fn unshare_detaches_member_and_owner() {
+        let mut registry = PerTaskMountNsRegistry::new();
+        registry.init_task_mount_ns(1);
+        registry.share_mount_ns_from_parent(2, 1);
+        registry.share_mount_ns_from_parent(3, 1);
+
+        registry.unshare_mount_ns(2);
+        let _ = registry.namespace_for_mut(2);
+        assert!(!Arc::ptr_eq(registry.namespace_for(1).unwrap(),
+                             registry.namespace_for(2).unwrap()));
+        assert!(Arc::ptr_eq(registry.namespace_for(1).unwrap(),
+                            registry.namespace_for(3).unwrap()));
+
+        registry.unshare_mount_ns(1);
+        let _ = registry.namespace_for_mut(1);
+        assert!(!Arc::ptr_eq(registry.namespace_for(1).unwrap(),
+                             registry.namespace_for(3).unwrap()));
+        assert_eq!(registry.effective_owner(3), 3);
+    }
+
+    #[test]
+    fn dropping_last_shared_member_reclaims_owner_slot() {
+        let mut registry = PerTaskMountNsRegistry::new();
+        registry.init_task_mount_ns(1);
+        registry.share_mount_ns_from_parent(2, 1);
+        registry.drop_task(1);
+        assert!(registry.namespace_for(2).is_some());
+        registry.drop_task(2);
+        assert!(registry.namespaces.is_empty());
+        assert!(registry.ref_counts.is_empty());
     }
 }

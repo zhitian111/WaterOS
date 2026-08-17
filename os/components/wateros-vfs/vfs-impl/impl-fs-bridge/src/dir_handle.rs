@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 
 use api_v0::{
     SingleRootReadView, VfsDirEntry, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType,
-    VfsOpenDescriptionState, VfsPreparedRead, VfsResult,
+    VfsOpenDescriptionState, VfsPreparedRead, VfsResourceKind, VfsResult,
     VfsSeekWhence,
 };
 
@@ -107,6 +107,8 @@ pub(crate) fn encode_one(buf : &mut [u8],
 }
 
 impl VfsIoHandle for DirectoryHandle {
+    fn resource_kind(&self) -> VfsResourceKind { VfsResourceKind::Directory }
+
     fn validate_read_access(&self) -> VfsResult<()> { Err(VfsError::NotAFile) }
 
     fn open_accmode(&self) -> u32 { 0 }

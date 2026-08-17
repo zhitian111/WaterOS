@@ -12,7 +12,7 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -22,12 +22,14 @@ use api_v0::{
 };
 use arch::interrupt::ArchInterruptState;
 use base::sync::MultiprocessorSafeCell;
+use base_config::task::MAX_CPUS;
+use spin::Mutex;
 
 mod process;
 mod tcb;
 
 pub use api_v0::TaskBootstrap;
-pub use process::{ParentDeathNotification, ProcessControlBlock, ProcessRegistry};
+pub use process::{ParentDeathNotification, ProcessControlBlock, ProcessIoCounters, ProcessRegistry};
 pub use tcb::TaskControlBlock;
 
 #[cfg(feature = "self_test")]
@@ -40,6 +42,8 @@ pub fn self_test() {
 static mut PROCESS_REGISTRY : MaybeUninit<MultiprocessorSafeCell<ProcessRegistry>> =
     MaybeUninit::uninit();
 static PROCESS_REGISTRY_READY : AtomicBool = AtomicBool::new(false);
+static PROCESS_IO_CACHE : [Mutex<Option<(TaskId, Arc<ProcessIoCounters>)>>; MAX_CPUS] =
+    [const { Mutex::new(None) }; MAX_CPUS];
 
 fn registry_cell() -> &'static MultiprocessorSafeCell<ProcessRegistry> {
     assert!(PROCESS_REGISTRY_READY.load(Ordering::Acquire),
@@ -58,6 +62,43 @@ pub fn init_process_registry() {
     }
     registry_cell().exclusive_access()
                    .clear();
+    for cache in PROCESS_IO_CACHE.iter() {
+        cache.lock().take();
+    }
+}
+
+fn with_process_io_cached(task_id : TaskId, f : impl Fn(&ProcessIoCounters)) {
+    // Keep the per-CPU slot stable and prevent a switched-in task on this CPU
+    // from spinning on a lock held by the switched-out task.
+    let _guard = ProcessRegistryInterruptGuard::new();
+    let cpu = arch::cpu::current_cpu_id().raw();
+    {
+        let cache = PROCESS_IO_CACHE[cpu].lock();
+        if let Some((cached_task, counters)) = cache.as_ref() {
+            if *cached_task == task_id {
+                f(counters);
+                return;
+            }
+        }
+    }
+    let Some(counters) = with_process_registry(|registry| registry.process_io_for_task(task_id))
+    else {
+        return;
+    };
+    f(&counters);
+    *PROCESS_IO_CACHE[cpu].lock() = Some((task_id, counters));
+}
+
+pub fn account_task_io(task_id : TaskId, read : bool, bytes : u64) {
+    with_process_io_cached(task_id, |counters| counters.account(read, bytes));
+}
+
+pub fn account_task_io_transfer(task_id : TaskId, bytes : u64) {
+    with_process_io_cached(task_id, |counters| counters.account_transfer(bytes));
+}
+
+pub fn process_io_snapshot(task_id : TaskId) -> Option<[u64; 4]> {
+    with_process_registry(|registry| registry.process_io_snapshot(task_id))
 }
 
 struct ProcessRegistryInterruptGuard {

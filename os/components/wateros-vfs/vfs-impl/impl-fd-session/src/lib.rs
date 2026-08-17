@@ -26,7 +26,7 @@ pub use handles::{
     UnixStreamPairEnd, UrandomDeviceHandle, ZeroDeviceHandle,
 };
 pub use interrupt_guard::with_interrupt_disabled;
-pub use registry::{poll_console_input_once, PerTaskFdRegistry};
+pub use registry::{poll_console_input_once, FdSlotSnapshot, PerTaskFdRegistry, SharedIoHandle};
 
 #[cfg(feature = "user-graphics")]
 pub use user_graphics::{initialize_user_graphics_devices, user_graphics_input_worker};

@@ -10,15 +10,6 @@ use alloc::vec::Vec;
 /// 与 syscall 路径拷贝上限一致。
 pub const PATH_MAX: usize = 256;
 
-/// Linux `/proc/<pid>/io` 中可由 syscall 层准确归属的字符 I/O 计数。
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ProcessIoCounters {
-    pub rchar : u64,
-    pub wchar : u64,
-    pub syscr : u64,
-    pub syscw : u64,
-}
-
 /// 全局 per-task cwd 表。
 // 本结构代码由AI完成
 pub struct PerTaskCwdRegistry {
@@ -28,7 +19,6 @@ pub struct PerTaskCwdRegistry {
     argv_vectors: BTreeMap<task::TaskId, Vec<String>>,
     env_vectors: BTreeMap<task::TaskId, Vec<String>>,
     auxv_vectors: BTreeMap<task::TaskId, Vec<u8>>,
-    io_counters: BTreeMap<task::TaskId, ProcessIoCounters>,
     owners: BTreeMap<task::TaskId, task::TaskId>,
     ref_counts: BTreeMap<task::TaskId, usize>,
 }
@@ -42,7 +32,6 @@ impl PerTaskCwdRegistry {
             argv_vectors: BTreeMap::new(),
             env_vectors: BTreeMap::new(),
             auxv_vectors: BTreeMap::new(),
-            io_counters: BTreeMap::new(),
             owners: BTreeMap::new(),
             ref_counts: BTreeMap::new(),
         }
@@ -130,7 +119,6 @@ impl PerTaskCwdRegistry {
             self.argv_vectors.remove(&owner);
             self.env_vectors.remove(&owner);
             self.auxv_vectors.remove(&owner);
-            self.io_counters.remove(&owner);
         }
         if task_id != owner {
             self.cwd_tables.remove(&task_id);
@@ -139,7 +127,6 @@ impl PerTaskCwdRegistry {
             self.argv_vectors.remove(&task_id);
             self.env_vectors.remove(&task_id);
             self.auxv_vectors.remove(&task_id);
-            self.io_counters.remove(&task_id);
         }
     }
 
@@ -237,31 +224,4 @@ impl PerTaskCwdRegistry {
         self.auxv_vectors.get(&owner).map(Vec::as_slice)
     }
 
-    /// 记录一次已成功返回用户态的 read-like 或 write-like syscall。
-    pub fn account_io(&mut self, task_id: task::TaskId, read: bool, bytes: u64) {
-        let owner = self.ensure_owner(task_id);
-        let counters = self.io_counters.entry(owner).or_default();
-        if read {
-            counters.syscr = counters.syscr.saturating_add(1);
-            counters.rchar = counters.rchar.saturating_add(bytes);
-        } else {
-            counters.syscw = counters.syscw.saturating_add(1);
-            counters.wchar = counters.wchar.saturating_add(bytes);
-        }
-    }
-
-    /// 记录一次同时产生读、写字符流量的内核内搬运 syscall。
-    pub fn account_io_transfer(&mut self, task_id: task::TaskId, bytes: u64) {
-        let owner = self.ensure_owner(task_id);
-        let counters = self.io_counters.entry(owner).or_default();
-        counters.syscr = counters.syscr.saturating_add(1);
-        counters.rchar = counters.rchar.saturating_add(bytes);
-        counters.syscw = counters.syscw.saturating_add(1);
-        counters.wchar = counters.wchar.saturating_add(bytes);
-    }
-
-    pub fn get_io_counters(&self, task_id: task::TaskId) -> ProcessIoCounters {
-        let owner = self.effective_owner(task_id);
-        self.io_counters.get(&owner).copied().unwrap_or_default()
-    }
 }

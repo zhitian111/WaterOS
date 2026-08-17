@@ -160,16 +160,20 @@ pub fn resolve_symlink_in_root_absolute(
                                              .filter(|part| !part.is_empty())
                                              .map(String::from)
                                              .collect();
+    // Keep an index into the component queue. Removing from the front makes
+    // every symlink hop copy the remaining path and turns deep paths O(d^2).
+    let mut pending_index = 0usize;
     let mut resolved = String::from(root);
     let mut followed = 0usize;
-    while !pending.is_empty() {
-        let component = pending.remove(0);
+    while pending_index < pending.len() {
+        let component = pending[pending_index].clone();
+        pending_index += 1;
         let candidate = if resolved == "/" {
             alloc::format!("/{component}")
         } else {
             alloc::format!("{}/{component}", resolved.trim_end_matches('/'))
         };
-        let is_final = pending.is_empty();
+        let is_final = pending_index == pending.len();
         if !is_final || final_symlink == FinalSymlink::Follow {
             match impl_fs_bridge::read_symlink_path(candidate.as_str()) {
                 Ok(target) => {
@@ -185,10 +189,10 @@ pub fn resolve_symlink_in_root_absolute(
                     let mut combined = cwd::resolve_with_virtual_root(root,
                                                                       resolved.as_str(),
                                                                       target.as_str())?;
-                    if !pending.is_empty() {
+                    if pending_index < pending.len() {
                         combined = cwd::resolve_with_virtual_root(root,
                                                                   combined.as_str(),
-                                                                  pending.join("/").as_str())?;
+                                                                  pending[pending_index..].join("/").as_str())?;
                     }
                     let suffix = if root == "/" {
                         combined.as_str()
@@ -201,6 +205,7 @@ pub fn resolve_symlink_in_root_absolute(
                                     .filter(|part| !part.is_empty())
                                     .map(String::from)
                                     .collect();
+                    pending_index = 0;
                     resolved = String::from(root);
                     continue;
                 }
@@ -396,7 +401,7 @@ pub fn mount_procfs_at(mount_point: &str) -> VfsResult<()> {
     fs::procfs::active_impl::register_task_argv_lookup(|tid| cwd::lookup_argv_for_task(tid));
     fs::procfs::active_impl::register_task_env_lookup(|tid| cwd::lookup_env_for_task(tid));
     fs::procfs::active_impl::register_task_auxv_lookup(|tid| cwd::lookup_auxv_for_task(tid));
-    fs::procfs::active_impl::register_task_io_lookup(|tid| cwd::lookup_io_for_task(tid));
+    fs::procfs::active_impl::register_task_io_lookup(|tid| task::process_io_snapshot(tid));
     fs::procfs::active_impl::register_task_exe_lookup(|tid| cwd::lookup_exe_for_task(tid));
     fs::procfs::active_impl::register_task_cwd_lookup(|tid| cwd::lookup_cwd_for_task(tid));
     fs::procfs::active_impl::register_task_root_lookup(|tid| cwd::lookup_root_for_task(tid));
@@ -416,7 +421,7 @@ pub fn mount_bootstrap_procfs_at(mount_point: &str) -> VfsResult<()> {
     fs::procfs::active_impl::register_task_argv_lookup(|tid| cwd::lookup_argv_for_task(tid));
     fs::procfs::active_impl::register_task_env_lookup(|tid| cwd::lookup_env_for_task(tid));
     fs::procfs::active_impl::register_task_auxv_lookup(|tid| cwd::lookup_auxv_for_task(tid));
-    fs::procfs::active_impl::register_task_io_lookup(|tid| cwd::lookup_io_for_task(tid));
+    fs::procfs::active_impl::register_task_io_lookup(|tid| task::process_io_snapshot(tid));
     fs::procfs::active_impl::register_task_exe_lookup(|tid| cwd::lookup_exe_for_task(tid));
     fs::procfs::active_impl::register_task_cwd_lookup(|tid| cwd::lookup_cwd_for_task(tid));
     fs::procfs::active_impl::register_task_root_lookup(|tid| cwd::lookup_root_for_task(tid));

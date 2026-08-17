@@ -54,10 +54,14 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let ptr = args.arg(1);
     let len = args.arg(2);
-    if let Err(err) = validate_read_fd(fd) {
+    let fd_lease = match vfs::fd::current_io_lease(fd) {
+        Ok(lease) => lease,
+        Err(error) => return UserRet::from_error(vfs_error_to_errno(error)),
+    };
+    if let Err(err) = validate_read_lease(&fd_lease) {
         return UserRet::from_error(err);
     }
-    if let Err(error) = check_tty_foreground(fd, false) {
+    if let Err(error) = check_tty_foreground_lease(&fd_lease, false) {
         return UserRet::from_error(error);
     }
     if len == 0 {
@@ -67,7 +71,7 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
         return UserRet::from_error(ErrNo::EFAULT);
     }
     let transfer_len = read_transfer_len(len);
-    let lease = match acquire_read_lease(fd, transfer_len) {
+    let lease = match acquire_read_lease(&fd_lease, transfer_len) {
         Ok(lease) => lease,
         Err(error) => return UserRet::from_error(error),
     };
@@ -75,15 +79,17 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
     finish_scattered_read(lease, progress)
 }
 
-fn acquire_read_lease(fd : usize, transfer_len : usize) -> Result<Box<dyn VfsReadLease>, ErrNo> {
-    let socket_wait = socket_fd::lookup(fd).map(|socket| {
+fn acquire_read_lease(fd_lease : &vfs::fd::FdIoLease,
+                      transfer_len : usize)
+                      -> Result<Box<dyn VfsReadLease>, ErrNo> {
+    let socket_wait = socket_fd::lookup_lease(fd_lease).map(|socket| {
         (socket_fd::is_nonblocking_socket(&socket), task::current_task_id().unwrap_or(0))
     });
     let lease = loop {
         if socket_wait.is_some() {
             drive_network_stack();
         }
-        let prepared = match vfs::fd::prepare_current_read(fd, transfer_len) {
+        let prepared = match fd_lease.prepare_read(transfer_len) {
             Ok(prepared) => prepared,
             Err(VfsError::Busy) => {
                 wait_for_read_retry(socket_wait)?;
@@ -130,16 +136,15 @@ fn finish_scattered_read(lease : Box<dyn VfsReadLease>, progress : UserWriteProg
     }
 }
 
-fn validate_read_fd(fd : usize) -> Result<(), ErrNo> {
-    if socket_fd::lookup(fd).is_some() {
-        return Ok(());
-    }
-    if vfs::fd::is_path_only_fd(fd).map_err(vfs_error_to_errno)? {
+fn validate_read_lease(lease : &vfs::fd::FdIoLease) -> Result<(), ErrNo> {
+    if lease.is_path_only() {
         return Err(ErrNo::EBADF);
     }
-    vfs::fd::with_current_io(fd, |handle| {
-        handle.validate_read_access()
-    }).map_err(vfs_error_to_errno)
+    if lease.resource_kind() == vfs::api::VfsResourceKind::Socket {
+        return Ok(());
+    }
+    lease.with_io(|handle| handle.validate_read_access())
+         .map_err(vfs_error_to_errno)
 }
 
 /// 内核缓冲区有独立上限；大 `count` 通过合法短读分批完成，不能返回 `EINVAL`。
@@ -240,10 +245,14 @@ pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let iov_ptr = args.arg(1);
     let iovcnt = args.arg(2);
-    if let Err(error) = validate_read_fd(fd) {
+    let fd_lease = match vfs::fd::current_io_lease(fd) {
+        Ok(lease) => lease,
+        Err(error) => return UserRet::from_error(vfs_error_to_errno(error)),
+    };
+    if let Err(error) = validate_read_lease(&fd_lease) {
         return UserRet::from_error(error);
     }
-    if let Err(error) = check_tty_foreground(fd, false) {
+    if let Err(error) = check_tty_foreground_lease(&fd_lease, false) {
         return UserRet::from_error(error);
     }
     let iovecs = match import_iovecs(iov_ptr, iovcnt) {
@@ -253,7 +262,7 @@ pub(crate) fn sys_readv(args : SyscallArgs) -> UserRet {
     if iovecs.total_len == 0 {
         return UserRet::from_success(0);
     }
-    let lease = match acquire_read_lease(fd, read_transfer_len(iovecs.total_len)) {
+    let lease = match acquire_read_lease(&fd_lease, read_transfer_len(iovecs.total_len)) {
         Ok(lease) => lease,
         Err(error) => return UserRet::from_error(error),
     };
@@ -508,6 +517,12 @@ fn check_tty_foreground(fd : usize, writing : bool) -> Result<(), ErrNo> {
     }
     let pty = vfs::fd::current_pty_endpoint(fd).ok()
                                                .flatten();
+    check_tty_foreground_state(pty, writing)
+}
+
+fn check_tty_foreground_state(pty : Option<tty::PtyEndpointHandle>,
+                              writing : bool)
+                              -> Result<(), ErrNo> {
     // PTY master 是终端模拟器的数据端，不是受前台进程组限制的控制终端端点。
     if pty.as_ref()
           .is_some_and(|endpoint| endpoint.endpoint() == tty::TerminalEndpoint::PtyMaster)
@@ -547,6 +562,15 @@ fn check_tty_foreground(fd : usize, writing : bool) -> Result<(), ErrNo> {
     };
     crate::sys::ipc::signal::send_kernel_signal_to_process_group(process.pgid, signal);
     Err(ErrNo::EINTR)
+}
+
+fn check_tty_foreground_lease(lease : &vfs::fd::FdIoLease,
+                              writing : bool)
+                              -> Result<(), ErrNo> {
+    if lease.resource_kind() != vfs::api::VfsResourceKind::Terminal {
+        return Ok(());
+    }
+    check_tty_foreground_state(lease.pty_endpoint().ok().flatten(), writing)
 }
 
 fn write_tcp_socket_blocking(socket : &SocketRef, buf : &[u8]) -> Result<usize, ErrNo> {
@@ -659,19 +683,19 @@ fn gather_imported_iovecs(iovecs : &ImportedIoVecs) -> Result<Vec<u8>, ErrNo> {
     Ok(out)
 }
 
-fn validate_pread_fd(fd : usize) -> Result<(), ErrNo> {
-    if socket_fd::lookup(fd).is_some() {
+fn validate_pread_lease(lease : &vfs::fd::FdIoLease) -> Result<(), ErrNo> {
+    if lease.resource_kind() == vfs::api::VfsResourceKind::Socket {
         return Err(ErrNo::ESPIPE);
     }
-    if vfs::fd::is_path_only_fd(fd).map_err(vfs_error_to_errno)? {
+    if lease.is_path_only() {
         return Err(ErrNo::EBADF);
     }
-    vfs::fd::with_current_io(fd, |handle| {
-        handle.validate_read_access()?;
-        let mut empty = [];
-        handle.read_at(0, &mut empty)
-              .map(|_| ())
-    }).map_err(vfs_io_at_error_to_errno)
+    lease.with_io(|handle| {
+             handle.validate_read_access()?;
+             let mut empty = [];
+             handle.read_at(0, &mut empty).map(|_| ())
+         })
+         .map_err(vfs_io_at_error_to_errno)
 }
 
 // 本方法代码由AI完成
@@ -679,7 +703,11 @@ pub(crate) fn sys_pread64(args : SyscallArgs) -> UserRet {
     let fd = args.arg(0);
     let ptr = args.arg(1);
     let len = args.arg(2);
-    if let Err(error) = validate_pread_fd(fd) {
+    let fd_lease = match vfs::fd::current_io_lease(fd) {
+        Ok(lease) => lease,
+        Err(error) => return UserRet::from_error(vfs_error_to_errno(error)),
+    };
+    if let Err(error) = validate_pread_lease(&fd_lease) {
         return UserRet::from_error(error);
     }
     let offset = match offset_from_arg(args.arg(3)) {
@@ -697,7 +725,7 @@ pub(crate) fn sys_pread64(args : SyscallArgs) -> UserRet {
         Ok(kbuf) => kbuf,
         Err(error) => return UserRet::from_error(error),
     };
-    let n = match vfs::fd::with_current_io(fd, |handle| {
+    let n = match fd_lease.with_io(|handle| {
               handle.read_at(offset, &mut kbuf)
           }) {
         Ok(n) => n,
@@ -785,12 +813,20 @@ pub(crate) fn sys_preadv(args : SyscallArgs) -> UserRet {
         Ok(offset) => offset,
         Err(error) => return UserRet::from_error(error),
     };
-    preadv_at(fd, iov_ptr, iovcnt, offset)
+    let fd_lease = match vfs::fd::current_io_lease(fd) {
+        Ok(lease) => lease,
+        Err(error) => return UserRet::from_error(vfs_error_to_errno(error)),
+    };
+    preadv_at(&fd_lease, iov_ptr, iovcnt, offset)
 }
 
 /// 执行已经完成 Linux 分槽 ABI 解码的向量定位读。
-fn preadv_at(fd : usize, iov_ptr : usize, iovcnt : usize, offset : u64) -> UserRet {
-    if let Err(error) = validate_pread_fd(fd) {
+fn preadv_at(fd_lease : &vfs::fd::FdIoLease,
+             iov_ptr : usize,
+             iovcnt : usize,
+             offset : u64)
+             -> UserRet {
+    if let Err(error) = validate_pread_lease(fd_lease) {
         return UserRet::from_error(error);
     }
     let iovecs = match import_iovecs(iov_ptr, iovcnt) {
@@ -810,9 +846,7 @@ fn preadv_at(fd : usize, iov_ptr : usize, iovcnt : usize, offset : u64) -> UserR
     let mut cursor = IovScatterCursor::new(&iovecs.entries);
     while remaining > 0 {
         let chunk = remaining.min(kbuf.len());
-        let n = match vfs::fd::with_current_io(fd, |handle| {
-                  handle.read_at(file_off, &mut kbuf[..chunk])
-              }) {
+        let n = match fd_lease.with_io(|handle| handle.read_at(file_off, &mut kbuf[..chunk])) {
             Ok(n) => n,
             Err(error) => {
                 return if cursor.copied > 0 {
@@ -870,7 +904,11 @@ pub(crate) fn sys_preadv2(args : SyscallArgs) -> UserRet {
         Ok(offset) => offset,
         Err(error) => return UserRet::from_error(error),
     };
-    preadv_at(args.arg(0),
+    let fd_lease = match vfs::fd::current_io_lease(args.arg(0)) {
+        Ok(lease) => lease,
+        Err(error) => return UserRet::from_error(vfs_error_to_errno(error)),
+    };
+    preadv_at(&fd_lease,
               args.arg(1),
               args.arg(2),
               offset)

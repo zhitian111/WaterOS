@@ -13,7 +13,7 @@ use spin::Mutex;
 use vfs::api::{
     VfsCopyProgress, VfsError, VfsFileContentIdentity, VfsIoHandle, VfsMetadata,
     VfsNodeType, VfsOpenDescriptionState, VfsPreparedRead, VfsReadFinish, VfsReadLease,
-    VfsReadReservation, VfsResult, VfsSeekWhence,
+    VfsReadReservation, VfsResourceKind, VfsResult, VfsSeekWhence,
 };
 
 use crate::{user_copy::copy_user_path_cstr, vfs_util::vfs_error_to_errno};
@@ -187,6 +187,8 @@ impl MemFdHandle {
 }
 
 impl VfsIoHandle for MemFdHandle {
+    fn resource_kind(&self) -> VfsResourceKind { VfsResourceKind::Regular }
+
     fn prepare_read(&mut self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
         Ok(Box::new(MemFdPreparedRead { state : self.state.clone(),
                                         description : self.description.clone(),

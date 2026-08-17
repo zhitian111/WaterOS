@@ -3,7 +3,9 @@
 use alloc::boxed::Box;
 
 use vfs_api::error::{VfsError, VfsResult};
-use vfs_api::handle::{VfsCopyProgress, VfsIoHandle, VfsPreparedRead, VfsReadFinish, VfsReadLease};
+use vfs_api::handle::{
+    VfsCopyProgress, VfsIoHandle, VfsPreparedRead, VfsReadFinish, VfsReadLease, VfsResourceKind,
+};
 use vfs_api::meta::{VfsMetadata, VfsNodeType};
 
 use crate::{
@@ -125,6 +127,8 @@ struct TcpSocketHandle {
 }
 
 impl VfsIoHandle for TcpSocketHandle {
+    fn resource_kind(&self) -> VfsResourceKind { VfsResourceKind::Socket }
+
     fn open_accmode(&self) -> u32 { 2 }
 
     fn open_status_flags(&self) -> u32 {
@@ -198,6 +202,8 @@ struct UdpSocketHandle {
 }
 
 impl VfsIoHandle for UdpSocketHandle {
+    fn resource_kind(&self) -> VfsResourceKind { VfsResourceKind::Socket }
+
     fn open_accmode(&self) -> u32 { 2 }
 
     fn open_status_flags(&self) -> u32 {

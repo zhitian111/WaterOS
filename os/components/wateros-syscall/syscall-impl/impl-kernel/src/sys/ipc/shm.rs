@@ -530,8 +530,9 @@ fn unmap_shared_range(handle : usize, info : &ShmAttachInfo) -> Result<(), ErrNo
     use mm::api::addr::VirtAddr;
     use mm::api::mmap::MmapOps;
 
-    mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
-        MmapOps::munmap_external(aspace, VirtAddr(info.base), info.size)
+    mm::user_aspace::with_user_aspace_mut_and_flush_if_changed(handle, |aspace| {
+        let changed = MmapOps::munmap_external(aspace, VirtAddr(info.base), info.size)?;
+        Ok(((), changed.changed()))
     }).map_err(mm_err_to_errno)
 }
 
@@ -540,9 +541,10 @@ fn unmap_range_dealloc(handle : usize, base : usize, len : usize) -> Result<(), 
     use mm::api::mmap::MmapOps;
     use mm::frame_alloctor::GlobalPhysFrameAllocator;
 
-    mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
+    mm::user_aspace::with_user_aspace_mut_and_flush_if_changed(handle, |aspace| {
         let mut alloc = GlobalPhysFrameAllocator;
-        MmapOps::munmap(aspace, &mut alloc, VirtAddr(base), len)
+        let changed = MmapOps::munmap(aspace, &mut alloc, VirtAddr(base), len)?;
+        Ok(((), changed.changed()))
     }).map_err(mm_err_to_errno)
 }
 

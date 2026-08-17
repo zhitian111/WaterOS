@@ -13,6 +13,21 @@ pub fn process_snapshot(pid : ProcessId) -> Option<ProcessSnapshot> {
     active_impl::process_snapshot(pid)
 }
 
+/// 在 syscall 成功路径累加当前进程字符 I/O，不进入全局 cwd registry。
+pub fn account_process_io(task_id : TaskId, read : bool, bytes : u64) {
+    active_impl::account_task_io(task_id, read, bytes);
+}
+
+/// 累加同时产生读写流量的内核内数据搬运 syscall。
+pub fn account_process_io_transfer(task_id : TaskId, bytes : u64) {
+    active_impl::account_task_io_transfer(task_id, bytes);
+}
+
+/// 返回指定任务所属进程的 `[rchar, wchar, syscr, syscw]` 原子快照。
+pub fn process_io_snapshot(task_id : TaskId) -> Option<[u64; 4]> {
+    active_impl::process_io_snapshot(task_id)
+}
+
 /// 返回 registry 中全部进程 PID（含未 reap 的 zombie）。
 pub fn all_process_pids() -> Vec<ProcessId> { active_impl::all_process_pids() }
 

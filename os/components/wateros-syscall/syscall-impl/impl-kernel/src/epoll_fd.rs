@@ -8,7 +8,7 @@ use alloc::sync::Arc;
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use spin::Mutex;
-use vfs::api::{VfsIoHandle, VfsMetadata, VfsNodeType, VfsResult};
+use vfs::api::{VfsIoHandle, VfsMetadata, VfsNodeType, VfsResourceKind, VfsResult};
 
 use crate::poll_engine::{poll_revents_fd, POLLIN, POLLNVAL};
 
@@ -62,6 +62,8 @@ impl EpollHandle {
 }
 
 impl VfsIoHandle for EpollHandle {
+    fn resource_kind(&self) -> VfsResourceKind { VfsResourceKind::Epoll }
+
     fn open_accmode(&self) -> u32 { 2 }
 
     fn poll_revents(&mut self, events : i16) -> VfsResult<i16> {

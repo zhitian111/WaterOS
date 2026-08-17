@@ -11,7 +11,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use api_v0::{
     VfsCopyProgress, VfsError, VfsIoHandle, VfsMetadata, VfsNodeType, VfsPreparedRead,
-    VfsReadFinish, VfsReadLease, VfsResult, VfsSeekWhence,
+    VfsReadFinish, VfsReadLease, VfsResourceKind, VfsResult, VfsSeekWhence,
 };
 use ipc::pipe::{
     NamedPipe, PipeEndpoint, PipeEndpointOps, PipeError, PipeReadFinish as IpcPipeReadFinish,
@@ -225,6 +225,8 @@ fn special_dev_meta(mode : u16,
 pub struct ConsoleInHandle;
 
 impl VfsIoHandle for ConsoleInHandle {
+    fn resource_kind(&self) -> VfsResourceKind { VfsResourceKind::Terminal }
+
     fn open_accmode(&self) -> u32 { 0 }
 
     fn prepare_read(&mut self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
@@ -254,6 +256,8 @@ impl VfsIoHandle for ConsoleInHandle {
 pub struct ConsoleOutHandle;
 
 impl VfsIoHandle for ConsoleOutHandle {
+    fn resource_kind(&self) -> VfsResourceKind { VfsResourceKind::Terminal }
+
     fn open_accmode(&self) -> u32 { 1 }
 
     // 本方法代码由AI完成
@@ -683,6 +687,8 @@ pub fn pipe_handle_pair_with_flags(nonblocking : bool,
 }
 
 impl VfsIoHandle for NamedPipeHandle {
+    fn resource_kind(&self) -> VfsResourceKind { VfsResourceKind::Pipe }
+
     fn open_accmode(&self) -> u32 {
         match (self.read_end
                    .is_some(),
@@ -839,6 +845,8 @@ impl VfsIoHandle for NamedPipeHandle {
 }
 
 impl VfsIoHandle for PipeReadHandle {
+    fn resource_kind(&self) -> VfsResourceKind { VfsResourceKind::Pipe }
+
     fn open_accmode(&self) -> u32 { 0 }
 
     fn prepare_read(&mut self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
@@ -937,6 +945,8 @@ impl VfsIoHandle for PipeReadHandle {
 
 /// pipe 写端。
 impl VfsIoHandle for PipeWriteHandle {
+    fn resource_kind(&self) -> VfsResourceKind { VfsResourceKind::Pipe }
+
     fn open_accmode(&self) -> u32 { 1 }
 
     // 本方法代码由AI完成
@@ -1050,6 +1060,8 @@ pub fn stream_pair_handle_pair(nonblocking : bool) -> (UnixStreamPairEnd, UnixSt
 }
 
 impl VfsIoHandle for UnixStreamPairEnd {
+    fn resource_kind(&self) -> VfsResourceKind { VfsResourceKind::Unix }
+
     fn prepare_read(&mut self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
         Ok(Box::new(PipePreparedRead { endpoint : self.read_end
                                                       .clone(),

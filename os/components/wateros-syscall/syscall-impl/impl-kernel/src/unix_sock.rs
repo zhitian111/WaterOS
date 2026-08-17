@@ -16,7 +16,7 @@ use vfs::api::handle::VfsIoHandle;
 use vfs::api::resolve_open_path;
 use vfs::api::{
     SingleRootReadView, VfsCopyProgress, VfsError, VfsMetadata, VfsNodeType, VfsPreparedRead,
-    VfsReadFinish, VfsReadLease, VfsResult,
+    VfsReadFinish, VfsReadLease, VfsResourceKind, VfsResult,
 };
 use vfs::UnixStreamPairEnd;
 
@@ -857,6 +857,8 @@ fn install_pathname_socket(key : &[u8]) -> Result<(), ErrNo> {
 }
 
 impl VfsIoHandle for UnixSocketHandle {
+    fn resource_kind(&self) -> VfsResourceKind { VfsResourceKind::Unix }
+
     fn open_accmode(&self) -> u32 { 2 }
 
     fn prepare_read(&mut self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {

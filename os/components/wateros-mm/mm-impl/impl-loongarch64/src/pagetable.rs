@@ -565,20 +565,21 @@ impl LoongArch64AddressSpace {
                                       allocator : &mut A,
                                       start : VirtAddr,
                                       end : VirtAddr)
-                                      -> MmResult<()>
+                                      -> MmResult<bool>
         where A : api_v0::frame_allocator::PhysicalFrameAllocator<FrameId = PhysPageNum>
     {
+        let mut changed = false;
         let mut vpn = start.floor_page();
         let vpn_end = end.ceil_page();
         while vpn.0 < vpn_end.0 {
             if self.non_owned_vma_contains(vpn.start_addr()) {
-                let _ = self.unmap_page_to_ppn(vpn)?;
+                changed |= self.unmap_page_to_ppn(vpn)?.is_some();
             } else {
-                self.unmap_page_with_alloc(allocator, vpn)?;
+                changed |= self.unmap_page_with_alloc(allocator, vpn)?;
             }
             vpn = VirtPageNum(vpn.0 + 1);
         }
-        Ok(())
+        Ok(changed)
     }
 
     pub(crate) fn register_shared_anon_vma(&mut self, start : VirtAddr, end : VirtAddr) {
