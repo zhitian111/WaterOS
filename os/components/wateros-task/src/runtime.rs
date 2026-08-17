@@ -2,6 +2,34 @@
 use crate::active_impl::TaskBootstrap;
 use crate::scheduler;
 use crate::scheduler::TaskTrapFrame;
+use core::sync::atomic::{AtomicUsize, Ordering};
+
+static IDLE_MAINTENANCE_HOOK : AtomicUsize = AtomicUsize::new(0);
+
+/// 注册 idle task 在每次 WFI 前执行的有界维护函数。启动期只能注册一个稳定的
+/// `'static` 函数；重复注册同一函数允许，替换成另一函数属于组装错误。
+pub fn register_idle_maintenance_hook(hook : fn()) {
+    let address = hook as usize;
+    match IDLE_MAINTENANCE_HOOK.compare_exchange(0,
+                                                 address,
+                                                 Ordering::Release,
+                                                 Ordering::Acquire) {
+        Ok(_) => {}
+        Err(current) => assert_eq!(current, address, "idle maintenance hook already registered"),
+    }
+}
+
+#[inline]
+fn run_idle_maintenance() {
+    let address = IDLE_MAINTENANCE_HOOK.load(Ordering::Acquire);
+    if address == 0 {
+        return;
+    }
+    // SAFETY: 唯一写入来自 `register_idle_maintenance_hook` 的有效 `fn()`，且注册后
+    // 不会撤销；Release/Acquire 保证所有 CPU 观察到完整函数地址。
+    let hook : fn() = unsafe { core::mem::transmute(address) };
+    hook();
+}
 // ============================================================================
 // Rust 入口：地址空间 token 管理 & trap 帧访问
 // ============================================================================
@@ -54,6 +82,7 @@ pub extern "C" fn __wateros_task_runtime_enter_current_user_task() -> ! {
 pub extern "C" fn __wateros_idle_task_runtime_main(_arg : usize) -> ! {
     let _ = arch::interrupt::enable_global_interrupt();
     loop {
+        run_idle_maintenance();
         arch::interrupt::wait_for_interrupt();
     }
 }

@@ -27,10 +27,7 @@ impl OwnedPhysPage {
     pub fn alloc_zeroed() -> FrameAllocResult<Self> {
         #[cfg(feature = "impl-stack")]
         {
-            let frame = frame_alloc_result()?;
-            unsafe {
-                core::ptr::write_bytes((frame.0 * PAGE_SIZE) as *mut u8, 0, PAGE_SIZE);
-            }
+            let frame = frame_alloc_zeroed_result()?;
             Ok(Self { frame })
         }
         #[cfg(not(feature = "impl-stack"))]

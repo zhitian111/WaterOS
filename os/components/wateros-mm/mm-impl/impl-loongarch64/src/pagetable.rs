@@ -22,7 +22,10 @@ use api_v0::error::{MmError, MmResult};
 use api_v0::mmap::{DemandPageLoader, PageFaultAccess};
 use api_v0::perm::PagePerm;
 
-use frame_alloctor::{frame_alloc_result, frame_dealloc_result, frame_inc_ref, frame_ref_count};
+use frame_alloctor::{
+    frame_alloc_result, frame_alloc_zeroed_result, frame_dealloc_result, frame_inc_ref,
+    frame_ref_count,
+};
 pub(crate) use impl_common::{
     handle_lazy_file_fault, DeviceVma, LazyFileVma, LazyVmaAccess, LazyVmaSet, SharedAnonVma,
     SharedFileVma, VmaBacking,
@@ -246,9 +249,7 @@ pub(crate) fn zero_phys_page(ppn : PhysPageNum) {
 
 #[inline]
 fn alloc_table_frame_zeroed() -> MmResult<PhysPageNum> {
-    let ppn = frame_alloc_result().map_err(MmError::from)?;
-    zero_phys_page(ppn);
-    Ok(ppn)
+    frame_alloc_zeroed_result().map_err(MmError::from)
 }
 
 /// LoongArch64 根页表与 walk 状态；所有映射均为 **4 KiB 叶子**。

@@ -268,8 +268,23 @@ gdb_point_0:
     call trap_entry_rust
 gdb_point_1:
 
-    # Rust 内核不使用浮点寄存器。此处恢复的正是这个 TrapContext 所属
-    # 用户/内核任务在 trap 瞬间的状态；任务在调度器中睡眠多久都不会串线。
+    # 恢复控制寄存器
+    ld t0, 32*8(sp)
+    andi t6, t0, 1 << 8
+    csrw sstatus, t0
+    ld t0, 33*8(sp)
+    csrw sepc, t0
+    bnez t6, .Ltrap_return_kernel
+
+    mv a0, sp
+    addi a1, sp, 560
+    j __wateros_riscv_restore_user_from_frame
+
+.Ltrap_return_kernel:
+
+    # 内核返回直接使用当前栈帧恢复 FPU。用户返回由
+    # __wateros_riscv_restore_user_from_frame 在切换 satp 前恢复；不能在公共
+    # 路径先恢复一次，否则每个用户 trap 会重复执行 32 次 fld 和一次 fcsr 写入。
     fld f0,  296(sp)
     fld f1,  304(sp)
     fld f2,  312(sp)
@@ -304,20 +319,6 @@ gdb_point_1:
     fld f31, 544(sp)
     lw t0, 552(sp)
     csrw fcsr, t0
-
-    # 恢复控制寄存器
-    ld t0, 32*8(sp)
-    andi t6, t0, 1 << 8
-    csrw sstatus, t0
-    ld t0, 33*8(sp)
-    csrw sepc, t0
-    bnez t6, .Ltrap_return_kernel
-
-    mv a0, sp
-    addi a1, sp, 560
-    j __wateros_riscv_restore_user_from_frame
-
-.Ltrap_return_kernel:
 
     ld x1,  1*8(sp)
     ld x3,  3*8(sp)

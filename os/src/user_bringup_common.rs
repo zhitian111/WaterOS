@@ -28,7 +28,12 @@ pub fn run_one_bringup_command(log_tag : &str, cmd : &BringupCommand) -> Option<
               cmd.program);
         return None;
     }
-    run_one_elf_argv_exit(log_tag, cmd.program, cmd.argv)
+    // PERF_PROBE: restore for a dedicated zeroed-frame-pool measurement build.
+    // mm::frame_alloctor::reset_zeroed_frame_pool_stats();
+    let result = run_one_elf_argv_exit(log_tag, cmd.program, cmd.argv);
+    // PERF_PROBE: restore for a dedicated zeroed-frame-pool measurement build.
+    // mm::frame_alloctor::log_zeroed_frame_pool_stats(cmd.program);
+    result
 }
 
 /// 基于已装载 ELF 创建尚未发布的用户任务，并在用户栈上写入 `argv` / `envp`

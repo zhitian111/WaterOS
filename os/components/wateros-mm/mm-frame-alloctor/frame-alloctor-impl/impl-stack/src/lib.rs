@@ -21,6 +21,23 @@ use arch::interrupt::{
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 
+const ZEROED_POOL_CAPACITY : usize = 1024;
+const ZEROED_POOL_LOW_WATERMARK : usize = 256;
+const ZEROED_POOL_HIGH_WATERMARK : usize = ZEROED_POOL_CAPACITY;
+const ZEROED_SYNC_BATCH : usize = 16;
+const ZEROED_IDLE_BATCH : usize = 32;
+const ZEROED_OOM_DRAIN_BATCH : usize = 32;
+
+#[cfg(feature = "zeroed-frame-pool-stats")]
+macro_rules! pool_stats {
+    ($($body:tt)*) => { $($body)* };
+}
+
+#[cfg(not(feature = "zeroed-frame-pool-stats"))]
+macro_rules! pool_stats {
+    ($($body:tt)*) => {};
+}
+
 struct FrameAllocatorInterruptGuard {
     state : ArchInterruptState,
 }
@@ -65,6 +82,20 @@ fn with_frame_allocator<R>(f : impl FnOnce(&mut StackFrameAllocator) -> R) -> R 
     drop(allocator);
     debug::lock_released(cpu, debug::DebugLockKind::FrameAllocator, object);
     result
+}
+
+/// Idle 维护不能为了拿 allocator 锁而自旋；锁忙时本轮直接进入 WFI。
+fn try_with_frame_allocator<R>(f : impl FnOnce(&mut StackFrameAllocator) -> R) -> Option<R> {
+    let _irq = FrameAllocatorInterruptGuard::new();
+    let cell = get_frame_allocator_cell();
+    let cpu = arch::cpu::current_cpu_id().raw();
+    let object = cell as *const _ as usize;
+    let mut allocator = cell.try_lock()?;
+    debug::lock_acquired(cpu, debug::DebugLockKind::FrameAllocator, object);
+    let result = f(&mut allocator);
+    drop(allocator);
+    debug::lock_released(cpu, debug::DebugLockKind::FrameAllocator, object);
+    Some(result)
 }
 
 /// 临时的 LIFO 栈式帧分配器：
@@ -176,6 +207,31 @@ impl StackFrameAllocator {
             page_bytes: PAGE_SIZE,
         }
     }
+
+    /// 在一次 allocator 临界区内取得至多 `out.len()` 个 raw frame。
+    fn alloc_batch(&mut self, out : &mut [PhysPageNum]) -> FrameAllocResult<usize> {
+        let mut count = 0usize;
+        while count < out.len() {
+            match self.alloc_frame() {
+                Ok(frame) => {
+                    out[count] = frame;
+                    count += 1;
+                }
+                Err(FrameAllocError::OutOfMemory) if count != 0 => break,
+                Err(error) => {
+                    for frame in out[..count].iter().copied() {
+                        let _ = self.dealloc_frame(frame);
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        if count == 0 {
+            Err(FrameAllocError::OutOfMemory)
+        } else {
+            Ok(count)
+        }
+    }
 }
 
 impl PhysicalFrameAllocator for StackFrameAllocator {
@@ -285,6 +341,230 @@ static mut FRAME_ALLOCATOR : MaybeUninit<MultiprocessorSafeCell<StackFrameAlloca
     MaybeUninit::uninit();
 static FRAME_ALLOCATOR_READY : AtomicBool = AtomicBool::new(false);
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ZeroedFramePoolStats {
+    pub demand_hits : u64,
+    pub demand_misses : u64,
+    pub prefault_hits : u64,
+    pub prefault_misses : u64,
+    pub sync_refill_batches : u64,
+    pub sync_refill_pages : u64,
+    pub idle_refill_batches : u64,
+    pub idle_refill_pages : u64,
+    pub idle_lock_busy : u64,
+    pub low_watermark_activations : u64,
+    pub raw_oom_drains : u64,
+    pub raw_oom_drain_pages : u64,
+    pub peak_len : usize,
+    pub current_len : usize,
+    pub in_flight : usize,
+    pub capacity : usize,
+    pub low_watermark : usize,
+}
+
+impl ZeroedFramePoolStats {
+    const fn empty() -> Self {
+        Self { demand_hits : 0,
+               demand_misses : 0,
+               prefault_hits : 0,
+               prefault_misses : 0,
+               sync_refill_batches : 0,
+               sync_refill_pages : 0,
+               idle_refill_batches : 0,
+               idle_refill_pages : 0,
+               idle_lock_busy : 0,
+               low_watermark_activations : 0,
+               raw_oom_drains : 0,
+               raw_oom_drain_pages : 0,
+               peak_len : 0,
+               current_len : 0,
+               in_flight : 0,
+               capacity : ZEROED_POOL_CAPACITY,
+               low_watermark : ZEROED_POOL_LOW_WATERMARK }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ZeroedTakeKind {
+    Demand,
+    Prefault,
+    Retry,
+}
+
+#[derive(Clone, Copy)]
+enum ZeroedRefillKind {
+    Sync,
+    Idle,
+}
+
+/// 池中和正在清零的 frame 都保持 allocator 的 `allocated=true, ref_count=1`。
+/// `in_flight` 是生产者的发布槽预留，防止多个 idle CPU 同时越过容量。
+struct ZeroedFramePool {
+    frames : [PhysPageNum; ZEROED_POOL_CAPACITY],
+    len : usize,
+    in_flight : usize,
+    refill_active : bool,
+    stats : ZeroedFramePoolStats,
+}
+
+impl ZeroedFramePool {
+    const fn new() -> Self {
+        Self { frames : [PhysPageNum(0); ZEROED_POOL_CAPACITY],
+               len : 0,
+               in_flight : 0,
+               refill_active : true,
+               stats : ZeroedFramePoolStats::empty() }
+    }
+
+    fn reset(&mut self) {
+        self.len = 0;
+        self.in_flight = 0;
+        self.refill_active = true;
+        self.reset_stats();
+    }
+
+    fn reset_stats(&mut self) {
+        self.stats = ZeroedFramePoolStats { peak_len : self.len,
+                                            current_len : self.len,
+                                            in_flight : self.in_flight,
+                                            capacity : ZEROED_POOL_CAPACITY,
+                                            low_watermark : ZEROED_POOL_LOW_WATERMARK,
+                                            ..ZeroedFramePoolStats::default() };
+    }
+
+    fn update_refill_state(&mut self) {
+        let effective = self.len.saturating_add(self.in_flight);
+        if effective < ZEROED_POOL_LOW_WATERMARK {
+            if !self.refill_active {
+                pool_stats! { self.stats.low_watermark_activations += 1; }
+            }
+            self.refill_active = true;
+        } else if effective >= ZEROED_POOL_HIGH_WATERMARK {
+            self.refill_active = false;
+        }
+    }
+
+    fn take(&mut self,
+            preserve_low_watermark : bool,
+            kind : ZeroedTakeKind)
+            -> Option<PhysPageNum> {
+        if self.len == 0 || (preserve_low_watermark && self.len <= ZEROED_POOL_LOW_WATERMARK) {
+            match kind {
+                ZeroedTakeKind::Demand => {
+                    pool_stats! { self.stats.demand_misses += 1; }
+                }
+                ZeroedTakeKind::Prefault => {
+                    pool_stats! { self.stats.prefault_misses += 1; }
+                }
+                ZeroedTakeKind::Retry => {}
+            }
+            return None;
+        }
+        self.len -= 1;
+        let frame = self.frames[self.len];
+        match kind {
+            ZeroedTakeKind::Demand => {
+                pool_stats! { self.stats.demand_hits += 1; }
+            }
+            ZeroedTakeKind::Prefault => {
+                pool_stats! { self.stats.prefault_hits += 1; }
+            }
+            ZeroedTakeKind::Retry => {}
+        }
+        self.update_refill_state();
+        Some(frame)
+    }
+
+    fn claim_sync_publish_slots(&mut self, wanted : usize) -> usize {
+        let available = ZEROED_POOL_CAPACITY.saturating_sub(self.len.saturating_add(self.in_flight));
+        let claimed = wanted.min(available);
+        self.in_flight += claimed;
+        claimed
+    }
+
+    fn claim_idle_publish_slots(&mut self) -> usize {
+        self.update_refill_state();
+        if !self.refill_active {
+            return 0;
+        }
+        let effective = self.len.saturating_add(self.in_flight);
+        let claimed = ZEROED_IDLE_BATCH.min(ZEROED_POOL_HIGH_WATERMARK.saturating_sub(effective));
+        self.in_flight += claimed;
+        self.update_refill_state();
+        claimed
+    }
+
+    fn finish_claim(&mut self,
+                    claimed : usize,
+                    frames : &[PhysPageNum],
+                    kind : ZeroedRefillKind,
+                    produced_pages : usize) {
+        debug_assert!(frames.len() <= claimed);
+        debug_assert!(claimed <= self.in_flight);
+        debug_assert!(self.len.saturating_add(frames.len()) <= ZEROED_POOL_CAPACITY);
+        for frame in frames.iter().copied() {
+            self.frames[self.len] = frame;
+            self.len += 1;
+        }
+        self.in_flight -= claimed;
+        if produced_pages != 0 {
+            match kind {
+                ZeroedRefillKind::Sync => {
+                    pool_stats! {
+                        self.stats.sync_refill_batches += 1;
+                        self.stats.sync_refill_pages += produced_pages as u64;
+                    }
+                }
+                ZeroedRefillKind::Idle => {
+                    pool_stats! {
+                        self.stats.idle_refill_batches += 1;
+                        self.stats.idle_refill_pages += produced_pages as u64;
+                    }
+                }
+            }
+        }
+        pool_stats! { self.stats.peak_len = self.stats.peak_len.max(self.len); }
+        self.update_refill_state();
+    }
+
+    fn drain(&mut self, out : &mut [PhysPageNum]) -> usize {
+        let count = self.len.min(out.len());
+        let start = self.len - count;
+        out[..count].copy_from_slice(&self.frames[start..self.len]);
+        self.len = start;
+        if count != 0 {
+            pool_stats! {
+                self.stats.raw_oom_drains += 1;
+                self.stats.raw_oom_drain_pages += count as u64;
+            }
+        }
+        self.update_refill_state();
+        count
+    }
+
+    fn stats(&self) -> ZeroedFramePoolStats {
+        ZeroedFramePoolStats { current_len : self.len,
+                               in_flight : self.in_flight,
+                               ..self.stats }
+    }
+}
+
+static ZEROED_FRAME_POOL : MultiprocessorSafeCell<ZeroedFramePool> =
+    MultiprocessorSafeCell::new(ZeroedFramePool::new());
+
+fn with_zeroed_frame_pool<R>(f : impl FnOnce(&mut ZeroedFramePool) -> R) -> R {
+    let _irq = FrameAllocatorInterruptGuard::new();
+    let mut pool = ZEROED_FRAME_POOL.exclusive_access();
+    f(&mut pool)
+}
+
+#[inline]
+fn zero_frame(frame : PhysPageNum) {
+    unsafe {
+        core::ptr::write_bytes((frame.0 * PAGE_SIZE) as *mut u8, 0, PAGE_SIZE);
+    }
+}
+
 // BOOT_CONTRACT: `FRAME_ALLOCATOR` 只能由 BSP 在开放 AP 前初始化。`READY` 的
 // Release/Acquire 负责发布已构造对象，不把并发的首次初始化变成安全操作。
 fn get_frame_allocator_cell() -> &'static MultiprocessorSafeCell<StackFrameAllocator> {
@@ -309,6 +589,9 @@ pub fn init_frame_allocator_with_reserved(start_ppn : PhysPageNum,
         }
         FRAME_ALLOCATOR_READY.store(true, Ordering::Release);
     }
+    // 该入口也供 allocator 自测重置状态；旧池帧随后会被 allocator 的 init
+    // 一并重新标记为空闲，不能把旧 PPN 留在池中。
+    with_zeroed_frame_pool(ZeroedFramePool::reset);
     get_frame_allocator_cell();
     with_frame_allocator(|allocator| {
         allocator.init_with_reserved(start_ppn,
@@ -325,7 +608,7 @@ pub fn frame_allocator_cell() -> &'static MultiprocessorSafeCell<StackFrameAlloc
 
 /// 分配一个物理帧（返回帧标识）。
 pub fn frame_alloc() -> Option<PhysPageNum> {
-    with_frame_allocator(|allocator| allocator.alloc_frame().ok())
+    frame_alloc_result().ok()
 }
 
 /// 回收一个物理帧。
@@ -338,7 +621,142 @@ pub fn frame_dealloc(frame : PhysPageNum) {
 }
 
 pub fn frame_alloc_result() -> FrameAllocResult<PhysPageNum> {
-    with_frame_allocator(|allocator| allocator.alloc_frame())
+    let first = with_frame_allocator(|allocator| allocator.alloc_frame());
+    if first != Err(FrameAllocError::OutOfMemory) {
+        return first;
+    }
+
+    // 预清零池是可回收缓存。raw 分配耗尽时先在独立临界区摘下池中页，再批量
+    // 归还 allocator，绝不同时持有两把锁。
+    let mut reclaimed = [PhysPageNum(0); ZEROED_OOM_DRAIN_BATCH];
+    let count = with_zeroed_frame_pool(|pool| pool.drain(&mut reclaimed));
+    if count == 0 {
+        return first;
+    }
+    with_frame_allocator(|allocator| {
+        for frame in reclaimed[..count].iter().copied() {
+            allocator.dealloc_frame(frame)?;
+        }
+        allocator.alloc_frame()
+    })
+}
+
+/// 分配一页已清零 frame。池 miss 时当前 CPU 一次锁内批量取得 raw frame，
+/// 锁外清零，返回一页并发布其余页。
+pub fn frame_alloc_zeroed_result() -> FrameAllocResult<PhysPageNum> {
+    if let Some(frame) =
+        with_zeroed_frame_pool(|pool| pool.take(false, ZeroedTakeKind::Demand))
+    {
+        return Ok(frame);
+    }
+
+    let claimed = with_zeroed_frame_pool(|pool| {
+        pool.claim_sync_publish_slots(ZEROED_SYNC_BATCH - 1)
+    });
+    let wanted = 1 + claimed;
+    let mut frames = [PhysPageNum(0); ZEROED_SYNC_BATCH];
+    let allocated = with_frame_allocator(|allocator| allocator.alloc_batch(&mut frames[..wanted]));
+    let count = match allocated {
+        Ok(count) => count,
+        Err(error) => {
+            with_zeroed_frame_pool(|pool| {
+                pool.finish_claim(claimed, &[], ZeroedRefillKind::Sync, 0)
+            });
+            // 一个并发 idle 生产者可能刚好在 raw 分配失败后发布了页。
+            return with_zeroed_frame_pool(|pool| pool.take(false, ZeroedTakeKind::Retry))
+                .ok_or(error);
+        }
+    };
+
+    for frame in frames[..count].iter().copied() {
+        zero_frame(frame);
+    }
+    let publish_count = count.saturating_sub(1);
+    with_zeroed_frame_pool(|pool| {
+        pool.finish_claim(claimed,
+                          &frames[1..1 + publish_count],
+                          ZeroedRefillKind::Sync,
+                          count);
+    });
+    Ok(frames[0])
+}
+
+/// 只在池高于低水位时取一页，不分配、不清零。ELF BSS 预映射用它保证
+/// `exec` 前台只消费 idle CPU 已完成的工作；返回 `None` 时继续保留 lazy 映射。
+pub fn try_alloc_zeroed_frame_for_prefault() -> Option<PhysPageNum> {
+    with_zeroed_frame_pool(|pool| pool.take(true, ZeroedTakeKind::Prefault))
+}
+
+/// Idle task 在每次 WFI 前执行一轮有界维护。allocator 锁忙时立即放弃本轮；
+/// 成功取得的 raw frame 在所有锁外清零，再用一次短临界区发布 PPN。
+pub fn idle_zeroed_frame_pool_maintenance() {
+    if !FRAME_ALLOCATOR_READY.load(Ordering::Acquire) {
+        return;
+    }
+    let claimed = with_zeroed_frame_pool(ZeroedFramePool::claim_idle_publish_slots);
+    if claimed == 0 {
+        return;
+    }
+
+    let mut frames = [PhysPageNum(0); ZEROED_IDLE_BATCH];
+    let Some(allocated) = try_with_frame_allocator(|allocator| {
+        allocator.alloc_batch(&mut frames[..claimed])
+    }) else {
+        with_zeroed_frame_pool(|pool| {
+            pool_stats! { pool.stats.idle_lock_busy += 1; }
+            pool.finish_claim(claimed, &[], ZeroedRefillKind::Idle, 0);
+        });
+        return;
+    };
+    let count = match allocated {
+        Ok(count) => count,
+        Err(_) => {
+            with_zeroed_frame_pool(|pool| {
+                pool.finish_claim(claimed, &[], ZeroedRefillKind::Idle, 0)
+            });
+            return;
+        }
+    };
+    for frame in frames[..count].iter().copied() {
+        zero_frame(frame);
+    }
+    with_zeroed_frame_pool(|pool| {
+        pool.finish_claim(claimed, &frames[..count], ZeroedRefillKind::Idle, count)
+    });
+}
+
+pub fn reset_zeroed_frame_pool_stats() {
+    with_zeroed_frame_pool(ZeroedFramePool::reset_stats);
+}
+
+pub fn zeroed_frame_pool_stats() -> ZeroedFramePoolStats {
+    with_zeroed_frame_pool(|pool| pool.stats())
+}
+
+pub fn log_zeroed_frame_pool_stats(label : &str) {
+    let stats = zeroed_frame_pool_stats();
+    log::error!("[frame-zeroed-pool] label={} demand_hit={} demand_miss={} prefault_hit={} \
+                 prefault_miss={} sync_batches={} sync_pages={} idle_batches={} idle_pages={} \
+                 idle_lock_busy={} low_activations={} oom_drains={} oom_drain_pages={} \
+                 peak_len={} current_len={} in_flight={} capacity={} low={}",
+                label,
+                stats.demand_hits,
+                stats.demand_misses,
+                stats.prefault_hits,
+                stats.prefault_misses,
+                stats.sync_refill_batches,
+                stats.sync_refill_pages,
+                stats.idle_refill_batches,
+                stats.idle_refill_pages,
+                stats.idle_lock_busy,
+                stats.low_watermark_activations,
+                stats.raw_oom_drains,
+                stats.raw_oom_drain_pages,
+                stats.peak_len,
+                stats.current_len,
+                stats.in_flight,
+                stats.capacity,
+                stats.low_watermark);
 }
 
 pub fn frame_dealloc_result(frame : PhysPageNum) -> FrameAllocResult<()> {
@@ -361,7 +779,12 @@ pub fn frame_mem_stats() -> FrameMemStats {
             ..FrameMemStats::default()
         };
     }
-    with_frame_allocator(|allocator| allocator.mem_stats())
+    let mut stats = with_frame_allocator(|allocator| allocator.mem_stats());
+    let zeroed_free = with_zeroed_frame_pool(|pool| pool.len);
+    stats.free_frames = stats.free_frames
+                             .saturating_add(zeroed_free)
+                             .min(stats.total_frames);
+    stats
 }
 
 /// 零大小适配器：实现 [`PhysicalFrameAllocator`] 时每次调用短借全局栈式分配器。
@@ -377,6 +800,11 @@ impl PhysicalFrameAllocator for GlobalPhysFrameAllocator {
 
     #[inline]
     fn alloc_frame(&mut self) -> FrameAllocResult<Self::FrameId> { frame_alloc_result() }
+
+    #[inline]
+    fn try_alloc_zeroed_frame(&mut self) -> FrameAllocResult<Option<Self::FrameId>> {
+        frame_alloc_zeroed_result().map(Some)
+    }
 
     #[inline]
     fn dealloc_frame(&mut self, frame : Self::FrameId) -> FrameAllocResult<()> {

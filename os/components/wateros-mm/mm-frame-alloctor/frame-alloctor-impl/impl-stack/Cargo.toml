@@ -16,4 +16,6 @@
 [features]
     api-v0 = [  ]
     self_test = [  ]
+    # 性能探针默认关闭，避免正式内核在帧池热路径维护诊断计数。
+    zeroed-frame-pool-stats = [  ]
     default = [ "api-v0" ]

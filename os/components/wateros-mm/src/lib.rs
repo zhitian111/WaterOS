@@ -90,6 +90,12 @@ pub fn init_after_boot(dtb_pa: usize, memory_end: usize) {
     log::info!("[mm] init_after_boot complete");
 }
 
+/// Idle task 的有界 MM 维护入口。当前仅补充全局预清零 frame 池；具体实现保证
+/// allocator 锁忙时立即返回，且不在任何锁内清零页面。
+pub fn idle_maintenance() {
+    frame_alloctor::idle_zeroed_frame_pool_maintenance();
+}
+
 #[cfg(feature = "self_test")]
 /// MM 组件统一自检入口；不自行猜测物理内存范围，避免破坏已初始化的帧池。
 pub fn self_test() {

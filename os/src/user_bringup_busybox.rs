@@ -135,6 +135,8 @@ pub(crate) extern "C" fn run_auto_queue(_arg : usize) -> ! {
     }
 
     for cmd in commands {
+        // PERF_PROBE: restore for a dedicated zeroed-frame-pool measurement build.
+        // mm::frame_alloctor::reset_zeroed_frame_pool_stats();
         let start_ns = monotonic_ns();
         error!("[{LOG_TAG}] program={} argv={:?} start_mono_ns={start_ns}",
                cmd.program, cmd.argv);
@@ -145,6 +147,8 @@ pub(crate) extern "C" fn run_auto_queue(_arg : usize) -> ! {
                                                                   envp_for_command(image,
                                                                                    cmd.program));
         log_elapsed(LOG_TAG, cmd, start_ns, monotonic_ns());
+        // PERF_PROBE: restore for a dedicated zeroed-frame-pool measurement build.
+        // mm::frame_alloctor::log_zeroed_frame_pool_stats(cmd.program);
         match exit_code {
             Some(0) => error!("[{LOG_TAG}] command succeeded program={} exit_code=0",
                               cmd.program),

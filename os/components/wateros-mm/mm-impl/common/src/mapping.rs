@@ -9,6 +9,19 @@ pub fn zero_phys_page(ppn : PhysPageNum) {
     }
 }
 
+/// 优先使用 allocator 的预清零能力；不支持时保持原有的 raw 分配后清零语义。
+#[inline]
+pub fn alloc_zeroed_frame_with_alloc<A>(allocator : &mut A) -> MmResult<PhysPageNum>
+    where A : PhysicalFrameAllocator<FrameId = PhysPageNum>
+{
+    if let Some(frame) = allocator.try_alloc_zeroed_frame()? {
+        return Ok(frame);
+    }
+    let frame = allocator.alloc_frame()?;
+    zero_phys_page(frame);
+    Ok(frame)
+}
+
 /// Computes the page-rounded end address for an mmap request.
 pub fn mmap_map_end(base : VirtAddr, len : usize) -> MmResult<VirtAddr> {
     let n_pages = len.checked_add(PAGE_SIZE - 1)
@@ -91,8 +104,7 @@ pub fn map_zeroed_page_with_alloc<S, A>(aspace : &mut S,
     where S : AddressSpaceOps,
           A : PhysicalFrameAllocator<FrameId = PhysPageNum>
 {
-    let ppn = allocator.alloc_frame()?;
-    zero_phys_page(ppn);
+    let ppn = alloc_zeroed_frame_with_alloc(allocator)?;
     aspace.map_page_to_ppn(vpn, ppn, perm)
 }
 
@@ -136,10 +148,9 @@ pub fn map_range_from_loader<S, A, F>(aspace : &mut S,
     let vpn_end = end.ceil_page();
     let mut page_index = 0usize;
     while vpn.0 < vpn_end.0 {
-        let ppn = allocator.alloc_frame()?;
+        let ppn = alloc_zeroed_frame_with_alloc(allocator)?;
         let pa = ppn.0 * PAGE_SIZE;
         let page = unsafe { core::slice::from_raw_parts_mut(pa as *mut u8, PAGE_SIZE) };
-        page.fill(0);
         if let Err(e) = load_page(page_index, page) {
             let _ = allocator.dealloc_frame(ppn);
             let _ = aspace.unmap_range_with_alloc(allocator, base, vpn.start_addr());

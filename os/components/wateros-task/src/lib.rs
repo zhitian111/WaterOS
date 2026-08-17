@@ -5,6 +5,7 @@ mod cpu;
 mod lifecycle;
 mod process;
 mod runtime;
+pub use runtime::register_idle_maintenance_hook;
 pub mod sched;
 mod schedule;
 mod spawn;

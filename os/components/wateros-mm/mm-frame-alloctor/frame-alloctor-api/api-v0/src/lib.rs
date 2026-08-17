@@ -55,6 +55,15 @@ pub trait PhysicalFrameAllocator {
     /// 分配一帧；耗尽时返回 [`FrameAllocError::OutOfMemory`]。
     fn alloc_frame(&mut self) -> FrameAllocResult<Self::FrameId>;
 
+    /// 尝试从实现维护的预清零池分配一帧。
+    ///
+    /// `Ok(Some(frame))` 保证该帧的全部字节均为零，并把一份正常的所有权转移给
+    /// 调用者；`Ok(None)` 表示该 allocator 不提供此可选能力，调用者应退回
+    /// [`Self::alloc_frame`] 后自行清零。默认实现保持现有 allocator 的行为。
+    fn try_alloc_zeroed_frame(&mut self) -> FrameAllocResult<Option<Self::FrameId>> {
+        Ok(None)
+    }
+
     /// 释放先前由 [`Self::alloc_frame`] 返回的帧；重复释放等行为由具体实现定义（栈实现见其实现侧注释）。
     fn dealloc_frame(&mut self, frame: Self::FrameId) -> FrameAllocResult<()>;
 }

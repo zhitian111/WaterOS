@@ -192,6 +192,7 @@ fn init_after_boot(dtb_pa: usize, memory_end: usize, cpu_id: task::CpuId) {
     crate::dashboard::init();
     crate::trap_handler::init();
     mm::init_after_boot(dtb_pa, memory_end);
+    task::register_idle_maintenance_hook(mm::idle_maintenance);
 }
 
 #[cfg(feature = "self_test")]
