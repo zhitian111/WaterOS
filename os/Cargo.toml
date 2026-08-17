@@ -101,7 +101,7 @@
         # "runtime/impl-info",
         # "runtime/impl-debug",
         # "runtime/impl-warn",
-        # 编译期日志级别 feature 彼此互斥；本平台固定为 Error。
+        # main 分支固定为 error 等级
         "runtime/impl-error",
         # "dashboard-debug",
         "dep:klog",
@@ -143,10 +143,11 @@
         "mm/self_test-sv39",
         "platform/impl-qemu-riscv64-opensbi",
         # "runtime/impl-trace",
-        # 编译期日志级别 feature 彼此互斥；本平台固定为 Info。
-        "runtime/impl-info",
+        # "runtime/impl-info",
         # "runtime/impl-debug",
         # "runtime/impl-warn",
+        # main 分支固定为 error 等级
+        "runtime/impl-error",
         "dep:klog",
         "klog/default",
         "runtime/impl-platform-console",

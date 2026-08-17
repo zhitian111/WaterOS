@@ -1,0 +1,73 @@
+%% WaterOS presentation architecture: application -> shared kernel -> dual ISA.
+%% This is a presentation view; wateros-architecture.mmd remains the component dependency view.
+flowchart TB
+
+  subgraph user["用户态｜真实程序运行在同一套通用内核语义之上"]
+    direction LR
+    desktop["图形桌面<br/><small>Nano-X · WaterFM · mGBA · nxterm</small>"]
+    dev["Unix 开发环境<br/><small>APT · Neovim · GCC · ELF</small>"]
+    workload["重型工作负载<br/><small>BuildStorm · 多进程 · 文件 I/O</small>"]
+  end
+
+  abi["Linux generic64 ABI<br/><small>syscall · signals · files · sockets · poll</small>"]
+
+  subgraph kernel["WaterOS Rust 宏内核｜共享内核服务"]
+    direction LR
+    task["任务与调度<br/><small>Process · Thread · Scheduler</small>"]
+    mm["虚拟内存<br/><small>Sv39/LA 页表 · mmap · fault</small>"]
+    vfs["VFS 与文件系统<br/><small>FD · mount · ext4 · PageCache</small>"]
+    ipc["IPC 与同步<br/><small>pipe · futex · signal · waitqueue</small>"]
+    net["网络协议栈<br/><small>socket · poll/epoll · smoltcp</small>"]
+  end
+
+  subgraph io["设备与持久化服务｜把内核能力接到真实 I/O"]
+    direction LR
+    fsio["存储路径<br/><small>VFS → PageCache → ext4</small>"]
+    drivers["VirtIO 驱动<br/><small>block · net · input · gpu</small>"]
+    display["图形与输入<br/><small>/dev/fb0 · evdev · framebuffer</small>"]
+    platform["平台运行时<br/><small>timer · console · SMP · klog</small>"]
+  end
+
+  subgraph arch["双架构底座｜共享上层语义，隔离 ISA 与板级适配"]
+    direction LR
+    rv["RISC-V64<br/><small>OpenSBI · Sv39 · VirtIO-MMIO</small>"]
+    la["LoongArch64<br/><small>CSR · LA 页表 · VirtIO-PCI</small>"]
+  end
+
+  desktop --> abi
+  dev --> abi
+  workload --> abi
+  abi --> task
+  abi --> mm
+  abi --> vfs
+  abi --> ipc
+  abi --> net
+  task --> io
+  mm --> io
+  vfs --> fsio
+  ipc --> display
+  net --> drivers
+  fsio --> drivers
+  display --> drivers
+  drivers --> platform
+  platform --> rv
+  platform --> la
+
+  class desktop,dev,workload app;
+  class abi boundary;
+  class task,mm,vfs,ipc,net service;
+  class fsio,drivers,display,platform io;
+  class rv riscv;
+  class la loong;
+
+  classDef app fill:#0D2B4B,stroke:#22D3EE,color:#F4F8FC,stroke-width:2px;
+  classDef boundary fill:#0891B2,stroke:#67E8F9,color:#061426,stroke-width:2px;
+  classDef service fill:#123B61,stroke:#3B82F6,color:#F4F8FC,stroke-width:1.5px;
+  classDef io fill:#164E63,stroke:#2DD4A7,color:#F4F8FC,stroke-width:1.5px;
+  classDef riscv fill:#173B7A,stroke:#60A5FA,color:#F4F8FC,stroke-width:2px;
+  classDef loong fill:#4C267A,stroke:#A78BFA,color:#F4F8FC,stroke-width:2px;
+  style user fill:#091D35,stroke:#3B82F6,color:#F4F8FC,stroke-width:2px
+  style kernel fill:#091D35,stroke:#22D3EE,color:#F4F8FC,stroke-width:2px
+  style io fill:#091D35,stroke:#2DD4A7,color:#F4F8FC,stroke-width:2px
+  style arch fill:#061426,stroke:#A78BFA,color:#F4F8FC,stroke-width:2px
+  linkStyle default stroke:#7DD3FC,stroke-width:1.5px

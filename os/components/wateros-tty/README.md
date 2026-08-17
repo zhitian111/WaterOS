@@ -2,218 +2,140 @@
 
 [项目首页](../../../README.md) · [内核工程](../../README.md) · [系统架构](../../../README.md#系统架构)
 
-`wateros-tty` 管理系统控制台和 UNIX98 伪终端的 TTY 行规程。它不负责 VFS 路径、文件描述符表，
-也不包含 Linux syscall 请求号，从而可以独立于具体文件系统和系统调用实现复用。
+`wateros-tty` 是 WaterOS 内核的终端状态与行规程组件，统一承载系统控制台和 UNIX98 伪终端的
+输入编辑、回显、输出转换、阻塞读取及控制字符信号事件。UART 或字符设备输入经 VFS 适配后进入
+行规程，在 canonical 模式下按行编辑，在 raw 模式下依据 `VMIN/VTIME` 交付字节；读取采用预约与
+提交机制，用户复制失败时可回滚，等待通过 waitqueue 避免丢失唤醒。PTY 以共享 terminal 状态连接
+master/slave 两端，使用有界队列、独立等待队列和引用租约管理关闭与 hangup。该组件只拥有终端机制，
+不负责 VFS 路径、fd 生命周期、syscall ABI 转换或实际信号投递。
 
-## 模块分层
+## 定位和边界
 
+`wateros-tty` 是终端行规程和 UNIX98 PTY 的状态所有者：它处理输入编辑、回显、控制字符、
+输出后处理、读取等待以及 master/slave 数据流。它不拥有 VFS 路径或文件描述符表，也不解析
+Linux syscall 号、用户指针或用户态 `termios` 布局；这些分别由 `wateros-vfs` 和
+`wateros-syscall` 适配。字符设备层把 UART 字节交给 `feed_input`，调用方在锁外执行回显和
+信号投递。
 
-| 层                | 路径                     | 职责                                                                                                      |
-| ------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| 聚合门面          | `src/lib.rs`             | 按 feature 选择并重导出当前 TTY 实现，作为调用方访问终端策略和处理后输入的唯一入口。                      |
-| TTY API           | `tty-api/api-v0/`        | 版本化终端数据契约：`ConsoleTtyMode`、`TtyTermios`、`TtyWinSize`、`TtyControlEvent` 及控制字符/信号常量。 |
-| 控制台与 PTY 实现 | `tty-impl/impl-console/` | console 行规程及 UNIX98 PTY pair、实例注册、数据队列、前台进程组与控制会话。                              |
+顶层 `wateros-tty` 通过 feature 选择 API 与 `impl-console`。API 是架构无关契约；当前实现
+使用 `spin::Mutex` 和 `ipc-waitqueue`，RISC-V 与 LoongArch 没有独立的 TTY 语义分支。
 
-## 实现说明
+## 代码地图
 
-- `wateros-tty` 只负责终端机制和状态，不实现 VFS 路径、fd 表或 Linux syscall 请求号。
-- 数据流：UART 字符设备 → VFS 字符设备适配层 → `feed_input` → TTY（输入缓冲与行编辑、echo
-  字节、`TtyControlEvent`）→ stdin/stdout/stderr 与 signal 调度层。
-- 调用方必须在释放 TTY 锁后输出回显或投递信号；syscall 层只负责在 Linux 用户 ABI 的
-  `termios`/`winsize` 内存布局与本组件类型之间转换。
-- 主要状态：
-  - `ConsoleTtyMode::Interactive`（真实 UART）、`Closed`（读立即 EOF，无人值守评测）、
-    `Fixture`（固定 `password\n`，兼容旧测试）。
-  - `TtyTermios`（输入/输出/本地模式与控制字符）、`TtyWinSize`（`TIOCGWINSZ/SWINSZ`）。
-  - 前台进程组与控制会话：供 job control、Ctrl-C/Ctrl-Z 及后台读写检查使用。
-  - processed input：已完成 CR 转换、行编辑或 raw 处理、可交付 `read(2)` 的字节。
+| 语义 | 源码 | 所有权/职责 |
+| --- | --- | --- |
+| 聚合门面 | `src/lib.rs` | 按 `api-v0`、`impl-console` feature 再导出能力。 |
+| 稳定契约 | `tty-api/api-v0/src/lib.rs` | `TtyTermios`、`TtyWinSize`、`TerminalId`、控制事件、模式位和错误类型。 |
+| 控制台行规程 | `tty-impl/impl-console/src/lib.rs` | `TTY`、`INPUT_WAIT`、canonical/raw 输入、预约式读取和输出转换。 |
+| PTY | `tty-impl/impl-console/src/pty.rs` | `PtyRegistry`、`SharedTerminal`、master/slave 端点和有界队列。 |
+| 启动选择 | `os/src/user_operator.rs` | `pre`/`final_online`/operator feature 映射到 `ConsoleTtyMode`。 |
 
-### 输入行编辑与回显
+## 核心状态与数据结构
 
-- `feed_input(byte)` 是唯一输入入口，只接受 `Interactive` 模式；非交互模式直接忽略。
-- 输入预处理：若 `ICRNL` 置位，回车 `\r` 先转成 `\n`。
-- canonical 模式（`ICANON`）按行编辑：
-  - `VERASE`（退格）弹出 `editing` 末字节，回显 `\x08 \x08`；`VKILL` 清空整行并回显 `^U\n`；
-  - `VEOF`：空行时置 `eof_pending`（下一次读返回 EOF），非空行时把 `editing` 提交进
-    `readable`；
-  - `\n`：把 `editing` 提交并追加换行，回显 `\r\n`；
-  - 普通字节进 `editing`，回显原字节。
-- raw 模式：字节直接进 `readable`，不做行编辑。
-- 每次返回一个短回显序列（`EchoBytes`，最多 8 字节）与可选的 `TtyControlEvent`，由调用方在
-  锁外写 UART / 投递信号；处理完成后唤醒 `INPUT_WAIT` 上的阻塞读者。
+| 状态 | 关键字段与存储 | 并发、生命周期和不变量 |
+| --- | --- | --- |
+| `TTY: Mutex<TtyState>` (`lib.rs`) | `termios`、`winsize`、`foreground_pgid`、`controlling_sid`；`readable: VecDeque<u8>` 是已处理输入，`editing: Vec<u8>` 是未提交行；`eof_pending`、`active_read`/`next_read_id` 管 EOF 与读取预约。 | 所有字段由同一自旋锁保护。`configure` 重置配置、会话和缓冲；`prepare_read` 一次只允许一个预约，`finish_read` 只消费已复制字节，其余按原序放回队首。 |
+| `INPUT_WAIT: Mutex<Option<WaitQueue>>` | 懒创建的 `console-tty-input` 等待队列。 | 不能在 `TTY` 锁内唤醒或阻塞；`feed_input`/`configure` 释放 TTY 锁后唤醒，`wait_for_input` 用 `wait_current_while` 原子衔接条件检查和入队。 |
+| `PtyRegistry` (`pty.rs`) | `pairs: BTreeMap<u32, Weak<SharedTerminal>>`；`sessions: BTreeMap<usize, TerminalId>`；PTY 编号上限 `MAX_PTYS=64`，终端 ID 从 2 起。 | 全局 `Mutex` 只管理索引。最后一个 `Arc<SharedTerminal>` 释放时移除 pair 和会话映射，并释放四个等待队列。 |
+| `PtyState` | `locked`、独立 `termios`/窗口/前台组/会话；`slave_readable`/`slave_editing`/`slave_eof_pending`；`master_readable`；两个活动读取 ID；master/slave 打开描述计数；hangup 标志和 `events`。 | 由 `SharedTerminal.state` 短锁保护。master 写入只进入 slave 行规程，slave 输出/回显进入 master 队列；两侧各有独立读/空间等待队列。每侧队列容量 `QUEUE_CAPACITY=64*1024`。 |
+| `PtyEndpointHandle` / `EndpointLease` | `Arc<SharedTerminal>`、端点类型、`Arc<AtomicBool>` 非阻塞标志、访问模式；租约引用端点。 | clone 增加描述引用；最后一个 master/slave 描述关闭时更新 hangup/唤醒对端，`SharedTerminal` 的 `Drop` 才回收注册表对象。 |
+| API 数据 | `TtyTermios` 为 `#[repr(C)]`、`NCCS=19`；`TtyWinSize` 默认 25x80；`TtyControlEvent { process_group, signal }`。 | API 不含 syscall 号或指针。事件只描述待投递信号，实际投递必须在 TTY/PTY 锁外完成。 |
 
-### 信号检测与锁外投递
+## 关键链路
 
-- `ISIG` 置位时匹配 `VINTR` / `VQUIT` / `VSUSP`，分别产生 `SIGINT` / `SIGQUIT` / `SIGTSTP`；
-  同时清空 `editing`，按信号回显 `^C` / `^\` / `^Z`（后接 `\r\n`）。
-- 只生成 `TtyControlEvent { process_group: 前台 pgid, signal }`，不自行投递；实际发送在释放
-  TTY 锁后由 syscall/signal 层完成，避免持锁调度或信号死锁。
+### UART 输入到阻塞读取和信号
 
-### 预约式读取与 `VMIN/VTIME`
-
-- `prepare_read(max_len)` 在锁内从 `readable` 取出字节、分配预约 id 并置 `active_read`；一次
-  只允许一个活动预约（有 `active_read` 时返回 `Pending`），避免并发读互相消费。
-- canonical 下整行就绪才算可读；raw 下按 `VMIN` 判断（`readable_for`），`Closed` 直接返回
-  `Eof`，空行 `VEOF` 待交付时也返回 `Eof`。
-- `finish_read(预约, copied, complete)` 只正式消费 `copied` 字节，其余按原顺序放回队首；若
-  `copied == 0 && !complete`（用户复制失败）返回错误，字节全部回滚。
-- 非 canonical 字节间计时器：`wait_for_input_change` 等待第一个字节到达，随后
-  `wait_for_input_change_for_ticks` 以每个新字节重启 `VTIME` 计时；`read_settings` 返回
-  `(canonical, VMIN, VTIME)` 快照供超时计算。
-- `wait_for_input` 用 `wait_current_while` 原子衔接“条件检查”与“入队等待”，避免 UART 字节恰好
-  在检查与睡眠之间到达造成丢失唤醒；等待阈值取 `min(VMIN, 缓冲区长度)`。
-
-### 输出转换
-
-- `transform_output` 按 `OPOST` / `ONLCR` 把用户输出里的 `\n` 转成 `\r\n`，返回可直接写入
-  UART 的线缆字节；未启用转换或没有换行时原样返回。
-
-### 锁与调度约束
-
-- 持有 TTY 锁时禁止访问 UART、复制用户内存、执行调度或投递信号。
-- UART 设备锁只保护一次短读取，不得与 TTY 锁嵌套持有。
-- `prepare_read` 先预约输入字节，用户复制成功后由 `finish_read` 提交，失败时把未复制字节
-  放回队首，避免并发读取重复消费或丢失输入。
-- 阻塞读取通过 waitqueue 等待输入或超时，不允许忙等占满 CPU。
-- `os/src/user_operator.rs` 按 `pre`/`final_online`/`operator-shell` 等编译期 feature 选择
-  interactive/closed/fixture，并启动唯一控制台输入任务。
-
-### UNIX98 PTY 与 Nano-X 终端
-
-`pty.rs` 提供最多 64 个按需分配的 PTY pair。每个 pair 有独立的 termios、窗口尺寸、
-前台进程组、控制会话、slave 行规程和两个 64 KiB 有界字节队列：
-
-```text
-nxterm 写 master -> slave 行规程 -> /bin/sh 从 slave 读取
-/bin/sh 写 slave -> OPOST/ONLCR -> nxterm 从 master 读取
+```mermaid
+sequenceDiagram
+    participant U as UART/字符设备
+    participant V as VFS 适配
+    participant T as TTY::TTY
+    participant W as INPUT_WAIT
+    participant S as syscall/signal
+    U->>V: 读取原始字节
+    V->>T: feed_input(byte)
+    T->>T: ICRNL、ICANON/raw、编辑、ECHO/ISIG
+    alt 控制字符
+        T-->>S: TtyControlEvent(pgid, signal)
+        T-->>V: echo 字节
+    else 普通输入
+        T->>T: 推入 readable 或 editing
+        T-->>V: echo 字节
+    end
+    T->>W: 释放 TTY 锁后 wake_all
+    S->>T: prepare_read(max_len)
+    alt Pending
+        S->>W: wait_for_input / VMIN-VTIME 等待
+        W-->>S: 字节到达或被信号中断
+    else Data/Eof
+        T-->>S: 预约、EOF 或空读
+    end
+    S->>S: copy_to_user
+    S->>T: finish_read(reservation, copied, complete)
+    S->>S: 锁外投递前台组信号
 ```
 
-- `/dev/ptmx` 创建锁定的 pair，`TIOCGPTN` 返回编号，`TIOCSPTLCK` 供 `unlockpt()` 解锁。
-- `/dev/pts/N` 是 slave；session leader 执行 `setsid()` 后打开它会自动取得控制终端。
-- `/dev/tty` 根据当前 SID 返回 PTY slave 或系统 console。
-- master 输入的 Ctrl-C/Ctrl-\\/Ctrl-Z 形成控制事件，syscall 层在 PTY 锁外向前台进程组投递。
-- fd 关闭、队列读写、`poll/select` 与非阻塞状态均以打开文件描述为单位；最后一个 master
-  关闭时 slave 收到 hangup 语义。
+`feed_input` 在 `TTY` 锁内完成转换和状态改变，随后才唤醒等待者；`prepare_read` 把字节暂时
+移出队列，用户复制失败时 `finish_read` 回滚未复制部分。canonical 模式以整行就绪为条件；
+raw 模式按 `VMIN`，并由 `wait_for_input_change*` 实现字节间 `VTIME`。`Closed` 或空行 `VEOF`
+返回 EOF。
 
-## 调用链路
+### PTY master/slave 传输与关闭
 
-输入数据流：
-
-```text
-UART 字符设备
-  -> VFS 字符设备适配层
-  -> feed_input(raw bytes)
-  -> ICRNL 回车转换 / 行编辑（canonical / raw）
-  -> 返回 echo 字节 + TtyControlEvent
-  -> 锁外：echo 写回 UART；信号交 signal 层
-  -> 可交付字节进入 readable，唤醒 INPUT_WAIT
+```mermaid
+sequenceDiagram
+    participant M as PTY master
+    participant P as SharedTerminal.state
+    participant L as slave 行规程
+    participant D as PTY slave
+    M->>P: write(master)
+    P->>L: 经过锁内输入处理
+    L->>D: slave_readable / editing
+    L-->>M: ECHO 写入 master_readable
+    D->>P: write(slave)
+    P->>M: OPOST/ONLCR 后进入 master_readable
+    M->>P: read/poll
+    P-->>M: 数据、Pending 或 hangup
+    M->>P: 最后一个 master close
+    P->>D: 设置 master_hung_up，唤醒 slave 等待者
+    D->>P: 最后一个 slave close
+    P->>P: EndpointLease/Arc 归零，移除 REGISTRY 映射
 ```
 
-读取路径：
+`/dev/ptmx` 分配 pair 后初始为 locked；解锁后 `/dev/pts/N` 才能作为 slave 使用。master 和
+slave 各自只有一个活动读预约，写入受 64 KiB 队列和空间等待队列约束；端点的非阻塞位按打开
+文件描述保存。关闭产生 hangup 语义，资源回收由租约引用计数而非路径名决定。
 
-```text
-read(2)
-  -> syscall 层（Linux ABI 转换）
-  -> TTY prepare_read（canonical 整行 / raw VMIN 判断）
-       -> 有数据：Data(预约)；无数据：Pending
-  -> 无数据时 wait_for_input() 挂到 INPUT_WAIT
-  -> syscall 把预约字节 copy 到用户缓冲
-  -> finish_read(预约, copied) 提交；失败回滚到队首
-```
+## 机制与正确性
 
-输出路径：
+- `ICRNL` 先把 `\r` 转成 `\n`。canonical 模式实现 `VERASE`、`VKILL`、`VEOF` 和换行提交；
+  raw 模式直接入 `readable`。ECHO 产生最多 8 字节短回显，不能在锁内写 UART。
+- `ISIG` 匹配 `VINTR`/`VQUIT`/`VSUSP`，清空当前编辑行并产生 `SIGINT`/`SIGQUIT`/`SIGTSTP`。
+  事件只携带前台进程组；syscall/signal 层在释放锁后投递，避免锁顺序反转。
+- `OPOST|ONLCR` 将输出换行转换为 `\r\n`；未启用时原样复制。TTY 不负责实际设备写入。
+- `wait_current_while` 避免“检查后、入队前”丢失 UART 唤醒；读、写空间等待分别由 PTY 的四个
+  waitqueue 管理。锁内不做用户复制、调度、等待、设备 I/O 或信号回调。
+- `PtyError` 提供 `NotFound`、`Locked`、`NoSpace`、`HungUp`、`WouldBlock` 等可由 VFS 映射的
+  分类；API 不承诺所有 Linux PTY ioctl 或 job-control 语义。
 
-```text
-write(2)
-  -> syscall 层解析 fd -> ConsoleOutHandle
-  -> TTY transform_output（OPOST / ONLCR：\n → \r\n）
-  -> wateros-vfs 写回 UART
-```
+## 初始化、配置与可观测性
 
-信号路径（Ctrl+C 为例）：
+`TTY` 静态初始化为 `Closed`、`TtyTermios::DEFAULT`、25x80 窗口和空缓冲；`INPUT_WAIT` 与
+PTY 等待队列按需创建。`os/src/user_operator.rs::build_plan` 在编译期 feature 下选择：
+`pre` 默认 `Fixture`（预置 `password\n`），`final_online` 默认 `Closed`，
+`operator-shell`/`operator-run` 选择 `Interactive`。operator feature 互斥，启动时
+`operator_main` 调用 TTY 配置后再启动用户 workload。
 
-```text
-用户按 Ctrl+C
-  -> feed_input(0x03)
-  -> ISIG 匹配 VINTR -> 清空 editing
-  -> 产生 TtyControlEvent { pgid, SIGINT } + 回显 ^C
-  -> 释放 TTY 锁后由 syscall/signal 层投递 SIGINT 到前台进程组
-```
+`impl-console` 的 `self_test` 覆盖默认状态、canonical 编辑/EOF、raw 读取、VMIN/VTIME、
+缓冲区上限和前台控制字符。可观察入口是 `[tty]`/调用方日志、`poll_readable` 与读取预约状态；
+本组件没有独立的运行时统计计数器。
 
-ioctl 路径：
+## 限制与后续边界
 
-```text
-TIOCGWINSZ / TIOCSWINSZ / tcsetattr 等
-  -> syscall 层解析 Linux termios / winsize 布局
-  -> 与 TtyTermios / TtyWinSize 互相转换
-```
-
-PTY 链路（Nano-X 终端）：
-
-```text
-nxterm 写 master -> slave 行规程 -> /bin/sh 从 slave 读取
-/bin/sh 写 slave -> OPOST/ONLCR -> nxterm 从 master 读取
-```
-
-## 实现功能
-
-### tty-api / 终端数据契约
-
-主要实现在 `tty-api/api-v0/src/lib.rs`：
-
-- `ConsoleTtyMode`：`Interactive` / `Closed` / `Fixture`。
-- `TtyTermios`：`NCCS = 19` 的 Linux 兼容行规程状态，含 `TtyTermios::DEFAULT`。
-- `TtyWinSize`：`row` / `col` / `xpixel` / `ypixel`，含 `DEFAULT`（25×80）。
-- `TtyControlEvent { process_group, signal }`：终端控制字符产生的信号请求；实际投递须在释放
-  TTY 锁后由 syscall/signal 层完成。
-- 常量：控制字符索引（`VINTR`/`VERASE`/`VEOF`/`VMIN`/`VTIME`/`VSUSP` 等）、信号（`SIGHUP`/
-  `SIGINT`/`SIGQUIT`/`SIGCONT`/`SIGTSTP`/`SIGWINCH`）与模式位（`ICANON`/`ECHO`/`ISIG`/
-  `ICRNL`/`OPOST`/`ONLCR` 等）。
-
-### impl-console / 控制台 TTY
-
-主要实现在 `tty-impl/impl-console/src/lib.rs`，核心是两个模块级全局变量。
-
-#### `static TTY: Mutex<TtyState>` —— 系统控制台的共享行规程状态
-
-`TtyState` 字段（由该自旋锁保护）：
-
-- `mode: ConsoleTtyMode`：stdin 来源策略（`Interactive` / `Closed` / `Fixture`）。
-- `termios: TtyTermios`：当前行规程配置。
-- `winsize: TtyWinSize`：对用户态报告的窗口尺寸。
-- `foreground_pgid: usize`：可接收终端控制信号的前台进程组。
-- `controlling_sid: usize`：当前拥有该控制终端的会话。
-- `readable: VecDeque<u8>`：已完成行规程处理、可交付给读取者的字节。
-- `editing: Vec<u8>`：canonical 模式下尚未提交的一行。
-- `eof_pending: bool`：空行收到 VEOF 后待交付的一次 EOF。
-- `active_read: Option<u64>` / `next_read_id: u64`：当前独占读取预约与下一次预约序列号。
-
-对 `TTY` 的操作入口（公开函数）：
-
-- `configure(mode)` / `mode()`：配置与查询 stdin 来源策略。
-- `termios()` / `set_termios(t, flush_input)`：读取/设置行规程。
-- `winsize()` / `set_winsize()`：读取/设置窗口尺寸。
-- `foreground_pgid()` / `set_foreground_pgid()`、`controlling_sid()` /
-  `set_controlling_sid()` / `detach_controlling_terminal()`：前台进程组与控制会话。
-- `output_stops_background()`：`TOSTOP` 后台写检查。
-- `feed_input(byte) -> (Option<TtyControlEvent>, [u8; 8], usize)`：喂入一个输入字节，返回
-  信号请求与回显字节。
-- `prepare_read(max_len)` / `prepare_partial_read(max_len)` / `finish_read(rsv, copied, complete)`：事务式读取预约、提交与回滚。
-- `poll_readable()` / `readable_len()` / `read_settings()` / `transform_output()`：读取就绪、
-  可读长度、设置与输出转换。
-- `wait_for_input(max_len)` / `wait_for_input_change()` /
-  `wait_for_input_change_for_ticks()`：阻塞等待输入或变化（配合 `INPUT_WAIT`）。
-
-#### `static INPUT_WAIT: Mutex<Option<WaitQueue>>` —— 输入等待队列
-
-- 阻塞读取在无输入时登记到该 waitqueue；`feed_input` 投递输入后唤醒等待者。
-- 锁顺序：持 `TTY` 锁时只准备等待条件，真正的阻塞/唤醒在释放锁后进行。
-
-### 聚合门面 / src/lib.rs
-
-- 按 feature 导出 `api` 与 `impl-console`，调用方通过本 crate 访问终端策略和处理后的输入。
-- 各层职责：
-  - `wateros-tty`：终端机制和状态。
-  - `wateros-vfs`：UART/字符设备发现以及 TTY 文件描述符适配。
-  - `wateros-syscall`：TTY ioctl、用户内存复制、后台进程组检查和信号返回值。
-  - `os/src/user_operator.rs`：按 feature 选择 interactive/closed/fixture 并启动输入任务。
+- 当前控制台只有一个固定 `TerminalId::CONSOLE=1`；PTY 上限为 64，单向队列为 64 KiB，容量耗尽
+  依赖阻塞/非阻塞调用方处理。
+- `Fixture` 是固定 `password\n`，不是通用输入脚本；`Closed` 直接 EOF，不能模拟 UART。
+- Linux ABI 的结构体布局、ioctl 编号、用户复制和 errno 转换不在本组件；TTY 也不实现完整的
+  权限、会话继承或全部 job-control 规则。源码未显示的语义不能视为已支持。
+- 没有架构专用 TTY 实现；设备探测、UART 驱动、VFS fd 生命周期和 signal 实际投递仍由相邻组件
+  负责。

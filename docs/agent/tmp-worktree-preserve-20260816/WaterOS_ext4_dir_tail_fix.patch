@@ -1,0 +1,54 @@
+diff --git a/os/src/trap_handler.rs b/os/src/trap_handler.rs
+index a4abd83c..81bc2195 100644
+--- a/os/src/trap_handler.rs
++++ b/os/src/trap_handler.rs
+@@ -10,6 +10,7 @@ use arch_api_v0::trap::{Exception, Interrupt, TrapCause, TrapFrameRead, TrapFram
+ use base_config::task::SCHED_TIMER_PERIOD_MS;
+ use core::sync::atomic::{AtomicUsize, Ordering};
+ use mm::api::mmap::PageFaultAccess;
++use mm::api::user_access::UserMemoryOps;
+ use platform::arch::paging;
+ use platform::arch::trap::ActiveTrapFrame as TrapContext;
+ use runtime::logging::*;
+@@ -391,7 +392,40 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
+                 let (signal, code, address) = match trap_cause {
+                     // ILL_ILLOPC and the faulting instruction address.
+                     TrapCause::Exception(Exception::IllegalInstruction) => {
+-                        (4, 1, cx.user_pc())
++                        let pc = cx.user_pc();
++                        // 读取故障指令字节，便于定位具体 ISA 扩展/执行逻辑。
++                        let mut insn = [0u8; 8];
++                        let mut insn_len = 0usize;
++                        let aspace = task::current_task_user_aspace_ptr();
++                        if aspace != 0 {
++                            let ops = mm::ActiveUserMemoryOps::new(aspace);
++                            for len in [8usize, 4, 2] {
++                                let mut buf = [0u8; 8];
++                                if ops
++                                    .copy_from_user(
++                                        &mut buf[..len],
++                                        mm::api::addr::VirtAddr(pc),
++                                    )
++                                    .is_ok()
++                                {
++                                    insn[..len].copy_from_slice(&buf[..len]);
++                                    insn_len = len;
++                                    break;
++                                }
++                            }
++                        }
++                        let pid = task::current_process_snapshot()
++                            .map(|process| process.pid.raw())
++                            .unwrap_or(0);
++                        warn!(
++                            "[trap] illegal instruction pid={} pc={:#x} insn_len={} \
++                             insn_bytes={:02x?}",
++                            pid,
++                            pc,
++                            insn_len,
++                            &insn[..insn_len],
++                        );
++                        (4, 1, pc)
+                     }
+                     // SEGV_MAPERR is the conservative classification for the
+                     // remaining synchronous user exceptions.
