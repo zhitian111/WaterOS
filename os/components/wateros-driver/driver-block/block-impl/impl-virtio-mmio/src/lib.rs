@@ -1,10 +1,9 @@
 //! VirtIO 块设备（MMIO 传输）实现，供平台驱动在枚举到 `virtio,mmio` + block 设备后实例化。
 //!
-//! **DMA / HAL**：`virtio-drivers` 的队列与内部缓冲通过 [`Hal::dma_alloc`] /
-//! [`Hal::dma_dealloc`] 向本机要 **物理连续、页对齐、已清零** 的内存。此前使用固定 bump
-//! 物理地址且 `dma_dealloc` 为空实现，易与内核其它内存及 VirtIO 传输重叠；现改为使用
-//! 已初始化的全局 **帧分配器**（`wateros-mm-frame-alloctor`），与 Sv39 bring-up 一致。
-//! 恒等映射下 `paddr == vaddr`（`usize`/`PhysAddr` 视图一致）。
+//! **DMA / HAL**：统一 HAL 从 linker 保留的固定 DMA pool 申请物理连续、页对齐、已清零的
+//! 队列内存；普通 I/O buffer 通过 HAL 的 staging `share/unshare` 进行方向相关复制。
+//! 当前内核恒等映射下 DMA 物理地址和 CPU 地址数值一致，但普通 frame allocator 不会返回
+//! DMA pool 中的页。
 
 #![no_std]
 extern crate alloc;
@@ -21,10 +20,10 @@ use virtio_drivers::PAGE_SIZE;
 const _ : () = assert!(PAGE_SIZE == mm_api::addr::PAGE_SIZE);
 const IOZONE_PROBE_MIN_WRITE_BYTES : usize = 4096;
 
-/// 将内核帧分配器接到 `virtio-drivers` 的 [`Hal`]：恒等映射下返回的 `PhysAddr` 与可写虚拟指针相同。
+/// 将统一 DMA pool HAL 接到 `virtio-drivers`。
 /* Shared HAL is provided by driver-impl-common. */
 /*
-    /// 按页数向帧池要连续物理页；失败时释放已拿页并返回空指针对，由上层映射为 [`DriverError`]。
+    /// 该实现由公共 HAL 提供；此类型保留用于兼容现有驱动类型参数。
     fn dma_alloc(pages : usize, _direction : BufferDirection) -> (PhysAddr, NonNull<u8>) {
         if pages == 0 {
             return (0, NonNull::dangling());

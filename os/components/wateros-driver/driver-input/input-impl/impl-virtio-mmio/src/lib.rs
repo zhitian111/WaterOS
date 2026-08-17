@@ -16,8 +16,9 @@ use virtio_drivers::device::input::VirtIOInput;
 use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
 use virtio_drivers::{BufferDirection, Hal, PhysAddr, PAGE_SIZE};
 
-struct VirtioInputMmioHal;
+type VirtioInputMmioHal = common::virtio_hal::VirtioHal;
 
+#[cfg(any())]
 unsafe impl Hal for VirtioInputMmioHal {
     fn dma_alloc(pages : usize, _direction : BufferDirection) -> (PhysAddr, NonNull<u8>) {
         if pages == 0 { return (0, NonNull::dangling()) }

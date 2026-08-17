@@ -6,20 +6,14 @@
 #![no_std]
 extern crate alloc;
 
-use alloc::vec::Vec;
-use core::ptr;
-use core::ptr::NonNull;
-
 use api_v0::{BlockDevice, DriverError, DriverResult, Lba};
-use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
-use mm_api::addr::PhysPageNum;
 use virtio_drivers::device::blk::VirtIOBlk;
 use virtio_drivers::transport::pci::bus::{
     BarInfo, Cam, Command, ConfigurationAccess, DeviceFunction, MemoryBarType, MmioCam, PciRoot,
 };
 use virtio_drivers::transport::pci::{self, PciTransport};
 use virtio_drivers::transport::DeviceType as VirtioDeviceType;
-use virtio_drivers::{BufferDirection, Hal, PhysAddr, PAGE_SIZE};
+use virtio_drivers::PAGE_SIZE;
 
 const _ : () = assert!(PAGE_SIZE == mm_api::addr::PAGE_SIZE);
 
@@ -81,8 +75,9 @@ fn align_up_u64(value : u64, align : u64) -> Option<u64> {
          .map(|v| v & !(align - 1))
 }
 
-struct VirtioPciHal;
+type VirtioPciHal = common::virtio_hal::VirtioHal;
 
+#[cfg(any())]
 unsafe impl Hal for VirtioPciHal {
     fn dma_alloc(pages : usize, _direction : BufferDirection) -> (PhysAddr, NonNull<u8>) {
         if pages == 0 {

@@ -71,7 +71,7 @@ user_graphics_input_worker()
 
 - 从 DTB 枚举得到的 MMIO 窗口初始化 VirtIO 键盘/平板（`VirtioInputMmioDevice::from_mmio`），
   查询设备能力并构造 `InputDeviceInfo`。
-- 通过恒等映射帧分配申请 DMA 内存（`VirtioInputMmioHal`），与其它 virtio 驱动共用策略。
+- 通过公共 `VirtioHal` 从 linker 保留的固定 DMA pool 申请 DMA 内存，与其它 VirtIO 驱动共用策略。
 - `pop_event()` 直接转发 `VirtIOInput::pop_pending_event()` 并转换为 `RawInputEvent`。
 
 ### impl-virtio-pci / LoongArch VirtIO 输入

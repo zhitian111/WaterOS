@@ -22,7 +22,8 @@
 - `send(buf)` 操作完整的 L2 帧（含目的/源 MAC 与 EtherType），由调用方构造；
   `receive(buf)` 返回实际字节数，`buf` 不足以容纳完整帧时返回 `DriverError::InvalidParam`。
 - 接收缓冲区 `RX_BUF_LEN = 2048`（含 virtio net header），须不小于 `MIN_BUFFER_LEN`（1526）。
-- DMA / HAL：与块设备共用同一套恒等映射帧分配策略，DMA 内存物理连续、页对齐、已清零。
+- DMA / HAL：与块设备共用 linker 保留的固定 DMA pool，DMA 内存物理连续、页对齐、已清零；
+  普通 buffer 通过 HAL staging share/unshare。
 - 各 transport（MMIO/PCI）对应 RISC-V / LoongArch：DTB 声明支持 `virtio,mmio` 与 PCI
   transitional/modern（`pci1af4,1000` / `pci1af4,1041`）。
 - 缺失 virtio-net 时 `init_after_boot` 会输出警告日志，网络可能不可用。

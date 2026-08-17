@@ -43,7 +43,7 @@ feature；`impl-block-cache` 是可选的块设备装饰器。
 |RISC-V 已成功 transport 的诊断表|`VIRTIO_BLK_MMIO`、`VIRTIO_NET_MMIO`、可选 `VIRTIO_GPU_MMIO`|均为 `Mutex<Vec<...>>`，每轮 probe 清空，只有成功注册后写入；用于自检/诊断，非 I/O 数据面。LoongArch 对应 PCI BDF/ID 表在 `register.rs`。|
 |`INIT_AFTER_BOOT_DONE`|两套机器 crate 的 `AtomicBool`|以 `swap(AcqRel)` 拒绝重复初始化；内部失败后以 `store(Release)` 清除，允许重试。成功后设备表允许为空。|
 |`CachingBlockDevice`|注册表中的一个 `BlockDevice` 装饰器；持有 raw 后端、预分配数据区、LBA 索引、空闲槽、LRU 双链及 `RecentIndex`|读取第一次未命中只记 recent，第二次才准入；写入先向 raw 后端写成功，再 write-allocate/更新缓存。外层设备 mutex 覆盖其全部可变状态。默认容量为 `BLOCK_CACHE_CAPACITY_BLOCKS = 16384` 块。|
-|VirtIO DMA 资源|各 MMIO/PCI 后端的 `Hal::dma_alloc` 向 frame allocator 申请连续页|当前假定内核恒等映射，`paddr == vaddr`；分配失败或页不连续时回收已取页并返回空对，由 `virtio-drivers` 初始化失败映射为 `DriverError`。|
+|VirtIO DMA 资源|公共 `impl-common::VirtioHal` 从 linker 保留的 `.dma` 区间分配连续页|普通 frame allocator 不会返回 DMA 区间；`dma_alloc` 失败返回空对。`share/unshare` 通过固定 DMA pool 做 staging copy，暂不要求 file/page-cache buffer 物理连续。|
 
 `DeviceInfo` 的 `SupportedDeviceEntry` 匹配是非排他的目录：`compatible = "virtio,mmio"`
 可被多个子系统声明，但 RISC-V probe 随硬件读出的 `DeviceType` 选择 block、network、display 或 input
@@ -107,7 +107,8 @@ flowchart LR
 
 [`impl-virtio-mmio/src/lib.rs`](driver-block/block-impl/impl-virtio-mmio/src/lib.rs) 使用
 `MmioTransport`，PCI 版本以 `PciTransport` 解析 capability；两者的 `Hal` 均从物理帧分配器取得
-连续页并坚持恒等映射。`share()` 仅把现有缓冲区地址作为物理地址，因此调用路径也依赖该映射假设。
+连续页并使用当前内核恒等映射。普通调用方 buffer 通过 `share()` 复制到 DMA pool，完成后由
+`unshare()` 按方向回拷；因此 page-cache/VMA 不需要承担 DMA 连续性或固定页生命周期。
 缓存只合并连续读未命中区间；它是 write-through，`flush()` 仍转发 raw 设备，不实现 write-back。
 
 ## 机制与正确性

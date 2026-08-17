@@ -24,7 +24,8 @@
   实现任意字节对齐读取，设备侧仍只看到整倍数 `block_size` 的 `read_blocks` 调用。
 - 注册顺序稳定：`register_block_device` 返回的下标即全局表中的位置；`first_block_device()`
   常用于根文件系统绑定单盘场景。
-- DMA / HAL：virtio 队列与内部缓冲通过 `Hal::dma_alloc` 向全局帧分配器申请**物理连续、页
+- DMA / HAL：virtio 队列与内部缓冲通过公共 `VirtioHal::dma_alloc` 从 linker 保留的 DMA
+  pool 申请**物理连续、页
   对齐、已清零**的内存；恒等映射下 `paddr == vaddr`。
 - 各 transport（MMIO/PCI）共用同一套帧分配策略：`virtio,mmio` 对应 RISC-V；PCI
   transitional/modern（`pci1af4,1001` / `pci1af4,1042`）对应 LoongArch。

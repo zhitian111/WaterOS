@@ -26,7 +26,7 @@
   传输和提交指定矩形区域。
 - `SharedDisplayDevice = Arc<Mutex<Box<dyn DisplayDevice>>>`，锁同时保护驱动状态和可写
   framebuffer。
-- DMA framebuffer 由各实现的 `Hal::dma_alloc` 申请**物理连续、页对齐、已清零**的内存。
+- DMA framebuffer 由公共 `VirtioHal::dma_alloc` 从 linker 保留的 DMA pool 申请**物理连续、页对齐、已清零**的内存。
 - 该模块由顶层 `gui`（内核绘制）或 `user-graphics`（通过 `/dev/fb0` 向用户态共享 DMA 页）
   feature 显式启用，两者互斥；默认比赛构建不会探测 GPU，也不会额外分配 framebuffer。
 - `supported_devices()` 声明三个可绑定条目：`virtio,mmio`（`virtio-gpu-mmio`）、
@@ -71,7 +71,7 @@ Nano-X ioctl(FBIOPAN_DISPLAY)
 
 - 从 DTB 枚举得到的 MMIO 窗口初始化 VirtIO GPU（`VirtioGpuMmioDevice::from_mmio`）：建传输 →
   协商 → 查分辨率 → 分配 DMA framebuffer → 构造 `FramebufferInfo`。
-- 通过恒等映射帧分配申请连续物理页（`VirtioGpuMmioHal`），不连续或 OOM 时整体回滚。
+- 通过公共固定 DMA pool 申请连续物理页；pool OOM 时整体回滚。
 - 刷新直接转发 `VirtIOGpu::flush` / `flush_region`。
 
 ### impl-virtio-pci / LoongArch VirtIO GPU

@@ -68,8 +68,9 @@ impl VirtioGpuPciBarAllocator {
     }
 }
 
-struct VirtioGpuPciHal;
+type VirtioGpuPciHal = common::virtio_hal::VirtioHal;
 
+#[cfg(any())]
 unsafe impl Hal for VirtioGpuPciHal {
     fn dma_alloc(pages : usize, _direction : BufferDirection) -> (PhysAddr, NonNull<u8>) {
         if pages == 0 {

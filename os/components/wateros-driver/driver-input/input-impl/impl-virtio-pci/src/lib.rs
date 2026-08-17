@@ -47,8 +47,9 @@ impl VirtioInputPciBarAllocator {
     }
 }
 
-struct VirtioInputPciHal;
+type VirtioInputPciHal = common::virtio_hal::VirtioHal;
 
+#[cfg(any())]
 unsafe impl Hal for VirtioInputPciHal {
     fn dma_alloc(pages : usize, _direction : BufferDirection) -> (PhysAddr, NonNull<u8>) {
         if pages == 0 { return (0, NonNull::dangling()) }

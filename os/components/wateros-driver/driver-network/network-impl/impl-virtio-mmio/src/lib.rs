@@ -1,21 +1,16 @@
 //! VirtIO 网络设备（MMIO 传输）实现，供平台驱动在枚举到 `virtio,mmio` + network 设备后实例化。
 //!
-//! **DMA / HAL**：与块设备共用同一套恒等映射帧分配策略。
+//! **DMA / HAL**：与块设备共用 linker 保留的固定 DMA pool 和 staging share/unshare 策略。
 
 #![no_std]
 extern crate alloc;
-
-use alloc::vec::Vec;
-use core::ptr;
 use core::ptr::NonNull;
 
 use api_v0::{DriverError, DriverResult, NetworkDevice, DEFAULT_MTU};
 use driver_api::MmioRegion;
-use frame_alloctor::{frame_alloc_result, frame_dealloc_result};
-use mm_api::addr::PhysPageNum;
 use virtio_drivers::device::net::VirtIONet;
 use virtio_drivers::transport::mmio::{MmioTransport, VirtIOHeader};
-use virtio_drivers::{BufferDirection, Hal, PhysAddr, PAGE_SIZE};
+use virtio_drivers::PAGE_SIZE;
 
 const _: () = assert!(PAGE_SIZE == mm_api::addr::PAGE_SIZE);
 
@@ -23,8 +18,9 @@ const _: () = assert!(PAGE_SIZE == mm_api::addr::PAGE_SIZE);
 const RX_BUF_LEN: usize = 2048;
 
 /// 将内核帧分配器接到 `virtio-drivers` 的 [`Hal`]：恒等映射下返回的 `PhysAddr` 与可写虚拟指针相同。
-struct VirtioMmioHal;
+type VirtioMmioHal = common::virtio_hal::VirtioHal;
 
+#[cfg(any())]
 unsafe impl Hal for VirtioMmioHal {
     fn dma_alloc(pages: usize, _direction: BufferDirection) -> (PhysAddr, NonNull<u8>) {
         if pages == 0 {

@@ -44,6 +44,15 @@ SECTIONS
   }
 
   . = ALIGN(4K);
+  .dma (NOLOAD) : {
+    dma_start = .;
+    KEEP(*(.dma))
+    KEEP(*(.dma.*))
+    . = ALIGN(4K);
+    dma_end = .;
+  }
+
+  . = ALIGN(4K);
   .kernel.heap : {
     kernel_heap_start = .;
     *(.kernel.heap)

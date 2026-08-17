@@ -26,6 +26,10 @@ pub const QEMU_VIRT_PHYS_RAM_END : usize = 0xC000_0000;
 /// QEMU `virt` 物理 RAM 字节容量。
 pub const QEMU_VIRT_PHYS_RAM_SIZE : usize = QEMU_VIRT_PHYS_RAM_END - QEMU_VIRT_PHYS_RAM_BASE;
 
+/// Linker-reserved VirtIO DMA pool size.  The pool is kept outside the ordinary
+/// frame allocator and is used for physically contiguous queue/staging buffers.
+pub const DMA_POOL_SIZE : usize = 16 * 1024 * 1024;
+
 /// QEMU RISC-V `virt` 上 Goldfish RTC 的物理 MMIO 页（半开区间）。
 /// RTC 位于常规 UART/VirtIO MMIO 窗口之外，因此需要单独恒等映射。
 pub const QEMU_VIRT_RTC_PHYS_START : usize = 0x0010_1000;

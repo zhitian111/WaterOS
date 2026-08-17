@@ -19,8 +19,9 @@ use virtio_drivers::{BufferDirection, Hal, PhysAddr, PAGE_SIZE};
 const _ : () = assert!(PAGE_SIZE == mm_api::addr::PAGE_SIZE);
 
 /// 将 WaterOS 恒等映射帧分配器接到 VirtIO GPU。
-struct VirtioGpuMmioHal;
+type VirtioGpuMmioHal = common::virtio_hal::VirtioHal;
 
+#[cfg(any())]
 unsafe impl Hal for VirtioGpuMmioHal {
     fn dma_alloc(pages : usize, _direction : BufferDirection) -> (PhysAddr, NonNull<u8>) {
         if pages == 0 {
