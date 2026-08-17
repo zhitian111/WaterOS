@@ -16,6 +16,13 @@ pub(crate) fn lookup(fd: usize) -> Option<SocketRef> {
         .flatten()
 }
 
+pub(crate) fn lookup_lease(lease : &vfs::fd::FdIoLease) -> Option<SocketRef> {
+    if lease.resource_kind() != vfs::api::VfsResourceKind::Socket {
+        return None;
+    }
+    lease.with_io(|handle| Ok(socket_ref(handle))).ok().flatten()
+}
+
 /// 查找 inet socket fd；无效 fd 返回 `EBADF`，有效非 socket 返回 `ENOTSOCK`。
 pub(crate) fn lookup_or_errno(fd: usize) -> Result<SocketRef, api_v0::ErrNo> {
     match vfs::fd::with_current_io(fd, |handle| Ok(socket_ref(handle))) {

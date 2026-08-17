@@ -191,6 +191,8 @@ impl ProcDirectoryHandle {
 }
 
 impl VfsIoHandle for ProcDirectoryHandle {
+    fn resource_kind(&self) -> VfsResourceKind { VfsResourceKind::Directory }
+
     fn validate_read_access(&self) -> VfsResult<()> { Err(VfsError::NotAFile) }
 
     fn open_accmode(&self) -> u32 { 0 }
@@ -266,6 +268,8 @@ impl VfsIoHandle for ProcDirectoryHandle {
 }
 
 impl VfsIoHandle for ProcFileHandle {
+    fn resource_kind(&self) -> VfsResourceKind { VfsResourceKind::Regular }
+
     fn open_accmode(&self) -> u32 { 0 }
 
     fn prepare_read(&mut self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {

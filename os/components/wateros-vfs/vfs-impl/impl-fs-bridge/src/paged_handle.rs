@@ -441,6 +441,8 @@ impl PagedFileHandle {
 }
 
 impl VfsIoHandle for PagedFileHandle {
+    fn resource_kind(&self) -> VfsResourceKind { VfsResourceKind::Regular }
+
     fn prepare_read(&mut self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
         let reservation = ReservationGuard::begin(self.description
                                                       .clone())?;

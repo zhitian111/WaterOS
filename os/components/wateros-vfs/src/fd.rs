@@ -6,7 +6,10 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use api_v0::{VfsError, VfsIoHandle, VfsResult, VfsSpecialDeviceInfo, VfsTerminalEndpoint};
+use api_v0::{
+    VfsError, VfsIoHandle, VfsPreparedRead, VfsResourceKind, VfsResult, VfsSpecialDeviceInfo,
+    VfsTerminalEndpoint,
+};
 use base::sync::MultiprocessorSafeCell;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -25,6 +28,54 @@ pub struct FdRegistryStats {
     pub table_count : usize,
     /// 所有独立 fd 表中当前已打开的描述符槽位数（含 stdio）。
     pub open_fd_count : usize,
+}
+
+/// A stable open-file-description lease plus immutable fd-slot attributes.
+///
+/// Acquiring this object performs the only global fd-registry lookup needed by
+/// a syscall. Operations on the handle use the per-description lock afterwards.
+#[derive(Clone)]
+pub struct FdIoLease {
+    handle : impl_fd_session::SharedIoHandle,
+    flags : u8,
+    resource_kind : VfsResourceKind,
+    terminal_id : Option<tty::TerminalId>,
+}
+
+impl FdIoLease {
+    pub fn flags(&self) -> u8 { self.flags }
+
+    pub fn resource_kind(&self) -> VfsResourceKind { self.resource_kind }
+
+    pub fn terminal_id(&self) -> Option<tty::TerminalId> { self.terminal_id }
+
+    pub fn is_path_only(&self) -> bool {
+        self.flags & impl_fd_session::registry::FD_PATH_ONLY != 0
+    }
+
+    pub fn with_io<R>(&self,
+                      f : impl FnOnce(&mut (dyn VfsIoHandle + '_)) -> VfsResult<R>)
+                      -> VfsResult<R> {
+        self.handle.with_io(f)
+    }
+
+    pub fn prepare_read(&self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
+        self.handle.prepare_read(max_len)
+    }
+
+    pub fn pty_endpoint(&self) -> VfsResult<Option<tty::PtyEndpointHandle>> {
+        self.with_io(|handle| Ok(impl_fd_session::pty_endpoint_for_handle(handle)))
+    }
+}
+
+/// Acquire all fd-slot state required by an I/O syscall in one registry lookup.
+pub fn current_io_lease(fd : usize) -> VfsResult<FdIoLease> {
+    let task_id = current_task_id()?;
+    let slot = with_fd_registry(|registry| registry.fd_slot_for_task(task_id, fd))?;
+    Ok(FdIoLease { handle : slot.handle,
+                   flags : slot.flags,
+                   resource_kind : slot.resource_kind,
+                   terminal_id : slot.terminal_id })
 }
 
 /// 全局 per-task fd 注册表（自旋锁保护）。
@@ -349,17 +400,13 @@ pub fn init_child_fd_table(child_id : task::TaskId) {
 
 /// fork 时复制父任务 fd 表。
 pub fn copy_fd_table_from_parent(child_id : task::TaskId, parent_id : task::TaskId) {
-    let (parent_snapshot, parent_flags) =
-        with_registry(|registry| registry.fd_table_copy_snapshot(parent_id));
+    let parent_snapshot = with_registry(|registry| registry.fd_table_copy_snapshot(parent_id));
     let parent_table = parent_snapshot.into_iter()
                                       .map(|slot| {
-                                          slot.and_then(|handle| {
-                                                  handle.duplicate()
-                                                        .ok()
-                                              })
+                                          slot.and_then(|slot| slot.duplicate().ok())
                                       })
                                       .collect();
-    with_registry(|registry| registry.install_fd_table_copy(child_id, parent_table, parent_flags));
+    with_registry(|registry| registry.install_fd_table_copy(child_id, parent_table));
 }
 
 /// thread clone 时共享父任务 fd 表。
@@ -436,6 +483,10 @@ pub fn self_test() {
         assert_eq!(fd, fd_b);
         assert!(reg.io_handle_for_task(a, fd)
                    .is_ok());
+        assert_eq!(reg.fd_slot_for_task(a, fd)
+                      .expect("fd slot classification")
+                      .resource_kind,
+                   api_v0::VfsResourceKind::Terminal);
         assert!(reg.io_handle_for_task(b, fd_b)
                    .is_ok());
         let dup_handle = reg.duplicate_handle_for_task(a, fd)
@@ -457,6 +508,11 @@ pub fn self_test() {
         assert_eq!(reg.get_fd_flags(a, dup_fd),
                    Ok(0),
                    "dup descriptor flags must be independent");
+        assert_eq!(reg.fd_slot_for_task(a, dup_fd)
+                      .expect("dup slot classification")
+                      .resource_kind,
+                   api_v0::VfsResourceKind::Terminal,
+                   "dup must preserve cached resource classification");
         assert!(reg.io_handle_for_task(a, dup_fd)
                    .is_ok());
         assert!(reg.close_fd_for_task(a, dup_fd)
@@ -475,22 +531,24 @@ pub fn self_test() {
                          parent_extra,
                          usize::from(impl_fd_session::registry::FD_CLOEXEC))
            .expect("set inherited cloexec");
-        let (parent_table, parent_flags) = reg.fd_table_copy_snapshot(a);
+        let parent_table = reg.fd_table_copy_snapshot(a);
         let parent_table = parent_table.into_iter()
                                        .map(|slot| {
-                                           slot.and_then(|handle| {
-                                                   handle.duplicate()
-                                                         .ok()
-                                               })
+                                           slot.and_then(|slot| slot.duplicate().ok())
                                        })
                                        .collect();
-        reg.install_fd_table_copy(b, parent_table, parent_flags);
+        reg.install_fd_table_copy(b, parent_table);
         assert!(reg.io_handle_for_task(b, parent_extra)
                    .is_ok());
         assert!(reg.io_handle_for_task(a, parent_extra)
                    .is_ok());
         assert_eq!(reg.get_fd_flags(b, parent_extra),
                    Ok(usize::from(impl_fd_session::registry::FD_CLOEXEC)));
+        assert_eq!(reg.fd_slot_for_task(b, parent_extra)
+                      .expect("fork slot classification")
+                      .resource_kind,
+                   api_v0::VfsResourceKind::Terminal,
+                   "fork must preserve cached resource classification");
         reg.set_fd_flags(b, parent_extra, 0)
            .expect("clear child cloexec");
         assert_eq!(reg.get_fd_flags(a, parent_extra),
@@ -500,6 +558,15 @@ pub fn self_test() {
         reg.share_fd_table_from_parent(c, a);
         assert!(reg.io_handle_for_task(c, parent_extra)
                    .is_ok());
+        reg.set_fd_flags(c, parent_extra, 0)
+           .expect("shared flags update");
+        assert_eq!(reg.get_fd_flags(a, parent_extra),
+                   Ok(0),
+                   "CLONE_FILES must expose the same fd slot state");
+        reg.set_fd_flags(a,
+                         parent_extra,
+                         usize::from(impl_fd_session::registry::FD_CLOEXEC))
+           .expect("restore shared cloexec");
         reg.drop_task_fd_table(c);
         assert!(reg.io_handle_for_task(a, parent_extra)
                    .is_ok());
@@ -513,6 +580,39 @@ pub fn self_test() {
         assert_eq!(fd_reuse, fd);
         reg.drop_task_fd_table(a);
         reg.drop_task_fd_table(b);
+
+        let unshare_owner : task::TaskId = 40;
+        let unshare_sibling : task::TaskId = 41;
+        let unshare_second_sibling : task::TaskId = 42;
+        let shared_fd = reg.alloc_fd_for_task(unshare_owner,
+                                              Box::new(impl_fd_session::ConsoleOutHandle))
+                           .expect("alloc shared fd");
+        reg.set_fd_flags(unshare_owner,
+                         shared_fd,
+                         usize::from(impl_fd_session::registry::FD_CLOEXEC))
+           .expect("set shared fd flags");
+        reg.share_fd_table_from_parent(unshare_sibling, unshare_owner);
+        reg.share_fd_table_from_parent(unshare_second_sibling, unshare_owner);
+        reg.unshare_fd_table(unshare_owner)
+           .expect("owner unshare");
+        for task_id in [unshare_owner, unshare_sibling, unshare_second_sibling] {
+            let slot = reg.fd_slot_for_task(task_id, shared_fd)
+                          .expect("unshare slot");
+            assert_eq!(slot.resource_kind, api_v0::VfsResourceKind::Terminal);
+            assert_eq!(slot.flags & impl_fd_session::registry::FD_CLOEXEC,
+                       impl_fd_session::registry::FD_CLOEXEC);
+        }
+        let owner_next = reg.alloc_fd_for_task(unshare_owner,
+                                               Box::new(impl_fd_session::ConsoleOutHandle))
+                            .expect("owner allocation after unshare");
+        let sibling_next = reg.alloc_fd_for_task(unshare_sibling,
+                                                 Box::new(impl_fd_session::ConsoleOutHandle))
+                              .expect("sibling allocation after owner migration");
+        assert_eq!(owner_next, shared_fd + 1);
+        assert_eq!(sibling_next, shared_fd + 1);
+        reg.drop_task_fd_table(unshare_owner);
+        reg.drop_task_fd_table(unshare_sibling);
+        reg.drop_task_fd_table(unshare_second_sibling);
 
         // An in-flight stdio operation must keep the old table alive while the
         // task exits. Reusing the task id must receive a fresh stdio table.
