@@ -339,7 +339,7 @@ WaterOS 不为不同平台维护多套源代码。Makefile 将命令行参数组
 features，再由各 `wateros-*` 组件继续选择接口实现。平台、赛事阶段和可选能力因此都在
 编译期确定，最终二进制只包含本次构建需要的实现。
 
-平台 profile 同时选择唯一的编译期日志上限：RISC-V64 当前为 `Info`，LoongArch64 当前为
+平台 profile 同时选择唯一的编译期日志上限：RISC-V64 当前为 `Warn`，LoongArch64 当前为
 `Error`。该选择通过 `wateros-runtime` 转发到 `log/max_level_*`，更详细的日志宏及其参数
 求值不会进入最终内核；运行期间不再改变日志级别。
 

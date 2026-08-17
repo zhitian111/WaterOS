@@ -49,7 +49,7 @@ Makefile 只暴露少量稳定参数，内部再转换为脚本环境变量和 C
 底层环境变量是脚本之间的接口，不是日常命令的首选接口。除非正在调试脚本本身，否则
 优先传 Make 参数。
 
-日志上限由平台 feature 固定选择：RISC-V64 当前转发 `runtime/impl-info`，LoongArch64
+日志上限由平台 feature 固定选择：RISC-V64 当前转发 `runtime/impl-warn`，LoongArch64
 转发 `runtime/impl-error`。两者最终启用对应的 `log/max_level_*` 编译期过滤，不能同时选择
 多个级别，也不能在 operator 启动后动态覆盖。
 
