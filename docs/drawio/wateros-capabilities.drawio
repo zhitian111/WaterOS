@@ -1,0 +1,74 @@
+<mxfile host="Electron">
+  <diagram name="WaterOS 能力全景" id="wateros-capabilities">
+    <mxGraphModel dx="965" dy="742" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="740" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="cap0" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#6c8ebf;strokeColor=#4a6b96;fontColor=#ffffff;shadow=1;" value="&lt;font style=&quot;font-size: 24px;&quot; color=&quot;#ffffff&quot;&gt;&lt;b&gt;WaterOS&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 13px;&quot; color=&quot;#ffffff&quot;&gt;双架构 Rust 宏内核&lt;/font&gt;&lt;br&gt;&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot; color=&quot;#ffffff&quot;&gt;任务调度 · 内存管理 · 文件系统&lt;br&gt;网络 · IPC · 驱动 · 平台&lt;/font&gt;" vertex="1">
+          <mxGeometry height="170" width="220" x="340" y="280" as="geometry" />
+        </mxCell>
+        <mxCell id="cap1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;双架构&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;RISC-V64 / LoongArch64&lt;/font&gt;" vertex="1">
+          <mxGeometry height="65" width="210" x="90" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="cap2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;Linux ABI 兼容&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;运行 busybox 等标准程序&lt;/font&gt;" vertex="1">
+          <mxGeometry height="65" width="210" x="600" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="cap3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;多核调度与负载均衡&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;SMP · 多策略调度&lt;/font&gt;" vertex="1">
+          <mxGeometry height="65" width="210" x="30" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="cap4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;文件系统&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;ext4 · devfs · procfs&lt;/font&gt;" vertex="1">
+          <mxGeometry height="65" width="210" x="30" y="400" as="geometry" />
+        </mxCell>
+        <mxCell id="cap5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;虚拟内存管理&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;按需分页 · 写时复制&lt;/font&gt;" vertex="1">
+          <mxGeometry height="65" width="210" x="660" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="cap6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;网络支持&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;TCP / UDP 协议栈&lt;/font&gt;" vertex="1">
+          <mxGeometry height="65" width="210" x="660" y="400" as="geometry" />
+        </mxCell>
+        <mxCell id="cap7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;进程间通信&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;信号 · 管道 · 共享内存&lt;/font&gt;" vertex="1">
+          <mxGeometry height="65" width="210" x="150" y="560" as="geometry" />
+        </mxCell>
+        <mxCell id="cap8" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;图形桌面&lt;/b&gt;&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;Nano-X · mGBA&lt;/font&gt;" vertex="1">
+          <mxGeometry height="65" width="210" x="540" y="560" as="geometry" />
+        </mxCell>
+        <mxCell id="capA1" edge="1" parent="1" source="cap1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=classic;exitX=0.5;exitY=1;entryX=0.35;entryY=0;strokeColor=light-dark(#ffffff, #ededed);strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;" target="cap0" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="195" y="175" />
+              <mxPoint x="417" y="175" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="capA2" edge="1" parent="1" source="cap2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=classic;exitX=0.5;exitY=1;entryX=0.65;entryY=0;strokeWidth=2;strokeColor=#FFFFFF;" target="cap0" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="705" y="173" />
+              <mxPoint x="483" y="173" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="capA3" edge="1" parent="1" source="cap3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=classic;exitX=1;exitY=0.5;entryX=0;entryY=0.3;strokeColor=#FFFFFF;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;" target="cap0" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="capA4" edge="1" parent="1" source="cap4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=classic;exitX=1;exitY=0.5;entryX=0;entryY=0.7;strokeColor=#FFFFFF;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;" target="cap0" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="capA5" edge="1" parent="1" source="cap5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=classic;exitX=0;exitY=0.5;entryX=1;entryY=0.3;strokeColor=#FFFFFF;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;" target="cap0" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="capA6" edge="1" parent="1" source="cap6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=classic;exitX=0;exitY=0.5;entryX=1;entryY=0.7;strokeColor=#FFFFFF;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;" target="cap0" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="capA7" edge="1" parent="1" source="cap7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=classic;exitX=0.5;exitY=0;entryX=0.35;entryY=1;strokeColor=#FFFFFF;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;" target="cap0" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="capA8" edge="1" parent="1" source="cap8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=classic;exitX=0.5;exitY=0;entryX=0.65;entryY=1;strokeColor=#FFFFFF;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;" target="cap0" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="KoE7AB5abTnxUpirMsmC-2" edge="1" parent="1" source="cap2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;innerLoopWaypoints=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0.908;entryDx=0;entryDy=0;entryPerimeter=0;" target="cap2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

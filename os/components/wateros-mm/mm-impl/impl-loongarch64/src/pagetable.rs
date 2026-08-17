@@ -471,9 +471,9 @@ impl LoongArch64AddressSpace {
             .any(|vma| vma.contains_page(page))
     }
 
-    /// 页是否由其他地址空间或设备持有，解除 PTE 时不得回收物理页。
+    /// 页是否不由物理帧分配器管理，解除 PTE 时不得回收物理页。
+    /// MAP_SHARED 页使用帧引用计数；只有设备映射是外部生命周期。
     pub(crate) fn non_owned_vma_contains(&self, page : VirtAddr) -> bool {
-        self.shared_vma_contains(page) ||
         self.device_vmas
             .iter()
             .any(|vma| vma.contains_page(page))
@@ -1125,11 +1125,9 @@ unsafe fn destroy_table(ppn : PhysPageNum,
                     .user()
             {
                 let page = VirtPageNum(vpn_prefix | (i << (level * VPN_INDEX_BITS))).start_addr();
-                let is_shared_anon = shared_anon_vmas.iter()
-                                                     .any(|vma| vma.contains_page(page));
                 let is_device = device_vmas.iter()
                                            .any(|vma| vma.contains_page(page));
-                if !is_shared_anon && !is_device {
+                if !is_device {
                     let _ = frame_dealloc_result(child_ppn);
                 }
             }
@@ -1181,7 +1179,7 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
                                                      .any(|vma| vma.contains_page(page));
                 let is_device = device_vmas.iter()
                                            .any(|vma| vma.contains_page(page));
-                if !is_shared_anon && !is_device {
+                if !is_device {
                     frame_inc_ref(ppn).map_err(MmError::from)?;
                 }
                 let child_flags = if is_shared_anon || is_device {

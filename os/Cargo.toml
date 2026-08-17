@@ -145,9 +145,9 @@
         # "runtime/impl-trace",
         # "runtime/impl-info",
         # "runtime/impl-debug",
-        # "runtime/impl-warn",
+        "runtime/impl-warn",
         # main 分支固定为 error 等级
-        "runtime/impl-error",
+        # "runtime/impl-error",
         "dep:klog",
         "klog/default",
         "runtime/impl-platform-console",

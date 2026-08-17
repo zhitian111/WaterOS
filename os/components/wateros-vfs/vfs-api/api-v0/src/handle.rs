@@ -486,6 +486,15 @@ pub trait VfsIoHandle: Send + VfsHandleAny {
         Err(VfsError::Unsupported)
     }
 
+    /// Write dirty file data back to the filesystem cache without forcing the
+    /// entire backing filesystem to stable storage.
+    ///
+    /// `munmap(2)`/address-space teardown need this weaker operation: Linux
+    /// shared mappings remain coherent after unmap, but unmap is not an
+    /// implicit `fsync(2)`.  Handles without a separate page cache may use
+    /// their normal flush implementation.
+    fn writeback(&mut self) -> VfsResult<()> { self.flush() }
+
     fn flush(&mut self) -> VfsResult<()> {
         Err(VfsError::Unsupported)
     }

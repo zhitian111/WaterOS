@@ -121,7 +121,7 @@ def build_qemu_launch(
         raise QemuConfigError(f"WOS_SMP 必须是 1..8，当前为 {smp!r}") from exc
     if not 1 <= smp_number <= 8:
         raise QemuConfigError(f"WOS_SMP 必须是 1..8，当前为 {smp!r}")
-    memory = _value(env, "WOS_QEMU_MEM") or ("1G" if profile == "pre" else "8G")
+    memory = _value(env, "WOS_QEMU_MEM") or ("8G" if profile == "pre" else "8G")
     kernel_value = _value(env, "WOS_KERNEL") or f"./kernel-{arch}-{profile}"
     kernel = Path(kernel_value)
     if not kernel.is_absolute():

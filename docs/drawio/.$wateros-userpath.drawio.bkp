@@ -1,56 +1,31 @@
 <mxfile host="Electron">
   <diagram name="WaterOS 用户路径" id="wateros-userpath">
-    <mxGraphModel dx="1174" dy="882" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1000" pageHeight="1340" math="0" shadow="0">
+    <mxGraphModel dx="1957" dy="1470" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1000" pageHeight="1340" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="up1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;align=left;spacingLeft=8;spacingTop=4;" value="&lt;font style=&quot;font-size: 20px;&quot;&gt;用户态&lt;/font&gt;" vertex="1">
-          <mxGeometry height="110" width="820" x="40" y="30" as="geometry" />
+        <mxCell id="up1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;align=center;spacingLeft=8;spacingTop=4;" value="&lt;font style=&quot;font-size: 20px;&quot;&gt;用户态&lt;/font&gt;" vertex="1">
+          <mxGeometry height="110" width="588" x="165.5" y="220" as="geometry" />
         </mxCell>
-        <mxCell id="up2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;busybox&lt;/font&gt;" vertex="1">
-          <mxGeometry height="45" width="130" x="60" y="70" as="geometry" />
+        <mxCell id="up2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="&lt;font style=&quot;font-size: 19px;&quot;&gt;busybox&lt;/font&gt;" vertex="1">
+          <mxGeometry height="45" width="130" x="220" y="260" as="geometry" />
         </mxCell>
         <mxCell id="up3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;LTP&lt;/font&gt;" vertex="1">
-          <mxGeometry height="45" width="130" x="210" y="70" as="geometry" />
+          <mxGeometry height="45" width="130" x="395" y="260" as="geometry" />
         </mxCell>
-        <mxCell id="up4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;mGBA · 内核 GUI · 终端&lt;/font&gt;" vertex="1">
-          <mxGeometry height="45" width="220" x="360" y="70" as="geometry" />
+        <mxCell id="up4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="&lt;font style=&quot;font-size: 20px;&quot;&gt;nanox&lt;/font&gt;" vertex="1">
+          <mxGeometry height="45" width="130" x="565" y="260" as="geometry" />
         </mxCell>
-        <mxCell id="upA1" edge="1" parent="1" source="up1" target="up5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" value="">
+        <mxCell id="upA1" edge="1" parent="1" source="up1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="up5" value="">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="up5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#b1ddf0;strokeColor=#10739e;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;Linux ABI（wateros-abi / wateros-syscall）：syscall · signal · file · socket · poll&lt;/font&gt;" vertex="1">
-          <mxGeometry height="50" width="660" x="120" y="170" as="geometry" />
+        <mxCell id="up5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#b1ddf0;strokeColor=#10739e;" value="&lt;font style=&quot;font-size: 23px;&quot;&gt;Linux ABI syscall&amp;nbsp;&lt;/font&gt;" vertex="1">
+          <mxGeometry height="50" width="265" x="327.5" y="370" as="geometry" />
         </mxCell>
-        <mxCell id="upA2" edge="1" parent="1" source="up5" target="up6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" value="">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="up6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;verticalAlign=top;align=left;spacingLeft=8;spacingTop=4;" value="&lt;font style=&quot;font-size: 20px;&quot;&gt;中断机制（wateros-platform）&lt;/font&gt;" vertex="1">
-          <mxGeometry height="170" width="560" x="170" y="250" as="geometry" />
-        </mxCell>
-        <mxCell id="up7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;trap_from_user&lt;/font&gt;" vertex="1">
-          <mxGeometry height="45" width="150" x="200" y="292" as="geometry" />
-        </mxCell>
-        <mxCell id="up8" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;return_to_user&lt;/font&gt;" vertex="1">
-          <mxGeometry height="45" width="150" x="390" y="292" as="geometry" />
-        </mxCell>
-        <mxCell id="up9" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;trap_handler&lt;/font&gt;" vertex="1">
-          <mxGeometry height="45" width="150" x="200" y="357" as="geometry" />
-        </mxCell>
-        <mxCell id="up10" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;syscall_service&lt;/font&gt;" vertex="1">
-          <mxGeometry height="45" width="150" x="390" y="357" as="geometry" />
-        </mxCell>
-        <mxCell id="upA3" edge="1" parent="1" source="up7" target="up9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" value="">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="upA4" edge="1" parent="1" source="up9" target="up10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" value="">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="upA5" edge="1" parent="1" source="up10" target="up8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" value="">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="upA6" edge="1" parent="1" source="up6" target="wa14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" value="">
-          <mxGeometry relative="1" as="geometry" />
+        <mxCell id="upA2" edge="1" parent="1" source="up5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.51;entryY=0.005;entryDx=0;entryDy=0;entryPerimeter=0;" target="wa14" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="455" y="400" as="targetPoint" />
+          </mxGeometry>
         </mxCell>
         <mxCell id="eqK4yEGNKagXqvruC3aa-6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="" vertex="1">
           <mxGeometry height="300" width="771" x="64.5" y="1010" as="geometry" />

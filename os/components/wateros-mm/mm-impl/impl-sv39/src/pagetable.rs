@@ -507,9 +507,11 @@ impl Sv39AddressSpace {
             .any(|vma| vma.contains_page(page))
     }
 
-    /// 页是否由其他地址空间或设备持有，解除 PTE 时不得回收物理页。
+    /// 页是否不由物理帧分配器管理，解除 PTE 时不得回收物理页。
+    ///
+    /// MAP_SHARED 页仍是引用计数帧：fork 增加引用，每个地址空间在
+    /// munmap/销毁时各自释放一次。只有设备映射是外部生命周期。
     pub(crate) fn non_owned_vma_contains(&self, page : VirtAddr) -> bool {
-        self.shared_vma_contains(page) ||
         self.device_vmas
             .iter()
             .any(|vma| vma.contains_page(page))
@@ -597,7 +599,7 @@ impl Sv39AddressSpace {
         self.device_vmas = next;
     }
 
-    /// 解除 mmap 区间；共享页和设备页只断开 PTE，其他页正常回收。
+    /// 解除 mmap 区间；设备页只断开 PTE，引用计数内存页正常回收。
     pub(crate) fn unmap_mmap_range<A>(&mut self,
                                       allocator : &mut A,
                                       start : VirtAddr,
@@ -1121,16 +1123,14 @@ unsafe fn destroy_table(ppn : PhysPageNum,
         let child_ppn = pte.ppn();
 
         if flags.is_leaf_at_level(level) {
-            // 用户叶：回收物理帧；共享匿名 VMA 内页由其它地址空间仍引用
+            // 用户叶：每个地址空间释放自己持有的一次物理帧引用；设备页除外。
             if flags.to_page_perm()
                     .user()
             {
                 let page = VirtPageNum(vpn_prefix | (i << (level * VPN_INDEX_BITS))).start_addr();
-                let is_shared_anon = shared_anon_vmas.iter()
-                                                     .any(|vma| vma.contains_page(page));
                 let is_device = device_vmas.iter()
                                            .any(|vma| vma.contains_page(page));
-                if !is_shared_anon && !is_device {
+                if !is_device {
                     let _ = frame_dealloc_result(child_ppn);
                 }
             }
@@ -1185,7 +1185,7 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
                                                      .any(|vma| vma.contains_page(page));
                 let is_device = device_vmas.iter()
                                            .any(|vma| vma.contains_page(page));
-                if !is_shared_anon && !is_device {
+                if !is_device {
                     frame_inc_ref(ppn).map_err(MmError::from)?;
                 }
                 // 可写私有页：父子共享物理帧，父 PTE 清 W 并打 COW 标记

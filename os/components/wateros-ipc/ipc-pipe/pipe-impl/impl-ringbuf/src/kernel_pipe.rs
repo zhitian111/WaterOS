@@ -8,7 +8,6 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
-use alloc::vec;
 use alloc::vec::Vec;
 use api_v0::{
     KernelPipe, PipeError, PipeReadFinish, PipeReadLease, PipeResult,
@@ -38,9 +37,11 @@ struct ReadReservation {
 
 /// `DATA:` 同一 pipe 的全部可变状态，必须只在 `Pipe::state` 锁内访问。
 struct PipeState {
-    buf: Vec<u8>,
-    head: usize,
-    len: usize,
+    /// Bytes currently buffered.  Keep storage proportional to payload, not
+    /// to the configured pipe capacity: Linux's `F_SETPIPE_SZ` changes a
+    /// limit and must not eagerly pin (up to) 1 MiB of kernel heap per pipe.
+    buf: VecDeque<u8>,
+    capacity: usize,
     segments: VecDeque<PipeSegment>,
     read_reservation: Option<ReadReservation>,
     next_reservation_id: u64,
@@ -64,9 +65,8 @@ impl PipeState {
             return Err(PipeError::InvalidCapacity);
         }
         Ok(Self {
-            buf: vec![0; capacity],
-            head: 0,
-            len: 0,
+            buf: VecDeque::new(),
+            capacity,
             segments: VecDeque::new(),
             read_reservation: None,
             next_reservation_id: 1,
@@ -79,22 +79,22 @@ impl PipeState {
 
     #[inline]
     fn capacity(&self) -> usize {
-        self.buf.len()
+        self.capacity
     }
 
     #[inline]
     fn free_len(&self) -> usize {
-        self.capacity().saturating_sub(self.len)
+        self.capacity().saturating_sub(self.buf.len())
     }
 
     #[inline]
     fn is_empty(&self) -> bool {
-        self.len == 0
+        self.buf.is_empty()
     }
 
     #[inline]
     fn is_full(&self) -> bool {
-        self.len == self.capacity()
+        self.buf.len() == self.capacity()
     }
 
     fn read_plan(&self, max_len: usize) -> (usize, usize, bool) {
@@ -107,18 +107,13 @@ impl PipeState {
     }
 
     fn copy_head(&self, out: &mut [u8]) {
-        let count = out.len().min(self.len);
-        let capacity = self.capacity();
-        let first_run = (capacity - self.head).min(count);
-        out[..first_run].copy_from_slice(&self.buf[self.head..self.head + first_run]);
-        let remaining = count - first_run;
-        if remaining > 0 {
-            out[first_run..count].copy_from_slice(&self.buf[..remaining]);
+        for (dst, src) in out.iter_mut().zip(self.buf.iter()) {
+            *dst = *src;
         }
     }
 
     fn consume(&mut self, mut count: usize) {
-        count = count.min(self.len);
+        count = count.min(self.buf.len());
         if count == 0 {
             return;
         }
@@ -134,9 +129,7 @@ impl PipeState {
                 self.segments.pop_front();
             }
         }
-        let capacity = self.capacity();
-        self.head = (self.head + consumed) % capacity;
-        self.len -= consumed;
+        self.buf.drain(..consumed);
     }
 
     /// 从 ring buffer 的 head 开始读；packet 的未返回尾部一并丢弃。
@@ -166,22 +159,17 @@ impl PipeState {
     }
 
     /// 从 `(head + len) % capacity` 写入；调用方已确认存在空位。
-    fn write_from(&mut self, input: &[u8], packet: bool) -> usize {
+    fn write_from(&mut self, input: &[u8], packet: bool) -> PipeResult<usize> {
         let count = input.len().min(self.free_len());
         if count == 0 {
-            return 0;
+            return Ok(0);
         }
-        let capacity = self.capacity();
-        let tail = (self.head + self.len) % capacity;
-        let first_run = (capacity - tail).min(count);
-        self.buf[tail..tail + first_run].copy_from_slice(&input[..first_run]);
-        let remaining = count - first_run;
-        if remaining > 0 {
-            self.buf[..remaining].copy_from_slice(&input[first_run..count]);
-        }
-        self.len += count;
+        self.buf
+            .try_reserve_exact(count)
+            .map_err(|_| PipeError::NoMemory)?;
+        self.buf.extend(input[..count].iter().copied());
         self.record_segment(count, packet);
-        count
+        Ok(count)
     }
 
     fn begin_read(&mut self, staging: &mut Vec<u8>) -> PipeResult<ReadReservation> {
@@ -362,7 +350,7 @@ impl Pipe {
         let written = state.write_from(
             if packet { &input[..packet_len] } else { input },
             packet,
-        );
+        )?;
         drop(state);
         self.read_wait.wake_all();
         Ok(written)
@@ -609,17 +597,16 @@ impl KernelPipe for Pipe {
             return Err(PipeError::InvalidCapacity);
         }
         let mut state = self.state.lock();
-        if state.len != 0 {
+        if !state.buf.is_empty() {
             return Err(PipeError::InvalidCapacity);
         }
-        state.buf = vec![0; capacity];
-        state.head = 0;
+        state.capacity = capacity;
         state.segments.clear();
         Ok(capacity)
     }
 
     fn len(&self) -> usize {
-        self.state.lock().len
+        self.state.lock().buf.len()
     }
 
     /// `FLOW:` 在锁内取出字节，解锁后通知写者；空且写端关闭返回 EOF。
@@ -675,7 +662,7 @@ impl KernelPipe for Pipe {
         if state.is_full() {
             return Err(PipeError::WouldBlock);
         }
-        let written = state.write_from(input, false);
+        let written = state.write_from(input, false)?;
         drop(state);
         self.read_wait.wake_all();
         Ok(written)
