@@ -38,6 +38,17 @@ pub fn test() {
     assert_eq!(pipe.read(&mut buf), Ok(2));
     assert_eq!(&buf, &[1, 2]);
 
+    // F_SETPIPE_SZ-style growth changes only the logical limit.  A small
+    // payload in a 1 MiB pipe must continue to work without eagerly allocating
+    // the whole configured capacity.
+    let lazy_capacity = Pipe::with_capacity(8).expect("lazy-capacity pipe");
+    assert_eq!(lazy_capacity.set_capacity(1 << 20), Ok(1 << 20));
+    assert_eq!(lazy_capacity.capacity(), 1 << 20);
+    assert_eq!(lazy_capacity.try_write(b"small"), Ok(5));
+    let mut small = [0u8; 5];
+    assert_eq!(lazy_capacity.try_read(&mut small), Ok(5));
+    assert_eq!(&small, b"small");
+
     let (read_end, write_end) = PipeEndpoint::pair(false);
     assert_eq!(read_end.kind(), api_v0::PipeEndpointKind::Read);
     assert_eq!(write_end.kind(), api_v0::PipeEndpointKind::Write);

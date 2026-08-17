@@ -97,7 +97,17 @@ impl DemandPageLoader for VfsMmapPageLoader {
                                  .ok_or(MmError::InvalidAddress)?;
             let n = self.handle
                         .write_at(off as u64, &src[done..writable])
-                        .map_err(|_| MmError::AccessViolation)?;
+                        .map_err(|error| {
+                            let identity = self.content_identity
+                                               .as_ref()
+                                               .map(|id| (id.mount_id(), id.node_id()));
+                            log::warn!("[mmap-writeback] write_at failed error={error:?} \
+                                        offset={off} len={} file_size={} accmode={} identity={identity:?}",
+                                       writable - done,
+                                       self.file_size,
+                                       self.handle.open_accmode());
+                            MmError::AccessViolation
+                        })?;
             if n == 0 {
                 return Err(MmError::AccessViolation);
             }
@@ -108,7 +118,21 @@ impl DemandPageLoader for VfsMmapPageLoader {
     }
 
     fn flush(&mut self) -> MmResult<()> {
-        self.handle.flush().map_err(|_| MmError::AccessViolation)
+        // munmap/address-space teardown must publish dirty MAP_SHARED pages,
+        // but it is not an implicit fsync of the whole filesystem.  The old
+        // call to `flush()` reached the block driver's cache-flush command;
+        // images/devices that do not support that command returned EIO once
+        // per process even though every page write had succeeded.
+        self.handle.writeback().map_err(|error| {
+                     let identity = self.content_identity
+                                        .as_ref()
+                                        .map(|id| (id.mount_id(), id.node_id()));
+                     log::warn!("[mmap-writeback] commit failed error={error:?} file_size={} \
+                                 accmode={} identity={identity:?}",
+                                self.file_size,
+                                self.handle.open_accmode());
+                     MmError::AccessViolation
+                 })
     }
 }
 
@@ -172,6 +196,7 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
         }
         const O_ACCMODE : u32 = 3;
         const O_WRONLY : u32 = 1;
+        const O_RDWR : u32 = 2;
         let accmode = match vfs::fd::with_current_io(fd as usize, |handle| {
             Ok(handle.open_accmode())
         }) {
@@ -179,6 +204,16 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
             Err(_) => return UserRet::from_error(ErrNo::EBADF),
         };
         if accmode & O_ACCMODE == O_WRONLY {
+            return UserRet::from_error(ErrNo::EACCES);
+        }
+        // POSIX/Linux require a writable open file description for a
+        // writable MAP_SHARED mapping.  Accepting an O_RDONLY fd here used to
+        // defer the failure until address-space destruction, where every
+        // resident page was written back and produced an AccessViolation
+        // warning (once per short-lived process under LTP).
+        if mf.contains(MapFlags::SHARED) && perm.writable() &&
+           accmode & O_ACCMODE != O_RDWR
+        {
             return UserRet::from_error(ErrNo::EACCES);
         }
         let framebuffer_mapping = vfs::fd::with_current_io(fd as usize, |handle| {

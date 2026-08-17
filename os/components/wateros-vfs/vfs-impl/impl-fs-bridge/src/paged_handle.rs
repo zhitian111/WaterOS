@@ -740,6 +740,8 @@ impl VfsIoHandle for PagedFileHandle {
     }
 
     // 本方法代码由AI完成
+    fn writeback(&mut self) -> VfsResult<()> { self.writeback_dirty() }
+
     fn flush(&mut self) -> VfsResult<()> { self.sync_dirty() }
 
     // 本方法代码由AI完成

@@ -167,6 +167,14 @@ pub struct FdSlotSnapshot {
     pub terminal_id : Option<tty::TerminalId>,
 }
 
+/// Immutable fd-table image shared by ordinary fork children until either
+/// side mutates its descriptor table.  Individual open-file descriptions are
+/// shared as required by fork(2), while `Arc::make_mut` below preserves
+/// independent descriptor-table mutation semantics.
+pub struct ForkFdTableSnapshot {
+    table : Arc<Vec<Option<FdSlot>>>,
+}
+
 impl FdSlotSnapshot {
     pub fn duplicate(&self) -> VfsResult<Self> {
         let handle = self.handle.duplicate()?;
@@ -187,7 +195,7 @@ impl FdSlotSnapshot {
 /// 全局 per-task fd 注册表。
 // 本结构代码由AI完成
 pub struct PerTaskFdRegistry {
-    tables : BTreeMap<task::TaskId, Vec<Option<FdSlot>>>,
+    tables : BTreeMap<task::TaskId, Arc<Vec<Option<FdSlot>>>>,
     owners : BTreeMap<task::TaskId, task::TaskId>,
     ref_counts : BTreeMap<task::TaskId, usize>,
     open_counts : BTreeMap<task::TaskId, usize>,
@@ -222,9 +230,9 @@ impl PerTaskFdRegistry {
         self.ref_counts
             .entry(owner)
             .or_insert(1);
-        let table = self.tables
-                        .entry(owner)
-                        .or_insert_with(Vec::new);
+        let table = Arc::make_mut(self.tables
+                                      .entry(owner)
+                                      .or_insert_with(|| Arc::new(Vec::new())));
         if table.len() < VFS_FIRST_DYNAMIC_FD {
             table.resize_with(VFS_FIRST_DYNAMIC_FD, || None);
             table[VFS_STDIN_FD] = Some(FdSlot::new(SharedIoHandle::new(default_stdin_handle()), 0));
@@ -268,15 +276,15 @@ impl PerTaskFdRegistry {
     fn table_mut(&mut self, task_id : task::TaskId) -> &mut Vec<Option<FdSlot>> {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
-        self.tables
-            .get_mut(&owner)
-            .expect("fd table owner")
+        Arc::make_mut(self.tables
+                          .get_mut(&owner)
+                          .expect("fd table owner"))
     }
 
     fn resize_table_with_holes(&mut self, owner : task::TaskId, new_len : usize) {
-        let table = self.tables
-                        .get_mut(&owner)
-                        .expect("fd table owner");
+        let table = Arc::make_mut(self.tables
+                                      .get_mut(&owner)
+                                      .expect("fd table owner"));
         let old_len = table.len();
         if old_len < new_len {
             table.resize_with(new_len, || None);
@@ -348,15 +356,15 @@ impl PerTaskFdRegistry {
                 .get_mut(&owner)
                 .expect("fd free set owner")
                 .remove(&fd);
-            let table = self.tables
-                            .get_mut(&owner)
-                            .expect("fd table owner");
+            let table = Arc::make_mut(self.tables
+                                          .get_mut(&owner)
+                                          .expect("fd table owner"));
             table[fd] = Some(FdSlot::new(handle, 0));
             fd
         } else {
-            let table = self.tables
-                            .get_mut(&owner)
-                            .expect("fd table owner");
+            let table = Arc::make_mut(self.tables
+                                          .get_mut(&owner)
+                                          .expect("fd table owner"));
             let old_len = table.len();
             if old_len < minfd {
                 table.resize_with(minfd, || None);
@@ -399,12 +407,15 @@ impl PerTaskFdRegistry {
     // 本方法代码由AI完成
     fn take_table_handles(&mut self, owner : task::TaskId) -> Vec<SharedIoHandle> {
         let mut handles = Vec::new();
-        if let Some(mut table) = self.tables
-                                     .remove(&owner)
-        {
-            for slot in table.iter_mut() {
-                if let Some(slot) = slot.take() {
-                    handles.push(slot.handle);
+        if let Some(table) = self.tables.remove(&owner) {
+            // A fork child that never touched its fd table can release the
+            // shared table with one Arc decrement.  Only the final owner must
+            // walk and close every open-file description.
+            if let Ok(mut table) = Arc::try_unwrap(table) {
+                for slot in table.iter_mut() {
+                    if let Some(slot) = slot.take() {
+                        handles.push(slot.handle);
+                    }
                 }
             }
         }
@@ -422,9 +433,9 @@ impl PerTaskFdRegistry {
                              -> VfsResult<SharedIoHandle> {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
-        let handle = self.tables
-                         .get_mut(&owner)
-                         .ok_or(VfsError::BadFd)?
+        let handle = Arc::make_mut(self.tables
+                                       .get_mut(&owner)
+                                       .ok_or(VfsError::BadFd)?)
                          .get_mut(fd)
                          .ok_or(VfsError::BadFd)?
                          .take()
@@ -443,7 +454,7 @@ impl PerTaskFdRegistry {
         let owner = self.effective_owner(task_id);
         let table_len = self.tables
                             .get(&owner)
-                            .map(Vec::len)
+                            .map(|table| table.len())
                             .unwrap_or(0);
         if first >= table_len {
             return Ok(Vec::new());
@@ -459,9 +470,9 @@ impl PerTaskFdRegistry {
             {
                 continue;
             }
-            let handle = self.tables
-                             .get_mut(&owner)
-                             .expect("fd table owner")
+            let handle = Arc::make_mut(self.tables
+                                           .get_mut(&owner)
+                                           .expect("fd table owner"))
                              .get_mut(fd)
                              .expect("fd in range")
                              .take()
@@ -480,7 +491,7 @@ impl PerTaskFdRegistry {
         let owner = self.effective_owner(task_id);
         let table_len = self.tables
                             .get(&owner)
-                            .map(Vec::len)
+                            .map(|table| table.len())
                             .unwrap_or(0);
         let mut handles = Vec::new();
         for fd in (0..table_len).rev() {
@@ -641,10 +652,10 @@ impl PerTaskFdRegistry {
                            -> VfsResult<&mut (dyn VfsIoHandle + '_)> {
         self.ensure_task(task_id);
         let owner = self.effective_owner(task_id);
-        match self.tables
-                  .get_mut(&owner)
-                  .and_then(|table| table.get_mut(fd))
-        {
+        let table = Arc::make_mut(self.tables
+                                      .get_mut(&owner)
+                                      .expect("fd table owner"));
+        match table.get_mut(fd) {
             Some(Some(h)) => {
                 let inner = Arc::get_mut(&mut h.handle.inner).ok_or(VfsError::Busy)?;
                 Ok(inner.get_mut()
@@ -833,9 +844,9 @@ impl PerTaskFdRegistry {
             None
         };
         self.resize_table_with_holes(owner, newfd + 1);
-        self.tables
-            .get_mut(&owner)
-            .expect("fd table owner")[newfd] =
+        Arc::make_mut(self.tables
+                          .get_mut(&owner)
+                          .expect("fd table owner"))[newfd] =
             Some(FdSlot::new(dup_handle, if cloexec { FD_CLOEXEC } else { 0 }));
         self.mark_fd_open(owner, newfd);
         Ok((newfd, displaced))
@@ -872,9 +883,10 @@ impl PerTaskFdRegistry {
     pub fn set_fd_path_only(&mut self, task_id : task::TaskId, fd : usize) -> VfsResult<()> {
         self.ensure_fd_exists(task_id, fd)?;
         let owner = self.effective_owner(task_id);
-        self.tables
-            .get_mut(&owner)
-            .and_then(|table| table.get_mut(fd))
+        Arc::make_mut(self.tables
+                          .get_mut(&owner)
+                          .expect("fd table owner"))
+            .get_mut(fd)
             .and_then(Option::as_mut)
             .expect("checked fd slot")
             .flags |= FD_PATH_ONLY;
@@ -902,9 +914,10 @@ impl PerTaskFdRegistry {
                       -> VfsResult<()> {
         self.ensure_fd_exists(task_id, fd)?;
         let owner = self.effective_owner(task_id);
-        let slot = self.tables
-                       .get_mut(&owner)
-                       .and_then(|table| table.get_mut(fd))
+        let slot = Arc::make_mut(self.tables
+                                     .get_mut(&owner)
+                                     .expect("fd table owner"))
+                       .get_mut(fd)
                        .and_then(Option::as_mut)
                        .expect("checked fd slot");
         if cloexec {
@@ -926,15 +939,15 @@ impl PerTaskFdRegistry {
         let owner = self.effective_owner(task_id);
         let table_len = self.tables
                             .get(&owner)
-                            .map(Vec::len)
+                            .map(|table| table.len())
                             .unwrap_or(0);
         if first >= table_len {
             return Ok(());
         }
         let end = last.min(table_len - 1);
-        let table = self.tables
-                        .get_mut(&owner)
-                        .expect("fd table owner");
+        let table = Arc::make_mut(self.tables
+                                      .get_mut(&owner)
+                                      .expect("fd table owner"));
         for fd in first..=end {
             let Some(slot) = table[fd].as_mut() else {
                 continue;
@@ -969,6 +982,30 @@ impl PerTaskFdRegistry {
             .unwrap_or_default()
     }
 
+    /// O(1) fork snapshot.  Descriptor-table storage and open-file
+    /// descriptions stay shared until a descriptor operation mutates either
+    /// process's table.
+    pub fn fd_table_fork_snapshot(&mut self, parent : task::TaskId) -> ForkFdTableSnapshot {
+        self.ensure_task(parent);
+        let parent_owner = self.effective_owner(parent);
+        ForkFdTableSnapshot { table : self.tables
+                                           .get(&parent_owner)
+                                           .cloned()
+                                           .unwrap_or_default() }
+    }
+
+    pub fn install_fd_table_fork_snapshot(&mut self,
+                                          child : task::TaskId,
+                                          snapshot : ForkFdTableSnapshot) {
+        if self.owners.contains_key(&child) {
+            self.drop_task_fd_table(child);
+        }
+        self.owners.insert(child, child);
+        self.ref_counts.insert(child, 1);
+        self.tables.insert(child, snapshot.table);
+        self.rebuild_table_indexes(child);
+    }
+
     /// Install an fd-table snapshot for a fork child.
     pub fn install_fd_table_copy(&mut self,
                                  child : task::TaskId,
@@ -985,9 +1022,9 @@ impl PerTaskFdRegistry {
             .insert(child, 1);
         self.tables
             .insert(child,
-                    parent_table.into_iter()
-                                .map(|slot| slot.map(FdSlotSnapshot::into_slot))
-                                .collect());
+                    Arc::new(parent_table.into_iter()
+                                         .map(|slot| slot.map(FdSlotSnapshot::into_slot))
+                                         .collect()));
         self.rebuild_table_indexes(child);
     }
 
@@ -1028,7 +1065,8 @@ impl PerTaskFdRegistry {
                                .get(&owner)
                                .cloned()
                                .unwrap_or_default();
-        let private_table = parent_table.into_iter()
+        let private_table = parent_table.iter()
+                                        .cloned()
                                         .map(|slot| {
                                             slot.and_then(|slot| slot.duplicate().ok())
                                         })
@@ -1085,7 +1123,7 @@ impl PerTaskFdRegistry {
         self.ref_counts
             .insert(task_id, 1);
         self.tables
-            .insert(task_id, private_table);
+            .insert(task_id, Arc::new(private_table));
         self.rebuild_table_indexes(task_id);
         Ok(())
     }
@@ -1097,7 +1135,7 @@ impl PerTaskFdRegistry {
         let owner = self.effective_owner(task_id);
         let table_len = self.tables
                             .get(&owner)
-                            .map(Vec::len)
+                            .map(|table| table.len())
                             .unwrap_or(0);
         for fd in (0..table_len).rev() {
             let cloexec = self.tables
