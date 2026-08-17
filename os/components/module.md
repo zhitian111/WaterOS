@@ -30,3 +30,5 @@ network
 fs
 tty
 vfs
+ipc
+platform

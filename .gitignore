@@ -7,6 +7,7 @@
 .idea/
 .vscode/
 .cursor/
+.worktrees/
 
 # python 运行垃圾
 __pycache__/
