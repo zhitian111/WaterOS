@@ -683,21 +683,6 @@ fn gather_imported_iovecs(iovecs : &ImportedIoVecs) -> Result<Vec<u8>, ErrNo> {
     Ok(out)
 }
 
-fn validate_pread_fd(fd : usize) -> Result<(), ErrNo> {
-    if socket_fd::lookup(fd).is_some() {
-        return Err(ErrNo::ESPIPE);
-    }
-    if vfs::fd::is_path_only_fd(fd).map_err(vfs_error_to_errno)? {
-        return Err(ErrNo::EBADF);
-    }
-    vfs::fd::with_current_io(fd, |handle| {
-        handle.validate_read_access()?;
-        let mut empty = [];
-        handle.read_at(0, &mut empty)
-              .map(|_| ())
-    }).map_err(vfs_io_at_error_to_errno)
-}
-
 fn validate_pread_lease(lease : &vfs::fd::FdIoLease) -> Result<(), ErrNo> {
     if lease.resource_kind() == vfs::api::VfsResourceKind::Socket {
         return Err(ErrNo::ESPIPE);
@@ -828,12 +813,20 @@ pub(crate) fn sys_preadv(args : SyscallArgs) -> UserRet {
         Ok(offset) => offset,
         Err(error) => return UserRet::from_error(error),
     };
-    preadv_at(fd, iov_ptr, iovcnt, offset)
+    let fd_lease = match vfs::fd::current_io_lease(fd) {
+        Ok(lease) => lease,
+        Err(error) => return UserRet::from_error(vfs_error_to_errno(error)),
+    };
+    preadv_at(&fd_lease, iov_ptr, iovcnt, offset)
 }
 
 /// 执行已经完成 Linux 分槽 ABI 解码的向量定位读。
-fn preadv_at(fd : usize, iov_ptr : usize, iovcnt : usize, offset : u64) -> UserRet {
-    if let Err(error) = validate_pread_fd(fd) {
+fn preadv_at(fd_lease : &vfs::fd::FdIoLease,
+             iov_ptr : usize,
+             iovcnt : usize,
+             offset : u64)
+             -> UserRet {
+    if let Err(error) = validate_pread_lease(fd_lease) {
         return UserRet::from_error(error);
     }
     let iovecs = match import_iovecs(iov_ptr, iovcnt) {
@@ -853,9 +846,7 @@ fn preadv_at(fd : usize, iov_ptr : usize, iovcnt : usize, offset : u64) -> UserR
     let mut cursor = IovScatterCursor::new(&iovecs.entries);
     while remaining > 0 {
         let chunk = remaining.min(kbuf.len());
-        let n = match vfs::fd::with_current_io(fd, |handle| {
-                  handle.read_at(file_off, &mut kbuf[..chunk])
-              }) {
+        let n = match fd_lease.with_io(|handle| handle.read_at(file_off, &mut kbuf[..chunk])) {
             Ok(n) => n,
             Err(error) => {
                 return if cursor.copied > 0 {
@@ -913,7 +904,11 @@ pub(crate) fn sys_preadv2(args : SyscallArgs) -> UserRet {
         Ok(offset) => offset,
         Err(error) => return UserRet::from_error(error),
     };
-    preadv_at(args.arg(0),
+    let fd_lease = match vfs::fd::current_io_lease(args.arg(0)) {
+        Ok(lease) => lease,
+        Err(error) => return UserRet::from_error(vfs_error_to_errno(error)),
+    };
+    preadv_at(&fd_lease,
               args.arg(1),
               args.arg(2),
               offset)
