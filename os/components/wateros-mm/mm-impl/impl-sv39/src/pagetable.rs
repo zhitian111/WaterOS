@@ -611,8 +611,7 @@ impl Sv39AddressSpace {
             if self.non_owned_vma_contains(vpn.start_addr()) {
                 changed |= self.unmap_page_to_ppn(vpn)?.is_some();
             } else {
-                changed |= self.translate_addr(vpn.start_addr())?.is_some();
-                self.unmap_page_with_alloc(allocator, vpn)?;
+                changed |= self.unmap_page_with_alloc(allocator, vpn)?;
             }
             vpn = VirtPageNum(vpn.0 + 1);
         }

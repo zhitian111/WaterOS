@@ -76,20 +76,21 @@ pub trait AddressSpaceOps {
         self.map_page_to_ppn(vpn, ppn, perm)
     }
 
-    /// 解除 `vpn` 映射并回收帧（若未映射则不执行任何操作）。
+    /// 解除 `vpn` 映射并回收帧；返回是否实际移除了叶 PTE。
     #[inline]
     fn unmap_page_with_alloc<A>(
         &mut self,
         allocator: &mut A,
         vpn: VirtPageNum,
-    ) -> MmResult<()>
+    ) -> MmResult<bool>
     where
         A: PhysicalFrameAllocator<FrameId = PhysPageNum>,
     {
         if let Some(ppn) = self.unmap_page_to_ppn(vpn)? {
             allocator.dealloc_frame(ppn)?;
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 
     /// 将 `[start, end)` 覆盖的虚拟页全部映射到新分配的帧。
