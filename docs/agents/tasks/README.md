@@ -16,6 +16,7 @@
 - `CODEX_HANDOFF_UPDATE_PROMPT.md`：继续工作后增量刷新交接状态。
 - `CODEX_HANDOFF_TEMPLATE.md`：交接文件的字段、证据链和完整性模板。
 - `vma-unified/`：VMA 统一路径重构的分支任务拆解、验收与历史简报。
+- `syscall-chain-opt/`：BuildStorm 路径解析、FD I/O、ELF、TLB 与文件系统锁链优化任务。
 
 当前问题、性能实施和专项回归分别位于 `docs/tasks/known-issues/`、
 `docs/tasks/perf/` 和 `docs/tasks/read-family/`。每项任务的已完成记录保留在其自身的
