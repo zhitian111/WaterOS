@@ -337,6 +337,7 @@ mod qemu_riscv64_opensbi {
         platform::arch::init();
         let memory_end = platform::physical_ram_end_exclusive();
         init_after_boot(dtb_pa, memory_end, cpu_id);
+        runtime::heap_allocator::enable_per_cpu_arenas();
         AP_BOOT_READY.store(true, Ordering::Release);
 
         let requested_aps = start_secondary_harts(cpu_id, dtb_pa);
@@ -465,6 +466,7 @@ mod qemu_loongarch64_virt {
               configured.bits());
         let memory_end = platform::physical_ram_end_exclusive();
         init_after_boot(dtb_pa, memory_end, cpu_id);
+        runtime::heap_allocator::enable_per_cpu_arenas();
         task::set_cpu_online(cpu_id);
         platform::arch::paging::init_paging_disable_mmu();
 

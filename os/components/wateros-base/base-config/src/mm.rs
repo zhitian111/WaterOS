@@ -3,17 +3,20 @@
 //! 真机或自定义 `-m` 时应以 DTB/固件为准；此处常量多用于 bring-up 与缺省回退。
 //! 堆容量等配置只在本 crate 维护，`wateros-base` 不再复制这些数值。
 
-/// 内核堆大小的以 2 为底的指数位宽。
+/// 单个内核堆 arena 大小的以 2 为底的指数位宽。
 ///
 /// 降低此值可释放更多物理内存给用户态。不能设太低：`StackFrameAllocator` 的
 /// `ref_counts` 与 `allocated` Vec 随平台公布的物理页数增长，也从内核堆分配。
 /// 全量 native Rust build 已观测到约 121MB 活跃分配；128MB 池会因分配器元数据
 /// 和碎片余量不足而向用户态返回 `ENOMEM`。2026-08-15：stress-ng `--forkheavy`
 /// 等内存/进程类压力在 256MB 池下触发 `[heap] OOM`（used≈248MB，分配 1MB 失败）
-/// 并 panic（final=8G RAM 场景）。提升到 512MB 以覆盖内存类压力测试；注意 LA
-/// pre 仅 1G RAM 时 512MB 堆会挤占用户内存（当前策略：final 能跑优先）。
-pub const KERNEL_HEAP_SIZE_BIT_WIDTH : usize = 29;
-/// 内核堆字节容量，即 `1 << KERNEL_HEAP_SIZE_BIT_WIDTH`。
+/// 并 panic（final=8G RAM 场景）。固定 per-CPU 后端采用多个 arena，以空间换取锁拆分；
+/// 单 arena 保持 256 MiB，避免 RISC-V 上静态堆地址范围覆盖 QEMU FDT 放置区域。
+pub const KERNEL_HEAP_SIZE_BIT_WIDTH : usize = 28;
+/// 单个内核堆 arena 的字节容量，即 `1 << KERNEL_HEAP_SIZE_BIT_WIDTH`。
+///
+/// 单堆后端只有一个 arena；固定 per-CPU 后端为 early/global 和每个静态 CPU 各保留
+/// 一个同等容量的 arena。
 pub const KERNEL_HEAP_SIZE : usize = 1 << KERNEL_HEAP_SIZE_BIT_WIDTH;
 
 /// QEMU `virt` 物理 RAM 起始（包含）。

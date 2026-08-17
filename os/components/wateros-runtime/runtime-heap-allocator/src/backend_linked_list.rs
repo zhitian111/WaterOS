@@ -73,4 +73,10 @@ pub(crate) fn init_heap() {
     }
 }
 
+pub(crate) fn enable_per_cpu_arenas() {}
+
+pub(crate) fn reserved_end() -> usize {
+    core::ptr::addr_of!(HEAP_SPACE) as usize + KERNEL_HEAP_SIZE
+}
+
 pub(crate) fn stats() -> HeapMemStats { HEAP_ALLOCATOR.mem_stats() }

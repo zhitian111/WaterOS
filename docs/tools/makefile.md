@@ -42,7 +42,7 @@ Makefile 只暴露少量稳定参数，内部再转换为脚本环境变量和 C
 | `ARCH`、`PROFILE` | Cargo target、平台 feature、阶段 feature、产物名和默认镜像 |
 | `MODE`、`SCRIPT`、`GUEST_SHELL` | `operator-*` feature 与构建期环境变量 |
 | `SMP`、`SDCARD`、`SNAPSHOT`、`WRITE_DISK` | `scripts/run/qemu_run.py` 的 `WOS_*` 环境变量 |
-| `EXTRA_FEATURES`、`HEAP_ALLOCATOR_FEATURE` | 顶层 Cargo feature 列表 |
+| `EXTRA_FEATURES`、`HEAP_ALLOCATOR_FEATURE` | 顶层 Cargo feature 列表；堆后端可选 `heap-tlsf`、`heap-per-cpu-tlsf` 或 `heap-linked-list` |
 | `GRAPHICS`、`GRAPHICS_BACKEND` | QEMU 显示设备和显示后端 |
 | `PORT`、`START_PAUSED`、`FAULTS` | `scripts/debug/wateros_debug.py` |
 

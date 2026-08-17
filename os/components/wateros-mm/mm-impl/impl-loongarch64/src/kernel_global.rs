@@ -81,11 +81,8 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
     PHYS_RAM_END_EXCL.store(ram_end_exclusive, Ordering::Release);
 
     // 初始化帧分配器
-    let kernel_end_addr : usize;
-    unsafe {
-        core::arch::asm!("la {}, kernel_end", out(reg) kernel_end_addr);
-    }
-    let start_ppn = (kernel_end_addr + PAGE_SIZE - 1) / PAGE_SIZE;
+    let reserved_end = runtime::heap_allocator::reserved_end();
+    let start_ppn = (reserved_end + PAGE_SIZE - 1) / PAGE_SIZE;
     let end_ppn = ram_end_exclusive / PAGE_SIZE;
     frame_alloctor::init_frame_allocator(PhysPageNum(start_ppn),
                                          PhysPageNum(end_ppn));

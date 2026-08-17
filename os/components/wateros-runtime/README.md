@@ -30,15 +30,16 @@ feature 的构建会静默丢弃 console 字节，而不会伪造设备输出。
 | console API 与平台后端 | `runtime-console/src/lib.rs`；`runtime-console/console-api/api-v0/src/lib.rs`；`runtime-console/console-impl/impl-platform-console/src/lib.rs` | API 无状态；平台 console 锁和硬件由 `wateros-platform` 持有 |
 | 全局 logger | `runtime-logging/src/lib.rs`、`logger.rs` | 静态 `WaterOSLogger` 与 `log` 全局注册；输出下沉到 console |
 | panic 终止 | `runtime-panic/src/lib.rs` | 只格式化、flush、请求 `platform::reset::shutdown`，不恢复任务 |
-| 全局堆 | `runtime-heap-allocator/src/lib.rs`、`backend_tlsf.rs`、`backend_linked_list.rs`、`interrupt_guard.rs` | `.kernel.heap` 静态池与后端元数据；跨 CPU 后端锁、本 CPU 中断 guard |
+| 全局堆 | `runtime-heap-allocator/src/lib.rs`、`backend_{tlsf,per_cpu_tlsf,linked_list}.rs`、`interrupt_guard.rs` | `.kernel.heap (NOLOAD)` 静态池与后端元数据；跨 CPU 后端锁、本 CPU 中断 guard |
 | UART 字符设备 facade | `runtime-serial/src/lib.rs` | 再导出 `Ns16550Port`、注册表和 QEMU virt UART0 常量；设备生命周期由 driver 持有 |
 
 ## 核心状态与数据结构
 
 | 状态/结构 | 关键字段与存储 | 同步、创建与销毁 | 不变量与限制 |
 | --- | --- | --- | --- |
-| `HEAP_SPACE` | `#[link_section = ".kernel.heap"]` 的 `[u8; KERNEL_HEAP_SIZE]`；`KERNEL_HEAP_SIZE = 1 << 29`（512 MiB，`base-config/src/mm.rs`） | `heap_allocator::init()` 只应在 BSP 单线程阶段调用一次；静态池随内核生命周期存在 | 后端不能同时启用 TLSF 与 linked-list；重复 init 会破坏元数据 |
+| `HEAP_SPACE` / `PER_CPU_HEAP_SPACE` | `.kernel.heap (NOLOAD)` 静态池；`KERNEL_HEAP_SIZE = 1 << 28`（每 arena 256 MiB） | `heap_allocator::init()` 只应在 BSP 单线程阶段调用一次；per-CPU 模式在核心初始化后显式切换 | 三个后端互斥；per-CPU 模式包含一个 global 和 `MAX_CPUS` 个 CPU arena；重复 init 会破坏元数据 |
 | TLSF `InterruptSafeTlsfHeap` | `Mutex<KernelTlsf>`、`pool_len: AtomicUsize`、`used_estimate: AtomicUsize` | 分配/释放先经过 `with_allocator_interrupt_guard`，再锁 TLSF；`pool_len` Release 发布、读取 Acquire；全局 allocator 静态创建 | O(1) 分配；`used` 是按 layout 大小的饱和估算，不是回收决策依据；指针范围/对齐越界会被拒绝 |
+| per-CPU `PerCpuTlsfHeap` | global TLSF、`MAX_CPUS` 个独立 TLSF 与固定静态池、阶段标记 | alloc 在切换后选择当前 CPU，本地 OOM 回退 global；dealloc/realloc 按地址选择 owner arena | 每 arena 独立锁；跨 CPU free 正确但会获取 owner 锁；总静态容量为 `(MAX_CPUS + 1) * KERNEL_HEAP_SIZE` |
 | linked-list `InterruptSafeLockedHeap` | `LockedHeap` 内部空闲链表；容量仍为 `KERNEL_HEAP_SIZE` | 同样由 interrupt guard 包裹，后端锁保护链表；`init` 将静态池交给 `LockedHeap` | 统计 `used/free` 来自 allocator；与 TLSF feature 互斥 |
 | `HEAP_GUARD_DEPTH` / 高水位标记 | `CpuLocal<AtomicUsize, MAX_CPUS>` 递归深度；全局 `AtomicBool` 告警标记 | 关本 CPU 全局中断后以 Acquire/Release 更新深度；高水位标记 Relaxed，整个引导周期最多告警一次 | guard 内不得调度、等待、进入 VFS 或触发日志格式化分配；嵌套 GlobalAlloc 直接 panic；使用量超过 90% 才告警 |
 | `WaterOSLogger` / `log` 全局状态 | 无字段静态 logger；`log::set_logger` 与 `log::set_max_level` | `logging::init()` 在 console 可写后注册一次；重复注册失败且不替换既有 logger | `impl-trace`…`impl-error` 至多一个，编译期裁剪宏；`ext4_rs` 的 Info 及以上记录被过滤；logger 不分配、不递归调用 log |
@@ -139,7 +140,7 @@ panic 路径不获取 scheduler/VFS/allocator 锁，也不假定 heap 已就绪�
 | --- | --- |
 | `impl-platform-console` | 将 console、logger、panic 连接到 platform console/reset |
 | `impl-trace` / `impl-debug` / `impl-info` / `impl-warn` / `impl-error` | 互斥选择编译期日志最大级别 |
-| `heap-tlsf` / `heap-linked-list` | 选择互斥堆后端；默认架构 feature 启用 TLSF |
+| `heap-tlsf` / `heap-per-cpu-tlsf` / `heap-linked-list` | 选择互斥堆后端；默认仍为单 TLSF |
 | `impl-riscv64` / `impl-loongarch64` | 传递 allocator 所需的 arch 实现；顶层默认 RISC-V |
 | `heap-stress` | init 后运行碎片压测并最终 `loop {}`，仅诊断用途 |
 | `self_test` | 暴露 runtime 自检，执行 logger 标记和一次临时堆分配 |

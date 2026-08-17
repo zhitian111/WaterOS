@@ -13,7 +13,7 @@ use crate::{SwitchPair, TaskTrapFrame};
 use api_v0::{CPUState, CpuSnapshot, QueueTarget, TaskRegistry, WaitQueues};
 use arch::task::{ActiveArchTaskContext as TaskContext, ArchTaskContext};
 use base::cpu::CpuMask;
-use config::task::MAX_CPUS;
+use config::{mm::KERNEL_HEAP_SIZE, task::MAX_CPUS};
 use task_api::{
     AddressSpaceHandle, CpuId, ExitedTask, KernelTaskEntry, Priority, SchedError, SchedPolicy,
     TaskExitCode, TaskId, TaskSnapshot, TaskState, TaskTick, TaskWaitResult, TaskWaitTarget,
@@ -24,7 +24,6 @@ use api_v0::{RescheduleCause, ScheduleReason};
 
 unsafe extern "C" {
     static kernel_heap_start: u8;
-    static kernel_heap_end: u8;
 }
 
 pub(super) struct MultiClassScheduler {
@@ -125,7 +124,9 @@ impl MultiClassScheduler {
         let ra = context.return_address();
         let sp = context.stack_pointer();
         let heap_start = core::ptr::addr_of!(kernel_heap_start) as usize;
-        let heap_end = core::ptr::addr_of!(kernel_heap_end) as usize;
+        // 使用最大静态 arena span 做损坏诊断，避免直接引用可能位于代码 ±2 GiB
+        // 之外的 linker end symbol。单堆后端多覆盖的地址同样不可能是合法内核 RA。
+        let heap_end = heap_start.saturating_add((MAX_CPUS + 1) * KERNEL_HEAP_SIZE);
         if (heap_start..heap_end).contains(&ra) {
             panic!("[scheduler] corrupted switch target: cpu={} task={} cx={:#x} ra={:#x} \
                     sp={:#x} heap=[{:#x},{:#x})",

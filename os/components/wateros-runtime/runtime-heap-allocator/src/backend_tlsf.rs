@@ -16,7 +16,7 @@ use crate::interrupt_guard::{maybe_warn_high_water, with_allocator_interrupt_gua
 use crate::HeapMemStats;
 use crate::HEAP_SPACE;
 
-/// TLSF 位图参数：`FLLEN=23` 覆盖统一配置的 256 MiB 静态堆。
+/// TLSF 位图参数覆盖统一配置的静态堆。
 type KernelTlsf = Tlsf<'static, u32, u32, 23, 32>;
 
 pub(crate) struct InterruptSafeTlsfHeap {
@@ -193,6 +193,12 @@ pub(crate) fn init_heap() {
     unsafe {
         HEAP_ALLOCATOR.init();
     }
+}
+
+pub(crate) fn enable_per_cpu_arenas() {}
+
+pub(crate) fn reserved_end() -> usize {
+    core::ptr::addr_of!(HEAP_SPACE) as usize + KERNEL_HEAP_SIZE
 }
 
 pub(crate) fn stats() -> HeapMemStats { HEAP_ALLOCATOR.mem_stats() }

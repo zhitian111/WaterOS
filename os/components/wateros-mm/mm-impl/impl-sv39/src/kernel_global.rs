@@ -62,15 +62,11 @@ pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
             "kernel_mm: ram_end_exclusive must be above RAM base");
     PHYS_RAM_END_EXCL.store(ram_end_exclusive, Ordering::Release);
 
-    // 从 kernel_end 到 DTB `/memory` 上界都属于帧池；DTB 自身仅作为一个小的
+    // 从静态 heap arena 末端到 DTB `/memory` 上界都属于帧池；DTB 自身仅作为一个小的
     // reserved region 排除，不能再把 DTB 的放置地址误当成 RAM 终点。QEMU 9.2.1
     // 会把 16 GiB machine 的 DTB 放在约 3 GiB，旧逻辑因此错误丢弃后方 13 GiB。
-    // 用 inline asm 取 kernel_end 符号地址（避免 extern static 指针语法歧义）
-    let kernel_end_addr : usize;
-    unsafe {
-        core::arch::asm!("la {}, kernel_end", out(reg) kernel_end_addr);
-    }
-    let start_ppn = (kernel_end_addr + PAGE_SIZE - 1) / PAGE_SIZE;
+    let reserved_end = runtime::heap_allocator::reserved_end();
+    let start_ppn = (reserved_end + PAGE_SIZE - 1) / PAGE_SIZE;
     let end_ppn = ram_end_exclusive / PAGE_SIZE;
     let (reserved_start_ppn, reserved_end_ppn) = dtb_reserved_ppns(dtb_pa,
                                                                    ram_end_exclusive)
