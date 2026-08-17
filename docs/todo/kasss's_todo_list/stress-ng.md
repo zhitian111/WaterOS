@@ -4,8 +4,8 @@ stress-ng --vm-addr 2 --vma 2 --mmap 2 --mmapfork 2 --timeout=20 --metrics
 
 # 文件系统（open/read/write/stat 风暴）
 
-stress-ng --open 4 --fstat 4 --dir 2 --seek 2 
-  --chmod 2 --chown 2 --rename 2 --symlink 2 --getdent 2 
+stress-ng --open 4 --fstat 4 --dir 2 --seek 2
+  --chmod 2 --chown 2 --rename 2 --symlink 2 --getdent 2
   --timeout=20 --metrics
 
 # 调度/进程

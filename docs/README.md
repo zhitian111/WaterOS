@@ -21,6 +21,7 @@
 - `tasks/`：当前任务、历史记录和跨任务报告。
 - `todo/`：尚未收敛的性能分析与队友维护的个人待办。
 - `guides/`：提供给人阅读的规范、流程和协作说明。
+- `components/`：一级内核组件架构 README 的统一验收入口。
 - `tools/`：项目脚本、调试和测试工具的使用入口。
 - `workflows/`：构建、调试、性能分析等可重复执行的标准流程。
 - `technical_document/`：LaTeX 技术文档及其分章写作说明。
@@ -37,6 +38,8 @@
 5. 接手开发任务时，查看 [`tasks/README.md`](./tasks/README.md) 和对应交接记录。
 6. 自动化 Agent 在工作前阅读 [`agents/README.md`](./agents/README.md)。
 7. 需要项目技术文稿时进入 [`technical_document/README.md`](./technical_document/README.md)。
+8. 统一审阅内核组件架构文档时，从
+   [`components/README.md`](./components/README.md) 进入。
 
 README 的分级页头、导航和事实引用约定见
 [`guides/readme-style.md`](./guides/readme-style.md)。

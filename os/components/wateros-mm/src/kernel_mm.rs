@@ -1,5 +1,22 @@
 //! MM 内核地址空间与 ELF 装载 facade。
 
+/// 用户页错处理结果；trap 层据此选择 Linux 的同步信号语义。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UserPageFaultResult {
+    /// 已完成 COW、按需装页或必要的 TLB 修复，可重试原指令。
+    Handled,
+    /// 地址不属于任何用户映射，对应 `SEGV_MAPERR`。
+    MapError,
+    /// 地址已映射但本次访问不符合权限，对应 `SEGV_ACCERR`。
+    AccessError,
+    /// 处理缺页时物理内存耗尽。
+    OutOfMemory,
+    /// 文件后备页无法装入，对应 `SIGBUS/BUS_ADRERR`。
+    BackingError,
+    /// 页表或地址空间状态出现其它内部错误。
+    Internal(api_v0::error::MmError),
+}
+
 pub use api_v0::kernel_bringup::{
         LoadElfError, LoadProgramError, LoadedElf, PrepareUserStackError, RootVolumeReadError, DEFAULT_USER_ELF_PATH,
     };
@@ -32,21 +49,21 @@ pub use api_v0::kernel_bringup::{
         map_identity_range_user,
     };
 
-    pub fn handle_cow_fault(aspace_ptr: usize, fault_addr: usize) -> bool {
+    pub fn handle_cow_fault(aspace_ptr: usize,
+                            fault_addr: usize)
+                            -> api_v0::error::MmResult<bool> {
         #[cfg(feature = "impl-sv39")]
         {
-            return impl_sv39::kernel_mm_impl::handle_cow_fault(aspace_ptr, fault_addr)
-                .unwrap_or(false);
+            return impl_sv39::kernel_mm_impl::handle_cow_fault(aspace_ptr, fault_addr);
         }
         #[cfg(all(not(feature = "impl-sv39"), feature = "impl-loongarch64"))]
         {
-            return impl_loongarch64::kernel_mm_impl::handle_cow_fault(aspace_ptr, fault_addr)
-                .unwrap_or(false);
+            return impl_loongarch64::kernel_mm_impl::handle_cow_fault(aspace_ptr, fault_addr);
         }
         #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
         {
             let _ = (aspace_ptr, fault_addr);
-            false
+            Ok(false)
         }
     }
 
@@ -54,31 +71,63 @@ pub use api_v0::kernel_bringup::{
         aspace_ptr: usize,
         fault_addr: usize,
         access: api_v0::mmap::PageFaultAccess,
-    ) -> bool {
+    ) -> UserPageFaultResult {
         #[cfg(feature = "impl-sv39")]
         {
             use api_v0::addr::VirtAddr;
+            use api_v0::error::MmError;
             use api_v0::mmap::MmapOps;
             let mut alloc = crate::frame_alloctor::GlobalPhysFrameAllocator;
+            let fault_addr = VirtAddr(fault_addr);
             return crate::user_aspace::with_user_aspace_mut(aspace_ptr, |aspace| {
-                MmapOps::handle_page_fault(aspace, &mut alloc, VirtAddr(fault_addr), access)
+                let outcome = match MmapOps::handle_page_fault(aspace,
+                                                               &mut alloc,
+                                                               fault_addr,
+                                                               access)
+                {
+                    Ok(true) => UserPageFaultResult::Handled,
+                    Ok(false) if aspace.madvise_range_mapped(fault_addr, 1) => {
+                        UserPageFaultResult::AccessError
+                    }
+                    Ok(false) => UserPageFaultResult::MapError,
+                    Err(MmError::OutOfMemory) => UserPageFaultResult::OutOfMemory,
+                    Err(MmError::AccessViolation) => UserPageFaultResult::BackingError,
+                    Err(error) => UserPageFaultResult::Internal(error),
+                };
+                Ok(outcome)
             })
-            .unwrap_or(false);
+            .unwrap_or_else(UserPageFaultResult::Internal);
         }
         #[cfg(all(not(feature = "impl-sv39"), feature = "impl-loongarch64"))]
         {
             use api_v0::addr::VirtAddr;
+            use api_v0::error::MmError;
             use api_v0::mmap::MmapOps;
             let mut alloc = crate::frame_alloctor::GlobalPhysFrameAllocator;
+            let fault_addr = VirtAddr(fault_addr);
             return crate::user_aspace::with_user_aspace_mut(aspace_ptr, |aspace| {
-                MmapOps::handle_page_fault(aspace, &mut alloc, VirtAddr(fault_addr), access)
+                let outcome = match MmapOps::handle_page_fault(aspace,
+                                                               &mut alloc,
+                                                               fault_addr,
+                                                               access)
+                {
+                    Ok(true) => UserPageFaultResult::Handled,
+                    Ok(false) if aspace.madvise_range_mapped(fault_addr, 1) => {
+                        UserPageFaultResult::AccessError
+                    }
+                    Ok(false) => UserPageFaultResult::MapError,
+                    Err(MmError::OutOfMemory) => UserPageFaultResult::OutOfMemory,
+                    Err(MmError::AccessViolation) => UserPageFaultResult::BackingError,
+                    Err(error) => UserPageFaultResult::Internal(error),
+                };
+                Ok(outcome)
             })
-            .unwrap_or(false);
+            .unwrap_or_else(UserPageFaultResult::Internal);
         }
         #[cfg(not(any(feature = "impl-sv39", feature = "impl-loongarch64")))]
         {
             let _ = (aspace_ptr, fault_addr, access);
-            false
+            UserPageFaultResult::MapError
         }
     }
 

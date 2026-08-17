@@ -214,6 +214,11 @@ pub fn account_task_io(task_id: task::TaskId, read: bool, bytes: u64) {
     registry().exclusive_access().account_io(task_id, read, bytes);
 }
 
+/// 累加一次同时产生读、写字符流量的内核内数据搬运。
+pub fn account_task_io_transfer(task_id: task::TaskId, bytes: u64) {
+    registry().exclusive_access().account_io_transfer(task_id, bytes);
+}
+
 /// 返回 `[rchar, wchar, syscr, syscw]`，供 procfs 回调使用。
 pub fn lookup_io_for_task(task_id: task::TaskId) -> Option<[u64; 4]> {
     let mut reg = registry().exclusive_access();

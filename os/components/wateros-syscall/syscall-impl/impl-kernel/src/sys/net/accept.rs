@@ -71,7 +71,8 @@ fn accept_inner(fd : usize, addr_ptr : usize, addrlen_ptr : usize, flags : usize
         Err(_) => return UserRet::from_error(ErrNo::ENOTSOCK),
     }
 
-    let nonblocking = (flags & SOCK_NONBLOCK) != 0 || socket_fd::is_nonblocking(fd);
+    let nonblocking =
+        (flags & SOCK_NONBLOCK) != 0 || socket_fd::is_nonblocking_socket(&socket);
     let task_id = task::current_task_id().unwrap_or(0);
 
     let status_flags = if flags & SOCK_NONBLOCK != 0 {

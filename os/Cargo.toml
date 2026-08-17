@@ -101,6 +101,7 @@
         # "runtime/impl-info",
         # "runtime/impl-debug",
         # "runtime/impl-warn",
+        # main 分支固定为 error 等级
         "runtime/impl-error",
         # "dashboard-debug",
         "dep:klog",
@@ -142,11 +143,13 @@
         "mm/self_test-sv39",
         "platform/impl-qemu-riscv64-opensbi",
         # "runtime/impl-trace",
-        #"runtime/impl-info",
+        # "runtime/impl-info",
+        # "runtime/impl-debug",
         # "runtime/impl-warn",
+        # main 分支固定为 error 等级
+        "runtime/impl-error",
         "dep:klog",
         "klog/default",
-        "runtime/impl-error",
         "runtime/impl-platform-console",
         "runtime/impl-riscv64",
         "syscall/impl-kernel",

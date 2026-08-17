@@ -12,7 +12,8 @@ use wateros_base_config::task::SCHED_TIMER_PERIOD_MS;
 use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_fd;
 use crate::user_copy::{
-    copy_from_user, copy_from_user_struct, copy_to_user, copy_to_user_progress, copy_to_user_struct,
+    copy_from_user, copy_from_user_array, copy_from_user_struct, copy_to_user,
+    copy_to_user_progress, copy_to_user_struct,
 };
 
 #[repr(C)]
@@ -274,15 +275,12 @@ fn sendmsg_one(fd : usize, msg_ptr : usize, flags : usize) -> Result<usize, ErrN
     }
 
     // 读取 iovec 数组并收集数据
-    let iov_size = core::mem::size_of::<IoVec>();
     let mut total_len : usize = 0;
-    let mut iovs : alloc::vec::Vec<IoVec> = alloc::vec![];
-
-    for i in 0..msg.msg_iovlen {
-        let iov : IoVec = match copy_from_user_struct(msg.msg_iov + i * iov_size) {
-            Ok(v) => v,
-            Err(_) => return Err(ErrNo::EFAULT),
-        };
+    let iovs = match copy_from_user_array::<IoVec>(msg.msg_iov, msg.msg_iovlen) {
+        Ok(iovs) => iovs,
+        Err(error) => return Err(error),
+    };
+    for iov in &iovs {
         total_len = match total_len.checked_add(iov.iov_len) {
             Some(total) => total,
             None => return Err(ErrNo::EINVAL),
@@ -290,7 +288,6 @@ fn sendmsg_one(fd : usize, msg_ptr : usize, flags : usize) -> Result<usize, ErrN
         if total_len > SYSCALL_IO_MAX {
             return Err(ErrNo::EMSGSIZE);
         }
-        iovs.push(iov);
     }
 
     if total_len == 0 {
@@ -331,7 +328,7 @@ fn sendmsg_one(fd : usize, msg_ptr : usize, flags : usize) -> Result<usize, ErrN
 
     let sent = match socket.kind() {
         Ok(SocketKind::Udp) => {
-            super::sendto::send_udp_blocking(fd, &socket, &kbuf, destination, flags)
+            super::sendto::send_udp_blocking(&socket, &kbuf, destination, flags)
         }
         Ok(SocketKind::Tcp) => socket.send(&kbuf)
                                      .map_err(super::sendto::socket_send_error_to_errno),
@@ -372,20 +369,16 @@ pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
     }
 
     // 读取 iovec 数组并计算总接收空间
-    let iov_size = core::mem::size_of::<IoVec>();
     let mut total_len : usize = 0;
-    let mut iovs : alloc::vec::Vec<IoVec> = alloc::vec![];
-
-    for i in 0..msg.msg_iovlen {
-        let iov : IoVec = match copy_from_user_struct(msg.msg_iov + i * iov_size) {
-            Ok(v) => v,
-            Err(_) => return UserRet::from_error(ErrNo::EFAULT),
-        };
+    let iovs = match copy_from_user_array::<IoVec>(msg.msg_iov, msg.msg_iovlen) {
+        Ok(iovs) => iovs,
+        Err(error) => return UserRet::from_error(error),
+    };
+    for iov in &iovs {
         total_len = match total_len.checked_add(iov.iov_len) {
             Some(total) if total <= SYSCALL_IO_MAX => total,
             _ => return UserRet::from_error(ErrNo::EINVAL),
         };
-        iovs.push(iov);
     }
 
     if total_len == 0 {
@@ -400,7 +393,7 @@ pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
         Ok(kind) => kind,
         Err(_) => return UserRet::from_error(ErrNo::ENOTSOCK),
     };
-    let lease = match recvmsg_receive_blocking(fd, &socket, flags, total_len) {
+    let lease = match recvmsg_receive_blocking(&socket, flags, total_len) {
         Ok(Some(lease)) => lease,
         Ok(None) => return UserRet::from_success(0),
         Err(error) => return UserRet::from_error(error),
@@ -495,16 +488,11 @@ pub(crate) fn sys_recvmsg(args : SyscallArgs) -> UserRet {
     }
 }
 
-fn recvmsg_is_nonblocking(fd : usize, flags : usize) -> bool {
-    socket_fd::is_nonblocking(fd) || (flags & MSG_DONTWAIT) != 0
-}
-
-fn recvmsg_receive_blocking(fd : usize,
-                            socket : &SocketRef,
+fn recvmsg_receive_blocking(socket : &SocketRef,
                             flags : usize,
                             max_len : usize)
                             -> Result<Option<SocketReceiveLease>, ErrNo> {
-    let nonblocking = recvmsg_is_nonblocking(fd, flags);
+    let nonblocking = socket_fd::is_nonblocking_socket(socket) || (flags & MSG_DONTWAIT) != 0;
     let wait_ticks = socket_recv_wait_ticks(socket, SOCKET_RECVMSG_WAIT_TICKS);
     for _ in 0..wait_ticks {
         drive_network_stack();

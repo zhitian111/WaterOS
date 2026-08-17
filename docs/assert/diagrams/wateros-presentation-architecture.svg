@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="770" viewBox="0 100 1600 770" role="img" aria-labelledby="title desc">
+  <title id="title">WaterOS 展示用内核架构图</title>
+  <desc id="desc">从用户态应用、Linux generic64 ABI、共享内核服务、设备与持久化服务到 RISC-V64 与 LoongArch64 双架构底座。</desc>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#000" flood-opacity=".28"/></filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#7DD3FC"/></marker>
+    <style>
+      .sans{font-family:Inter,"Noto Sans SC","Source Han Sans SC",Arial,sans-serif}
+      .title{font-size:30px;font-weight:700;fill:#F4F8FC}
+      .layer{font-size:18px;font-weight:700;fill:#F4F8FC}
+      .label{font-size:19px;font-weight:700;fill:#F4F8FC}
+      .small{font-size:14px;fill:#BBD0E3}
+      .tiny{font-size:13px;fill:#AFC2D8}
+      .arrow{fill:none;stroke:#7DD3FC;stroke-width:2.5;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <!-- user space -->
+  <rect x="60" y="112" width="1480" height="126" rx="16" fill="#091D35" stroke="#3B82F6" stroke-width="2"/>
+  <text x="86" y="143" class="sans layer">用户态｜真实程序运行在同一套通用内核语义之上</text>
+  <g filter="url(#shadow)">
+    <rect x="86" y="161" width="430" height="58" rx="9" fill="#0D2B4B" stroke="#22D3EE" stroke-width="2"/>
+    <rect x="585" y="161" width="430" height="58" rx="9" fill="#0D2B4B" stroke="#22D3EE" stroke-width="2"/>
+    <rect x="1084" y="161" width="430" height="58" rx="9" fill="#0D2B4B" stroke="#22D3EE" stroke-width="2"/>
+  </g>
+  <text x="301" y="188" text-anchor="middle" class="sans label">图形桌面</text><text x="301" y="208" text-anchor="middle" class="sans small">Nano-X · WaterFM · mGBA · nxterm</text>
+  <text x="800" y="188" text-anchor="middle" class="sans label">Unix 开发环境</text><text x="800" y="208" text-anchor="middle" class="sans small">APT · Neovim · GCC · ELF</text>
+  <text x="1299" y="188" text-anchor="middle" class="sans label">重型工作负载</text><text x="1299" y="208" text-anchor="middle" class="sans small">BuildStorm · 多进程 · 文件 I/O</text>
+
+  <!-- ABI -->
+  <path d="M301 238 V260 M800 238 V260 M1299 238 V260" class="arrow"/>
+  <rect x="60" y="262" width="1480" height="62" rx="12" fill="#0891B2" stroke="#67E8F9" stroke-width="2"/>
+  <text x="800" y="289" text-anchor="middle" class="sans label" fill="#061426">Linux generic64 ABI</text>
+  <text x="800" y="309" text-anchor="middle" class="sans tiny" fill="#061426">syscall · signals · files · sockets · poll</text>
+
+  <!-- kernel -->
+  <path d="M800 324 V344" class="arrow"/>
+  <rect x="60" y="346" width="1480" height="190" rx="16" fill="#091D35" stroke="#22D3EE" stroke-width="2"/>
+  <text x="86" y="377" class="sans layer">WaterOS Rust 宏内核｜共享内核服务</text>
+  <g filter="url(#shadow)">
+    <rect x="86" y="397" width="260" height="112" rx="9" fill="#123B61" stroke="#3B82F6" stroke-width="1.5"/>
+    <rect x="377" y="397" width="260" height="112" rx="9" fill="#123B61" stroke="#3B82F6" stroke-width="1.5"/>
+    <rect x="668" y="397" width="260" height="112" rx="9" fill="#123B61" stroke="#3B82F6" stroke-width="1.5"/>
+    <rect x="959" y="397" width="260" height="112" rx="9" fill="#123B61" stroke="#3B82F6" stroke-width="1.5"/>
+    <rect x="1250" y="397" width="264" height="112" rx="9" fill="#123B61" stroke="#3B82F6" stroke-width="1.5"/>
+  </g>
+  <text x="216" y="435" text-anchor="middle" class="sans label">任务与调度</text><text x="216" y="461" text-anchor="middle" class="sans small">Process · Thread · Scheduler</text>
+  <text x="507" y="435" text-anchor="middle" class="sans label">虚拟内存</text><text x="507" y="461" text-anchor="middle" class="sans small">页表 · mmap · page fault</text>
+  <text x="798" y="435" text-anchor="middle" class="sans label">VFS 与文件系统</text><text x="798" y="461" text-anchor="middle" class="sans small">FD · mount · ext4 · PageCache</text>
+  <text x="1089" y="435" text-anchor="middle" class="sans label">IPC 与同步</text><text x="1089" y="461" text-anchor="middle" class="sans small">pipe · futex · signal · waitqueue</text>
+  <text x="1382" y="435" text-anchor="middle" class="sans label">网络协议栈</text><text x="1382" y="461" text-anchor="middle" class="sans small">socket · poll/epoll · smoltcp</text>
+  <path d="M216 509 V548 M507 509 V548 M798 509 V548 M1089 509 V548 M1382 509 V548" class="arrow"/>
+
+  <!-- IO -->
+  <rect x="60" y="550" width="1480" height="145" rx="16" fill="#091D35" stroke="#2DD4A7" stroke-width="2"/>
+  <text x="86" y="581" class="sans layer">设备与持久化服务｜把内核能力接到真实 I/O</text>
+  <g filter="url(#shadow)">
+    <rect x="86" y="601" width="330" height="68" rx="9" fill="#164E63" stroke="#2DD4A7" stroke-width="1.5"/>
+    <rect x="452" y="601" width="330" height="68" rx="9" fill="#164E63" stroke="#2DD4A7" stroke-width="1.5"/>
+    <rect x="818" y="601" width="330" height="68" rx="9" fill="#164E63" stroke="#2DD4A7" stroke-width="1.5"/>
+    <rect x="1184" y="601" width="330" height="68" rx="9" fill="#164E63" stroke="#2DD4A7" stroke-width="1.5"/>
+  </g>
+  <text x="251" y="630" text-anchor="middle" class="sans label">存储路径</text><text x="251" y="651" text-anchor="middle" class="sans small">VFS → PageCache → ext4</text>
+  <text x="617" y="630" text-anchor="middle" class="sans label">VirtIO 驱动</text><text x="617" y="651" text-anchor="middle" class="sans small">block · net · input · gpu</text>
+  <text x="983" y="630" text-anchor="middle" class="sans label">图形与输入</text><text x="983" y="651" text-anchor="middle" class="sans small">/dev/fb0 · evdev · framebuffer</text>
+  <text x="1349" y="630" text-anchor="middle" class="sans label">平台运行时</text><text x="1349" y="651" text-anchor="middle" class="sans small">timer · console · SMP · klog</text>
+  <path d="M617 669 V718 M1349 669 V718" class="arrow"/>
+
+  <!-- architectures -->
+  <rect x="60" y="720" width="1480" height="136" rx="16" fill="#061426" stroke="#A78BFA" stroke-width="2"/>
+  <text x="86" y="750" class="sans layer">双架构底座｜共享上层语义，隔离 ISA 与板级适配</text>
+  <rect x="86" y="769" width="690" height="67" rx="10" fill="#173B7A" stroke="#60A5FA" stroke-width="2"/>
+  <rect x="824" y="769" width="690" height="67" rx="10" fill="#4C267A" stroke="#A78BFA" stroke-width="2"/>
+  <text x="431" y="798" text-anchor="middle" class="sans label">RISC-V64</text><text x="431" y="820" text-anchor="middle" class="sans small">OpenSBI · Sv39 · VirtIO-MMIO</text>
+  <text x="1169" y="798" text-anchor="middle" class="sans label">LoongArch64</text><text x="1169" y="820" text-anchor="middle" class="sans small">CSR · LA 页表 · VirtIO-PCI</text>
+
+</svg>

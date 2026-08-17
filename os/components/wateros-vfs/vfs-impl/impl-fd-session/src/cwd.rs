@@ -250,6 +250,16 @@ impl PerTaskCwdRegistry {
         }
     }
 
+    /// 记录一次同时产生读、写字符流量的内核内搬运 syscall。
+    pub fn account_io_transfer(&mut self, task_id: task::TaskId, bytes: u64) {
+        let owner = self.ensure_owner(task_id);
+        let counters = self.io_counters.entry(owner).or_default();
+        counters.syscr = counters.syscr.saturating_add(1);
+        counters.rchar = counters.rchar.saturating_add(bytes);
+        counters.syscw = counters.syscw.saturating_add(1);
+        counters.wchar = counters.wchar.saturating_add(bytes);
+    }
+
     pub fn get_io_counters(&self, task_id: task::TaskId) -> ProcessIoCounters {
         let owner = self.effective_owner(task_id);
         self.io_counters.get(&owner).copied().unwrap_or_default()

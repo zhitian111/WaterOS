@@ -12,6 +12,10 @@
 - `*.mmd`：图表源码，只描述节点、连线和样式分类。
 - `*.svg`：供 Markdown、LaTeX 和演示材料引用的渲染结果。
 
+其中 `wateros-presentation-architecture.svg` 是面向五分钟决赛展示的 16:9 分层图，按
+“用户态 → ABI → 共享内核服务 → 设备与持久化 → 双架构底座”组织；它与
+`wateros-architecture.svg` 的组件依赖视图互补，不替代后者。
+
 配色以 Radix Colors 的 Ruby 色阶为基础，使用浅色背景与 Ruby 12 深红文字组成固定
 对比，并以山东大学红 `#9E1B32` 表示关键边界。SVG 画布透明，但容器和节点保留背景，
 因此标题与正文在浅色、深色页面中均可辨认。

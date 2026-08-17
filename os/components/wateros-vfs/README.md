@@ -1,138 +1,119 @@
 # wateros-vfs
 
-[项目首页](../../../README.md) · [内核工程](../../README.md) · [系统架构](../../../README.md#系统架构)
+[项目首页](../../../README.md) · [内核工程](../../README.md) · [架构说明](../../../README.md#系统架构)
 
-`wateros-vfs` 是 WaterOS 的虚拟文件系统聚合 crate。它通过 [`api`] 定义基本能力契约，
-`active_impl` 选择后端，并把能力组合为 `root`、`mount`、`self_test` 等对外稳定接口。它把
-`wateros-fs` 的根卷/devfs 暴露成统一的 fd 会话与文件句柄，供 syscall 层使用。
+`wateros-vfs` 为内核提供统一的文件访问中间层：上承 syscall、任务和内存管理，下接根文件系统、伪文件系统及设备句柄。它将绝对路径解析、当前工作目录、符号链接、挂载命名空间、每任务文件描述符表和打开文件生命周期组合起来，并以稳定的 `VfsIoHandle` 契约隔离具体后端。普通文件可经页缓存完成共享读取、脏页跟踪、预取和批量写回；管道、控制台、字符设备及可选图形设备则由 fd-session 提供相应句柄。VFS 负责路由、资源持有和错误分类，不直接实现 ext4 磁盘格式、块设备传输或 Linux syscall ABI。
 
-## 模块分层
+## 定位和边界
 
+`wateros-vfs` 是 syscall、MM 和 `wateros-fs` 之间的 VFS 聚合层。它把路径、打开态句柄、每任务
+fd/cwd、挂载命名空间和文件页缓存组合为稳定的 VFS 面；`vfs-api/api-v0` 只定义契约，实际行为由
+`impl-fd-session`、`impl-fs-bridge` 和 `impl-page-cache` 提供（见各自 `Cargo.toml`）。
 
-| 层       | 路径                        | 职责                                                                                              |
-| ---------- | ----------------------------- | --------------------------------------------------------------------------------------------------- |
-| 聚合门面 | `src/lib.rs`                | re-export`api`、`fd`、`cwd`、`mount_ns`；路径解析、符号链接、user-graphics 入口。                 |
-| VFS API  | `vfs-api/api-v0/`           | `VfsBackend`、`VfsIoHandle`、`VfsFdSession`、`VfsMountOps`、设备映射等契约；不依赖 `wateros-fs`。 |
-| fd 会话  | `vfs-impl/impl-fd-session/` | per-task fd 表、cwd、文件锁，以及控制台/pipe/char dev 等`VfsIoHandle`。                           |
-| FS 桥接  | `vfs-impl/impl-fs-bridge/`  | 把`VfsBackend` 桥接到 `wateros-fs`：目录/文件/paged/proc/tmpfs 句柄与挂载表。                     |
-| 页缓存   | `vfs-impl/impl-page-cache/` | 全局共享文件页缓存（Direct 模式，LRU）。                                                          |
+它拥有路径规范化/符号链接解析、fd 槽位和句柄生命周期、挂载路由、读预约提交以及缓存一致性；不拥有
+ext4/inode 的磁盘实现（由 `wateros-fs`）、块设备传输（由 `wateros-driver`）或 syscall 参数和 errno
+转换（由 `wateros-syscall`）。组件本身不按 ISA 分叉；RISC-V/LoongArch 的差异由下游平台和驱动隐藏。
 
-## 实现说明
+## 代码地图
 
-- `api` 只定义能力契约（`VfsBackend` / `VfsIoHandle` / `VfsFileHandle` / `VfsFdSession` /
-  `VfsMountOps` 等），不依赖 `wateros-fs`；具体行为由 `impl-fs-bridge` 等实现。
-- 三个主要 feature 面：
-  - `bridge-fs-api`：启用 `impl-fs-bridge`，把 VFS 桥接到 `wateros-fs`（根卷、devfs、procfs、
-    tmpfs、挂载表）。
-  - `impl-fd-session`：启用 per-task fd 表、cwd、文件锁与各类 `VfsIoHandle`（依赖 base/task/
-    arch/debug/tty）。
-  - `user-graphics`：在 fd-session 上启用 `/dev/fb0` 与 evdev（`initialize_user_graphics_devices`、
-    `user_graphics_input_worker`）。
-- 读路径采用预约模型：`VfsReadLease` / `VfsPreparedRead` / `VfsReadFinish`，用户复制成功后
-  提交、失败回滚；页缓存与 fd 会话都复用该语义。
-- 设备映射：`VfsDeviceMapping` / `VfsDeviceMappingLease` / `VfsFramebufferInfo`，供
-  `/dev/fb0` 的 mmap 与 lease 生命周期管理。
-- 路径解析：`normalize_absolute_path`、`resolve_against_cwd`、`resolve_open_path`、
-  `resolve_symlink_path_with`（`FinalSymlink`）；符号链接展开与挂载路由在桥接层完成。
-- 页缓存 Lock ordering：`files` → per-file `FileEntryInner` → `state` → 根卷 `SharedRwFs`，
-  禁止逆序；`state` 锁内不得调用下层块设备 I/O。
+| 语义层 | 主要路径 | 当前职责 |
+| --- | --- | --- |
+| 聚合 facade | `src/lib.rs` | feature 选择 `active_impl::backend()`，导出路径解析、fd/cwd/mount_ns 和图形设备入口 |
+| 公共契约 | `vfs-api/api-v0/src/{backend,handle,fd,mount,resolve}.rs` | `VfsBackend`、`VfsIoHandle`、`VfsFdSession`、挂载/路径/错误契约；不依赖 FS |
+| fd 会话 | `vfs-impl/impl-fd-session/src/{registry,cwd,handles}.rs` | `PerTaskFdRegistry`、共享打开文件描述、cwd/root、pipe/console/字符设备和 flock |
+| FS 桥接 | `vfs-impl/impl-fs-bridge/src/{lib,path_ops,mount_table,paged_handle,file_handle}.rs` | 根卷与伪 FS 路由、目录/普通文件/tmpfile/procfs/sysfs 句柄、稳定节点 |
+| 页缓存 | `vfs-impl/impl-page-cache/src/{lib,file_cache,cache_state}.rs` | 按挂载代次和文件身份索引的共享 LRU、脏页、预取和批量写回 |
 
-## 调用链路
+`bridge-fs-api`、`impl-fd-session` 是默认 feature；`user-graphics` 追加 `/dev/fb0`/evdev，
+`cache-layer-diagnostics` 打开缓存诊断，`self_test` 仅在显式启用时导出。关闭桥接时 facade 使用
+`UnsupportedBackend`，能力列表为空，挂载返回 `VfsError::Unsupported`（`src/lib.rs`）。
 
-打开路径：
+## 核心状态与数据结构
 
-```text
-sys_openat
-  -> resolve_open_path（cwd + 符号链接展开）
-  -> VfsOpenOps / 后端（FsBridge → wateros-fs 或特殊设备 open_special_device）
-  -> 得到 Box<dyn VfsIoHandle>，登记到 PerTaskFdRegistry
+| 状态 | 关键字段/存储 | 并发与生命周期不变量 |
+| --- | --- | --- |
+| `PerTaskFdRegistry` | `TaskId -> Vec<Option<SharedIoHandle>>`，另有 close-on-exec/path-only 标志表 | registry 内锁/可变借用保护槽位；`SharedIoHandle` 以 `Arc<Mutex<OpenFileDescription>>` 共享，`close_once` 保证幂等；任务创建时建立，close/exec 时释放对应槽位 |
+| `PerTaskCwdRegistry` | 任务到 cwd、进程 root、`CLONE_FS` 共享关系的表（`cwd.rs`） | fork 复制或按 `CLONE_FS` 共享；解析不得越过虚拟 root，任务退出时清理 |
+| `MountNamespace`/`MountEntry` | 根挂载及辅助挂载的前缀、`mount_id`、`fstype`、传播属性；全局 registry 由 `MultiprocessorSafeCell` 发布 | `resolve_route` 按最长前缀选择 Root/AuxRw/AuxRo/Pseudo 路由；挂载 ID 单调分配，命名空间按任务引用，卸载后不再接受新路由 |
+| `StableNodeLease`/detached 状态 | `(mount_id,node_id)` 到稳定 inode 的弱引用表；unlink 后句柄可持有 detached 数据 | 打开句柄持有 lease；最后一个引用释放时回收未发布 tmpfile/缓存元数据，内容版本原子递增 |
+| `GlobalFilePageCache` | `GLOBAL_CACHE: Mutex<Option<Arc<_>>>`；`FileCacheKey{mount_gen,stable,path}`、帧池、LRU、每文件脏页版本 | `files -> FileEntryInner -> state -> FS` 锁顺序；I/O 在 `state` 锁外执行；脏页版本匹配才标记 clean；挂载代次切换原地清空并复用帧池 |
+
+## 关键链路
+
+### 打开、读取与关闭
+
+```mermaid
+sequenceDiagram
+    participant S as syscall
+    participant R as resolve_open_path
+    participant B as FsBridge::open
+    participant F as PerTaskFdRegistry
+    participant C as PagedFileHandle/page-cache
+    S->>R: cwd + absolute path
+    R->>B: resolve_route + symlink
+    B-->>S: Box<dyn VfsIoHandle>
+    S->>F: alloc_fd_for_task
+    F->>F: SharedIoHandle::new
+    S->>F: prepare_read(fd,len)
+    F->>C: read/预约 VfsPreparedRead
+    C-->>S: staged bytes
+    S->>F: finish(commit 或 rollback)
+    S->>F: close_fd
+    F->>C: flush/释放最后 open ref
 ```
 
-读取路径：
+`resolve_symlink_absolute` 在最终组件是否跟随由 `FinalSymlink` 决定，并把超过 40 次展开转成
+`TooManySymlinks`；桥接层把 FS 错误映射为 `VfsError`。读预约在用户复制失败时回滚，避免字节被
+错误消费；`PagedFileHandle::Drop` 配合缓存的 `release_open_ref_key` 回收路径元数据。
 
-```text
-read(2)
-  -> PerTaskFdRegistry 定位 fd
-  -> VfsIoHandle / VfsFileHandle（fs-bridge 句柄）
-  -> VfsReadLease 预约 -> 用户复制 -> finish 提交/回滚
-  -> 页缓存（impl-page-cache）-> ext4（wateros-fs）
+### 写入、淘汰与持久化
+
+```mermaid
+flowchart TD
+    A[write/truncate on PagedFileHandle] --> B[global_cache: mark dirty + version]
+    B --> C{flush 或 LRU 淘汰}
+    C -->|淘汰脏页| D[锁外 PageCacheIo::write_range]
+    C -->|显式 flush_all| E[按连续页合并 flush_dirty_run]
+    D --> F{版本仍匹配?}
+    E --> F
+    F -->|是| G[mark_clean / 清除 dirty_pages]
+    F -->|否| H[保留新写入，下一轮重试]
+    G --> I[FsBridge -> root_rw/辅助 RW FS -> block driver]
 ```
 
-挂载 / user-graphics：
+页缓存缺页时 `install_page` 先释放 cache 锁再读盘，第二次加锁检查避免重复装页；没有可用帧时
+等待 LRU 状态变化。`flush_all` 是 `reset_global_cache` 前的持久化边界，不能在未写回时直接丢弃旧代次。
 
-```text
-mount
-  -> VfsMountOps / mount_table（resolve_route / FsRoute）
-Nano-X 打开 /dev/fb0
-  -> open_special_device -> FramebufferHandle / EvdevHandle（user_graphics）
-```
+## 机制与正确性
 
-## 各实现功能
+- 路由顺序是 namespace 的最长前缀匹配；Root、AuxRw、AuxRo、proc/sys/security 伪挂载分别决定
+  可写性，写入只允许 Root/AuxRw，否则返回 `ReadOnlyFs`。
+- fd 槽位区分普通 fd、`FD_CLOEXEC` 和 `FD_PATH_ONLY`；共享打开描述在并发 close/dup 时以
+  `closed` 和 `Busy` 防止重复释放或取得可变句柄失败。pipe/stream 的端点引用由句柄对象持有。
+- 页缓存的 `mount_gen` 使用 `AtomicU64` Release/Acquire 发布；旧代次请求被忽略，新代次清空索引但
+  复用帧池。写回只在 key、页号和版本仍一致时清脏，避免写回覆盖并发新数据。
+- FS/块设备调用不得在 page-cache `state` 锁内进行；读盘、写回和预取均在锁外完成。VFS 错误在
+  bridge 边界统一为 `VfsError`，syscall 再负责 Linux errno。
+- `user-graphics` 的 `initialize_user_graphics_devices` 必须在平台驱动探测后调用；输入 worker
+  是低优先级任务。该组件没有在 VFS 内实现权限模型、块设备调度或完整 Linux mount 语义。
 
-### vfs-api / VFS 公共 API
+## 初始化、配置与可观测性
 
-主要实现在 `vfs-api/api-v0/src/`。
+构建默认启用 `api-v0 + bridge-fs-api + impl-fd-session`；根卷和 devfs/procfs 的实际初始化属于
+`wateros-fs`，VFS 只在其可用后通过 `FsBridge` 建立句柄和路由。页缓存容量和页大小来自
+`wateros-base/base-config`（`FILE_PAGE_SIZE`、缓存帧容量及 `FLUSH_RUN_MAX_PAGES`），不是运行时由
+VFS 自动扩容。`cache-layer-diagnostics` 提供 lookup/install/eviction 计数，`self_test` 提供
+页缓存和桥接自检；运行时日志使用 `[page-cache]` 等组件前缀。
 
-- 定义统一的打开态句柄契约：`VfsIoHandle` / `VfsFileHandle` 把读、写、seek、close、poll 等
-  语义抽象成 trait，syscall 层只依赖这些抽象，不感知具体文件系统后端或设备类型。
-- 提供预约式读取：先 `prepare_read` 预约输入字节，再以 `VfsReadLease` 持有 staged data，最后
-  `finish` 提交或回滚；用户复制失败时返回 `Fault`，未消费字节不会丢失，避免并发读取重复消费。
-- 提供文件内容版本化：`VfsFileContentIdentity` 在内容变更后递增版本号，缓存消费者把版本纳入
-  键，跨 close/reopen 保持稳定，避免读到旧内容缓存。
-- 提供 framebuffer 的中立视图与区域校验：`VfsFramebufferInfo` / `VfsFramebufferRegion` 让
-  syscall 层不依赖具体 VirtIO 驱动即可实现 `/dev/fb0` 的 mmap 与区域刷新，`fits` 用
-  checked 运算拒绝越界与溢出。
-- 提供路径解析与规范化：`normalize_absolute_path` 规整 `..`/`.`（如 `/a/./b/../c` →
-  `/a/c`），`resolve_open_path` 结合 cwd 解析，`resolve_symlink_path_with` 按 `FinalSymlink`
-  决定是否跟随最终符号链接。
-- 定义 fd 会话、挂载与节点视图契约：固定 stdin/stdout/stderr fd（`VFS_STDIN_FD` 等）与动态
-  fd 起点、`VfsMountOps` / `VfsMountTable`、devfs 节点视图与 `VfsError` 统一错误分类。
+建议验证入口：`cargo check --manifest-path os/components/wateros-vfs/Cargo.toml`、
+`cargo test --manifest-path os/components/wateros-vfs/vfs-impl/impl-page-cache/Cargo.toml`
+（含页缓存并发/写回单测），以及目标架构的 `make rv_check`/`make la_check`。
 
-### impl-fd-session / per-task fd 会话
+## 限制与后续边界
 
-主要实现在 `vfs-impl/impl-fd-session/src/`。
-
-- 提供 per-task fd 表：以 `TaskId` 为 key 维护每个任务的打开文件集合，`close` 幂等（`closed`
-  标志防止重复关闭），并区分普通 fd 与 `FD_CLOEXEC`（exec 时自动关闭）、`FD_PATH_ONLY`
-  （`O_PATH`，只参与路径解析，不可读写）。
-- 提供控制台与 pipe 句柄：`ConsoleInHandle` / `ConsoleOutHandle` 桥接 tty；匿名 pipe、命名
-  pipe 与 Unix 流 socket 对（`pipe_handle_pair` / `stream_pair_handle_pair`）成对创建，读端/
-  写端/对端生命周期独立管理。
-- 提供各类设备句柄：null、zero、urandom、CPU-dma-latency 等特殊设备，以及 RTC 等字符设备
-  句柄（含 devfs 路径元数据查询）。
-- 提供 per-task cwd、进程 root 与文件锁：`PerTaskCwdRegistry` 维护工作目录及 `chroot(2)`
-  根边界，fork 复制、`CLONE_FS` 共享，并约束绝对路径、`..`、符号链接和保存的 dirfd；
-  `Flock` 按 inode 索引实现 `LOCK_SH` / `LOCK_EX` / `LOCK_UN` / `LOCK_NB` 语义。
-- 提供用户图形特殊设备：`user-graphics` 下打开 `/dev/fb0` 与 evdev，并以低优先级 worker 轮询
-  输入、广播给各打开者；未启用时这些入口编译为空实现。
-
-### impl-fs-bridge / 文件系统桥接
-
-主要实现在 `vfs-impl/impl-fs-bridge/src/`。
-
-普通文件句柄以稳定 inode 支撑 unlink 后 I/O；`O_TMPFILE` 直接创建无目录项节点，支持
-`linkat(AT_EMPTY_PATH)` 同挂载发布，并在最后一个 fd 关闭时回收未发布节点。
-
-- 把 VFS 桥接到 `wateros-fs`：零大小 `FsBridge` 后端把 `FsError` / `FsKind` 映射为
-  `VfsError` / `VfsFsKind`，使 VFS 层不依赖具体 ext4 实现即可访问根卷与 devfs。
-- 支持两种根卷文件句柄：小文件以 `BufferedFileHandle` 全文缓冲于内存（`RootFileHandle` 为兼容
-  别名），大文件走 `PagedFileHandle` 与页缓存协作，按文件规模选择路径。
-- 提供目录、procfs 与 tmpfs：`DirectoryHandle` 目录遍历、procfs 视图句柄、tmpfs 策略层。
-- 支持 per-task 挂载命名空间与辅助挂载表：可挂 RW / RO / procfs 伪挂载 / bind 别名，维护
-  `MountPropagation`（Private/Shared/Slave/Unbindable），路径经 `resolve_route` 按最长前缀
-  路由到对应卷。
-
-### impl-page-cache / 文件页缓存
-
-主要实现在 `vfs-impl/impl-page-cache/src/lib.rs`。
-
-- 提供全局共享文件页缓存：以"挂载代次 + 稳定 (mount_id, node_id)（或路径）"为身份，LRU 缓存
-  页帧；多读者可并发，写/刷盘独占，同一页在多个打开者间共享。
-- 维护脏页与预取：跟踪每文件脏页索引与上次读到的页号，连续脏页合并为一次批量写回，顺序读时
-  触发预取，减少下层块设备 I/O 往返。
-- 支持挂载代次切换时原地重置：`reset_to_gen` 清空缓存元数据并复用已分配帧池，避免每次
-  mount/umount 重建 16 MiB 缓存造成内核堆碎片化与长跑卡死。
-- 保证缺页与写回安全：`install_page` / `install_zero_page` 在调用下层 I/O 前先释放内部锁，
-  写回路径按固定锁顺序（files → 文件条目 → state → 根卷）访问，避免锁反转与持锁下探块设备。
-
-无 FS 桥接时，聚合层内部返回 `NotMounted`/`Unsupported`，不再维护独立占位 crate。
+- API 中部分默认实现仍返回 `Unsupported`；关闭 `bridge-fs-api` 时不会提供可用根卷。
+- 页缓存源码没有覆盖所有生产路径的测试（CodeGraph 未发现 `GlobalFilePageCache` 的完整调用覆盖）；
+  当前自检主要验证 LRU、写回竞争和失败重试。
+- 图形设备入口是 feature-gated 的内核句柄与输入 worker，不等于用户态图形协议或完整显示栈。
+- mount propagation、权限检查和 Linux ABI 的最终 errno/重启语义分别由桥接、cred/task 和 syscall
+  层负责，不能从本 README 的 VFS 契约推断为已完全兼容。

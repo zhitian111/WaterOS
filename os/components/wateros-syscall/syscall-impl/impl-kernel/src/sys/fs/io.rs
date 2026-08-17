@@ -5,7 +5,7 @@ use crate::fallible_buf::{try_kbuf, SYSCALL_IO_MAX};
 use crate::socket_block::socket_blocking_tick;
 use crate::socket_fd;
 use crate::user_copy::{
-    copy_from_user, copy_from_user_struct, copy_to_user_progress, UserWriteProgress,
+    copy_from_user, copy_from_user_array, copy_to_user_progress, UserWriteProgress,
 };
 use crate::vfs_util::{vfs_error_to_errno, vfs_io_at_error_to_errno};
 use alloc::boxed::Box;
@@ -44,14 +44,8 @@ struct UserIoVec {
     len : usize,
 }
 
-#[derive(Clone, Copy)]
-struct ImportedIoVec {
-    base : usize,
-    len : usize,
-}
-
 struct ImportedIoVecs {
-    entries : Vec<ImportedIoVec>,
+    entries : Vec<UserIoVec>,
     total_len : usize,
 }
 
@@ -82,10 +76,9 @@ pub(crate) fn sys_read(args : SyscallArgs) -> UserRet {
 }
 
 fn acquire_read_lease(fd : usize, transfer_len : usize) -> Result<Box<dyn VfsReadLease>, ErrNo> {
-    let socket_wait = socket_fd::lookup(fd).map(|_| {
-                                               (socket_fd::is_nonblocking(fd),
-                                                task::current_task_id().unwrap_or(0))
-                                           });
+    let socket_wait = socket_fd::lookup(fd).map(|socket| {
+        (socket_fd::is_nonblocking_socket(&socket), task::current_task_id().unwrap_or(0))
+    });
     let lease = loop {
         if socket_wait.is_some() {
             drive_network_stack();
@@ -162,16 +155,9 @@ fn import_iovecs(iov_ptr : usize, iovcnt : usize) -> Result<ImportedIoVecs, ErrN
     if iovcnt > 0 && iov_ptr == 0 {
         return Err(ErrNo::EFAULT);
     }
-    let mut entries = Vec::new();
-    entries.try_reserve_exact(iovcnt)
-           .map_err(|_| ErrNo::ENOMEM)?;
-    let iov_size = core::mem::size_of::<UserIoVec>();
+    let entries = copy_from_user_array::<UserIoVec>(iov_ptr, iovcnt)?;
     let mut total_len = 0usize;
-    for index in 0..iovcnt {
-        let address = index.checked_mul(iov_size)
-                           .and_then(|offset| iov_ptr.checked_add(offset))
-                           .ok_or(ErrNo::EFAULT)?;
-        let iov = copy_from_user_struct::<UserIoVec>(address)?;
+    for iov in &entries {
         if iov.len > 0 && iov.base == 0 {
             return Err(ErrNo::EFAULT);
         }
@@ -180,21 +166,19 @@ fn import_iovecs(iov_ptr : usize, iovcnt : usize) -> Result<ImportedIoVecs, ErrN
         if total_len > isize::MAX as usize {
             return Err(ErrNo::EINVAL);
         }
-        entries.push(ImportedIoVec { base : iov.base,
-                                     len : iov.len });
     }
     Ok(ImportedIoVecs { entries, total_len })
 }
 
 struct IovScatterCursor<'a> {
-    entries : &'a [ImportedIoVec],
+    entries : &'a [UserIoVec],
     index : usize,
     offset : usize,
     copied : usize,
 }
 
 impl<'a> IovScatterCursor<'a> {
-    fn new(entries : &'a [ImportedIoVec]) -> Self {
+    fn new(entries : &'a [UserIoVec]) -> Self {
         Self { entries,
                index : 0,
                offset : 0,
@@ -247,7 +231,7 @@ impl<'a> IovScatterCursor<'a> {
     }
 }
 
-fn scatter_progress(iovecs : &[ImportedIoVec], data : &[u8]) -> UserWriteProgress {
+fn scatter_progress(iovecs : &[UserIoVec], data : &[u8]) -> UserWriteProgress {
     IovScatterCursor::new(iovecs).write(data)
 }
 
@@ -460,8 +444,8 @@ pub(crate) fn sys_writev(args : SyscallArgs) -> UserRet {
 fn write_fd(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
     if let Some(socket) = socket_fd::lookup(fd) {
         return match socket.kind() {
-            Ok(SocketKind::Tcp) => write_tcp_socket_blocking(fd, buf),
-            Ok(SocketKind::Udp) => write_udp_socket_blocking(fd, buf),
+            Ok(SocketKind::Tcp) => write_tcp_socket_blocking(&socket, buf),
+            Ok(SocketKind::Udp) => write_udp_socket_blocking(&socket, buf),
             Err(_) => Err(ErrNo::ENOTSOCK),
         };
     }
@@ -565,11 +549,10 @@ fn check_tty_foreground(fd : usize, writing : bool) -> Result<(), ErrNo> {
     Err(ErrNo::EINTR)
 }
 
-fn write_tcp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
-    let nonblocking = socket_fd::is_nonblocking(fd);
+fn write_tcp_socket_blocking(socket : &SocketRef, buf : &[u8]) -> Result<usize, ErrNo> {
+    let nonblocking = socket_fd::is_nonblocking_socket(socket);
     let task_id = task::current_task_id().unwrap_or(0);
     loop {
-        let socket = socket_fd::lookup(fd).ok_or(ErrNo::ENOTSOCK)?;
         drive_network_stack();
         let snapshot = socket.poll_snapshot()
                              .map_err(|_| ErrNo::ENOTSOCK)?;
@@ -599,11 +582,10 @@ fn write_tcp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
     }
 }
 
-fn write_udp_socket_blocking(fd : usize, buf : &[u8]) -> Result<usize, ErrNo> {
-    let nonblocking = socket_fd::is_nonblocking(fd);
+fn write_udp_socket_blocking(socket : &SocketRef, buf : &[u8]) -> Result<usize, ErrNo> {
+    let nonblocking = socket_fd::is_nonblocking_socket(socket);
     let task_id = task::current_task_id().unwrap_or(0);
     loop {
-        let socket = socket_fd::lookup(fd).ok_or(ErrNo::ENOTSOCK)?;
         drive_network_stack();
         match socket.send(buf) {
             Ok(n) => {

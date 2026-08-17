@@ -4,14 +4,14 @@
     edition = "2024"
 
 [dependencies]
-    log = { version = "0.4.29" }
+    log = { version = "0.4.29", default-features = false }
     console = { path = "../runtime-console/", package = "wateros-runtime-console", default-features = false }
     platform = { path = "../../wateros-platform/", package = "wateros-platform", default-features = false, features = [ "api-v0" ], optional = true }
 [features]
     default = [  ]
-    impl-debug = [  ]
-    impl-error = [  ]
-    impl-info = [  ]
+    impl-debug = [ "log/max_level_debug" ]
+    impl-error = [ "log/max_level_error" ]
+    impl-info = [ "log/max_level_info" ]
     impl-platform-console = [ "console/impl-platform-console", "dep:platform" ]
-    impl-trace = [  ]
-    impl-warn = [  ]
+    impl-trace = [ "log/max_level_trace" ]
+    impl-warn = [ "log/max_level_warn" ]

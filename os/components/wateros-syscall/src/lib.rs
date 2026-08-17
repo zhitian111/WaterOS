@@ -11,7 +11,8 @@ pub use impl_kernel::{
     raise_current_fault_signal, raise_current_signal, record_syscall,
     record_user_page_fault_handled, restore_signal_frame,
     send_kernel_signal_to_process_group,
-    terminate_current_process, terminate_current_thread, timer_slack_for_task, timer_tick,
+    terminate_current_process, terminate_current_process_by_signal, terminate_current_thread,
+    timer_slack_for_task, timer_tick, SIGBUS, SIGILL, SIGKILL, SIGSEGV, SIGTRAP,
 };
 
 /// 系统调用内核实现的非用户态自检。

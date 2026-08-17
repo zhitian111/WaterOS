@@ -79,7 +79,9 @@ pub(crate) fn sys_connect(args : SyscallArgs) -> UserRet {
 
     match socket.connect(Ipv4Endpoint { address : ip, port }) {
         Ok(()) if matches!(kind, SocketKind::Udp) => UserRet::from_success(0),
-        Ok(()) if socket_fd::is_nonblocking(fd) => UserRet::from_error(ErrNo::EINPROGRESS),
+        Ok(()) if socket_fd::is_nonblocking_socket(&socket) => {
+            UserRet::from_error(ErrNo::EINPROGRESS)
+        }
         Ok(()) => wait_connected(&socket),
         Err(_) => UserRet::from_error(ErrNo::ECONNREFUSED),
     }

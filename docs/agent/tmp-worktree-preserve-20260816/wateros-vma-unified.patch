@@ -1,0 +1,107 @@
+diff --git a/os/components/wateros-mm/mm-impl/impl-loongarch64/src/user_heap_mmap.rs b/os/components/wateros-mm/mm-impl/impl-loongarch64/src/user_heap_mmap.rs
+index af95bf8e..ec1f0747 100644
+--- a/os/components/wateros-mm/mm-impl/impl-loongarch64/src/user_heap_mmap.rs
++++ b/os/components/wateros-mm/mm-impl/impl-loongarch64/src/user_heap_mmap.rs
+@@ -554,7 +554,30 @@ impl MmapOps for LoongArch64AddressSpace {
+         if self.handle_brk_page_fault(allocator, fault_addr, access)? {
+             return Ok(true);
+         }
+-        self.handle_lazy_page_fault(allocator, fault_addr, access)
++        if self.handle_lazy_page_fault(allocator, fault_addr, access)? {
++            return Ok(true);
++        }
++
++        let vpn = fault_addr.floor_page();
++        if self.translate_addr(vpn.start_addr())?
++               .is_some()
++        {
++            let perm = self.leaf_page_perm(vpn)?
++                           .unwrap_or(PagePerm::empty());
++            let allowed = match access {
++                PageFaultAccess::Read => perm.readable(),
++                PageFaultAccess::Write => perm.writable(),
++                PageFaultAccess::Execute => perm.executable(),
++            };
++            if perm.user() && allowed {
++                platform::arch::paging::flush_tlb_local(
++                    platform::arch::paging::TlbFlushRange::Page {
++                        addr : vpn.start_addr().0,
++                    });
++                return Ok(true);
++            }
++        }
++        Ok(false)
+     }
+ 
+     fn munmap<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,
+diff --git a/os/components/wateros-mm/mm-impl/impl-sv39/src/user_heap_mmap.rs b/os/components/wateros-mm/mm-impl/impl-sv39/src/user_heap_mmap.rs
+index 3ec6feab..d246c596 100644
+--- a/os/components/wateros-mm/mm-impl/impl-sv39/src/user_heap_mmap.rs
++++ b/os/components/wateros-mm/mm-impl/impl-sv39/src/user_heap_mmap.rs
+@@ -530,7 +530,33 @@ impl MmapOps for Sv39AddressSpace {
+         if self.handle_brk_page_fault(allocator, fault_addr, access)? {
+             return Ok(true);
+         }
+-        self.handle_lazy_page_fault(allocator, fault_addr, access)
++        if self.handle_lazy_page_fault(allocator, fault_addr, access)? {
++            return Ok(true);
++        }
++
++        // 页表已经满足本次访问，但当前 CPU 的 TLB 可能保留了 exec/mprotect/COW
++        // 之前的旧权限或旧 PPN。此时只需局部刷新并让用户指令重试，不能把它当成
++        // 未映射地址发送 SIGSEGV。
++        let vpn = fault_addr.floor_page();
++        if self.translate_addr(vpn.start_addr())?
++               .is_some()
++        {
++            let perm = self.leaf_page_perm(vpn)?
++                           .unwrap_or(PagePerm::empty());
++            let allowed = match access {
++                PageFaultAccess::Read => perm.readable(),
++                PageFaultAccess::Write => perm.writable(),
++                PageFaultAccess::Execute => perm.executable(),
++            };
++            if perm.user() && allowed {
++                platform::arch::paging::flush_tlb_local(
++                    platform::arch::paging::TlbFlushRange::Page {
++                        addr : vpn.start_addr().0,
++                    });
++                return Ok(true);
++            }
++        }
++        Ok(false)
+     }
+ 
+     fn munmap<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,
+diff --git a/os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/paged_handle.rs b/os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/paged_handle.rs
+index 494dad88..4490aadc 100644
+--- a/os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/paged_handle.rs
++++ b/os/components/wateros-vfs/vfs-impl/impl-fs-bridge/src/paged_handle.rs
+@@ -676,11 +676,11 @@ impl VfsIoHandle for PagedFileHandle {
+ 
+     // 本方法代码由AI完成
+     fn seek(&mut self, offset : i64, whence : VfsSeekWhence) -> VfsResult<u64> {
+-        log::info!("[paged_handle] seek path={} whence={whence:?} offset={offset} cur={} size={}",
+-                   self.active_path(),
+-                   self.description
+-                       .offset(),
+-                   self.current_size(),);
++        log::trace!("[paged_handle] seek path={} whence={whence:?} offset={offset} cur={} size={}",
++                    self.active_path(),
++                    self.description
++                        .offset(),
++                    self.current_size(),);
+         let result = (|| {
+             let size = self.current_size();
+             let new_off = match whence {
+@@ -707,8 +707,8 @@ impl VfsIoHandle for PagedFileHandle {
+             self.description
+                 .set_offset_if_idle(new_off)
+         })();
+-        log::info!("[paged_handle] seek done path={} result={result:?}",
+-                   self.active_path(),);
++        log::trace!("[paged_handle] seek done path={} result={result:?}",
++                    self.active_path(),);
+         result
+     }
+ 

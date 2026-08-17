@@ -35,7 +35,7 @@ pub(crate) fn set_status_flags(fd: usize, flags: usize) -> Option<()> {
     Some(())
 }
 
-pub(crate) fn is_nonblocking(fd: usize) -> bool {
+pub(crate) fn is_nonblocking_socket(socket: &SocketRef) -> bool {
     const O_NONBLOCK: usize = 0o0004000;
-    status_flags(fd).is_some_and(|flags| flags & O_NONBLOCK != 0)
+    socket.status_flags() & O_NONBLOCK != 0
 }

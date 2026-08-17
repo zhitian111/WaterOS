@@ -69,7 +69,7 @@ pub(crate) fn sys_sendto(args : SyscallArgs) -> UserRet {
         }
     } else {
         // 没有目标地址 → 作为 TCP send（或已 connect 的 UDP）
-        return match send_connected_socket(fd, &socket, buf_ptr, len, flags) {
+        return match send_connected_socket(&socket, buf_ptr, len, flags) {
             Ok(n) => UserRet::from_success(n),
             Err(err) => {
                 log::warn!("[syscall] sendto connected failed: {:?}",
@@ -88,8 +88,7 @@ pub(crate) fn sys_sendto(args : SyscallArgs) -> UserRet {
         _ => return UserRet::from_error(ErrNo::EFAULT),
     }
 
-    match send_udp_blocking(fd,
-                            &socket,
+    match send_udp_blocking(&socket,
                             &kbuf,
                             Some((ip, port)),
                             flags)
@@ -99,8 +98,7 @@ pub(crate) fn sys_sendto(args : SyscallArgs) -> UserRet {
     }
 }
 
-fn send_connected_socket(fd : usize,
-                         socket : &SocketRef,
+fn send_connected_socket(socket : &SocketRef,
                          buf_ptr : usize,
                          len : usize,
                          flags : usize)
@@ -108,25 +106,24 @@ fn send_connected_socket(fd : usize,
     match socket.kind()
                 .map_err(|_| ErrNo::ENOTSOCK)?
     {
-        SocketKind::Tcp => send_tcp_blocking(fd, socket, buf_ptr, len, flags),
+        SocketKind::Tcp => send_tcp_blocking(socket, buf_ptr, len, flags),
         SocketKind::Udp => {
             let mut kbuf = try_kbuf(len, SYSCALL_IO_MAX)?;
             match copy_from_user(&mut kbuf, buf_ptr) {
                 Ok(n) if n == len => {}
                 _ => return Err(ErrNo::EFAULT),
             }
-            send_udp_blocking(fd, socket, &kbuf, None, flags)
+            send_udp_blocking(socket, &kbuf, None, flags)
         }
     }
 }
 
-fn send_tcp_blocking(fd : usize,
-                     socket : &SocketRef,
+fn send_tcp_blocking(socket : &SocketRef,
                      buf_ptr : usize,
                      len : usize,
                      flags : usize)
                      -> Result<usize, ErrNo> {
-    let nonblocking = socket_fd::is_nonblocking(fd) || (flags & MSG_DONTWAIT) != 0;
+    let nonblocking = socket_fd::is_nonblocking_socket(socket) || (flags & MSG_DONTWAIT) != 0;
     let task_id = task::current_task_id().unwrap_or(0);
     loop {
         drive_network_stack();
@@ -165,13 +162,12 @@ fn send_tcp_blocking(fd : usize,
     }
 }
 
-pub(super) fn send_udp_blocking(fd : usize,
-                                socket : &SocketRef,
+pub(super) fn send_udp_blocking(socket : &SocketRef,
                                 data : &[u8],
                                 destination : Option<([u8; 4], u16)>,
                                 flags : usize)
                                 -> Result<usize, ErrNo> {
-    let nonblocking = socket_fd::is_nonblocking(fd) || (flags & MSG_DONTWAIT) != 0;
+    let nonblocking = socket_fd::is_nonblocking_socket(socket) || (flags & MSG_DONTWAIT) != 0;
     let task_id = task::current_task_id().unwrap_or(0);
     loop {
         drive_network_stack();

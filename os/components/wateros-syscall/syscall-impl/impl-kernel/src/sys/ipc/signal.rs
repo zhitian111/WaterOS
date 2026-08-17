@@ -94,6 +94,26 @@ pub(super) fn peek_pending_signal_source(task_id : usize,
                           .unwrap_or_default()
 }
 
+fn take_delivery_signal_source(task_id : usize,
+                               process_pid : usize,
+                               signal : usize)
+                               -> PendingSignalSource {
+    let mut sources = PENDING_SIGNAL_SOURCES.lock();
+    sources.remove(&(PendingSignalOwner::Thread(task_id), signal))
+           .or_else(|| sources.remove(&(PendingSignalOwner::Process(process_pid), signal)))
+           .unwrap_or_default()
+}
+
+fn drop_thread_signal_sources(task_id : usize) {
+    PENDING_SIGNAL_SOURCES.lock()
+                          .retain(|(owner, _), _| *owner != PendingSignalOwner::Thread(task_id));
+}
+
+fn drop_process_signal_sources(process_pid : usize) {
+    PENDING_SIGNAL_SOURCES.lock()
+                          .retain(|(owner, _), _| *owner != PendingSignalOwner::Process(process_pid));
+}
+
 #[cfg(target_arch = "riscv64")]
 const SIGNAL_TRAMPOLINE : usize = 0x0000_0000_7FFF_B000;
 #[cfg(target_arch = "loongarch64")]
@@ -496,12 +516,18 @@ pub(crate) fn raise_current_fault_signal(signal : usize,
         return Err(ErrNo::EINVAL);
     }
     let snapshot = ensure_current_signal_state()?;
+    let dispatch = ipc::signal::force_thread_signal(snapshot.task_id, signal)
+        .map_err(|error| match error {
+            SignalError::NoSuchTask | SignalError::NoSuchProcess => ErrNo::ESRCH,
+            _ => ErrNo::EINVAL,
+        })?;
     record_pending_signal_source(PendingSignalOwner::Thread(snapshot.task_id),
                                  signal,
                                  PendingSignalSource { code,
                                                        fault_addr,
                                                        ..PendingSignalSource::default() });
-    send_thread(snapshot.task_id, signal)
+    apply_signal_dispatch(dispatch, signal);
+    Ok(())
 }
 
 pub(crate) fn notify_parent_sigchld(pid : ProcessId) {
@@ -579,16 +605,24 @@ pub(crate) fn on_clone_thread(parent_task_id : usize,
 }
 
 pub(crate) fn on_exec(task_id : usize, removed_threads : &[task::ExitedTask]) {
+    for thread in removed_threads {
+        drop_thread_signal_sources(thread.id);
+    }
     let _ = ipc::signal::exec_process(task_id,
                                       removed_threads.iter()
                                                      .map(|thread| thread.id));
 }
 
 pub(crate) fn on_thread_exit(task_id : usize, pid : usize, last_thread : bool) {
+    drop_thread_signal_sources(task_id);
+    if last_thread {
+        drop_process_signal_sources(pid);
+    }
     ipc::signal::exit_thread(task_id, pid, last_thread);
 }
 
 pub(crate) fn drop_thread_state(task_id : usize) {
+    drop_thread_signal_sources(task_id);
     ipc::signal::drop_thread_and_empty_process(task_id);
 }
 
@@ -625,6 +659,7 @@ pub(crate) fn deliver_pending_signal(frame : *mut u8,
     let pending = match effect {
         SignalEffect::Handler(pending) => pending,
         SignalEffect::Terminate { signal } => {
+            let _ = take_delivery_signal_source(snapshot.task_id, snapshot.pid.raw(), signal);
             let exit_code =
                 crate::sys::task::wait::signal_terminate_exit_code(signal, snapshot.task_id);
             crate::sys::task::exit_group_with_wait_code(exit_code);

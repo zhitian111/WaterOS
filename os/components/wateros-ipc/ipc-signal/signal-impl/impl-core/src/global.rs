@@ -107,6 +107,11 @@ pub fn send_thread(task_id : usize, signal : usize) -> SignalResult<SignalDispat
     with_registry(|registry| registry.send_thread(task_id, signal))
 }
 
+/// 强制投递当前线程同步异常产生的信号，忽略普通 mask/`SIG_IGN` 抑制规则。
+pub fn force_thread_signal(task_id : usize, signal : usize) -> SignalResult<SignalDispatch> {
+    with_registry(|registry| registry.force_thread_signal(task_id, signal))
+}
+
 /// `FLOW:` 向进程投递信号；registry 选择候选线程，但不直接操作 task/scheduler。
 pub fn send_process(pid : usize, signal : usize) -> SignalResult<SignalDispatch> {
     with_registry(|registry| registry.send_process(pid, signal))

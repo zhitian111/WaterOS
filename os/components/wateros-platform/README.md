@@ -2,156 +2,141 @@
 
 [项目首页](../../../README.md) · [内核工程](../../README.md) · [系统架构](../../../README.md#系统架构)
 
-`wateros-platform` 是内核访问硬件环境的边界层。它不实现调度、进程、页表内容或设备驱动
-策略；它只把“当前 CPU 的 ISA 原语”和“当前机器/固件提供的服务”组合成稳定入口。
+## 简介
 
-## 模块分层
+`wateros-platform` 是 WaterOS 面向硬件与固件的边界层，将 RISC-V 或 LoongArch 原语与
+QEMU、OpenSBI 等服务组合成稳定入口。它承接启动参数、DTB、内存边界、计时器、控制台、
+复位和跨 CPU IPI，并统一错误与时间单位。`platform-arch` 负责 CSR、trap、分页和本地中断，
+`platform-impl` 负责 SBI、IOCSR、mailbox；调度、页表策略和设备驱动归其它组件。当前覆盖
+QEMU RISC-V + OpenSBI 与 QEMU LoongArch `virt`，远端 TLB shootdown 尚未实现。
 
+## 定位和边界
 
-| 层       | 路径                                                                     | 职责                                                                                                     |
-| ---------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| 聚合门面 | `src/lib.rs` 及 `src/{boot,time,smp,wall_clock}.rs`                      | 组合 arch 与 platform-impl，统一入口、时间换算、IPI reason；`timer`/`console`/`reset` 保留多层组合入口。 |
-| 平台 API | `platform-api/api-v0/`                                                   | 平台 profile 共用的类型与 trait：boot 参数、时间、SMP、console、timer、reset。                           |
-| 架构 API | `platform-arch/arch-api/api-v0/`                                         | ISA 公共的 trap、任务上下文、分页、中断、时间与 kernel_trap 类型。                                       |
-| 架构实现 | `platform-arch/arch-impl/impl-{riscv64,loongarch64}/`              | RISC-V / LoongArch 汇编、CSR、本地 interrupt/TLB/trap。                                                  |
-| 平台实现 | `platform-impl/impl-{qemu-riscv64-opensbi,qemu-loongarch64-virt}/` | QEMU/固件 profile：boot 参数解释、console、timer、reset、SMP 运输。                                      |
+`wateros-platform` 是内核与“当前 ISA + 当前机器/固件”之间的组合层。它向启动、调度、MM、
+trap 和 syscall 提供统一入口，但不拥有调度策略、进程状态、页表内容、设备驱动策略或全局
+时间推进。`platform-arch` 只操作 ISA 原语（CSR、trap、上下文、分页和本地中断）；
+`platform-impl` 解释 QEMU/固件约定并实现 SBI、IOCSR、DTB、console、timer、reset 和 SMP
+运输；`wateros-platform/src` 保存跨架构组合语义（例如 IPI reason 和 tick 换算）。
 
-## 实现说明
+`Cargo.toml` 的默认组合是 `api-v0 + impl-qemu-riscv64-opensbi`；LoongArch 使用
+`--no-default-features --features api-v0,impl-qemu-loongarch64-virt`。两个 platform profile
+和两个 arch profile 均为互斥选择；`self_test` 只在显式启用时导出。
 
-- 分层归属规则：**更换同一 ISA 的板子仍须修改的，放 `platform-impl`；更换 ISA 才须修改的，
-  放 `platform-arch`。**
-- 例：RISC-V 的 `sip.SSIP` 清除属于 arch；OpenSBI 的 `send_ipi`、HSM `hart_start` 属于 QEMU
-  RISC-V/OpenSBI profile；任务重调度原因属于 `wateros-platform::smp`，不属于任意硬件后端。
-- 发送 IPI 与清除本地 pending 位是两个不同职责：前者依赖固件或板级控制器（profile），后者
-  是目标 CPU 的 ISA 操作（arch `interrupt::clear_soft_interrupt`）。不要在 `platform-impl`
-  中重新实现 `sip`、`sie`、`satp` 等 arch 原语。
-- `active_impl` 二选一：`impl-qemu-riscv64-opensbi` 或 `impl-qemu-loongarch64-virt`；任一构建只启用一个 arch impl 与一个 platform impl。
-- RISC-V QEMU profile 使用 OpenSBI 提供 HSM、IPI、timer 与 reset；LoongArch QEMU profile 的
-  mailbox/IPI 运输在 platform profile，本地 IOCSR pending 清除及中断使能在 arch interrupt。
-- `init_when_boot(dtb_pa)` 保存平台持有的 DTB 物理指针；`physical_ram_end_exclusive()` 解析
-  物理 RAM 上界供恒等映射与帧分配器使用。
-- `timer` 用 arch tick 与平台 Hz 换算时刻，再经平台后端编程下一次定时器中断；错误变体区分
-  `Arch` / `Platform` / `DeadlineTimer` 三层来源。
-- `CpuMask`、online mask、IPI reason 和调度决策不属于具体 profile；由聚合层或 `wateros-task`
-  管理。
+## 代码地图
 
-## 调用链路
+| 语义 | 当前源码 | 所有权与边界 |
+| --- | --- | --- |
+| 聚合门面 | `src/lib.rs`、`src/{boot,time,timer,smp,console,wall_clock}.rs` | 选择 `active_impl`，保存 DTB 入口、时间频率缓存和软件 IPI reason；不直接写硬件寄存器 |
+| 平台契约 | `platform-api/api-v0/src/{boot,time,timer,smp,console,reset}.rs` | 最小稳定类型/错误；不绑定某个 ISA 或 QEMU 实现 |
+| 架构契约与实现 | `platform-arch/arch-api/api-v0/`、`platform-arch/arch-impl/impl-{riscv64,loongarch64}/` | trap、任务切换、分页、CSR、中断和本地计时；RISC-V 另有 `ipi.rs` |
+| 机器实现 | `platform-impl/impl-qemu-riscv64-opensbi/`、`impl-qemu-loongarch64-virt/` | 入口参数、DTB/RAM 解析、SBI 或 IOCSR mailbox、deadline timer、console、reset |
+| 链接与入口 | `linker/kernel-sections.ld`、各 profile `src/asm/_start.S` 与 `linker/link.ld` | 固定内核段布局和最早期栈/入口；不承载运行期策略 |
 
-启动早期：
+## 核心状态与数据结构
 
-```text
-boot 早期
-  -> platform::init_when_boot(dtb_pa)     保存 DTB 物理指针
-  -> arch::init()                          安装 trap 向量（开全局中断之前）
-  -> physical_ram_end_exclusive()          解析 RAM 上界（恒等映射 / 帧分配）
+| 状态 | 字段/存储 | 发布、生命周期与不变量 |
+| --- | --- | --- |
+| `TIMEBASE_HZ_CACHE` (`src/time.rs`) | `AtomicU64`，0 表示未由 DTB 覆盖 | boot 阶段 `set_frequency_hz` 以 `Release` 写入且拒绝 0；读侧 `Acquire`，timer 开始换算后不得再改。未覆盖时调用 profile `PlatformTimeImpl::get_time_frequency_hz` |
+| `PENDING_IPI` (`src/smp.rs`) | `AtomicU8[MAX_CPUS]`，每 CPU 的 `IpiKind` 位图 | 发送方 `fetch_or(..., Release)` 后才调用 profile 运输；目标 trap 用 `swap(0, AcqRel)` 一次取走并合并原因。它不表示 CPU online，也不替代 scheduler 的 need-resched |
+| LoongArch `CPU_STATES` / `CONFIGURED_CPU_MASK` | profile 内 `AtomicU8[MAX_CPUS]` / `AtomicU64` | DTB `/cpus` 解析后 `Release` 发布可用 CPU；`start_cpu` 用 `compare_exchange` 从 stopped 抢占启动所有权。状态镜像不是 scheduler online mask |
+| `PlatformTimerDeadline` | API 中的 `u64` 绝对 tick | 必须与 `arch::time::read_time_tick` 同源；RISC-V 直接交 SBI，LoongArch 在本 CPU 读取 `rdtime.d` 后转换为相对、至少 1 tick 且按 4 tick 对齐 |
+| DTB 指针与 RAM 上界 | 各 profile 的静态原子/缓存及 `memory::physical_ram_end_exclusive()` | `init_when_boot` 先保存物理 DTB 地址；后续 memory 解析返回不含上界，供恒等映射和帧分配器使用；未选 profile 时回退 `config::mm::QEMU_VIRT_PHYS_RAM_END` |
+
+## 关键链路
+
+### 启动、DTB 与架构初始化
+
+```mermaid
+sequenceDiagram
+    participant A as arch _start.S
+    participant P as platform::init_when_boot
+    participant T as platform::time
+    participant AR as platform::arch::init
+    participant M as MM/帧分配器
+    A->>P: 传入 DTB 物理地址
+    P->>P: profile::dtb::store(dtb_pa)
+    A->>T: profile/DTB 探测 timebase
+    T->>T: set_frequency_hz(hz), Release
+    A->>AR: init() 安装 trap 向量
+    AR->>M: physical_ram_end_exclusive()
+    M-->>M: 建立恒等映射并初始化帧范围
 ```
 
-SMP 与 IPI：
+`platform-impl/.../boot.rs` 只把入口寄存器包装为 `PlatformBootArgs`：RISC-V OpenSBI 的
+`arg0/arg1` 是 hart id/DTB 物理地址；LoongArch QEMU 的三个参数当前不承诺固定语义，DTB
+使用 profile 常量。`arch::init()` 必须在打开全局中断前调用；`init_when_boot` 不负责 CPU-local、
+页表或 scheduler 初始化。
 
-```text
-scheduler 请求远端重调度
-  -> platform::smp::send_ipi(mask, Reschedule)
-  -> 发布 pending IPI reason（组合层，Release）
-  -> profile::smp::send_ipi(mask)（SBI / IOCSR 运输层）
+### 定时器 deadline
 
-目标 CPU trap
-  -> platform::smp::clear_ipi()
-  -> arch::interrupt::clear_soft_interrupt()（本地 CSR / IOCSR）
-  -> take_pending_ipi()
-  -> scheduler 处理 Reschedule / TLB shootdown / TaskNotify
+```mermaid
+flowchart TD
+    C[调用 timer::set_timer_after] --> N[now_tick: arch CSR]
+    N --> H[time::frequency_hz: cache 或 profile fallback]
+    H --> D[duration_to_ticks 向上取整并检查溢出]
+    D --> E[绝对 deadline = now + delta]
+    E --> B[active_impl::timer::set_timer]
+    B --> R{profile}
+    R -->|RISC-V| S[SBI set_timer 绝对 tick]
+    R -->|LoongArch| L[rdtime.d + 相对 delta，CSR TCFG/TICLR]
+    S --> I[本地 timer interrupt]
+    L --> I
 ```
 
-定时器：
+`src/timer.rs` 将失败区分为 `Arch`、`Platform`、`DeadlineTimer`、`NoFrequency` 和
+`Overflow`。它只编程当前 CPU 的硬件 deadline，不推进 scheduler 的全局时钟；超时队列和
+唤醒归 `wateros-task`/IPC 所有。向上取整避免低频计时器把非零 duration 截成零。
 
-```text
-timer 请求
-  -> 用 arch tick + 平台 Hz 换算目标时刻
-  -> 经平台后端编程下一次定时器中断
+### IPI 发布与接收
+
+```mermaid
+sequenceDiagram
+    participant S as scheduler/MM
+    participant G as platform::smp
+    participant R as profile SBI/IOCSR
+    participant T as 目标 CPU trap
+    S->>G: send_ipi(mask, kind)
+    G->>G: PENDING_IPI[cpu].fetch_or(kind, Release)
+    G->>R: SmpImpl::send_ipi(mask)
+    R-->>T: 软件中断/运行期通知
+    T->>G: clear_ipi() (arch 本地清除)
+    T->>G: take_pending_ipi(cpu), swap(AcqRel)
+    G-->>S: 由调用方处理 Reschedule/TLB/TaskNotify
 ```
 
-## 实现功能
+`send_ipi` 不筛选 offline CPU，调用方必须使用自己的 online mask；运输失败时 reason 保留。
+RISC-V 运输是 OpenSBI `send_ipi`/RFENCE，LoongArch 是 IOCSR mailbox/IPI。LoongArch
+`flush_tlb_remote` 当前返回 `Unsupported`，上层必须阻止依赖远端 shootdown 的回收路径。
 
-### platform-api / 平台 API
+## 机制与正确性
 
-`platform-api/api-v0/src/` 下的文件：
+- **分层边界**：`sip/sie/sstatus/satp`、trap 向量和本地 pending 清除在 arch；SBI HSM、DTB、
+  QEMU 设备约定和 mailbox 在 profile；调度决策、页表锁、ack 与物理页回收不在本组件。
+- **原子协议**：IPI reason 的 Release→AcqRel 配对保证 reason 先于硬件通知可见；`swap` 使多
+  发送方合并且不会重复消费。timebase 的 Release→Acquire 保证 timer 不读到半发布频率。
+- **上下文约束**：`take_pending_ipi` 只能在当前 CPU 的软件中断处理路径调用；`clear_ipi` 必须
+  在返回 trap 前执行。平台入口函数不应在中断上下文执行可能阻塞的 MM/VFS 操作。
+- **错误与清理**：API 将 SBI/后端错误归一化为 `PlatformSmpError` 或 deadline 错误，不伪造
+  成功；LoongArch 启动的 CAS 失败会返回 `AlreadyAvailable`，不会重复写 mailbox。SBI
+  `hart_start` 成功只表示固件接受请求，AP 仍需完成 CPU-local、trap、timer 初始化并自行
+  发布 online。
 
-- `boot.rs`：引导参数解释。
-- `time.rs`：平台时间频率（`PlatformTime`），不等于 arch `time` CSR 读频率。
-- `smp.rs`：`HartStatus`、`IpiKind`、`PlatformSmp` 与 `PlatformSmpResult`。
-- `console.rs` / `reset.rs` / `timer.rs`：以具体后端函数提供的平台能力，不为无实现的空 trait
-  保留抽象层。
-- `lib.rs`：按 `boot`/`console`/`reset`/`smp`/`time`/`timer` 组织平台 API 模块导出。
+## 初始化、配置与可观测性
 
-### platform-arch / 架构层
+启动顺序至少是：profile `_start.S` 保存入口参数 → `init_when_boot` → DTB/timebase 探测与
+`set_frequency_hz` → `arch::init` → RAM 边界查询 → 各子系统初始化。`MAX_CPUS` 是编译期容量，
+LoongArch 还从 DTB `/cpus` 得到运行期 configured mask；两者都不等同 scheduler online mask。
 
-`arch-api/api-v0/src/` 下的 ISA 公共类型文件：
+`self_test`（`src/lib.rs`）检查 DTB/RAM 查询并调用 active profile 自检；timer 目前没有覆盖
+测试（CodeGraph 未发现 covering tests）。运行时可见日志包括 `[platform] init_after_boot`、
+`self_test ok` 以及 timer deadline debug 日志。相关验证入口是 `make rv_check`、`make la_check`、
+`make kernel-rv-pre`、`make kernel-la-pre` 和对应 QEMU run 目标。
 
-- `cpu.rs`：当前 CPU 标识与本核早期初始化结果类型。
-- `interrupt.rs`：定时器与全局中断在 ISA 层的开关原语。
-- `kernel_trap.rs`：组合层 trap 路由（单入口 + 运行期注册，避免 `arch-impl` 直接依赖
-  `task`/`syscall`）。
-- `paging.rs`：分页 CSR 相关类型。
-- `task.rs`：任务初次运行与切换的架构上下文构造。
-- `time.rs`：单调时间计数与可选频率查询（不含 `set_timer`/SBI）。
-- `trap.rs`：异常与中断 trap 帧、原因解码、syscall ABI 读写接口。
-- `lib.rs`：模块聚合。
+## 限制与后续边界
 
-`arch-impl/impl-riscv64/src/` 下的文件：
-
-- `cpu.rs`：当前 CPU id 查询。
-- `interrupt.rs`：`sie`/`sstatus` 级中断开关。
-- `ipi.rs`：核间中断——通过 SBI `send_ipi` 向目标 hart 发送 Supervisor Soft Interrupt
-  （`send_ipi(cpu_mask)`，错误归一化为 `IpiError`）。
-- `paging.rs`：`satp` 读写与 `sfence.vma`。
-- `task.rs`：任务上下文与进入桩函数符号。
-- `time.rs`：`time` CSR 读 tick；频率查询返回不支持（由 platform 层提供 Hz）。
-- `trap.rs`：trap 向量、`TrapContext` 与 `trap_entry_rust`（转入 `arch-api::kernel_trap`）。
-- `lib.rs`：汇编入口（`boot.S`/`trap.asm`/`switch.S`）与模块聚合；`init_trap` 安装 `stvec`。
-
-`arch-impl/impl-loongarch64/src/` 下的文件（无独立 `ipi.rs`；IPI 运输在 profile、本地
-pending 清除在 `interrupt.rs`）：
-
-- `cpu.rs` / `interrupt.rs`（本地 IOCSR pending 清除与中断使能）/ `paging.rs` / `task.rs` /
-  `time.rs` / `trap.rs` / `lib.rs`（`trap.S`/`switch.S`、`TrapContext`、LoongArch64 原因码解码、
-  `init_trap`）。
-
-### platform-impl / 机器层
-
-`impl-qemu-riscv64-opensbi/src/` 下的文件：
-
-- `boot.rs`：解释 OpenSBI 启动参数（`a0`/`a1` 分别承载 hart id 与 DTB 物理地址）。
-- `console.rs`：OpenSBI console（early console）后端。
-- `dtb.rs`：平台持有的引导 DTB 物理指针（`store` / `dtb_pa`）。
-- `memory.rs`：QEMU RISC-V 物理内存布局解析（`physical_ram_end_exclusive`）。
-- `reset.rs`：OpenSBI system reset 后端。
-- `smp.rs`：SBI HSM（`hart_start`/`hart_get_status`）与 IPI/remote fence 运输
-  （`QemuRiscv64OpenSbiSmp`）。
-- `time.rs`：QEMU RISC-V timebase-frequency fallback。
-- `timer.rs`：OpenSBI timer 后端（经 SBI 设置下次中断时刻）。
-- `lib.rs`：模块聚合与 `asm/_start.S` 平台 shim。
-
-`impl-qemu-loongarch64-virt/src/` 下的文件（结构相同）：
-
-- `boot.rs` / `console.rs` / `dtb.rs` / `memory.rs` / `reset.rs` / `smp.rs`（mailbox/IPI 运输）
-  / `time.rs` / `timer.rs` / `lib.rs`。
-
-
-### 聚合门面 / src/
-
-- `lib.rs`：`active_impl` 选择；`init_when_boot` / `dtb_pa` / `physical_ram_end_exclusive`；
-  `timer`/`console`/`reset` 组合入口；`arch` 再导出与 `arch::init()`。
-- `boot.rs`：启动参数与引导上下文。
-- `time.rs`：平台时间频率注入（`set_frequency_hz`）与回退。
-- `smp.rs`：跨架构通用的待处理 IPI reason（`PENDING_IPI`）与 `send_ipi`/`clear_ipi`/
-  `take_pending_ipi`。
-- `wall_clock.rs`：墙上时钟相关。
-
-### 添加新平台 profile
-
-1. 复用已有 ISA 的 `platform-arch/arch-impl`；除非 CPU 指令集不同，不新增 arch 实现。
-2. 新建 `platform-impl/impl-<machine>`，按 `boot`、`console`、`timer`、`reset`、`smp` 分文件
-   实现机器相关后端。
-3. 在根 `Cargo.toml` 和 `wateros-platform` feature 中选择该 profile，确保任一构建只启用一个
-   arch impl 与一个 platform impl。
-4. 至少检查 boot、timer、IPI 的错误路径。SMP profile 还必须验证 AP online 之前不会被
-   scheduler 当成可投递目标。
+- 当前只实现 QEMU RISC-V + OpenSBI 与 QEMU LoongArch `virt` 两个 profile；README 不把其它板卡
+  或固件写成已支持。
+- LoongArch profile 的远端 TLB shootdown 尚未实现，且其启动参数不承诺 RISC-V 的 hart/DTB ABI。
+- 频率缓存没有运行期重配置协议；启动后修改会破坏 deadline 换算契约。
+- `configured_cpu_mask`/firmware 状态、IPI reason 和 scheduler online 状态是三套状态，平台层
+  不替调用方完成一致性或重试策略。
