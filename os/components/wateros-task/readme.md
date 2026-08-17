@@ -32,6 +32,8 @@ scheduler 两组全局状态，分别负责进程语义管理和任务调度管�
   的 CPU mask。
 - scheduler 和 process registry 分别由多核安全锁保护。实际 IPI、地址空间回调、信号投递和
   `__switch` 不应在持有这些锁时执行。
+- `/proc/<pid>/io` 的字符 I/O 计数由 PCB 中的原子状态持有；syscall 成功路径通过 per-CPU
+  当前任务缓存更新，不进入 process registry 或 CWD 全局锁。procfs 渲染时才取得原子快照。
 - credential、文件描述符、CWD、mount namespace 和 signal 等资源由其它模块的侧表维护。
   用户任务通常采用“创建但不入队 → 初始化全部侧表 → 发布到就绪队列”的两阶段流程，避免
   其它 CPU 提前运行尚未初始化完成的任务。
@@ -88,6 +90,8 @@ PCB 与 ProcessRegistry 的主要实现在 `task-impl/impl-core/src/process.rs`�
 - 支持 `fork` 创建子进程，以及 `clone` 将新线程登记到现有进程。
 - 维护进程组 PGID、会话 SID、rlimit、umask、dumpable、child subreaper 和
   parent-death signal。
+- 维护线程共享的 `rchar/wchar/syscr/syscw` 原子计数：fork 子进程从零开始，thread clone
+  共享，exec 保留，进程 reap 后随 PCB 释放。
 - 维护进程的 Running、Stopped、Exiting、Exited 状态以及 stop/continue 的 wait 可见事件。
 - `exec` 期间通过 `exec_in_progress` 阻止并发注册 member，并协助清理同进程其它线程。
 - 非 leader 线程退出后进入 `exited_member_task_ids`，回收路径可以按 ID 精确处理，不需要每次

@@ -396,7 +396,7 @@ pub fn mount_procfs_at(mount_point: &str) -> VfsResult<()> {
     fs::procfs::active_impl::register_task_argv_lookup(|tid| cwd::lookup_argv_for_task(tid));
     fs::procfs::active_impl::register_task_env_lookup(|tid| cwd::lookup_env_for_task(tid));
     fs::procfs::active_impl::register_task_auxv_lookup(|tid| cwd::lookup_auxv_for_task(tid));
-    fs::procfs::active_impl::register_task_io_lookup(|tid| cwd::lookup_io_for_task(tid));
+    fs::procfs::active_impl::register_task_io_lookup(|tid| task::process_io_snapshot(tid));
     fs::procfs::active_impl::register_task_exe_lookup(|tid| cwd::lookup_exe_for_task(tid));
     fs::procfs::active_impl::register_task_cwd_lookup(|tid| cwd::lookup_cwd_for_task(tid));
     fs::procfs::active_impl::register_task_root_lookup(|tid| cwd::lookup_root_for_task(tid));
@@ -416,7 +416,7 @@ pub fn mount_bootstrap_procfs_at(mount_point: &str) -> VfsResult<()> {
     fs::procfs::active_impl::register_task_argv_lookup(|tid| cwd::lookup_argv_for_task(tid));
     fs::procfs::active_impl::register_task_env_lookup(|tid| cwd::lookup_env_for_task(tid));
     fs::procfs::active_impl::register_task_auxv_lookup(|tid| cwd::lookup_auxv_for_task(tid));
-    fs::procfs::active_impl::register_task_io_lookup(|tid| cwd::lookup_io_for_task(tid));
+    fs::procfs::active_impl::register_task_io_lookup(|tid| task::process_io_snapshot(tid));
     fs::procfs::active_impl::register_task_exe_lookup(|tid| cwd::lookup_exe_for_task(tid));
     fs::procfs::active_impl::register_task_cwd_lookup(|tid| cwd::lookup_cwd_for_task(tid));
     fs::procfs::active_impl::register_task_root_lookup(|tid| cwd::lookup_root_for_task(tid));

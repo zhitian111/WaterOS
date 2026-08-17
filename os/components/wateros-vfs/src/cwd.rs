@@ -209,24 +209,6 @@ pub fn lookup_auxv_for_task(task_id: task::TaskId) -> Option<Vec<u8>> {
     reg.get_auxv(task_id).map(|v| v.to_vec())
 }
 
-/// 累加当前进程的一次字符 I/O；线程通过共享 owner 聚合到同一进程。
-pub fn account_task_io(task_id: task::TaskId, read: bool, bytes: u64) {
-    registry().exclusive_access().account_io(task_id, read, bytes);
-}
-
-/// 累加一次同时产生读、写字符流量的内核内数据搬运。
-pub fn account_task_io_transfer(task_id: task::TaskId, bytes: u64) {
-    registry().exclusive_access().account_io_transfer(task_id, bytes);
-}
-
-/// 返回 `[rchar, wchar, syscr, syscw]`，供 procfs 回调使用。
-pub fn lookup_io_for_task(task_id: task::TaskId) -> Option<[u64; 4]> {
-    let mut reg = registry().exclusive_access();
-    reg.ensure_task_cwd(task_id);
-    let io = reg.get_io_counters(task_id);
-    Some([io.rchar, io.wchar, io.syscr, io.syscw])
-}
-
 /// 读取指定任务 exe 路径（procfs 回调用）。
 pub fn lookup_exe_for_task(task_id: task::TaskId) -> Option<String> {
     let mut reg = registry().exclusive_access();

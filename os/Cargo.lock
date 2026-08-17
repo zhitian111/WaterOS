@@ -1603,7 +1603,9 @@ name = "wateros-task-impl-core"
 version = "0.1.0"
 dependencies = [
  "log",
+ "spin",
  "wateros-base",
+ "wateros-base-config",
  "wateros-debug",
  "wateros-mm-api-v0",
  "wateros-platform-arch",
