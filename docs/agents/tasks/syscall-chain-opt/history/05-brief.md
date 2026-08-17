@@ -49,6 +49,7 @@ SMP / memory            8 / 16 GiB
 snapshot                enabled
 kernel SHA-256          6b3ecde9e7fa45a9eeee8c8498b5e03c798fd141752b085ef01273464479f233
 image SHA-256           dfb2b31b30118aab37fcf39be905bbc22584baf84512ca1e5eb3b88247b88ff6
+log SHA-256             42e7540cfb33aec51ff2c8ee1aa4256250684c7ac92b1e61d1f003229de0b75e
 QEMU return code        0
 cagent                   exit_code=0, elapsed=2.239s
 BuildStorm               status=OK, rc=0, cores=8, elapsed_s=571.39, run=OK
@@ -57,7 +58,8 @@ completion marker        all commands finished
 panic/OOM/FS error scan  no matches
 ```
 
-日志：`/tmp/syscall-chain-opt-perf-20260817T031052Z.log`。运行前后镜像 SHA-256 一致，
+日志：`/home/zhitian/project/WaterOS_perf_results/syscall-chain-opt/syscall-chain-opt-perf-20260817T031052Z.log`。
+运行前后镜像 SHA-256 一致，
 确认 QEMU `-snapshot` 没有改写基准镜像。该结果证明本提交未引入可观察的完整 workload
 功能回退；由于任务 00 的交错 A/B runner 尚未实现，单轮结果不能用于宣称确定的性能收益。
 
