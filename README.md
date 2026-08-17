@@ -360,7 +360,7 @@ make run ARCH=la PROFILE=final SMP=4 SDCARD=/path/to/rootfs.img
 | `ARCH` | 目标架构。`rv` 选择 RISC-V64、OpenSBI 和 VirtIO MMIO；`la` 选择 LoongArch64 和 VirtIO PCI | `rv` |
 | `PROFILE` | 赛事阶段。`pre` 启用初赛 bring-up，`final` 启用 `final_online` bring-up | `pre` |
 | `SMP` | QEMU 虚拟 CPU 数量，只接受 `1..8` | `8` |
-| `MODE` | guest 启动行为：`auto` 执行内核编排的测试队列；`shell` 进入交互终端；`run` 执行 `SCRIPT` 指定的脚本 | `auto` |
+| `MODE` | guest 启动行为：`auto` 执行内核编排的测试队列；`shell` 进入交互终端；`run` 执行 `SCRIPT` 指定的脚本。Loongson 2K1000LA 真机 profile 未显式指定模式时默认进入 `/bin/bash`（无该文件则回退 `/bin/sh`） | `auto`（2K1000LA 真机默认 `shell`） |
 | `SCRIPT` | `MODE=run` 时要执行的 guest 脚本，必须是绝对路径；其他模式下不能设置 | 空 |
 | `GUEST_SHELL` | 覆盖 guest 命令解释器，必须是 guest 内的绝对路径；留空时由内核自动选择 | 空 |
 | `SDCARD` | 本次运行使用的根文件系统镜像，可覆盖架构和阶段对应的默认镜像 | 见下方镜像参数 |

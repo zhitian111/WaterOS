@@ -57,6 +57,10 @@ make la2k_tftp TFTP_LISTEN=192.168.1.2 TFTP_ROOT=/srv/tftp
 `dnsmasq` 和 `sudo`。真机 SATA 验证结果见
 [`2K1000 SATA/AHCI 闭环报告`](../docs/tasks/real-hardware-port/reports/2026-08-16-loongson2k1000-sata-ahci-success.md)。
 
+Loongson 2K1000LA（`loongson2k1000la`）板级构建在未显式指定 `operator-run` 或
+`operator-shell` 时默认绕过 `/sbin/init`，直接以交互方式启动 `/bin/bash`；若镜像没有
+该文件，内核再回退到 `/bin/sh`。QEMU LoongArch 和其它板级 profile 不受此默认行为影响。
+
 ## 常见开发场景
 
 ### 交互终端
