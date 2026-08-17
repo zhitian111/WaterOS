@@ -24,6 +24,7 @@ os/scripts/competition/educg_cookie.conf
 2025a-rcore-kasss233/
 old/
 tem/
+/docs/drawio/
 
 # 测试用例目录
 test_case/
