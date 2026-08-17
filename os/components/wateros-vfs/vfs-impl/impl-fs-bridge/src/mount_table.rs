@@ -80,13 +80,20 @@ static NEXT_MOUNT_ID : AtomicU64 = AtomicU64::new(2);
 
 /// 内核 bring-up / 无当前任务时的挂载表（`procfs` 等在 spawn 用户任务前挂载）。
 // 本变量代码由AI完成
-static BOOTSTRAP_MOUNT_NS : Mutex<MountNamespace> =
-    Mutex::new(MountNamespace { entries : Vec::new() });
+static BOOTSTRAP_MOUNT_NS : Mutex<Option<Arc<MountNamespace>>> = Mutex::new(None);
 
 // 本方法代码由AI完成
-pub(crate) fn bootstrap_mount_namespace_snapshot() -> MountNamespace {
+pub(crate) fn bootstrap_mount_namespace_snapshot() -> Arc<MountNamespace> {
     BOOTSTRAP_MOUNT_NS.lock()
+                      .get_or_insert_with(|| Arc::new(MountNamespace::default()))
                       .clone()
+}
+
+fn with_bootstrap_namespace<R>(f : impl FnOnce(&mut MountNamespace) -> VfsResult<R>)
+                                -> VfsResult<R> {
+    let mut slot = BOOTSTRAP_MOUNT_NS.lock();
+    let namespace = slot.get_or_insert_with(|| Arc::new(MountNamespace::default()));
+    f(Arc::make_mut(namespace))
 }
 
 // 本变量代码由AI完成
@@ -139,14 +146,13 @@ fn with_current_namespace<R>(f : impl FnOnce(&mut MountNamespace) -> VfsResult<R
         let mut reg = registry().exclusive_access();
         f(reg.namespace_for_mut(task_id))
     } else {
-        let mut ns = BOOTSTRAP_MOUNT_NS.lock();
-        f(&mut ns)
+        with_bootstrap_namespace(f)
     }
 }
 
 // 本方法代码由AI完成
 #[allow(dead_code)]
-fn namespace_for_route(task_id : task::TaskId) -> Option<MountNamespace> {
+fn namespace_for_route(task_id : task::TaskId) -> Option<Arc<MountNamespace>> {
     registry().exclusive_access()
               .namespace_for(task_id)
               .cloned()
@@ -154,7 +160,7 @@ fn namespace_for_route(task_id : task::TaskId) -> Option<MountNamespace> {
 
 /// 克隆当前应使用的挂载表快照（单次加锁，避免在 `with_current_namespace` 内重入）。
 // 本方法代码由AI完成
-fn mount_namespace_snapshot() -> MountNamespace {
+fn mount_namespace_snapshot() -> Arc<MountNamespace> {
     if let Some(task_id) = task::current_task_id() {
         {
             let reg = registry().exclusive_access();
@@ -170,8 +176,7 @@ fn mount_namespace_snapshot() -> MountNamespace {
             }
         }
     }
-    BOOTSTRAP_MOUNT_NS.lock()
-                      .clone()
+    bootstrap_mount_namespace_snapshot()
 }
 
 /// 在已持有的 `ns` 上校验挂载点目录，不调用 [`resolve_route`]（避免 mount 表锁重入）。
@@ -562,13 +567,14 @@ pub(crate) fn mount_bootstrap_tmpfs_at(mount_point : &str) -> VfsResult<()> {
     let fs : SharedRwFs = fs::new_ramfs_rw(Some(BOOTSTRAP_TMPFS_LIMIT_BYTES),
                                            0o1777);
     {
-        let mut ns = BOOTSTRAP_MOUNT_NS.lock();
-        mount_aux_common(&mut ns,
-                         mount_point,
-                         AuxMount::Rw(fs),
-                         "tmpfs",
-                         "tmpfs",
-                         false)?;
+        with_bootstrap_namespace(|ns| {
+            mount_aux_common(ns,
+                             mount_point,
+                             AuxMount::Rw(fs),
+                             "tmpfs",
+                             "tmpfs",
+                             false)
+        })?;
     }
     bump_mount_generation_after_cache_flush();
     Ok(())
@@ -847,13 +853,14 @@ pub fn mount_aux_sys_at(mount_point : &str) -> VfsResult<()> {
 /// 在 bootstrap namespace 中挂载 procfs，供之后创建的内核/用户任务继承。
 pub fn mount_bootstrap_proc_at(mount_point : &str) -> VfsResult<()> {
     {
-        let mut ns = BOOTSTRAP_MOUNT_NS.lock();
-        mount_aux_common(&mut ns,
-                         mount_point,
-                         AuxMount::PseudoProc,
-                         "proc",
-                         "proc",
-                         true)?;
+        with_bootstrap_namespace(|ns| {
+            mount_aux_common(ns,
+                             mount_point,
+                             AuxMount::PseudoProc,
+                             "proc",
+                             "proc",
+                             true)
+        })?;
     }
     bump_mount_generation_after_cache_flush();
     Ok(())
@@ -862,13 +869,14 @@ pub fn mount_bootstrap_proc_at(mount_point : &str) -> VfsResult<()> {
 /// 在 bootstrap namespace 中挂载 sysfs，供之后创建的任务继承。
 pub fn mount_bootstrap_sys_at(mount_point : &str) -> VfsResult<()> {
     {
-        let mut ns = BOOTSTRAP_MOUNT_NS.lock();
-        mount_aux_common(&mut ns,
-                         mount_point,
-                         AuxMount::PseudoSys,
-                         "sysfs",
-                         "sysfs",
-                         true)?;
+        with_bootstrap_namespace(|ns| {
+            mount_aux_common(ns,
+                             mount_point,
+                             AuxMount::PseudoSys,
+                             "sysfs",
+                             "sysfs",
+                             true)
+        })?;
     }
     bump_mount_generation_after_cache_flush();
     Ok(())
@@ -887,7 +895,7 @@ pub fn is_proc_mounted_at(mount_point : &str) -> bool {
             });
         }
     }
-    let ns = BOOTSTRAP_MOUNT_NS.lock();
+    let ns = bootstrap_mount_namespace_snapshot();
     ns.entries
       .iter()
       .any(|e| e.mount_point == mp.as_str() && matches!(e.fs, AuxMount::PseudoProc))
@@ -942,9 +950,7 @@ pub fn list_proc_mount_lines() -> Vec<ProcMountLine> {
             return out;
         }
     }
-    for ent in BOOTSTRAP_MOUNT_NS.lock()
-                                 .entries
-                                 .iter()
+    for ent in bootstrap_mount_namespace_snapshot().entries.iter()
     {
         out.push(ProcMountLine { device : device_for(ent),
                                  mount_point : ent.mount_point
