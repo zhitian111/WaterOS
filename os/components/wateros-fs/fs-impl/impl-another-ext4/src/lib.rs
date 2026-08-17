@@ -36,6 +36,8 @@ const OPEN_INODE_DIR : &str = "/.wateros-open-inodes";
 
 #[path = "dentry_cache.rs"]
 mod dentry_cache;
+#[path = "positive_dentry_cache.rs"]
+mod positive_dentry_cache;
 #[path = "block_io.rs"]
 mod block_io;
 #[path = "path_lookup.rs"]
@@ -43,6 +45,7 @@ mod path_lookup;
 use block_io::{check_backend_error, map_error, map_type, BlockAdapter};
 pub(crate) use path_lookup::{lookup, metadata, metadata_open, parent_name, write_with_ordered_size};
 pub(crate) use dentry_cache::NegativeDentryCache;
+pub(crate) use positive_dentry_cache::PositiveDentryCache;
 #[cfg(test)]
 pub(crate) use dentry_cache::negative_path_hash;
 
@@ -63,6 +66,7 @@ struct LookupDiagnostics {
     not_found : AtomicU64,
     negative_hit : AtomicU64,
     positive_clear : AtomicU64,
+    positive_evict : AtomicU64,
     negative_invalidate : AtomicU64,
 }
 
@@ -75,6 +79,7 @@ impl LookupDiagnostics {
                not_found : AtomicU64::new(0),
                negative_hit : AtomicU64::new(0),
                positive_clear : AtomicU64::new(0),
+               positive_evict : AtomicU64::new(0),
                negative_invalidate : AtomicU64::new(0) }
     }
 
@@ -82,13 +87,14 @@ impl LookupDiagnostics {
         counter.fetch_add(1, Ordering::Relaxed);
         let total = self.total.fetch_add(1, Ordering::Relaxed) + 1;
         if total % (1 << 18) == 0 {
-            log::info!("BUILDSTORM_FS_META_COUNTERS total={} positive_hit={} lookup_success={} not_found={} negative_hit={} positive_clear={} negative_invalidate={}",
+            log::info!("BUILDSTORM_FS_META_COUNTERS total={} positive_hit={} lookup_success={} not_found={} negative_hit={} positive_clear={} positive_evict={} negative_invalidate={}",
                        total,
                        self.positive_hit.load(Ordering::Relaxed),
                        self.lookup_success.load(Ordering::Relaxed),
                        self.not_found.load(Ordering::Relaxed),
                        self.negative_hit.load(Ordering::Relaxed),
                        self.positive_clear.load(Ordering::Relaxed),
+                       self.positive_evict.load(Ordering::Relaxed),
                        self.negative_invalidate.load(Ordering::Relaxed));
         }
     }
@@ -104,9 +110,11 @@ macro_rules! lookup_diag_event {
     };
 }
 
-fn lookup_diag_positive_clear() {
+fn lookup_diag_positive_evict(evicted : usize) {
     #[cfg(feature = "lookup-diagnostics")]
-    LOOKUP_DIAGNOSTICS.positive_clear.fetch_add(1, Ordering::Relaxed);
+    LOOKUP_DIAGNOSTICS.positive_evict.fetch_add(evicted as u64, Ordering::Relaxed);
+    #[cfg(not(feature = "lookup-diagnostics"))]
+    let _ = evicted;
 }
 
 fn lookup_diag_negative_invalidate(removed : usize) {

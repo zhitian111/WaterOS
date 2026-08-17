@@ -4,7 +4,7 @@ pub struct AnotherExt4Fs {
     pub(crate) fs : Option<Ext4>,
     pub(crate) device : Option<SharedBlockDevice>,
     pub(crate) io_error_state : Option<Arc<AtomicBool>>,
-    pub(crate) lookup_cache : Mutex<BTreeMap<String, u32>>,
+    pub(crate) lookup_cache : Mutex<PositiveDentryCache>,
     pub(crate) negative_cache : Mutex<Option<Box<NegativeDentryCache>>>,
     pub(crate) open_nodes : BTreeMap<u32, usize>,
     pub(crate) orphan_nodes : BTreeMap<u32, String>,
@@ -19,7 +19,7 @@ impl AnotherExt4Fs {
         Self { fs : None,
                device : None,
                io_error_state : None,
-               lookup_cache : Mutex::new(BTreeMap::new()),
+               lookup_cache : Mutex::new(PositiveDentryCache::new()),
                negative_cache : Mutex::new(None),
                open_nodes : BTreeMap::new(),
                orphan_nodes : BTreeMap::new(),
@@ -46,7 +46,6 @@ impl AnotherExt4Fs {
         if let Some(inode) = self.lookup_cache
                                  .lock()
                                  .get(path)
-                                 .copied()
         {
             lookup_diag_event!(positive_hit);
             return Ok(inode);
@@ -80,11 +79,8 @@ impl AnotherExt4Fs {
     pub(crate) fn cache_insert(&self, path : &str, inode : u32) {
         let mut cache = self.lookup_cache
                             .lock();
-        if cache.len() >= LOOKUP_CACHE_CAPACITY && !cache.contains_key(path) {
-            cache.clear();
-            lookup_diag_positive_clear();
-        }
-        cache.insert(String::from(path), inode);
+        let evicted = cache.insert(path, inode, LOOKUP_CACHE_CAPACITY);
+        lookup_diag_positive_evict(evicted);
         drop(cache);
         self.negative_cache_remove_exact(path);
     }
@@ -108,54 +104,14 @@ impl AnotherExt4Fs {
     }
 
     pub(crate) fn cache_remove_subtree(&self, path : &str) {
-        let prefix = if path.ends_with('/') {
-            String::from(path)
-        } else {
-            let mut prefix = String::from(path);
-            prefix.push('/');
-            prefix
-        };
-        self.lookup_cache
-            .lock()
-            .retain(|cached, _| cached != path && !cached.starts_with(prefix.as_str()));
+        self.lookup_cache.lock().remove_subtree(path);
     }
 
     pub(crate) fn cache_rename_subtree(&self, old_path : &str, new_path : &str) {
-        let old_prefix = if old_path.ends_with('/') {
-            String::from(old_path)
-        } else {
-            let mut prefix = String::from(old_path);
-            prefix.push('/');
-            prefix
-        };
-        let new_prefix = if new_path.ends_with('/') {
-            String::from(new_path)
-        } else {
-            let mut prefix = String::from(new_path);
-            prefix.push('/');
-            prefix
-        };
-        let mut moved = Vec::new();
-        let mut cache = self.lookup_cache
-                            .lock();
-        cache.retain(|cached, inode| {
-                 if cached == old_path {
-                     moved.push((String::from(new_path), *inode));
-                     return false;
-                 }
-                 if let Some(suffix) = cached.strip_prefix(old_prefix.as_str()) {
-                     let mut renamed = String::from(new_path.trim_end_matches('/'));
-                     renamed.push('/');
-                     renamed.push_str(suffix);
-                     moved.push((renamed, *inode));
-                     return false;
-                 }
-                 cached != new_path && !cached.starts_with(new_prefix.as_str())
-             });
-        for (path, inode) in moved {
-            cache.insert(path, inode);
-        }
-        drop(cache);
+        let evicted = self.lookup_cache
+                          .lock()
+                          .rename_subtree(old_path, new_path, LOOKUP_CACHE_CAPACITY);
+        lookup_diag_positive_evict(evicted);
         self.negative_cache_remove_subtree(new_path);
     }
 
@@ -333,14 +289,14 @@ mod tests {
 
         fs.cache_rename_subtree("/src", "/dst");
 
-        let cache = fs.lookup_cache
-                      .lock();
-        assert_eq!(cache.get("/dst"), Some(&10));
-        assert_eq!(cache.get("/dst/child"), Some(&11));
-        assert_eq!(cache.get("/unrelated"), Some(&13));
-        assert!(!cache.contains_key("/src"));
-        assert!(!cache.contains_key("/src/child"));
-        assert!(!cache.contains_key("/dst/stale"));
+        let mut cache = fs.lookup_cache
+                          .lock();
+        assert_eq!(cache.get("/dst"), Some(10));
+        assert_eq!(cache.get("/dst/child"), Some(11));
+        assert_eq!(cache.get("/unrelated"), Some(13));
+        assert!(!cache.contains("/src"));
+        assert!(!cache.contains("/src/child"));
+        assert!(!cache.contains("/dst/stale"));
         drop(cache);
         let negative = fs.negative_cache
                          .lock();
@@ -380,11 +336,11 @@ mod tests {
 
         fs.cache_remove_subtree("/tmp/work");
 
-        let cache = fs.lookup_cache
-                      .lock();
-        assert!(!cache.contains_key("/tmp/work"));
-        assert!(!cache.contains_key("/tmp/work/output"));
-        assert_eq!(cache.get("/tmp/worker"), Some(&22));
+        let mut cache = fs.lookup_cache
+                          .lock();
+        assert!(!cache.contains("/tmp/work"));
+        assert!(!cache.contains("/tmp/work/output"));
+        assert_eq!(cache.get("/tmp/worker"), Some(22));
     }
 
     #[test]
@@ -431,10 +387,7 @@ mod tests {
           .insert("/created");
         fs.cache_insert("/created", 41);
 
-        assert_eq!(fs.lookup_cache
-                     .lock()
-                     .get("/created"),
-                   Some(&41));
+        assert_eq!(fs.lookup_cache.lock().get("/created"), Some(41));
         assert!(!fs.negative_cache
                    .lock()
                    .as_ref()
