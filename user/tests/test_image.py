@@ -78,6 +78,17 @@ class Ext4IntegrationTests(unittest.TestCase):
             )
             self.assertEqual(first_hash, second_hash, headers)
 
+    def test_auto_image_size_scales_with_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            staging = root / "staging"
+            staging.mkdir()
+            make_rootfs(staging)
+            (staging / "large-file").write_bytes(b"x" * (20 * 1024 * 1024))
+            size = image.auto_image_size_mb(staging, 4096, 256)
+            self.assertGreaterEqual(size, 32)
+            self.assertEqual(size & (size - 1), 0)
+
     def test_disk_image_appends_raw_filesystem_partition(self) -> None:
         if shutil.which("sfdisk") is None:
             self.skipTest("sfdisk is required")

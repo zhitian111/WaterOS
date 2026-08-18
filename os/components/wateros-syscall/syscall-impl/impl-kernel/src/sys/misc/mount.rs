@@ -301,8 +301,11 @@ pub(crate) fn sys_mount(args: SyscallArgs) -> UserRet {
 
     let readonly = flags & MS_RDONLY != 0;
 
+    // BusyBox passes `auto` when -t is omitted.  The current block backend
+    // supports ext4 (including the ext2/ext3-compatible path), so let auto
+    // reach the same dispatcher instead of rejecting it as an unknown type.
     if !fstype.is_empty()
-        && !matches!(fstype.as_str(), "ext4" | "ext3" | "ext2" | "vfat")
+        && !matches!(fstype.as_str(), "auto" | "ext4" | "ext3" | "ext2" | "vfat")
     {
         return UserRet::from_error(ErrNo::EINVAL);
     }

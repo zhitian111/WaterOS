@@ -220,6 +220,46 @@ fn char_dev_exists(abs : &str) -> bool {
     fs::devfs::active_impl::lookup_character_device(abs).is_ok()
 }
 
+/// Return whether `abs` names a block device currently registered in devfs.
+fn block_dev_exists(abs : &str) -> bool {
+    fs::devfs::active_impl::lookup_block_device(abs).is_ok()
+}
+
+/// Stable inode used for synthetic devfs nodes.
+fn devfs_path_inode(path : &str) -> u64 {
+    let mut hash = 0xCBF2_9CE4_8422_2325u64;
+    for byte in path.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100_0000_01B3);
+    }
+    hash | (1u64 << 63)
+}
+
+/// Metadata for a registered block device without requiring a filesystem inode.
+fn block_dev_metadata(abs : &str) -> Option<VfsMetadata> {
+    let device = fs::devfs::active_impl::lookup_block_device(abs).ok()?;
+    let device = device.lock();
+    Some(block_metadata_for_device(abs, device.as_ref()))
+}
+
+fn block_metadata_for_device(abs : &str,
+                             device : &dyn driver_block_api_v0::BlockDevice)
+                             -> VfsMetadata {
+    let size = device.total_blocks()
+                         .and_then(|blocks| blocks.checked_mul(device.block_size() as u64))
+                         .unwrap_or(0);
+    VfsMetadata { node_type : VfsNodeType::Special,
+                  size,
+                  mode : 0o60660,
+                  device_major : 0,
+                  device_minor : 0x7FFF_0002,
+                  inode : devfs_path_inode(abs),
+                  mount_id : 0,
+                  nlink : 1,
+                  uid : 0,
+                  gid : 0 }
+}
+
 // 本方法代码由AI完成
 fn char_dev_metadata(abs : &str) -> VfsMetadata {
     impl_fd_session::special_device_metadata(abs)
@@ -237,7 +277,14 @@ fn special_dev_directory_exists(abs : &str) -> bool {
     let prefix = alloc::format!("{}/", abs.trim_end_matches('/'));
     impl_fd_session::special_device_paths()
         .iter()
-        .any(|path| path.starts_with(prefix.as_str()))
+        .any(|path| devfs_path_has_descendant(&prefix, path)) ||
+    fs::devfs::active_impl::list_nodes()
+        .iter()
+        .any(|node| devfs_path_has_descendant(&prefix, node.path.as_str()))
+}
+
+fn devfs_path_has_descendant(prefix : &str, path : &str) -> bool {
+    path.starts_with(prefix) && path.len() > prefix.len()
 }
 
 fn special_dev_directory_metadata(abs : &str) -> VfsMetadata {
@@ -652,6 +699,12 @@ impl VfsDevInventory for FsBridge {
     fn default_root_block_path(&self) -> Option<String> {
         fs::devfs::active_impl::default_root_block_path()
     }
+
+    fn lookup_block_device_path(&self, path : &str) -> VfsResult<()> {
+        fs::devfs::active_impl::lookup_block_device(path)
+            .map(|_| ())
+            .map_err(|_| VfsError::NotFound)
+    }
 }
 
 impl VfsOpenOps for FsBridge {
@@ -682,6 +735,40 @@ impl VfsMountTable for FsBridge {
 
 impl VfsBackend for FsBridge {}
 
+#[cfg(feature = "self_test")]
+fn synthetic_devfs_self_test() {
+    struct TestBlock;
+    impl driver_block_api_v0::BlockDevice for TestBlock {
+        fn total_blocks(&self) -> Option<u64> { Some(8) }
+        fn read_blocks(&mut self,
+                       _start : driver_block_api_v0::Lba,
+                       buf : &mut [u8])
+                       -> driver_block_api_v0::DriverResult<()> {
+            if buf.len() % driver_block_api_v0::BLOCK_SIZE == 0 {
+                Ok(())
+            } else {
+                Err(driver_block_api_v0::DriverError::InvalidParam)
+            }
+        }
+        fn write_blocks(&mut self,
+                        _start : driver_block_api_v0::Lba,
+                        _buf : &[u8])
+                        -> driver_block_api_v0::DriverResult<()> {
+            Err(driver_block_api_v0::DriverError::Unsupported)
+        }
+        fn flush(&mut self) -> driver_block_api_v0::DriverResult<()> { Ok(()) }
+    }
+
+    let meta = block_metadata_for_device("/dev/vda", &TestBlock);
+    assert_eq!(meta.node_type, VfsNodeType::Special);
+    assert_eq!(meta.size, 8 * driver_block_api_v0::BLOCK_SIZE as u64);
+    assert_eq!(meta.mode & 0o170000, 0o060000);
+    assert_eq!(meta.inode, devfs_path_inode("/dev/vda"));
+    assert!(devfs_path_has_descendant("/dev/misc/", "/dev/misc/rtc"));
+    assert!(!devfs_path_has_descendant("/dev/misc/", "/dev/misc/"));
+    assert!(!devfs_path_has_descendant("/dev/misc/", "/dev/miscellaneous/rtc"));
+}
+
 // 本方法代码由AI完成
 pub fn test() {
     api_v0::test();
@@ -693,5 +780,6 @@ pub fn test() {
 #[cfg(feature = "self_test")]
 pub fn self_test() {
     test();
+    synthetic_devfs_self_test();
     impl_page_cache::self_test();
 }

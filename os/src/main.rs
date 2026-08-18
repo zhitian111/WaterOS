@@ -354,13 +354,11 @@ mod riscv64_opensbi_entry {
 
     #[unsafe(no_mangle)]
     pub fn wateros_kernel_main(cpu_raw : usize, dtb_pa : usize, _platform_arg1 : usize) -> ! {
-        unsafe {
-            crate::clear_bss();
-        }
         let cpu_id = task::CpuId::from_raw(cpu_raw);
-        platform::arch::cpu::init_current_cpu(cpu_id).expect("init current CPU");
-        mask_boot_interrupts();
-        // OpenSBI 提供 boot hart；次级 hart 可能直接由固件进入，也可能通过下方 SBI HSM 入口进入。
+        // OpenSBI supplies the boot hart.  Secondary harts can arrive either
+        // directly from firmware or through the SBI HSM entry below. `BSP_HART`
+        // has a non-zero initializer and is consequently stored in `.data`, so it
+        // is safe to use before the BSP clears `.bss`.
         if BSP_HART.compare_exchange(usize::MAX,
                                      cpu_raw,
                                      Ordering::AcqRel,
@@ -369,6 +367,14 @@ mod riscv64_opensbi_entry {
         {
             wait_ap_boot_ready(cpu_id);
         }
+        // Only the BSP may clear global BSS. An AP reaches this same Rust entry
+        // after `hart_start`; clearing here on the AP would erase the scheduler
+        // and all other global state already initialized by the BSP.
+        unsafe {
+            crate::clear_bss();
+        }
+        platform::arch::cpu::init_current_cpu(cpu_id).expect("init current CPU");
+        mask_boot_interrupts();
         // BSP 初始化：驱动 → 日志 → timebase → 堆 → arch → 任务 → trap
         runtime::init_console();
         runtime::showlogo();

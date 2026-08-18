@@ -103,7 +103,7 @@ uImage、`extlinux/extlinux.conf`、`uEnv.txt`、可选 DTB）：此时整盘镜
 | ----------------- | ------------------------------------ | ----------------------------------- |
 | `ARCH`          | `rv`                               | 目标架构，可选`rv`、`la`          |
 | `PACKAGE`       | `all`                              | 要组合的 package 预设或自定义列表 |
-| `IMAGE_SIZE_MB` | `256`                              | EXT4 镜像容量，单位 MiB           |
+| `IMAGE_SIZE_MB` | `auto`                             | EXT4 镜像容量，单位 MiB；默认按所选 package 内容自动计算 |
 | `DISK`          | `0`                                | 置 `1` 额外产出带分区表的整盘镜像 `.img` |
 | `PARTITION_TABLE`| `gpt`                             | 整盘镜像分区表：`gpt` 或 `mbr`     |
 | `DISK_SIZE_MB`  | 空（无附加镜像时沿用 `IMAGE_SIZE_MB`） | 整盘镜像容量，单位 MiB             |
@@ -167,8 +167,8 @@ make image ARCH=rv PACKAGE=graphics \
 `PACKAGE=all` 会扫描 `packages/*/package.toml`，只选择声明支持当前 `ARCH` 且默认启用的
 package。包含专有许可和显式 EULA 确认的 `minecraft-server` 不会被 `all` 自动选择。
 当前 `microwindows` 与 `openjdk21` 均支持 RV 和 LA，因此两个架构的默认完整镜像都包含
-Nano-X、演示程序、Doom、`doom1.wad` 和 OpenJDK 21。JVM 运行时较大，制作 `all` 镜像时
-建议设置 `IMAGE_SIZE_MB=512`。
+Nano-X、演示程序、Doom、`doom1.wad` 和 OpenJDK 21。镜像大小默认根据所选 package
+的 staging 内容自动计算；需要固定容量时仍可显式设置 `IMAGE_SIZE_MB`。
 
 ## 常用命令
 

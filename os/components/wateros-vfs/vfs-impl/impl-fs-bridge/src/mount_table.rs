@@ -928,7 +928,12 @@ fn device_for(entry : &MountEntry) -> String {
 
 // 本方法代码由AI完成
 fn root_mount_device() -> String {
-    fs::devfs::active_impl::default_root_block_path().unwrap_or_else(|| String::from("/dev/root"))
+    // The default path is only the first candidate (usually /dev/vda).  A
+    // partitioned disk may require falling back to /dev/vda4; report the
+    // path that actually mounted instead of the initial probe candidate.
+    fs::rootfs::active_impl::current_root_device_path()
+        .or_else(|| fs::devfs::active_impl::default_root_block_path())
+        .unwrap_or_else(|| String::from("/dev/root"))
 }
 
 // 本方法代码由AI完成

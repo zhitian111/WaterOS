@@ -10,6 +10,9 @@ impl SingleRootReadView for FsBridge {
         if char_dev_exists(abs.as_str()) {
             return Ok(true);
         }
+        if block_dev_exists(abs.as_str()) {
+            return Ok(true);
+        }
         if special_dev_directory_exists(abs.as_str()) {
             return Ok(true);
         }
@@ -39,6 +42,9 @@ impl SingleRootReadView for FsBridge {
         let abs = normalize_absolute_path(path)?;
         if char_dev_exists(abs.as_str()) {
             return Ok(char_dev_metadata(abs.as_str()));
+        }
+        if let Some(meta) = block_dev_metadata(abs.as_str()) {
+            return Ok(meta);
         }
         if special_dev_directory_exists(abs.as_str()) {
             return Ok(special_dev_directory_metadata(abs.as_str()));

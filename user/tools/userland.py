@@ -591,7 +591,14 @@ def parse_arguments() -> argparse.Namespace:
     add_build_arguments(build_parser)
     image_parser = commands.add_parser("image", help="build a standalone EXT4 image")
     add_build_arguments(image_parser)
-    image_parser.add_argument("--image-size-mb", type=int, default=256)
+    def image_size(value: str) -> int | None:
+        if value.lower() == "auto":
+            return None
+        try:
+            return int(value)
+        except ValueError as error:
+            raise argparse.ArgumentTypeError("must be a positive MiB value or auto") from error
+    image_parser.add_argument("--image-size-mb", type=image_size, default=None)
     image_parser.add_argument("--block-size", type=int, default=4096)
     image_parser.add_argument("--inode-size", type=int, default=256)
     image_parser.add_argument("--output", type=Path)
@@ -657,13 +664,15 @@ def main() -> int:
                 raise UserlandError("MBR does not have enough primary partitions for the requested layout")
             staging = build_packages(architecture, package_names, args.jobs)
             output = args.output or image_tool.default_image_path(architecture.name)
+            image_size_mb = image_tool.resolve_image_size(
+                staging, args.image_size_mb, args.block_size, args.inode_size)
             image_tool.create_image(staging, output, architecture.name,
-                                    args.image_size_mb, args.block_size, args.inode_size)
+                                    image_size_mb, args.block_size, args.inode_size)
             if args.disk:
                 disk_output = output.with_suffix(".img")
                 disk_size = args.disk_size_mb or None
                 image_tool.create_disk_image(staging, disk_output, architecture.name,
-                                             args.image_size_mb, args.partition_table,
+                                             image_size_mb, args.partition_table,
                                              args.boot_dir, args.boot_size_mb,
                                              args.filesystem_images, args.filesystem_types,
                                              disk_size)

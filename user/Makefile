@@ -4,7 +4,8 @@ ARCH ?= rv
 PACKAGE ?= all
 # 从 PACKAGE 展开的组合中排除 package；依赖被排除 package 的上层 package 也会跳过。
 SKIP_PACKAGE ?=
-IMAGE_SIZE_MB ?= 256
+# 默认按最终 staging 中所选 package 的内容自动计算；传 IMAGE_SIZE_MB=N 可固定容量。
+IMAGE_SIZE_MB ?= auto
 BLOCK_SIZE ?= 4096
 INODE_SIZE ?= 256
 BASE_IMAGE ?=
@@ -24,6 +25,11 @@ FILESYSTEM_TYPES ?=
 comma := ,
 FILESYSTEM_IMAGE_ARGS := $(foreach image,$(subst $(comma), ,$(FILESYSTEM_IMAGES)),--filesystem-image $(image))
 FILESYSTEM_TYPE_ARGS := $(foreach type,$(subst $(comma), ,$(FILESYSTEM_TYPES)),--filesystem-type $(type))
+# `tools/userland.py image --disk` derives the disk path by replacing the
+# output suffix with `.img`.  Keep the same derived path for the pre-build
+# cleanup below.
+DISK_OUTPUT ?= $(if $(strip $(OUTPUT)),$(OUTPUT),build/images/wateros-$(ARCH).ext4)
+DISK_IMAGE_OUTPUT := $(basename $(DISK_OUTPUT)).img
 
 PYTHON ?= python3
 TOOL := $(PYTHON) ./tools/userland.py
@@ -54,7 +60,7 @@ ifneq ($(strip $(JOBS)),)
 COMMON += --jobs $(JOBS)
 endif
 
-.PHONY: help setup doctor build image overlay inspect test clean distclean
+.PHONY: help setup doctor build image vf2_disk_latest overlay inspect test clean distclean
 
 help:
 	@echo "WaterOS userland / EXT4 image builder"
@@ -73,6 +79,7 @@ help:
 	@echo "  make image  ARCH=rv PACKAGE=base-layout,busybox,operator-tools"
 	@echo "  make overlay ARCH=rv PACKAGE=operator BASE_IMAGE=../os/sdcard-rv.img"
 	@echo "  make disk   ARCH=rv PACKAGE=minimal BOOT_DIR=../os/build/jh7110-boot  # VF2 整盘（P3 FAT boot + P4 rootfs）"
+	@echo "  make vf2_disk_latest                         UI 有更新时才重建默认 rv.img"
 	@echo "  make disk   ARCH=la PACKAGE=minimal PARTITION_TABLE=mbr FILESYSTEM_IMAGES=a.ext4,b.ext4 FILESYSTEM_TYPES=83,83"
 	@echo "  make inspect ARCH=rv"
 	@echo "  make test"
@@ -81,7 +88,7 @@ help:
 	@echo "  ARCH=rv"
 	@echo "  PACKAGE=all"
 	@echo "  SKIP_PACKAGE=<empty>"
-	@echo "  IMAGE_SIZE_MB=256 BLOCK_SIZE=4096 INODE_SIZE=256"
+	@echo "  IMAGE_SIZE_MB=auto BLOCK_SIZE=4096 INODE_SIZE=256"
 	@echo "  JOBS=<host CPU count> OUTPUT=build/images/wateros-<arch>.ext4"
 	@echo "  FILESYSTEM_IMAGES=<empty> FILESYSTEM_TYPES=<empty>"
 	@echo "Package presets:"
@@ -110,6 +117,7 @@ build:
 	$(TOOL) build $(COMMON)
 
 image:
+	$(if $(and $(filter 1,$(DISK)),$(strip $(FILESYSTEM_IMAGES))),@echo "[Makefile] removing existing disk image: $(DISK_IMAGE_OUTPUT)"; rm -f "$(DISK_IMAGE_OUTPUT)",)
 	$(TOOL) image $(COMMON) --image-size-mb $(IMAGE_SIZE_MB) \
 		--block-size $(BLOCK_SIZE) --inode-size $(INODE_SIZE) \
 		$(if $(strip $(OUTPUT)),--output $(OUTPUT),) \
@@ -121,6 +129,27 @@ image:
 
 disk:
 	$(MAKE) image DISK=1
+
+# VisionFive 2 增量整盘镜像：把启动分区中的 UI 纳入实际镜像文件依赖。
+# `disk` 保持兼容旧用法；需要确保 UI 更新后镜像同步时使用此目标。
+VF2_BOOT_DIR ?= ../os/build/jh7110-boot
+VF2_BOOT_UI ?= $(VF2_BOOT_DIR)/wateros-jh7110.ui
+VF2_DISK_IMAGE ?= build/images/wateros-rv.img
+# Extra filesystem images are passed through command-line variables and are
+# not otherwise part of the vf2_disk_latest dependency graph.  Make the
+# target phony for this invocation when any are requested, so an existing
+# default image cannot incorrectly be reported as up to date.
+VF2_DISK_EXTRA_FORCE := $(if $(strip $(FILESYSTEM_IMAGES)),vf2_disk_extra_force,)
+
+$(VF2_DISK_IMAGE): $(VF2_BOOT_UI) $(VF2_DISK_EXTRA_FORCE)
+	@mkdir -p "$(dir $@)"
+	$(MAKE) image DISK=1 ARCH=rv BOOT_DIR="$(VF2_BOOT_DIR)" OUTPUT="$@"
+
+.PHONY: vf2_disk_extra_force
+vf2_disk_extra_force:
+
+vf2_disk_latest: $(VF2_DISK_IMAGE)
+	@echo "[Makefile] [INFO] VisionFive 2 镜像已是最新：$(VF2_DISK_IMAGE)"
 
 overlay:
 	@test -n "$(BASE_IMAGE)" || { echo "BASE_IMAGE is required" >&2; exit 2; }

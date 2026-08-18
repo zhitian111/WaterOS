@@ -81,12 +81,17 @@ def create_disk_image(staging: Path, output: Path, arch: str,
             raise ImageError(f"filesystem image does not exist or is empty: {extra_image}")
     if disk_size_mb is None:
         disk_size_mb = size_mb
-        if extra_images:
+        if extra_images or boot_dir is not None:
             alignment = 1024 * 1024
             payload = size_mb * alignment
+            # ``size_mb`` is the rootfs size.  VF2 also needs two firmware
+            # placeholder partitions (6 MiB total) and the FAT boot partition;
+            # do not make those consume the package-derived rootfs capacity.
+            if boot_dir is not None:
+                payload += (6 + boot_size_mb) * alignment
             payload += sum(((path.stat().st_size + alignment - 1) // alignment) * alignment
                            for path in extra_images)
-            if boot_dir is None:
+            if boot_dir is None and extra_images:
                 payload += alignment
             payload += 34 * 512 if table == "gpt" else 0
             disk_size_mb = (payload + alignment - 1) // alignment
@@ -332,12 +337,51 @@ def _validate_image(image: Path, block_size: int, inode_size: int) -> None:
             raise ImageError(f"{path} is not owned by root:root")
 
 
+def auto_image_size_mb(staging: Path, block_size: int, inode_size: int) -> int:
+    """Choose a rootfs size from the files that will be copied into it.
+
+    The estimate includes filesystem block rounding and inode/directory space,
+    then leaves a 10% growth margin (and at least 8 MiB).  The result is
+    rounded up to the next power-of-two MiB tier (16, 32, 64, ...), keeping
+    generated images predictable and avoiding a late ``mke2fs`` ENOSPC.
+    """
+    payload = 0
+    entries = 0
+    for path in staging.rglob("*"):
+        entries += 1
+        stat = path.lstat()
+        if stat.st_mode & 0o170000 == 0o040000:  # directory
+            payload += block_size
+        elif stat.st_mode & 0o170000 == 0o100000:  # regular file
+            payload += ((stat.st_size + block_size - 1) // block_size) * block_size
+        elif stat.st_mode & 0o170000 == 0o120000:  # symlink payload (usually inline)
+            link_size = stat.st_size
+            if link_size > 60:
+                payload += ((link_size + block_size - 1) // block_size) * block_size
+    payload += entries * inode_size
+    margin = max(8 * 1024 * 1024, payload // 10)
+    required = max(16 * 1024 * 1024, payload + margin)
+    size = 16 * 1024 * 1024
+    while size < required:
+        size *= 2
+    return size // (1024 * 1024)
+
+
+def resolve_image_size(staging: Path, image_size_mb: int | None,
+                       block_size: int, inode_size: int) -> int:
+    if image_size_mb is None:
+        image_size_mb = auto_image_size_mb(staging, block_size, inode_size)
+        print(f"[image] auto image size: {image_size_mb} MiB", flush=True)
+    return image_size_mb
+
+
 def create_image(staging: Path, output: Path, arch: str,
-                 image_size_mb: int, block_size: int, inode_size: int) -> Path:
+                 image_size_mb: int | None, block_size: int, inode_size: int) -> Path:
     staging = staging.resolve()
     output = output.resolve()
     if not staging.is_dir():
         raise ImageError(f"staging directory does not exist: {staging}")
+    image_size_mb = resolve_image_size(staging, image_size_mb, block_size, inode_size)
     if image_size_mb < 16:
         raise ImageError("image size must be at least 16 MiB")
     if block_size not in (1024, 2048, 4096):

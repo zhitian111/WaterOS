@@ -16,7 +16,7 @@ BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 .PHONY: rv_pre_run-gdb rv_final_run-gdb rv_final_run_log-gdb rv_final_debug_run-gdb
 .PHONY: rv_qemu_run rv_qemu_run_snapshot
 .PHONY: rv_qemu_run_with_log
-.PHONY: la_check la2k_check jh7110_check kernel-la2k la2k_uimage la2k_bootscr la2k_tftp kernel-jh7110 jh7110_uimage jh7110_bootdir dd_img_vf2 dd_img_2k1000 la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
+.PHONY: la_check la2k_check jh7110_check kernel-la2k la2k_uimage la2k_bootscr la2k_tftp kernel-jh7110 jh7110_uimage jh7110_bootdir vf2_img_latest dd_img_vf2 dd_img_2k1000 la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
 .PHONY: kernel-la kernel-la-best kernel-la-pre kernel-la-final la_pre_run la_final_run la_final_run_log
 .PHONY: la_pre_run-gdb la_final_run-gdb la_final_run_log-gdb
 .PHONY: la_qemu_run la_qemu_run_snapshot
@@ -42,6 +42,14 @@ common_dependencies = $(shell find . -name "*.rs") \
 kernel_rv_dependencies = $(common_dependencies)
 
 COMMA := ,
+empty :=
+space := $(empty) $(empty)
+
+# 传递给 user/ 镜像构建器的附加裸文件系统镜像（逗号分隔）。
+FILESYSTEM_IMAGES ?=
+FILESYSTEM_TYPES ?=
+FILESYSTEM_IMAGES_ABS := $(subst $(COMMA), ,$(foreach image,$(subst $(COMMA), ,$(FILESYSTEM_IMAGES)),$(abspath $(image))))
+FILESYSTEM_IMAGES_ABS := $(subst $(space),$(COMMA),$(strip $(FILESYSTEM_IMAGES_ABS)))
 
 # ── 操作者可覆盖的默认值 ──────────────────────────────────────────
 # 命令行变量优先，例如：make run ARCH=la PROFILE=final SMP=4。
@@ -186,7 +194,9 @@ help:
 	@echo "  make debug-server ARCH=rv PROFILE=pre  手动挡：终端一启动 QEMU"
 	@echo "  make gdb                             手动挡：终端二连接"
 	@echo "  make dd_img_vf2 DEVICE=/dev/sdX     烧录 VisionFive 2 整盘镜像（先 cd user && make disk）"
+	@echo "  make vf2_img_latest                  UI 有更新时自动重建 VisionFive 2 整盘镜像"
 	@echo "  make dd_img_2k1000 DEVICE=/dev/sdX  烧录 Loongson 2K1000 整盘镜像（先 make disk ARCH=la）"
+	@echo "  FILESYSTEM_IMAGES=a.ext4,b.ext4 FILESYSTEM_TYPES=83,83  为 user 整盘镜像追加文件系统分区"
 	@echo "  make la2k_tftp                       启动 2K1000 TFTP 服务并同步最新启动文件"
 	@echo "  make snapshot / make watch           附加当前活动会话"
 	@echo "  make doctor                          检查 GDB/QEMU/符号工具"
@@ -562,7 +572,12 @@ jh7110_uimage: kernel-jh7110
 
 jh7110_bootdir: jh7110_uimage
 	@mkdir -p ./build/jh7110-boot/extlinux
-	@cp ./kernel-jh7110.ui ./build/jh7110-boot/wateros-jh7110.ui
+	@if cmp -s ./kernel-jh7110.ui ./build/jh7110-boot/wateros-jh7110.ui 2>/dev/null; then \
+		echo "[Makefile] [INFO] jh7110 UI 未变化，保留现有启动文件"; \
+	else \
+		cp ./kernel-jh7110.ui ./build/jh7110-boot/wateros-jh7110.ui; \
+		echo "[Makefile] [INFO] jh7110 UI 已更新"; \
+	fi
 	@cp ./scripts/root_image/jh7110-extlinux.conf ./build/jh7110-boot/extlinux/extlinux.conf
 	@cp ./scripts/root_image/jh7110-uEnv.txt ./build/jh7110-boot/uEnv.txt
 	@cp ./scripts/root_image/jh7110-vf2-uEnv.txt ./build/jh7110-boot/vf2_uEnv.txt
@@ -577,6 +592,24 @@ jh7110_bootdir: jh7110_uimage
 # 整盘镜像烧录（先由 user/ 的 make disk 生成镜像，再执行本目标）。
 VF2_DD_IMAGE ?= ../user/build/images/wateros-rv.img
 LA2K_DD_IMAGE ?= ../user/build/images/wateros-la.img
+VF2_BOOT_UI ?= ./build/jh7110-boot/wateros-jh7110.ui
+
+# 真实文件目标：只有启动 UI 比整盘镜像更新，或镜像尚不存在时，才重新
+# 调用 user/ 的 disk 构建。这样可以避免“UI 已经换了但镜像仍是旧的”这类
+# 依赖断裂，也避免每次调用便无条件重建整盘镜像。
+$(VF2_BOOT_UI): jh7110_bootdir
+
+$(VF2_DD_IMAGE): $(VF2_BOOT_UI)
+	@mkdir -p "$(dir $@)"
+	@$(MAKE) -C ../user vf2_disk_latest ARCH=rv \
+		VF2_BOOT_DIR="$(abspath $(dir $(VF2_BOOT_UI)))" \
+		VF2_BOOT_UI="$(abspath $(VF2_BOOT_UI))" \
+		VF2_DISK_IMAGE="$(abspath $@)" \
+		FILESYSTEM_IMAGES="$(FILESYSTEM_IMAGES_ABS)" \
+		FILESYSTEM_TYPES="$(FILESYSTEM_TYPES)"
+
+vf2_img_latest: $(VF2_DD_IMAGE)
+	@echo "[Makefile] [INFO] VisionFive 2 镜像已是最新：$(VF2_DD_IMAGE)"
 
 dd_img_vf2:
 	@test -n "$(DEVICE)" || { $(call ERROR_CMD,请先指定目标块设备 variable=DEVICE example=/dev/sdX image=$(VF2_DD_IMAGE),2); exit 2; }
