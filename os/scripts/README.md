@@ -159,6 +159,7 @@ make rv_symbol_at ADDR=0x80200000
 | `ltp_prune_sdcard_before.sh` | 用 debugfs 裁剪指定用例之前的 LTP 文件 | **修改目标镜像** |
 | `ltp_sum_passed.py` | 汇总 LTP Summary 中的 passed 数量 | 只读 |
 | `guest_buildstorm_parallel_probe.sh` | guest 内构造无网络 Cargo 并发负载 | 修改 guest `/tmp` |
+| `guest_cgroup_capability_regression.sh` | guest 内确认未实现的 cgroup 控制器不会被误报 | guest 内执行测试 |
 | `guest_read_family_regression.sh` | guest 内运行 read/pipe/socket 等 LTP 用例 | guest 内执行测试 |
 | `regress_ext4_dir_tail.sh`（scripts 根目录） | QEMU 内验证 ext4 目录块 tail 边界；可选 apt/dpkg 模式 | 创建 overlay、注入 guest 脚本 |
 

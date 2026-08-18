@@ -69,6 +69,21 @@ sequenceDiagram
 共享；`CLONE_NEWNS` 与 `CLONE_FS` 互斥。新增 side table 必须同时加入成功继承和
 `abort_initialized_fork` 回滚。
 
+### wait4/waitid 的事件语义
+
+`wait4`（内部与 `waitpid` 共用入口）支持任意子进程、指定 PID、当前进程组和指定进程组筛选。
+退出事件会 reap zombie 并累计 child rusage；`WUNTRACED` 返回尚未消费的停止事件，`WCONTINUED`
+返回继续事件，二者只消费事件标志而不回收进程。status 分别使用 Linux 的退出高 8 位、
+`(stopsig << 8) | 0x7f` 和 `0xffff` 编码。`WNOHANG` 在有匹配子进程但没有匹配事件时返回 0。
+
+`waitid` 额外支持 `P_PIDFD`、`WNOWAIT` 和 `siginfo_t` 结果。`WNOWAIT` 对退出、停止和继续事件都只读取
+状态：退出进程仍保留为 zombie，CPU 时间不计入父进程，后续 `waitid`/`wait4` 可以再次观察并完成回收。
+其 `si_status` 使用原始退出码或信号号，`si_code` 区分
+`CLD_EXITED/KILLED/DUMPED/STOPPED/CONTINUED`，不能复用 wait4 的 status 位编码。
+用户指针写入成功后才消费事件或 reap，因此 `EFAULT` 不会让父进程永久丢失子状态。默认 disposition
+的 SIGCHLD 不打断等待；捕获信号则按 handler 的 `SA_RESTART` 与 syscall restart 表决定重启或返回
+`EINTR`。
+
 ### exit 与 reap 的资源边界
 
 task core 先发布线程/进程退出状态，使 wait 和 pidfd 能观察 zombie；syscall 组合层随后在锁外调用
@@ -98,7 +113,8 @@ exit 立即释放，还是作为 zombie 可观察状态保留到 reap，不能�
 
 ## 已知边界
 
-- `CLONE_PIDFD` 尚未接入 clone 创建事务；独立 pidfd syscall 已完整可用。
+- `CLONE_PIDFD` 已接入 clone/clone3 创建事务和失败回滚；`CLONE_INTO_CGROUP` 目前只接受当前已支持的
+  cgroup 目录句柄，不具备 Linux cgroup v2 的完整控制器迁移语义。
 - pidfd_send_signal 的非空 siginfo 尚无 queued payload 语义，返回 `EOPNOTSUPP`。
 - rseq 保持 `ENOSYS`：完整实现必须在每次迁移/抢占时更新用户 rseq area 并处理 abort IP。
 - setns 和完整 namespace 尚无 namespace fd/引用生命周期。

@@ -32,7 +32,7 @@ self_test / 用户态 smoke / QEMU workload
 - 成功返回值、部分成功、阻塞/非阻塞、信号中断与 restart 语义。
 
 调用号定义在
-[`number.rs`](../../components/wateros-syscall/syscall-api/api-v0/src/number.rs)。若常量已存在，不要
+[`number.rs`](../../os/components/wateros-syscall/syscall-api/api-v0/src/number.rs)。若常量已存在，不要
 重复定义。`SELECT = usize::MAX` 这类值表示 generic64 没有独立编号，不能放进稠密分发表。
 
 ## 第二步：选择领域和状态所有者
@@ -123,8 +123,8 @@ struct UserExample {
 
 已有集中转换函数：
 
-- [`vfs_util.rs`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/vfs_util.rs)：`VfsError -> ErrNo`；
-- [`mm_util.rs`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/mm_util.rs)：`MmError -> ErrNo`；
+- [`vfs_util.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/vfs_util.rs)：`VfsError -> ErrNo`；
+- [`mm_util.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/mm_util.rs)：`MmError -> ErrNo`；
 - socket、futex、SHM 等在各领域文件内有专用映射。
 
 不要先把底层错误编码为负数，再交给 `UserRet::from_error`。也不要把所有错误统一成 `EINVAL`；测试通常
@@ -134,7 +134,7 @@ struct UserExample {
 
 1. 在领域 `mod.rs` 声明模块并 `pub(crate) use` handler。
 2. 在
-   [`syscall_nr_dispatch.rs`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/syscall_nr_dispatch.rs)
+   [`syscall_nr_dispatch.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/syscall_nr_dispatch.rs)
    的 `arg_syscalls!` 中加入 `api_v0::NUMBER => sys::sys_example`。
 3. 若 handler 没有标准签名，优先写很薄的本地 adapter；不要让整个热路径改成动态匹配。
 4. 如果 syscall 可在 `EINTR` 后自动重启，更新同文件的 restartable 表并验证信号语义。

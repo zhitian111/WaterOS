@@ -1,6 +1,6 @@
 # 线下测试、LTP 与 benchmark 执行手册
 
-本文说明如何选择测试、保存证据并避免把“脚本跑完”误报为“功能通过”。已有一次完整数据整理见 [RISC-V LTP/benchmark PPT 数据底稿](../reports/2026-08-18-ltp-bench-ppt-report.md)。
+本文说明如何选择测试、保存证据并避免把“脚本跑完”误报为“功能通过”。已有一次完整数据整理见 [RISC-V LTP/benchmark PPT 数据底稿](../../os/docs/reports/2026-08-18-ltp-bench-ppt-report.md)。
 
 ## 1. 四类结果必须分开
 
@@ -107,7 +107,7 @@ auto 队列由根镜像标志选择，不只由 PROFILE 决定。核对日志中
 
 ## 4. operator 冒烟
 
-[`operator_smoke.py`](../../scripts/testing/operator_smoke.py) 驱动串口 PTY，覆盖：shell prompt、pipe/file、后台 wait、Ctrl-C、raw TTY、shell 退出后救援 shell；可选 Vim。
+[`operator_smoke.py`](../../os/scripts/testing/operator_smoke.py) 驱动串口 PTY，覆盖：shell prompt、pipe/file、后台 wait、Ctrl-C、raw TTY、shell 退出后救援 shell；可选 Vim。
 
 ```sh
 python3 scripts/testing/operator_smoke.py \
@@ -118,7 +118,7 @@ python3 scripts/testing/operator_smoke.py \
 
 ## 5. LTP 定向回归
 
-[`guest_read_family_regression.sh`](../../scripts/testing/guest_read_family_regression.sh) 是 read/pipe/socket/eventfd 的 guest 侧稳定 marker 样板：
+[`guest_read_family_regression.sh`](../../os/scripts/testing/guest_read_family_regression.sh) 是 read/pipe/socket/eventfd 的 guest 侧稳定 marker 样板：
 
 ```text
 READ_FAMILY_BEGIN
@@ -137,7 +137,7 @@ LTP 判定优先级：
 4. `TPASS`：对应子断言通过；
 5. case/wrapper rc 与 Summary：辅助校验完整性。
 
-[`ltp_sum_passed.py`](../../scripts/testing/ltp_sum_passed.py) 能汇总 Summary 的 passed 数和 RUN case 数：
+[`ltp_sum_passed.py`](../../os/scripts/testing/ltp_sum_passed.py) 能汇总 Summary 的 passed 数和 RUN case 数：
 
 ```sh
 python3 scripts/testing/ltp_sum_passed.py /tmp/wateros-ltp.log
@@ -147,9 +147,9 @@ python3 scripts/testing/ltp_sum_passed.py /tmp/wateros-ltp.log
 
 ## 6. LTP hang 定位与镜像裁剪
 
-[`ltp_hang_iterate.sh`](../../scripts/testing/ltp_hang_iterate.sh) 会修改镜像、skip 表并反复构建，属于有副作用的历史工具。使用前必须复制镜像并确认 git 工作区；它不适合与其他 QEMU 测试并行。
+[`ltp_hang_iterate.sh`](../../os/scripts/testing/ltp_hang_iterate.sh) 会修改镜像、skip 表并反复构建，属于有副作用的历史工具。使用前必须复制镜像并确认 git 工作区；它不适合与其他 QEMU 测试并行。
 
-[`ltp_prune_sdcard_before.sh`](../../scripts/testing/ltp_prune_sdcard_before.sh) 通过 debugfs 删除目标 case 之前的二进制，以便从某位置重跑。先用 `--dry-run`：
+[`ltp_prune_sdcard_before.sh`](../../os/scripts/testing/ltp_prune_sdcard_before.sh) 通过 debugfs 删除目标 case 之前的二进制，以便从某位置重跑。先用 `--dry-run`：
 
 ```sh
 ./scripts/testing/ltp_prune_sdcard_before.sh \
@@ -178,7 +178,7 @@ git diff -- src/user_bringup_busybox.rs
 
 ## 8. QEMU 日志解析
 
-[`parse_qemu_test_log.py`](../../scripts/testing/parse_qemu_test_log.py) 面向旧日志格式，按 `[busybox-bringup] script_path` 切块，并把 `FAIL LTP CASE name : 0` 当通过。当前 bring-up 日志和 LTP wrapper 可能不同，使用前先检查 parser 是否实际识别到 block；输出 total=0 不是“零失败”，而是很可能没匹配格式。
+[`parse_qemu_test_log.py`](../../os/scripts/testing/parse_qemu_test_log.py) 面向旧日志格式，按 `[busybox-bringup] script_path` 切块，并把 `FAIL LTP CASE name : 0` 当通过。当前 bring-up 日志和 LTP wrapper 可能不同，使用前先检查 parser 是否实际识别到 block；输出 total=0 不是“零失败”，而是很可能没匹配格式。
 
 可靠解析器应：
 

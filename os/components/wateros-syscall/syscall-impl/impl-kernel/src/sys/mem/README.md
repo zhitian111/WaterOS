@@ -1,7 +1,7 @@
 # 内存系统调用开发手册
 
 [返回 impl-kernel](../../../README.md) · [MM 组件](../../../../../../wateros-mm/README.md) ·
-[跨组件调用链](../../../../../../../docs/offline-development/architecture-and-call-chains.md)
+[跨组件调用链](../../../../../../../../docs/offline-development/architecture-and-call-chains.md)
 
 本目录只拥有 Linux 内存 ABI 的解析和 VFS 文件 loader 适配；VMA、PTE、物理帧、COW、ASID 和 TLB
 由 `wateros-mm` 所有。通用 handler 同时服务 Sv39 与 LoongArch64，架构差异必须下沉到 MM。

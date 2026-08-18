@@ -18,8 +18,9 @@ from pathlib import Path
 
 
 OS_ROOT = Path(__file__).resolve().parents[2]
+REPOSITORY_ROOT = OS_ROOT.parent
 COMPONENTS = OS_ROOT / "components"
-OFFLINE_DOCS = OS_ROOT / "docs" / "offline-development"
+OFFLINE_DOCS = REPOSITORY_ROOT / "docs" / "offline-development"
 
 README_NAMES = ("README.md", "readme.md", "Readme.md")
 REQUIRED_OFFLINE_DOCS = (
@@ -33,6 +34,7 @@ REQUIRED_OFFLINE_DOCS = (
     "debugging-and-regression.md",
     "device-storage-network-runtime.md",
     "feature-cookbook.md",
+    "rust-patterns.md",
     "source-navigation-index.md",
     "testing-playbook.md",
 )

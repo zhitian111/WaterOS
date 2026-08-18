@@ -359,7 +359,7 @@ sysfs 是手工生成的兼容视图，只覆盖源码中列出的 CPU、node、
 
 普通 `mount -t tmpfs` 调用 `fs::new_ramfs_rw(limit, mode)`；本 crate 的 `TmpFs` 主要是 cgroup v1/v2 测试兼容树，内含 file/dir/symlink、inode、uid/gid 和 xattr 的 BTreeMap。
 
-cgroup 控制文件是静态 seed，并不执行真正资源控制。cpuset `tasks` 写入被有意放行，以避免 BusyBox ash 在 LTP 中因预期写失败提前退出并留下后台进程；代价是部分“应失败”用例会 TFAIL。
+cgroup 控制文件是静态 seed，并不执行真正资源控制。v2 的 `cgroup.controllers` 因此保持为空，避免用户态误判 memory、cpu、cpuset 等控制器可用。cpuset `tasks` 写入被有意放行，以避免 BusyBox ash 在 LTP 中因预期写失败提前退出并留下后台进程；代价是部分“应失败”用例会 TFAIL。
 
 xattr 名必须非空、<=255 且含点。cgroup 只接受非空 `trusted.*`，`security.*` 返回 Unsupported；普通 FS 交给后端。查询空 buffer 返回所需长度，缓冲不足由 FS/VFS 错误映射，syscall 层负责转换为 Linux errno。
 

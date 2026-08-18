@@ -16,6 +16,9 @@ impl MultiClassScheduler {
                        cpu_id.raw());
             return;
         }
+        // 从指定 timekeeper 的此刻开始建立 wall-clock 基准；后续 timer handler
+        // 若因 SMP 调度锁竞争迟到，会根据该基准补推进全局 timeout tick。
+        self.timekeeper_last_ns = platform::wall_clock::monotonic_ns().ok();
         log::info!("[scheduler] CPU {} is global timekeeper",
                    cpu_id.raw());
     }

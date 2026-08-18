@@ -108,19 +108,20 @@ fn log_unhandled_user_fault_probe(cx : &TrapContext, trap_cause : TrapCause, raw
            cx.return_address_space_token(),
            task::current_task_user_aspace_ptr());
     match mm::user_access::debug_probe_user_virt(task::current_task_user_aspace_ptr(),
-                                                  mm::api::addr::VirtAddr(cx.fault_addr()))
+                                                 mm::api::addr::VirtAddr(cx.fault_addr()))
     {
         Ok(probe) => warn!("[trap][probe] user VA={:#x} pa={:?} pte_perm={:?} lazy_perm={:?} \
-                           in_brk={} in_stack={} aspace_satp={:#x}",
-                          cx.fault_addr(),
-                          probe.pa,
-                          probe.perm,
-                          probe.lazy_perm,
-                          probe.in_brk,
-                          probe.in_stack,
-                          probe.aspace_satp),
+                            in_brk={} in_stack={} aspace_satp={:#x}",
+                           cx.fault_addr(),
+                           probe.pa,
+                           probe.perm,
+                           probe.lazy_perm,
+                           probe.in_brk,
+                           probe.in_stack,
+                           probe.aspace_satp),
         Err(error) => warn!("[trap][probe] failed to inspect user VA={:#x}: {:?}",
-                            cx.fault_addr(), error),
+                            cx.fault_addr(),
+                            error),
     }
 }
 
@@ -286,7 +287,9 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             // fault， 形成无限 trap 风暴；在 INFO
             // 日志级别下毫无输出，表现为「sret 后卡死」。
             if cx.returns_to_user() {
-                if matches!(trap_cause, TrapCause::Exception(Exception::StorePageFault)) {
+                if matches!(trap_cause,
+                            TrapCause::Exception(Exception::StorePageFault))
+                {
                     match mm::kernel_mm::handle_cow_fault(task::current_task_user_aspace_ptr(),
                                                           cx.fault_addr())
                     {
@@ -355,7 +358,8 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                                                syscall::SIGKILL);
                     }
                     UserPageFaultResult::Internal(error) => {
-                        error!("[trap] internal user page fault error sepc={:#x} stval={:#x}: {:?}",
+                        error!("[trap] internal user page fault error sepc={:#x} stval={:#x}: \
+                                {:?}",
                                cx.user_pc(),
                                cx.fault_addr(),
                                error);
@@ -381,11 +385,12 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                        code);
                 let raised = syscall::raise_current_fault_signal(signal, code, cx.fault_addr());
                 debug!("[trap][probe] raise_current_fault_signal({}, {}) -> {}",
-                       signal,
-                       code,
-                       raised);
+                       signal, code, raised);
                 if !raised {
-                    kill_current_user_task("user memory fault", trap_cause, cx, signal);
+                    kill_current_user_task("user memory fault",
+                                           trap_cause,
+                                           cx,
+                                           signal);
                 }
                 let delivered = return_to_user_signal_delivery(authoritative, trap_cause, cx, None);
                 if !delivered {

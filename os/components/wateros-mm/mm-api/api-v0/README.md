@@ -1,6 +1,6 @@
 # MM API v0 开发手册
 
-[MM 总览](../../README.md) · [离线开发手册](../../../../docs/offline-development/README.md)
+[MM 总览](../../README.md) · [离线开发手册](../../../../../docs/offline-development/README.md)
 
 本 crate 是物理内存、地址空间实现与 task/syscall 之间的稳定契约层。它只描述“地址、权限、映射和用户访问应当具有什么语义”，不编码 Sv39/LoongArch64 PTE，也不持有 VFS 文件或 Linux errno。新增跨架构内存能力时，优先在这里定义最小 trait/数据结构，再分别实现两个架构。
 

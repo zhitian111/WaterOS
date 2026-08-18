@@ -43,6 +43,14 @@ timer/yield/block/exit/reschedule
 
 目标上下文的返回地址若落入 kernel heap，`validate_switch_target` 会 panic，因为这通常表示 TCB/栈已释放或上下文被覆盖。遇到该错误应追查任务发布/回收时序和内核栈所有权，不要扩大允许地址范围。
 
+## 多核 timeout 时间基准
+
+只有 timekeeper CPU 推进全局 sleep/wait timeout。各 CPU 的 timer handler 都要取得 scheduler 锁，
+所以 8/12 核同时中断时，timekeeper 实际取得锁的间隔可能大于配置的 10ms。实现保存上次折算过的
+单调时钟基准，每次由 `elapsed / period` 补推进一个或多个全局 tick，并保留不足一个周期的余量。
+这保证 futex、poll、sleep 等 deadline 跟随实际经过时间，而不是跟随“成功取得锁的 timer 次数”；
+每 CPU 时间片和 vruntime 仍只按本 CPU 的真实 timer 事件推进，不因全局补 tick 被重复计费。
+
 ## 修改状态迁移的检查表
 
 1. 在一个 scheduler 临界区内摘除旧容器、更新 TCB、设置 CPU cache、加入新容器。
@@ -53,4 +61,3 @@ timer/yield/block/exit/reschedule
 6. 压力验证 SMP=1 与 SMP=8、频繁 fork/exit、wait timeout、affinity 改动和远端 wake。
 
 运行期应联合观察 CPU snapshot 的 runnable 分项、current、need_resched、timer/context-switch 计数，以及 debug 的 scheduler lock wait。长期 ready 但从不运行通常检查 affinity/online/queue ownership；上下文损坏则检查 premature reap/deferred publish；超时速度异常则检查 timekeeper 唯一性。
-

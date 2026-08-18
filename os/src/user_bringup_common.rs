@@ -6,9 +6,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use mm::api::kernel_bringup::{
-    LoadProgramError, LoadedElf, LoadedProgram, PrepareUserStackError,
-};
+use mm::api::kernel_bringup::{LoadProgramError, LoadedElf, LoadedProgram, PrepareUserStackError};
 use runtime::logging::*;
 
 const PROCESS_EXIT_GRACE_TICKS : task::TaskTick = 64;
@@ -40,10 +38,11 @@ pub fn run_one_bringup_command(log_tag : &str, cmd : &BringupCommand) -> Option<
 
 /// 基于已装载 ELF 创建尚未发布的用户任务，并在用户栈上写入 `argv` / `envp`
 ///（与 `execve` 布局一致）。
-pub fn create_user_task_from_loaded_elf_with_argv(loaded : &LoadedElf,
-                                                  argv : &[&str],
-                                                  envp : &[&str])
-                                                  -> Result<(task::TaskId, Vec<u8>), PrepareUserStackError> {
+pub fn create_user_task_from_loaded_elf_with_argv(
+    loaded : &LoadedElf,
+    argv : &[&str],
+    envp : &[&str])
+    -> Result<(task::TaskId, Vec<u8>), PrepareUserStackError> {
     let prepared = mm::kernel_mm::prepare_elf_user_stack(loaded, argv, envp)?;
     let sp = prepared.sp;
     let (argc, argv_ptr, envp_ptr) = initial_entry_args(sp, argv.len());
@@ -99,25 +98,30 @@ pub fn run_one_elf_argv_env_exit(log_tag : &str,
                                                 .collect();
     info!("[{log_tag}] spawn path={elf_path} entry_pc={:#x} satp={:#x} argv={final_argv:?}",
           loaded.entry_pc, loaded.satp);
-    let (tid, auxv) = match create_user_task_from_loaded_elf_with_argv(&loaded, &final_argv_refs, envp) {
-        Ok(created) => created,
-        Err(e) => {
-            warn!("[{log_tag}] skip spawn path={elf_path}: {e:?}");
-            mm::kernel_mm::drop_user_aspace(loaded.user_aspace_ptr);
-            return None;
-        }
-    };
+    let (tid, auxv) =
+        match create_user_task_from_loaded_elf_with_argv(&loaded, &final_argv_refs, envp) {
+            Ok(created) => created,
+            Err(e) => {
+                warn!("[{log_tag}] skip spawn path={elf_path}: {e:?}");
+                mm::kernel_mm::drop_user_aspace(loaded.user_aspace_ptr);
+                return None;
+            }
+        };
 
     cred::on_user_task_spawned(tid);
 
     #[cfg(feature = "vfs-bridge")]
-    vfs::cwd::on_user_task_spawned_for_elf(tid, executable_path.as_str(), &final_argv_refs);
+    vfs::cwd::on_user_task_spawned_for_elf(tid,
+                                           executable_path.as_str(),
+                                           &final_argv_refs);
     #[cfg(feature = "vfs-bridge")]
     let _ = vfs::cwd::set_task_env(tid, envp.iter().copied());
     #[cfg(feature = "vfs-bridge")]
     let _ = vfs::cwd::set_task_auxv(tid, auxv);
     #[cfg(feature = "vfs-bridge")]
-    if envp.iter().any(|entry| *entry == "PWD=/root") {
+    if envp.iter()
+           .any(|entry| *entry == "PWD=/root")
+    {
         if let Err(error) = vfs::cwd::set_task_cwd(tid, "/root") {
             warn!("[{log_tag}] failed to set operator cwd to /root: {error:?}");
         }
@@ -153,10 +157,10 @@ pub fn run_one_elf_argv_env_exit(log_tag : &str,
         // 对损坏的进程 registry 保留仅清理 leader 的旧回退路径；
         // 下方 purge_all_user_processes 仍是有界清理的最后保障。
         task::reap_exited_task(tid).map(|exited| {
-                                               drop_reaped_task_runtime_resources(&exited);
-                                               exited.exit_code
-                                           })
-                                           .unwrap_or(-1)
+                                       drop_reaped_task_runtime_resources(&exited);
+                                       exited.exit_code
+                                   })
+                                   .unwrap_or(-1)
     };
 
     let (purge, stray_exited) = task::purge_all_user_processes();
@@ -201,14 +205,15 @@ fn wait_and_reap_user_process(pid : task::ProcessId) -> Option<Vec<task::ExitedT
             return None;
         }
         let pending = task::task_ids_for_process(pid).and_then(|task_ids| {
-            task_ids.into_iter()
+                                                         task_ids.into_iter()
                     .find(|task_id| {
                         !matches!(task::task_state(*task_id),
                                   Some(task::TaskState::Exited(_)))
                     })
-        });
+                                                     });
         if let Some(task_id) = pending {
-            let remaining = deadline.saturating_sub(now).max(1);
+            let remaining = deadline.saturating_sub(now)
+                                    .max(1);
             let _ = task::wait_for_task_exit_for_ticks(task_id, remaining);
         } else {
             // registry 状态可能在极短窗口内落后于 scheduler。

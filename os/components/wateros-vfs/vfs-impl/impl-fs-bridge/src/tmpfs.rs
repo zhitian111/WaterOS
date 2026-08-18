@@ -324,7 +324,10 @@ impl TmpFs {
         if v2 {
             &[("cgroup.procs", b""),
               ("cgroup.subtree_control", b""),
-              ("cgroup.controllers", b"memory cpu cpuset io pids freezer\n"),
+              // 这里只提供 cgroupfs 的目录和控制文件兼容视图，并没有实现资源
+              // 控制器。控制器列表必须为空，否则 LTP/systemd 会据此进入真实的
+              // task migration、delegation 与 namespace 路径，得到误导性的失败。
+              ("cgroup.controllers", b""),
               ("cgroup.type", b"domain\n")]
         } else {
             Self::cgroup_v1_base_files()
@@ -397,6 +400,20 @@ impl TmpFs {
             }
             None => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cgroup_v2_does_not_advertise_unimplemented_controllers() {
+        let mut fs = TmpFs::new_cgroup(true, "").expect("create cgroup v2 compatibility tree");
+
+        assert_eq!(fs.read("/cgroup.controllers").unwrap(), b"");
+        fs.mkdir("/child", 0o755).unwrap();
+        assert_eq!(fs.read("/child/cgroup.controllers").unwrap(), b"");
     }
 }
 

@@ -6,36 +6,35 @@ use vfs::api::SingleRootReadView;
 use crate::user_bringup_common::BringupCommand;
 
 /// 非公开镜像携带初赛脚本；命令顺序就是 bring-up 阶段的执行顺序。
-const PRELIMINARY_COMMANDS : &[BringupCommand] =
-    &[/*BringupCommand { program : "/glibc/busybox",
-                       argv : &["sh",
-                                "/glibc/cyclictest_testcode.sh"] },
-      BringupCommand { program : "/musl/busybox",
-      argv : &["sh",
-               "/musl/cyclictest_testcode.sh"] },*/
-      BringupCommand { program : "/musl/busybox",
-                       argv : &["sh",
-                                "/musl/ltp_testcode.sh"] },
-      BringupCommand { program : "/glibc/busybox",
-                       argv : &["sh",
-                                "/glibc/ltp_testcode.sh"] },
-      BringupCommand { program : "/glibc/busybox",
-                       argv : &["sh",
-                                "/glibc/libcbench_testcode.sh"] },
-      BringupCommand { program : "/musl/busybox",
-                       argv : &["sh",
-                                "/musl/libcbench_testcode.sh"] },
-      BringupCommand { program : "/glibc/busybox",
-                       argv : &["sh",
-                                "/glibc/lmbench_testcode.sh"] },
-      BringupCommand { program : "/musl/busybox",
-                       argv : &["sh",
-                                "/musl/lmbench_testcode.sh"] },
-      BringupCommand { program : "/glibc/busybox",
-                       argv : &["sh",
-                                "/glibc/iozone_testcode.sh"] } /*BringupCommand { program : "/musl/busybox",
-                                                               argv : &["sh",
-                                                                        "/musl/iozone_testcode.sh"] }*/];
+const PRELIMINARY_COMMANDS : &[BringupCommand] = &[/*BringupCommand { program : "/glibc/busybox",
+                                                                    argv : &["sh",
+                                                                             "/glibc/cyclictest_testcode.sh"] },
+                                                   BringupCommand { program : "/musl/busybox",
+                                                   argv : &["sh",
+                                                            "/musl/cyclictest_testcode.sh"] },*/
+                                                   /*BringupCommand { program : "/musl/busybox",
+                                                                    argv : &["sh",
+                                                                             "/musl/ltp_testcode.sh"] },*/
+                                                   BringupCommand { program : "/glibc/busybox",
+                                                                    argv:
+                                                                        &["sh",
+                                                                          "/glibc/ltp_testcode.sh"] } /*BringupCommand { program : "/glibc/busybox",
+                                                                                                                       argv : &["sh",
+                                                                                                                                "/glibc/libcbench_testcode.sh"] },
+                                                                                                      BringupCommand { program : "/musl/busybox",
+                                                                                                                       argv : &["sh",
+                                                                                                                                "/musl/libcbench_testcode.sh"] },
+                                                                                                      BringupCommand { program : "/glibc/busybox",
+                                                                                                                       argv : &["sh",
+                                                                                                                                "/glibc/lmbench_testcode.sh"] },
+                                                                                                      BringupCommand { program : "/musl/busybox",
+                                                                                                                       argv : &["sh",
+                                                                                                                                "/musl/lmbench_testcode.sh"] },
+                                                                                                      BringupCommand { program : "/glibc/busybox",
+                                                                                                                       argv : &["sh",
+                                                                                                                                "/glibc/iozone_testcode.sh"] } BringupCommand { program : "/musl/busybox",
+                                                                                                                                                               argv : &["sh",
+                                                                                                                                                                        "/musl/iozone_testcode.sh"] }*/];
 
 /// `pub` 镜像携带这两个决赛脚本。
 const FINAL_COMMANDS : &[BringupCommand] =

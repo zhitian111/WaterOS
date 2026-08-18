@@ -178,4 +178,4 @@ dirty region 只限制 shadow 到 framebuffer 的复制/flush；当前 desktop �
 | GUI | 无设备退化、两架构显示、输入/焦点/拖动、提交失败重试、队列溢出 |
 | utils | host 单测、边界输入、无架构 feature 依赖 |
 
-相关详细文档：[`wateros-tty`](../../components/wateros-tty/README.md)、[`wateros-klog`](../../components/wateros-klog/README.md)、[`wateros-debug`](../../components/wateros-debug/README.md)、[`wateros-gui`](../../components/wateros-gui/README.md)、[`wateros-utils`](../../components/wateros-utils/README.md)。
+相关详细文档：[`wateros-tty`](../../os/components/wateros-tty/README.md)、[`wateros-klog`](../../os/components/wateros-klog/README.md)、[`wateros-debug`](../../os/components/wateros-debug/README.md)、[`wateros-gui`](../../os/components/wateros-gui/README.md)、[`wateros-utils`](../../os/components/wateros-utils/README.md)。

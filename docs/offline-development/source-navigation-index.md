@@ -37,9 +37,9 @@ rg -n '#\[cfg|compile_error!' components/wateros-<name> os/Cargo.toml
 
 | 目标 | 入口 |
 | --- | --- |
-| 全局容量和策略常量 | [`base-config/src`](../../components/wateros-base/base-config/src) |
-| CPU ID/mask 与 per-CPU 容器 | [`src`](../../components/wateros-base/src) |
-| 同步辅助 | [`src/sync`](../../components/wateros-base/src/sync) |
+| 全局容量和策略常量 | [`base-config/src`](../../os/components/wateros-base/base-config/src) |
+| CPU ID/mask 与 per-CPU 容器 | [`src`](../../os/components/wateros-base/src) |
+| 同步辅助 | [`src/sync`](../../os/components/wateros-base/src/sync) |
 
 先搜：
 
@@ -54,11 +54,11 @@ rg -n "CpuId|CpuMask|CpuLocal|Once" components/wateros-base
 
 | 层 | 入口 |
 | --- | --- |
-| 稳定平台 API | [`platform-api/api-v0/src`](../../components/wateros-platform/platform-api/api-v0/src) |
-| ISA 原语选择 | [`platform-arch/src/lib.rs`](../../components/wateros-platform/platform-arch/src/lib.rs) |
-| RISC-V OpenSBI profile | [`impl-qemu-riscv64-opensbi`](../../components/wateros-platform/platform-impl/impl-qemu-riscv64-opensbi) |
-| LoongArch virt profile | [`impl-qemu-loongarch64-virt`](../../components/wateros-platform/platform-impl/impl-qemu-loongarch64-virt) |
-| 组合层 trap 路由 | [`src/trap_handler.rs`](../../src/trap_handler.rs) |
+| 稳定平台 API | [`platform-api/api-v0/src`](../../os/components/wateros-platform/platform-api/api-v0/src) |
+| ISA 原语选择 | [`platform-arch/src/lib.rs`](../../os/components/wateros-platform/platform-arch/src/lib.rs) |
+| RISC-V OpenSBI profile | [`impl-qemu-riscv64-opensbi`](../../os/components/wateros-platform/platform-impl/impl-qemu-riscv64-opensbi) |
+| LoongArch virt profile | [`impl-qemu-loongarch64-virt`](../../os/components/wateros-platform/platform-impl/impl-qemu-loongarch64-virt) |
+| 组合层 trap 路由 | [`src/trap_handler.rs`](../../os/src/trap_handler.rs) |
 
 ```sh
 rg -n "trap_entry|TrapContext|TrapCause|set_timer|interrupt|send_ipi|shootdown|reset" components/wateros-platform src/trap_handler.rs
@@ -70,11 +70,11 @@ ISA 负责 frame/CSR/汇编边界，组合层负责 syscall、fault、signal、s
 
 | 子模块 | 入口 |
 | --- | --- |
-| console | [`runtime-console/src/lib.rs`](../../components/wateros-runtime/runtime-console/src/lib.rs) |
-| logging | [`runtime-logging/src`](../../components/wateros-runtime/runtime-logging/src) |
-| heap | [`runtime-heap-allocator/src`](../../components/wateros-runtime/runtime-heap-allocator/src) |
-| panic | [`runtime-panic/src/lib.rs`](../../components/wateros-runtime/runtime-panic/src/lib.rs) |
-| serial | [`runtime-serial/src/lib.rs`](../../components/wateros-runtime/runtime-serial/src/lib.rs) |
+| console | [`runtime-console/src/lib.rs`](../../os/components/wateros-runtime/runtime-console/src/lib.rs) |
+| logging | [`runtime-logging/src`](../../os/components/wateros-runtime/runtime-logging/src) |
+| heap | [`runtime-heap-allocator/src`](../../os/components/wateros-runtime/runtime-heap-allocator/src) |
+| panic | [`runtime-panic/src/lib.rs`](../../os/components/wateros-runtime/runtime-panic/src/lib.rs) |
+| serial | [`runtime-serial/src/lib.rs`](../../os/components/wateros-runtime/runtime-serial/src/lib.rs) |
 
 ```sh
 rg -n "global_allocator|HEAP_SPACE|with_allocator_interrupt_guard|set_logger|panic_handler|write_fmt" components/wateros-runtime
@@ -86,10 +86,10 @@ rg -n "global_allocator|HEAP_SPACE|with_allocator_interrupt_guard|set_logger|pan
 
 | 目标 | 入口 |
 | --- | --- |
-| 聚合生命周期 | [`wateros-task/src`](../../components/wateros-task/src) |
-| TCB/process registry | [`task-impl/impl-core`](../../components/wateros-task/task-impl/impl-core) |
-| scheduler API/实现 | [`task-scheduler`](../../components/wateros-task/task-scheduler) |
-| syscall 编排 | [`sys/task`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/sys/task) |
+| 聚合生命周期 | [`wateros-task/src`](../../os/components/wateros-task/src) |
+| TCB/process registry | [`task-impl/impl-core`](../../os/components/wateros-task/task-impl/impl-core) |
+| scheduler API/实现 | [`task-scheduler`](../../os/components/wateros-task/task-scheduler) |
+| syscall 编排 | [`sys/task`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/task) |
 
 ```sh
 rg -n "TaskControlBlock|ProcessRecord|mark_task_exited|reap_exited|run_first_task|schedule|wait_current" components/wateros-task
@@ -102,11 +102,11 @@ rg -n "start_fork_child|abort_fork_child|terminate_other_threads_for_exec" compo
 
 | 目标 | 入口 |
 | --- | --- |
-| 跨实现契约 | [`mm-api/api-v0/src`](../../components/wateros-mm/mm-api/api-v0/src) |
-| 物理帧 | [`mm-frame-alloctor`](../../components/wateros-mm/mm-frame-alloctor) |
-| 共用 MM 逻辑 | [`mm-impl/common`](../../components/wateros-mm/mm-impl/common) |
-| Sv39 | [`mm-impl/impl-sv39`](../../components/wateros-mm/mm-impl/impl-sv39) |
-| LoongArch | [`mm-impl/impl-loongarch64`](../../components/wateros-mm/mm-impl/impl-loongarch64) |
+| 跨实现契约 | [`mm-api/api-v0/src`](../../os/components/wateros-mm/mm-api/api-v0/src) |
+| 物理帧 | [`mm-frame-alloctor`](../../os/components/wateros-mm/mm-frame-alloctor) |
+| 共用 MM 逻辑 | [`mm-impl/common`](../../os/components/wateros-mm/mm-impl/common) |
+| Sv39 | [`mm-impl/impl-sv39`](../../os/components/wateros-mm/mm-impl/impl-sv39) |
+| LoongArch | [`mm-impl/impl-loongarch64`](../../os/components/wateros-mm/mm-impl/impl-loongarch64) |
 
 ```sh
 rg -n "Vma|mmap|munmap|mprotect|page_fault|lazy|Cow|writeback|drop_user_aspace|shootdown" components/wateros-mm
@@ -119,10 +119,10 @@ rg -n "copy_(to|from)_user|UserMemoryOps|translate" components/wateros-mm compon
 
 | 目标 | 入口 |
 | --- | --- |
-| handle/path/fd 契约 | [`vfs-api/api-v0/src`](../../components/wateros-vfs/vfs-api/api-v0/src) |
-| per-task fd session | [`impl-fd-session`](../../components/wateros-vfs/vfs-impl/impl-fd-session) |
-| FS/mount/proc bridge | [`impl-fs-bridge`](../../components/wateros-vfs/vfs-impl/impl-fs-bridge) |
-| page cache | [`impl-page-cache`](../../components/wateros-vfs/vfs-impl/impl-page-cache) |
+| handle/path/fd 契约 | [`vfs-api/api-v0/src`](../../os/components/wateros-vfs/vfs-api/api-v0/src) |
+| per-task fd session | [`impl-fd-session`](../../os/components/wateros-vfs/vfs-impl/impl-fd-session) |
+| FS/mount/proc bridge | [`impl-fs-bridge`](../../os/components/wateros-vfs/vfs-impl/impl-fs-bridge) |
+| page cache | [`impl-page-cache`](../../os/components/wateros-vfs/vfs-impl/impl-page-cache) |
 
 ```sh
 rg -n "VfsIoHandle|VfsPreparedRead|duplicate|alloc_fd|close_slot|share_fd_table|copy_fd_table" components/wateros-vfs
@@ -135,11 +135,11 @@ fd slot flag 与 OFD status flag 不同。消费型 read 必须检查 prepare/ac
 
 | 目标 | 入口 |
 | --- | --- |
-| FS trait | [`fs-api/api-v0/src`](../../components/wateros-fs/fs-api/api-v0/src) |
-| 当前默认 ext4 | [`impl-another-ext4`](../../components/wateros-fs/fs-impl/impl-another-ext4) |
-| 备用 ext4 | [`impl-ext4`](../../components/wateros-fs/fs-impl/impl-ext4)、[`impl-ext4-rs`](../../components/wateros-fs/fs-impl/impl-ext4-rs) |
-| ramfs | [`impl-ramfs`](../../components/wateros-fs/fs-impl/impl-ramfs) |
-| rootfs/devfs/procfs | [`fs-rootfs`](../../components/wateros-fs/fs-rootfs)、[`fs-devfs`](../../components/wateros-fs/fs-devfs)、[`fs-procfs`](../../components/wateros-fs/fs-procfs) |
+| FS trait | [`fs-api/api-v0/src`](../../os/components/wateros-fs/fs-api/api-v0/src) |
+| 当前默认 ext4 | [`impl-another-ext4`](../../os/components/wateros-fs/fs-impl/impl-another-ext4) |
+| 备用 ext4 | [`impl-ext4`](../../os/components/wateros-fs/fs-impl/impl-ext4)、[`impl-ext4-rs`](../../os/components/wateros-fs/fs-impl/impl-ext4-rs) |
+| ramfs | [`impl-ramfs`](../../os/components/wateros-fs/fs-impl/impl-ramfs) |
+| rootfs/devfs/procfs | [`fs-rootfs`](../../os/components/wateros-fs/fs-rootfs)、[`fs-devfs`](../../os/components/wateros-fs/fs-devfs)、[`fs-procfs`](../../os/components/wateros-fs/fs-procfs) |
 
 ```sh
 rg -n "registered_fs_impls|probe\(|mount_(ro|rw)|ROOT_(RW_)?FS|sync|flush|write_at|truncate|rename" components/wateros-fs
@@ -151,10 +151,10 @@ rg -n "registered_fs_impls|probe\(|mount_(ro|rw)|ROOT_(RW_)?FS|sync|flush|write_
 
 | 目标 | 入口 |
 | --- | --- |
-| 机器契约 | [`driver-api/api-v0/src/lib.rs`](../../components/wateros-driver/driver-api/api-v0/src/lib.rs) |
-| 公共 DTB 解析 | [`impl-common`](../../components/wateros-driver/driver-impl/impl-common) |
-| RISC-V / LoongArch probe | [`impl-qemu-riscv64-virt`](../../components/wateros-driver/driver-impl/impl-qemu-riscv64-virt)、[`impl-qemu-loongarch64-virt`](../../components/wateros-driver/driver-impl/impl-qemu-loongarch64-virt) |
-| 设备类 | [`driver-block`](../../components/wateros-driver/driver-block)、[`driver-network`](../../components/wateros-driver/driver-network)、[`driver-character`](../../components/wateros-driver/driver-character)、[`driver-display`](../../components/wateros-driver/driver-display)、[`driver-input`](../../components/wateros-driver/driver-input) |
+| 机器契约 | [`driver-api/api-v0/src/lib.rs`](../../os/components/wateros-driver/driver-api/api-v0/src/lib.rs) |
+| 公共 DTB 解析 | [`impl-common`](../../os/components/wateros-driver/driver-impl/impl-common) |
+| RISC-V / LoongArch probe | [`impl-qemu-riscv64-virt`](../../os/components/wateros-driver/driver-impl/impl-qemu-riscv64-virt)、[`impl-qemu-loongarch64-virt`](../../os/components/wateros-driver/driver-impl/impl-qemu-loongarch64-virt) |
+| 设备类 | [`driver-block`](../../os/components/wateros-driver/driver-block)、[`driver-network`](../../os/components/wateros-driver/driver-network)、[`driver-character`](../../os/components/wateros-driver/driver-character)、[`driver-display`](../../os/components/wateros-driver/driver-display)、[`driver-input`](../../os/components/wateros-driver/driver-input) |
 
 ```sh
 rg -n "scan_device_info|probe_.*devices|register_.*device|supported_devices|from_mmio|from_pci" components/wateros-driver
@@ -166,12 +166,12 @@ rg -n "scan_device_info|probe_.*devices|register_.*device|supported_devices|from
 
 | 子模块 | 入口 |
 | --- | --- |
-| waitqueue | [`ipc-waitqueue`](../../components/wateros-ipc/ipc-waitqueue) |
-| futex | [`ipc-futex`](../../components/wateros-ipc/ipc-futex) |
-| pipe | [`ipc-pipe`](../../components/wateros-ipc/ipc-pipe) |
-| signal | [`ipc-signal`](../../components/wateros-ipc/ipc-signal) |
-| SHM | [`ipc-shm`](../../components/wateros-ipc/ipc-shm) |
-| event primitives | [`ipc-event`](../../components/wateros-ipc/ipc-event) |
+| waitqueue | [`ipc-waitqueue`](../../os/components/wateros-ipc/ipc-waitqueue) |
+| futex | [`ipc-futex`](../../os/components/wateros-ipc/ipc-futex) |
+| pipe | [`ipc-pipe`](../../os/components/wateros-ipc/ipc-pipe) |
+| signal | [`ipc-signal`](../../os/components/wateros-ipc/ipc-signal) |
+| SHM | [`ipc-shm`](../../os/components/wateros-ipc/ipc-shm) |
+| event primitives | [`ipc-event`](../../os/components/wateros-ipc/ipc-event) |
 
 ```sh
 rg -n "WaitQueue|wait_current_while|wake_|reservation|cancel|close|Drop" components/wateros-ipc
@@ -184,9 +184,9 @@ rg -n "sysv|eventfd|signalfd|robust|SEM_UNDO" components/wateros-syscall/syscall
 
 | 目标 | 入口 |
 | --- | --- |
-| API | [`cred-api/api-v0`](../../components/wateros-cred/cred-api/api-v0) |
-| registry/钩子 | [`cred-impl/impl-root`](../../components/wateros-cred/cred-impl/impl-root) |
-| ABI | [`sys/cred`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/sys/cred) |
+| API | [`cred-api/api-v0`](../../os/components/wateros-cred/cred-api/api-v0) |
+| registry/钩子 | [`cred-impl/impl-root`](../../os/components/wateros-cred/cred-impl/impl-root) |
+| ABI | [`sys/cred`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/cred) |
 
 ```sh
 rg -n "Credential|Uid|Gid|cap|fork_cred|share_cred|on_exec|drop_task_cred|permission" components/wateros-cred components/wateros-syscall
@@ -198,10 +198,10 @@ rg -n "Credential|Uid|Gid|cap|fork_cred|share_cred|on_exec|drop_task_cred|permis
 
 | 目标 | 入口 |
 | --- | --- |
-| generic64 number/type | [`syscall-api/api-v0`](../../components/wateros-syscall/syscall-api/api-v0) |
-| dense dispatch | [`syscall_nr_dispatch.rs`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/syscall_nr_dispatch.rs) |
-| 用户复制 | [`user_copy.rs`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/user_copy.rs) |
-| 九个 domain | [`src/sys`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/sys) |
+| generic64 number/type | [`syscall-api/api-v0`](../../os/components/wateros-syscall/syscall-api/api-v0) |
+| dense dispatch | [`syscall_nr_dispatch.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/syscall_nr_dispatch.rs) |
+| 用户复制 | [`user_copy.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/user_copy.rs) |
+| 九个 domain | [`src/sys`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys) |
 
 ```sh
 rg -n "const .*: usize|sys_[a-z0-9_]+|SyscallArgs|UserRet|copy_(to|from)_user|ErrNo" components/wateros-syscall
@@ -213,10 +213,10 @@ handler 只负责编排、ABI 和错误转换。长期状态应放入 task/MM/VF
 
 | 目标 | 入口 |
 | --- | --- |
-| 公共类型 | [`network-api/api-v0`](../../components/wateros-network/network-api/api-v0) |
-| smoltcp stack | [`impl-smoltcp`](../../components/wateros-network/network-impl/impl-smoltcp) |
-| socket 对象/fd/lease | [`src/socket`](../../components/wateros-network/src/socket) |
-| socket syscall | [`sys/net`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/sys/net) |
+| 公共类型 | [`network-api/api-v0`](../../os/components/wateros-network/network-api/api-v0) |
+| smoltcp stack | [`impl-smoltcp`](../../os/components/wateros-network/network-impl/impl-smoltcp) |
+| socket 对象/fd/lease | [`src/socket`](../../os/components/wateros-network/src/socket) |
+| socket syscall | [`sys/net`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/net) |
 
 ```sh
 rg -n "NetworkStack|StackSocketHandle|SocketRef|SocketReceiveLease|poll_socket_events|socket_(send|recv|accept|close)" components/wateros-network
@@ -228,9 +228,9 @@ rg -n "NetworkStack|StackSocketHandle|SocketRef|SocketReceiveLease|poll_socket_e
 
 | 目标 | 入口 |
 | --- | --- |
-| termios/事件契约 | [`tty-api/api-v0`](../../components/wateros-tty/tty-api/api-v0) |
-| console line discipline/PTY | [`tty-impl/impl-console`](../../components/wateros-tty/tty-impl/impl-console) |
-| VFS handle | [`impl-fd-session`](../../components/wateros-vfs/vfs-impl/impl-fd-session) |
+| termios/事件契约 | [`tty-api/api-v0`](../../os/components/wateros-tty/tty-api/api-v0) |
+| console line discipline/PTY | [`tty-impl/impl-console`](../../os/components/wateros-tty/tty-impl/impl-console) |
+| VFS handle | [`impl-fd-session`](../../os/components/wateros-vfs/vfs-impl/impl-fd-session) |
 
 ```sh
 rg -n "feed_input|prepare_read|finish_read|foreground_pgid|controlling_sid|Pty|hangup|termios" components/wateros-tty components/wateros-vfs
@@ -242,10 +242,10 @@ TTY 锁内只变更状态，echo、信号投递、等待和设备 I/O 都在锁�
 
 | 目标 | 入口 |
 | --- | --- |
-| klog ring | [`klog-impl/impl-kernel`](../../components/wateros-klog/klog-impl/impl-kernel) |
-| klog ABI | [`klog-api/api-v0`](../../components/wateros-klog/klog-api/api-v0) |
-| debug ABI/TrackedMutex | [`wateros-debug/src`](../../components/wateros-debug/src) |
-| 主机调试脚本 | [`scripts/debug`](../../scripts/debug) |
+| klog ring | [`klog-impl/impl-kernel`](../../os/components/wateros-klog/klog-impl/impl-kernel) |
+| klog ABI | [`klog-api/api-v0`](../../os/components/wateros-klog/klog-api/api-v0) |
+| debug ABI/TrackedMutex | [`wateros-debug/src`](../../os/components/wateros-debug/src) |
+| 主机调试脚本 | [`scripts/debug`](../../os/scripts/debug) |
 
 ```sh
 rg -n "KlogRingbuf|read_cursor|records_dropped|record_event|publish_cpu_state|TrackedMutex|WATEROS_DEBUG" components/wateros-klog components/wateros-debug scripts/debug
@@ -257,9 +257,9 @@ klog view 只在锁内有效；debug 事件编号是主机 ABI，只能追加。
 
 | 目标 | 入口 |
 | --- | --- |
-| 数据模型 | [`gui-api/api-v0`](../../components/wateros-gui/gui-api/api-v0) |
-| runtime/scene/input/surface | [`gui-impl/impl-software`](../../components/wateros-gui/gui-impl/impl-software) |
-| 启动任务 | [`src/main.rs`](../../src/main.rs) |
+| 数据模型 | [`gui-api/api-v0`](../../os/components/wateros-gui/gui-api/api-v0) |
+| runtime/scene/input/surface | [`gui-impl/impl-software`](../../os/components/wateros-gui/gui-impl/impl-software) |
+| 启动任务 | [`src/main.rs`](../../os/src/main.rs) |
 
 ```sh
 rg -n "GuiRuntime|ShadowSurface|DirtyRegions|Desktop|InputBridge|render_if_dirty|flush_region" components/wateros-gui src/main.rs
@@ -271,8 +271,8 @@ rg -n "GuiRuntime|ShadowSurface|DirtyRegions|Desktop|InputBridge|render_if_dirty
 
 | 目标 | 入口 |
 | --- | --- |
-| 聚合 | [`wateros-utils/src/lib.rs`](../../components/wateros-utils/src/lib.rs) |
-| table format | [`table-format/src`](../../components/wateros-utils/table-format/src) |
+| 聚合 | [`wateros-utils/src/lib.rs`](../../os/components/wateros-utils/src/lib.rs) |
+| table format | [`table-format/src`](../../os/components/wateros-utils/table-format/src) |
 
 ```sh
 rg -n "pub (struct|enum|fn)|unsafe|platform|task|mm|vfs" components/wateros-utils

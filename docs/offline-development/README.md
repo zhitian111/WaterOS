@@ -14,13 +14,14 @@ README，而是回答三个更实际的问题：
 | 场景 | 首先阅读 | 然后阅读 |
 | --- | --- | --- |
 | 第一次接触内核 | [架构与调用链](architecture-and-call-chains.md) | 对应组件 README |
+| Rust 基础够用但不熟悉本项目写法 | [WaterOS 常用 Rust 写法](rust-patterns.md) | [功能补充实例](feature-cookbook.md) |
 | 启动、SMP、shell 或评测队列异常 | [启动与 bring-up](boot-and-bringup.md) | platform、task、FS README |
 | 驱动、根挂载、写回或网络异常 | [设备/存储/网络/runtime](device-storage-network-runtime.md) | driver、FS、network、runtime README |
 | console、TTY、日志、GDB 或 GUI 异常 | [可观测性与交互边界](console-tty-klog-debug-gui.md) | tty、klog、debug、gui README |
 | 新增或补全 syscall | [添加系统调用](adding-a-syscall.md) | `wateros-syscall/syscall-impl/impl-kernel/src/sys/<domain>/README.md` |
 | 增加 fd、procfs、socket option 或 task 状态 | [功能补充实例](feature-cookbook.md) | 对应实现源码与生命周期手册 |
 | panic、卡死、OOM、错误码不符 | [调试与回归](debugging-and-regression.md) | 状态所有者组件 README |
-| 执行 LTP、压力或 benchmark | [测试执行与结果口径](testing-playbook.md) | [现有 PPT 数据底稿](../reports/2026-08-18-ltp-bench-ppt-report.md) |
+| 执行 LTP、压力或 benchmark | [测试执行与结果口径](testing-playbook.md) | [现有 PPT 数据底稿](../../os/docs/reports/2026-08-18-ltp-bench-ppt-report.md) |
 | 修改 fork/exec/exit | 架构文档的“进程生命周期” | task、MM、VFS、IPC、cred README |
 | 查资源泄漏或过早释放 | [跨组件数据结构与生命周期](data-structure-lifetimes.md) | task syscall、MM、VFS README |
 | 修改文件映射或页缓存 | MM 与 VFS README | syscall mem/fs README |
@@ -57,23 +58,23 @@ wateros-foo/
 
 | 组件 | 状态与职责 | 常见修改入口 | 详细文档 |
 | --- | --- | --- | --- |
-| base | CPU ID/mask、once cell、集中容量配置 | `wateros-base/base-config` | [README](../../components/wateros-base/README.md) |
-| platform | trap、SMP、IPI、时钟、上下文、板级初始化 | `platform-arch/arch-impl/*` | [README](../../components/wateros-platform/README.md) |
-| runtime | 堆、panic、console、logging、serial | `runtime-*/` | [README](../../components/wateros-runtime/README.md) |
-| task | TCB、进程组、调度器、睡眠与回收 | `task-impl/impl-core` | [README](../../components/wateros-task/README.md) |
-| mm | 帧、页表、VMA、COW、用户拷贝、TLB | `mm-impl/impl-{sv39,loongarch64}` | [README](../../components/wateros-mm/README.md) |
-| vfs | fd/cwd、路径、打开句柄、挂载路由、页缓存 | `vfs-impl/*` | [README](../../components/wateros-vfs/README.md) |
-| fs | rootfs、devfs/procfs、ext4/ramfs 后端 | `fs-impl/*` | [README](../../components/wateros-fs/README.md) |
-| ipc | pipe、futex、signal、waitqueue、SHM、eventfd | `ipc-*/` | [README](../../components/wateros-ipc/README.md) |
-| cred | 每任务 credential 与 fork/clone 生命周期 | `cred-impl/impl-root` | [README](../../components/wateros-cred/README.md) |
-| syscall | generic64 ABI、分发表、用户拷贝、errno | `syscall-impl/impl-kernel/src/sys` | [README](../../components/wateros-syscall/README.md) |
-| driver | DTB/PCI 探测、VirtIO、设备注册 | `driver-impl/*`、各类 driver | [README](../../components/wateros-driver/README.md) |
-| network | socket 状态与 smoltcp 协议栈 | `network-impl/impl-smoltcp` | [README](../../components/wateros-network/README.md) |
-| tty | console tty、行规程、前台进程组 | `tty-impl/impl-console` | [README](../../components/wateros-tty/README.md) |
-| klog | 并发内核日志环和读取游标 | `klog-impl/impl-kernel` | [README](../../components/wateros-klog/README.md) |
-| debug | GDB 可读快照、事件和锁记录 | `wateros-debug/src` | [README](../../components/wateros-debug/README.md) |
-| gui | 内核软件合成器和输入事件 | `gui-impl/impl-software` | [README](../../components/wateros-gui/README.md) |
-| utils | 无状态格式化工具 | `table-format` | [README](../../components/wateros-utils/README.md) |
+| base | CPU ID/mask、once cell、集中容量配置 | `wateros-base/base-config` | [README](../../os/components/wateros-base/README.md) |
+| platform | trap、SMP、IPI、时钟、上下文、板级初始化 | `platform-arch/arch-impl/*` | [README](../../os/components/wateros-platform/README.md) |
+| runtime | 堆、panic、console、logging、serial | `runtime-*/` | [README](../../os/components/wateros-runtime/README.md) |
+| task | TCB、进程组、调度器、睡眠与回收 | `task-impl/impl-core` | [README](../../os/components/wateros-task/README.md) |
+| mm | 帧、页表、VMA、COW、用户拷贝、TLB | `mm-impl/impl-{sv39,loongarch64}` | [README](../../os/components/wateros-mm/README.md) |
+| vfs | fd/cwd、路径、打开句柄、挂载路由、页缓存 | `vfs-impl/*` | [README](../../os/components/wateros-vfs/README.md) |
+| fs | rootfs、devfs/procfs、ext4/ramfs 后端 | `fs-impl/*` | [README](../../os/components/wateros-fs/README.md) |
+| ipc | pipe、futex、signal、waitqueue、SHM、eventfd | `ipc-*/` | [README](../../os/components/wateros-ipc/README.md) |
+| cred | 每任务 credential 与 fork/clone 生命周期 | `cred-impl/impl-root` | [README](../../os/components/wateros-cred/README.md) |
+| syscall | generic64 ABI、分发表、用户拷贝、errno | `syscall-impl/impl-kernel/src/sys` | [README](../../os/components/wateros-syscall/README.md) |
+| driver | DTB/PCI 探测、VirtIO、设备注册 | `driver-impl/*`、各类 driver | [README](../../os/components/wateros-driver/README.md) |
+| network | socket 状态与 smoltcp 协议栈 | `network-impl/impl-smoltcp` | [README](../../os/components/wateros-network/README.md) |
+| tty | console tty、行规程、前台进程组 | `tty-impl/impl-console` | [README](../../os/components/wateros-tty/README.md) |
+| klog | 并发内核日志环和读取游标 | `klog-impl/impl-kernel` | [README](../../os/components/wateros-klog/README.md) |
+| debug | GDB 可读快照、事件和锁记录 | `wateros-debug/src` | [README](../../os/components/wateros-debug/README.md) |
+| gui | 内核软件合成器和输入事件 | `gui-impl/impl-software` | [README](../../os/components/wateros-gui/README.md) |
+| utils | 无状态格式化工具 | `table-format` | [README](../../os/components/wateros-utils/README.md) |
 
 ## 从故障现象反查入口
 
@@ -123,6 +124,7 @@ flowchart LR
 - 新增长期状态时，在所属组件 README 的“核心状态与数据结构”补 owner、锁和销毁点。
 - 新增跨组件调用时，在本手册的架构调用链或相应专题文档补链路。
 - 新增 syscall 时，按 [添加系统调用](adding-a-syscall.md) 的清单逐项确认。
+- 新增公共 Rust 写法或并发封装时，同步更新 [WaterOS 常用 Rust 写法](rust-patterns.md)，并优先引用仓库中的真实实现。
 - 修改命令、feature 或默认值时，同步修改这里和 `os/README.md`。
 - 文档只描述已实现行为；未实现项明确写“当前不支持”，不要写成计划已经落地。
 
@@ -133,7 +135,7 @@ python3 scripts/maintenance/check_offline_docs.py
 python3 scripts/maintenance/check_offline_docs.py --content-audit
 ```
 
-它检查 12 份必需专题手册、所有 `components/**/Cargo.toml` 所在 crate 的本地 README、相对
+它检查 13 份必需专题手册、所有 `components/**/Cargo.toml` 所在 crate 的本地 README、相对
 Markdown 链接和代码围栏。第二条命令还保守检查每个 crate 文档是否覆盖调用流程、并发/生命
 周期、失败边界和回归验证；它适合在离线文档补全阶段发现短占位 README。两种模式都不能证明
 语义与源码一致；修改状态机、锁或生命周期后仍必须由开发者逐段对照实现。

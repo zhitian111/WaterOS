@@ -123,9 +123,16 @@ impl WaitQueues {
     }
 
     /// 推进全局逻辑 tick。
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self) { self.advance_ticks(1); }
+
+    /// 按实际已经经过的定时周期推进全局逻辑 tick。
+    ///
+    /// SMP 下各 CPU 的 timer handler 会争用调度器锁，timekeeper 取得锁时可能已经跨过
+    /// 多个周期。调用方负责据单调时钟计算 `ticks`；在这里一次补齐可避免所有基于
+    /// wait queue 的 timeout 随锁竞争系统性变慢。
+    pub fn advance_ticks(&mut self, ticks : TaskTick) {
         self.current_tick = self.current_tick
-                                .saturating_add(1);
+                                .saturating_add(ticks);
     }
 
     /// 当前逻辑 tick。
@@ -581,5 +588,21 @@ mod tests {
                          .pop_front(),
                    Some((11, to_target)));
         assert_eq!(queues.wake_one_in_wait_queue(to), None);
+    }
+
+    #[test]
+    fn elapsed_tick_catch_up_expires_overdue_waits() {
+        let mut queues = WaitQueues::new();
+        let wait_queue_id = queues.allocate_wait_queue("test-catch-up");
+        let target = TaskWaitTarget::WaitQueue(wait_queue_id);
+        queues.enqueue_wait_task(13, target);
+        queues.enqueue_wait_timeout(13, target, 4);
+
+        queues.advance_ticks(5);
+
+        assert_eq!(queues.current_tick(), 5);
+        assert_eq!(queues.timeout_tasks()
+                         .pop_front(),
+                   Some((13, target)));
     }
 }
