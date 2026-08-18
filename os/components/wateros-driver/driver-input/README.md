@@ -79,3 +79,7 @@ user_graphics_input_worker()
 - 走 PCI ECAM 枚举并初始化 VirtIO 键盘/平板（`probe_all_from_ecam`），为 BAR 分配 MMIO 地址
   并开启 `MEMORY_SPACE` / `BUS_MASTER`。
 - 上层接口（`InputDevice`）与 RISC-V 完全相同，仅 transport 不同。
+
+## 锁、失败边界与回归
+
+设备mutex只覆盖一次非阻塞pop，释放后才写evdev队列和唤醒，避免input→waitqueue/task锁反转。能力查询失败可降级Unknown，但transport/DMA失败不得注册半设备。回归键盘/鼠标/tablet、完整SYN帧、空/突发队列、多设备索引、DMA OOM及设备关闭时worker生命周期。

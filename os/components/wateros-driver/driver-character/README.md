@@ -74,10 +74,16 @@ syscall / VFS
 - 平台层调用 `register_uart_character_device(base)` 把串口注册为 `CharacterDevice`；本 crate
   不感知板级地址，也不做波特率除数编程。
 
-### impl-rtc-stub / 实时钟
+### impl-rtc-stub / 实时钟路由标记
 
-- 读取实时钟时间（`RtcCharacterDevice` / `RtcTime`），由 `register_rtc_stub` 注册。
+- `RtcCharacterDevice` 本身不读取硬件时钟：read 返回 EOF、write 返回 Unsupported；它通过
+  `device_kind=Rtc` 让 VFS/syscall 识别 RTC fd。`RTC_RD_TIME/RTC_SET_TIME` 的用户结构转换、
+  权限与实际 wall-clock 访问在 syscall/platform 层完成。`register_rtc_stub` 负责注册标记设备。
 
 ### impl-null-stub / null 设备
 
 - 提供丢弃写入、无数据的占位设备（`NullCharacterDevice`），由 `register_null_stub` 注册。
+
+## 回归入口
+
+验证UART空读/突发输入/发送卡死、事务read首字节与中途EFAULT回滚、poll和read一致、RTC ioctl路由及null EOF/写长度。并发fd不能持设备锁等待；重复bring-up不得重复注册builtin或让devfs索引漂移。

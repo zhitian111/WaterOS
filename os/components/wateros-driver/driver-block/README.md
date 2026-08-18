@@ -85,3 +85,7 @@ probe_virtio_devices()
   trait。
 - 合并连续未命中为单次底层 `read_blocks`，读数据二次命中准入，避免顺序扫描把一次性块复制
   进数据缓存；`capacity_blocks` 为 0 时退化为直接透传。
+
+## 回归入口
+
+先测首尾LBA、非整块/越界、已知图样write→flush→read，再测DMA OOM/非连续回滚和缓存命中/淘汰/写穿。RV使用virtio-mmio、LA使用virtio-pci；两架构均需反复挂载/卸载并比较frame、heap和脏页基线。

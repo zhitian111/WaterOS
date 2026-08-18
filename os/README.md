@@ -50,6 +50,10 @@ make run ARCH=rv PROFILE=final SDCARD=/path/to/rootfs.img
 
 ## 常见开发场景
 
+无法使用 Agent 的线下开发，请先阅读
+[`WaterOS 线下开发手册`](./docs/offline-development/README.md)。其中包含跨组件调用链、添加
+syscall 的完整实例、资源生命周期检查表以及 QEMU/LTP/压力回归方法。
+
 ### 交互终端
 
 ```bash
@@ -183,12 +187,12 @@ wateros-example/
 | `wateros-platform` | ISA、Trap、上下文切换、板级平台与 SMP | [`README`](./components/wateros-platform/README.md) |
 | `wateros-runtime` | 控制台、日志、堆、串口与 panic | [`README`](./components/wateros-runtime/README.md) |
 | `wateros-task` | 进程线程生命周期、调度与等待 | [`README`](./components/wateros-task/README.md) |
-| `wateros-mm` | 地址空间、页表、物理帧与映射 | 源码目录 |
-| `wateros-vfs` | 路径、FD、FS bridge 与页缓存 | 源码目录 |
-| `wateros-fs` | 根文件系统、伪文件系统与 ext4 后端 | 源码目录 |
+| `wateros-mm` | 地址空间、页表、物理帧与映射 | [`README`](./components/wateros-mm/README.md) |
+| `wateros-vfs` | 路径、FD、FS bridge 与页缓存 | [`README`](./components/wateros-vfs/README.md) |
+| `wateros-fs` | 根文件系统、伪文件系统与 ext4 后端 | [`README`](./components/wateros-fs/README.md) |
 | `wateros-ipc` | signal、futex、pipe、SHM 与 waitqueue | 各子模块 README |
-| `wateros-driver` | 块、网络、显示、输入与板级设备发现 | 源码目录 |
-| `wateros-network` | Socket 接口与 smoltcp 协议栈 | 源码目录 |
+| `wateros-driver` | 块、网络、显示、输入与板级设备发现 | [`README`](./components/wateros-driver/README.md) |
+| `wateros-network` | Socket 接口与 smoltcp 协议栈 | [`README`](./components/wateros-network/README.md) |
 | `wateros-syscall` | Linux generic64 syscall 分发与实现 | [`README`](./components/wateros-syscall/README.md) |
 | `wateros-tty` | 终端会话、行规程与字符交互 | [`README`](./components/wateros-tty/README.md) |
 | `wateros-gui` | 软件桌面、显示与输入事件 | [`README`](./components/wateros-gui/README.md) |

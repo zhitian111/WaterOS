@@ -126,3 +126,7 @@ attachment 和 reservation 状态位于 `state.rs`，两阶段操作位于 `regi
 排查共享内存泄漏时，应对照任务退出是否调用 attachment cleanup，以及每个 begin-attach 是否
 有唯一的 finish/cancel；排查页表错误时则检查 MM 映射和 TLB 路径，不应让 SHM registry
 回收仍被映射的设备页或共享页。
+
+## 回归入口
+
+覆盖key/create/excl/RMID、页边界和OOM回滚、attach中并发删除、readonly权限、detach、fork失败回滚与exec/exit；每轮比较segment/nattch、页表external映射、frame和kernel heap基线。

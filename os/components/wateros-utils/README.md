@@ -53,3 +53,7 @@ use utils::table_format::{Alignment, Cell, Column, FixedTable};
 
 - `lib.rs`：`#![no_std]` 纯工具聚合入口，仅导出 `table_format`。
 - `asm/`：占位目录（未引用的汇编不进入公共 API）。
+
+## 回归入口
+
+运行table-format单测覆盖左右/居中、零宽、Unicode显示宽度、padding、Error/Truncate及fmt writer失败。聚合层保持no_std和无平台依赖；新增工具后用依赖树验证没有反向引入task/MM/driver。

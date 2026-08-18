@@ -79,3 +79,7 @@ Nano-X ioctl(FBIOPAN_DISPLAY)
 - 走 PCI ECAM 枚举并初始化 VirtIO GPU（`probe_first_from_ecam`），为 BAR 分配 MMIO 地址并
   开启 `MEMORY_SPACE` / `BUS_MASTER`。
 - 上层接口（`DisplayDevice`）与 RISC-V 完全相同，仅 transport 不同。
+
+## 失败边界与回归
+
+分辨率、stride、byte/mapped length任何溢出或短framebuffer都必须使构造失败且不注册；区域flush要拒绝坐标加法越界。回归覆盖DMA OOM/回滚、BGRA色块、四角/越界区域、用户mmap lease、SMP绘制锁，以及RV MMIO与LA PCI两条transport。
