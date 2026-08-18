@@ -55,6 +55,8 @@
     final_online = [  ]
     final_online_smp_test = [ "final_online" ]
     pre = [  ]
+    # 跳过 LTP 排除清单与 prune 实现；用于选择提交 87aa867c 的行为。
+    disable-ltp-prune = [  ]
     # 开发/诊断启动行为由编译期选择，不再通过 QEMU bootargs 传入。
     operator-run = [  ]
     operator-shell = [  ]
