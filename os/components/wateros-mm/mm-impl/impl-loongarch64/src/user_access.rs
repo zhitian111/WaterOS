@@ -15,9 +15,17 @@ use crate::user_aspace;
 
 #[inline]
 fn phys_access_addr(pa : usize) -> usize {
-    let kernel_start : usize;
-    unsafe { core::arch::asm!("la {}, kernel_start", out(reg) kernel_start); }
-    (kernel_start & 0xFFFF_0000_0000_0000usize) | pa
+    #[cfg(feature = "loongson2k1000la")]
+    {
+        // 2K1000 的 CPU 物理内存访问必须使用 DMW1 缓存窗口。不要从
+        // `kernel_start` 运行时推导窗口基址：在用户 syscall 的页表/重定位
+        // 场景下该符号可能被解析为低地址，进而把内核 memcpy 指向未映射的
+        // 物理别名（典型 fault 地址为 0xbf8a8000）。
+        const CACHED_WINDOW_BASE : usize = 0x9000_0000_0000_0000;
+        return CACHED_WINDOW_BASE | pa;
+    }
+    #[cfg(not(feature = "loongson2k1000la"))]
+    { pa }
 }
 
 /// 绑定到指定用户地址空间句柄的拷贝实现。
