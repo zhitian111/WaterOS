@@ -48,6 +48,8 @@ else ifeq ($(PACKAGE),minecraft)
 PACKAGE_LIST := minecraft-server
 else ifeq ($(PACKAGE),pacman)
 PACKAGE_LIST := pacman
+else ifeq ($(PACKAGE),developer)
+PACKAGE_LIST := base-layout,busybox,bash,vim,git
 else
 PACKAGE_LIST := $(PACKAGE)
 endif
@@ -76,6 +78,7 @@ help:
 	@echo "  make image  ARCH=rv PACKAGE=jvm IMAGE_SIZE_MB=512  # OpenJDK 21 (RV/LA)"
 	@echo "  make image  ARCH=rv PACKAGE=minecraft IMAGE_SIZE_MB=1024 # Minecraft + JDK"
 	@echo "  make image  ARCH=rv PACKAGE=pacman IMAGE_SIZE_MB=512  # pacman local package install (RV)"
+	@echo "  make image  ARCH=rv PACKAGE=developer             # bash + vim + git (HTTPS clone)"
 	@echo "  make image  ARCH=rv PACKAGE=base-layout,busybox,operator-tools"
 	@echo "  make overlay ARCH=rv PACKAGE=operator BASE_IMAGE=../os/sdcard-rv.img"
 	@echo "  make disk   ARCH=rv PACKAGE=minimal BOOT_DIR=../os/build/jh7110-boot  # VF2 整盘（P3 FAT boot + P4 rootfs）"
@@ -99,6 +102,7 @@ help:
 	@echo "  jvm       = OpenJDK 21 headless (RV/LA; dependencies add the base packages)"
 	@echo "  minecraft = Minecraft Java server + OpenJDK 21 (explicit EULA acceptance)"
 	@echo "  pacman    = pacman with local .pkg.tar.zst support (RV only)"
+	@echo "  developer = bash, Vim tiny and Git with HTTPS clone support"
 	@echo "  other     = a comma-separated custom package list"
 	@echo "  SKIP_PACKAGE = comma-separated exclusions; dependent packages are skipped too"
 	@echo "Toolchain overrides: RV_CROSS_COMPILE=... LA_CROSS_COMPILE=..."

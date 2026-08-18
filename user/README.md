@@ -117,7 +117,7 @@ uImage、`extlinux/extlinux.conf`、`uEnv.txt`、可选 DTB）：此时整盘镜
 | `OUTPUT`        | `build/images/wateros-<arch>.ext4` | 自定义输出路径                    |
 | `BASE_IMAGE`    | 无                                 | `overlay` 使用的基础镜像          |
 
-`PACKAGE` 提供六个预设：
+`PACKAGE` 提供以下预设：
 
 | 选项 | 实际内容 | 适用场景 |
 | --- | --- | --- |
@@ -127,6 +127,7 @@ uImage、`extlinux/extlinux.conf`、`uEnv.txt`、可选 DTB）：此时整盘镜
 | `graphics` | `microwindows` 及其依赖 | 双架构 Nano-X、演示程序与 Doom |
 | `jvm` | `openjdk21` 及其依赖 | 双架构 OpenJDK 21 headless 运行时 |
 | `minecraft` | `minecraft-server` 及其依赖 | Minecraft Java 服务端与 OpenJDK 21 |
+| `developer` | bash、Vim tiny、Git（HTTPS）及基础依赖 | 现场开发与代码拉取 |
 
 例如：
 
