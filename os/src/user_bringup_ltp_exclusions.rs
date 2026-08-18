@@ -10,6 +10,7 @@
 ///  ② 77 条已实现 syscall 的测例（SysV IPC msg/sem/shm、POSIX timer、
 ///     timerfd、futex、sendmmsg/recvmmsg，dispatch 已有映射）。
 const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
+    "cgroup_fj_proc",
     "cgroup_core01",
     "cgroup_core02",
     "cgroup_core03",
@@ -36,15 +37,6 @@ const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "check_pe",
     "check_setkey",
     "check_simple_capset",
-    "chown01_16",
-    "chown02_16",
-    "chown03_16",
-    "chown04_16",
-    "chown05_16",
-    "chroot01",
-    "chroot02",
-    "chroot03",
-    "chroot04",
     "cleanup_lvm.sh",
     "close_range01",
     "cmdlib.sh",

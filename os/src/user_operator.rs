@@ -217,6 +217,8 @@ extern "C" fn operator_main(_arg : usize) -> ! {
     };
     if image == crate::user_bringup_busybox::BringupImage::Preliminary {
         crate::user_bringup_root_layout::ensure_busybox_path_links();
+        #[cfg(not(feature = "disable-ltp-prune"))]
+        crate::user_bringup_root_layout::prune_ltp_excluded_testcases();
     }
     let plan = build_plan(image);
     configure_tty(plan.tty);
