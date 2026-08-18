@@ -36,9 +36,13 @@ use crate::pagetable::{zero_phys_page, LoongArch64AddressSpace};
 
 #[inline]
 fn phys_access_addr(pa : usize) -> usize {
-    let kernel_start : usize;
-    unsafe { core::arch::asm!("la {}, kernel_start", out(reg) kernel_start); }
-    (kernel_start & 0xFFFF_0000_0000_0000usize) | pa
+    #[cfg(feature = "loongson2k1000la")]
+    {
+        const CACHED_WINDOW_BASE : usize = 0x9000_0000_0000_0000;
+        return CACHED_WINDOW_BASE | pa;
+    }
+    #[cfg(not(feature = "loongson2k1000la"))]
+    { pa }
 }
 
 #[cfg(feature = "vfs-root-read")]

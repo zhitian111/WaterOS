@@ -33,15 +33,19 @@ pub(crate) use impl_common::{
 
 /// 高 cached/uncached 段窗口只保留高 16 位；低 48 位是物理地址。
 const LOONGARCH64_PHYS_ADDR_MASK : usize = 0x0000_FFFF_FFFF_FFFF;
+#[cfg(feature = "loongson2k1000la")]
 const LOONGARCH64_WINDOW_BASE_MASK : usize = 0xFFFF_0000_0000_0000;
 
 #[inline]
 fn kernel_va_window_base() -> usize {
-    let kernel_start_addr : usize;
-    unsafe {
-        core::arch::asm!("la {}, kernel_start", out(reg) kernel_start_addr);
+    #[cfg(feature = "loongson2k1000la")]
+    {
+        // 2K1000 DMW1 is the cached direct-memory window. Keep this fixed
+        // instead of deriving it from `kernel_start` in trap/page-fault paths.
+        return 0x9000_0000_0000_0000;
     }
-    kernel_start_addr & LOONGARCH64_WINDOW_BASE_MASK
+    #[cfg(not(feature = "loongson2k1000la"))]
+    { 0 }
 }
 
 #[inline]
@@ -141,8 +145,10 @@ impl LoongArch64PteFlags {
     /// 从 [`PagePerm`] 构造强序非缓存 MMIO 的 PTE 标志。
     #[inline]
     fn from_mmio_perm(perm : PagePerm) -> Self {
-        Self::from_perm_with_mat(perm,
-                                 MemoryAccessType::StronglyOrderedUncached)
+        #[cfg(feature = "loongson2k1000la")]
+        { Self::from_perm_with_mat(perm, MemoryAccessType::StronglyOrderedUncached) }
+        #[cfg(not(feature = "loongson2k1000la"))]
+        { Self::from_perm_with_mat(perm, MemoryAccessType::CoherentCached) }
     }
 
     #[inline]
