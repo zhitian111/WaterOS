@@ -10,8 +10,37 @@ pub struct UartDescription {
     pub layout : RegisterLayout,
 }
 
+/// 2K1000LA PMON 启动通常没有 DTB；BSP UART0 的地址固定为 0x1fe2_0000。
+const BOARD_UART0_BASE : usize = 0x1fe2_0000;
+/// 2K1000 的外设寄存器必须通过 DMW0 未缓存窗口访问。
+///
+/// DTB/U-Boot 描述的是物理地址；直接解引用该低地址会落入缓存别名，
+/// 轮询 LSR/RBR 时可能反复读到陈旧值（表现为串口持续收到 `0x55`）。
+const LOONGARCH64_UNCACHED_WINDOW_BASE : usize = 0x8000_0000_0000_0000;
+const LOONGARCH64_PHYS_ADDR_MASK : usize = 0x0000_ffff_ffff_ffff;
+
+#[inline]
+fn uart_mmio_base(base: usize) -> usize {
+    if base & !LOONGARCH64_PHYS_ADDR_MASK == 0 {
+        LOONGARCH64_UNCACHED_WINDOW_BASE | base
+    } else {
+        base
+    }
+}
+
 pub fn register(uart : UartDescription) -> usize {
-    character::register_uart_character_device(uart.mmio.base, uart.layout)
+    character::register_uart_character_device(uart_mmio_base(uart.mmio.base), uart.layout)
+}
+
+/// Register the board UART when firmware did not pass a device tree.
+pub fn register_board_fallback() -> DriverResult<usize> {
+    let idx = register(UartDescription { mmio : api_v0::MmioRegion {
+                                               base : BOARD_UART0_BASE,
+                                               size : 0x100 },
+                                         layout : RegisterLayout::Byte16550 });
+    log::info!("[driver][2k1000] registered board UART0 fallback base={:#x}",
+               BOARD_UART0_BASE);
+    Ok(idx)
 }
 
 pub(crate) fn layout(reg_shift : Option<u32>,
@@ -30,6 +59,9 @@ fn be32_property(node : &fdt::node::FdtNode<'_, '_>, name : &str) -> Option<u32>
 }
 
 pub fn register_from_dtb(dtb_pa : usize) -> DriverResult<usize> {
+    if dtb_pa == 0 {
+        return register_board_fallback();
+    }
     let fdt = read_fdt(dtb_pa)?;
     let mut registered = 0usize;
     for node in fdt.all_nodes() {
@@ -74,6 +106,8 @@ pub fn test() {
     assert_eq!(layout(Some(2), Some(4)),
                Some(RegisterLayout::DwApb32));
     assert_eq!(layout(Some(2), Some(1)), None);
+    assert_eq!(uart_mmio_base(0x1fe2_0000), 0x8000_0000_1fe2_0000);
+    assert_eq!(uart_mmio_base(0x8000_0000_1fe2_0000), 0x8000_0000_1fe2_0000);
 }
 
 #[cfg(test)]
