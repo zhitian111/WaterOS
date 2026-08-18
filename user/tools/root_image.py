@@ -509,11 +509,70 @@ def make_partition_table_vf2(image: Path, image_bytes: int, boot_size_mib: int,
     return partitions
 
 
+def make_partition_table_boot_root(image: Path, image_bytes: int, boot_size_mib: int,
+                                   table: str = "mbr",
+                                   extra_images: list[Path] | None = None,
+                                   extra_types: list[str] | None = None) -> list[Partition]:
+    """Conventional U-Boot layout: P1 FAT boot, P2 ext4 rootfs, then extras."""
+    extra_images = extra_images or []
+    extra_types = extra_types or []
+    if table == "mbr" and len(extra_images) > 2:
+        raise ImageError("boot-root MBR layout supports at most two extra partitions")
+    if len(extra_types) not in (0, len(extra_images)):
+        raise ImageError("filesystem partition type count must match filesystem image count")
+    total_sectors = image_bytes // SECTOR_SIZE
+    boot_start = DEFAULT_START_SECTOR
+    boot_sectors = boot_size_mib * 1024 * 1024 // SECTOR_SIZE
+    root_start = boot_start + boot_sectors
+    alignment = DEFAULT_BLOCK_SIZE // SECTOR_SIZE
+    extra_sectors = [
+        ((source.stat().st_size + DEFAULT_BLOCK_SIZE - 1) // DEFAULT_BLOCK_SIZE)
+        * alignment
+        for source in extra_images
+    ]
+    root_sectors = total_sectors - root_start - sum(extra_sectors)
+    if table == "gpt":
+        root_sectors -= 34
+    root_sectors -= root_sectors % alignment
+    if boot_sectors <= 0 or root_sectors <= 0:
+        raise ImageError("image is too small for boot-root boot + rootfs layout")
+    extra_starts: list[int] = []
+    cursor = root_start + root_sectors
+    for sectors in extra_sectors:
+        extra_starts.append(cursor)
+        cursor += sectors
+    default_type = "L" if table == "gpt" else "83"
+    partition_types = [_partition_type(value, table)
+                       for value in (extra_types or [default_type] * len(extra_images))]
+    if table == "mbr":
+        lines = ["label: dos", f"label-id: {DEFAULT_DISK_ID}", "unit: sectors", "",
+                 f"{boot_start},{boot_sectors},0c,*",
+                 f"{root_start},{root_sectors},83"]
+    elif table == "gpt":
+        lines = ["label: gpt", f"first-lba: {boot_start}", "unit: sectors", "",
+                 (f"{boot_start},{boot_sectors},"
+                  "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"),
+                 f"{root_start},{root_sectors},L"]
+    else:
+        raise ImageError(f"unsupported partition table: {table}")
+    lines.extend(f"{start},{sectors},{partition_type}"
+                 for start, sectors, partition_type in
+                 zip(extra_starts, extra_sectors, partition_types))
+    run(["sfdisk", "--quiet", str(image)], input_text="\n".join(lines) + "\n")
+    partitions = read_partitions(image)
+    expected = 2 + len(extra_images)
+    if len(partitions) != expected:
+        raise ImageError(f"partitioning tool created {len(partitions)} partitions, expected {expected}")
+    return partitions
+
+
 def build_boot_partition(image: Path, partition: Partition, boot_dir: Path) -> None:
     """用 `mkfs.vfat` + mtools 把 `boot_dir` 写进 FAT 启动分区。"""
     if not boot_dir.is_dir():
         raise ImageError(f"boot directory does not exist: {boot_dir}")
-    blocks = partition.byte_length // SECTOR_SIZE
+    # mkfs.vfat -C takes 1024-byte blocks, while partition geometry is tracked
+    # in 512-byte sectors.
+    blocks = partition.byte_length // 1024
     if blocks <= 0:
         raise ImageError("boot partition is too small")
     with tempfile.TemporaryDirectory(prefix="wateros-boot-") as temporary:
@@ -594,15 +653,19 @@ def build_image(args: argparse.Namespace) -> list[str]:
             boot_dir = getattr(args, "boot_dir", None)
             table = getattr(args, "partition_table", "mbr")
             if boot_dir is not None:
-                partitions = make_partition_table_vf2(
+                boot_layout = getattr(args, "boot_layout", "vf2")
+                partition_builder = (make_partition_table_vf2 if boot_layout == "vf2"
+                                     else make_partition_table_boot_root)
+                partitions = partition_builder(
                     temporary_image, image_bytes,
                     getattr(args, "boot_size_mib", DEFAULT_BOOT_SIZE_MIB), table,
                     extra_images, list(getattr(args, "extra_partition_types", [])),
                 )
-                boot_partition = next((p for p in partitions if p.number == 3), None)
-                root_partition = next((p for p in partitions if p.number == 4), None)
+                boot_number, root_number = (3, 4) if boot_layout == "vf2" else (1, 2)
+                boot_partition = next((p for p in partitions if p.number == boot_number), None)
+                root_partition = next((p for p in partitions if p.number == root_number), None)
                 if boot_partition is None or root_partition is None:
-                    raise ImageError("VF2 layout requires four partitions (P3 boot, P4 rootfs)")
+                    raise ImageError(f"{boot_layout} layout is missing boot/root partitions")
                 build_boot_partition(temporary_image, boot_partition, boot_dir.resolve())
                 partition = root_partition
             else:
@@ -639,7 +702,8 @@ def build_image(args: argparse.Namespace) -> list[str]:
             except subprocess.CalledProcessError as error:
                 raise ImageError(f"mkfs.ext4 failed with status {error.returncode}") from error
             if extra_images:
-                extra_start = 4 if boot_dir is not None else 1
+                extra_start = ((4 if boot_layout == "vf2" else 2)
+                               if boot_dir is not None else 1)
                 for extra_image, extra_partition in zip(extra_images, partitions[extra_start:]):
                     write_partition_image(temporary_image, extra_partition, extra_image)
             # Do not replace a known-good image before the replacement passes
@@ -648,7 +712,8 @@ def build_image(args: argparse.Namespace) -> list[str]:
                 args.manifest.resolve()
             )
             verify_image(temporary_image, required_paths, expected_files,
-                         boot_dir=boot_dir, extra_images=extra_images)
+                         boot_dir=boot_dir, extra_images=extra_images,
+                         boot_layout=getattr(args, "boot_layout", "vf2"))
             os.replace(temporary_image, image)
             temporary_image = None
             return required_paths
@@ -678,16 +743,19 @@ def verify_image(
     expected_files: dict[str, bytes] | None = None,
     boot_dir: Path | None = None,
     extra_images: list[Path] | None = None,
+    boot_layout: str = "vf2",
 ) -> Partition:
     partitions = read_partitions(image)
     extra_images = extra_images or []
     if boot_dir is not None:
-        expected_count = 4 + len(extra_images)
+        base_count = 4 if boot_layout == "vf2" else 2
+        expected_count = base_count + len(extra_images)
         if len(partitions) != expected_count:
-            raise ImageError(f"expected VF2 layout with {expected_count} partitions, found {len(partitions)}")
-        boot_partition = partitions[2]
-        root_partition = partitions[3]
-        extra_partitions = partitions[4:]
+            raise ImageError(f"expected {boot_layout} layout with {expected_count} partitions, found {len(partitions)}")
+        boot_index, root_index = (2, 3) if boot_layout == "vf2" else (0, 1)
+        boot_partition = partitions[boot_index]
+        root_partition = partitions[root_index]
+        extra_partitions = partitions[base_count:]
     else:
         expected_count = 1 + len(extra_images)
         if len(partitions) != expected_count:
@@ -801,6 +869,7 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--boot-dir", type=Path,
                        help="VisionFive 2 layout: P1/P2 placeholders, P3 FAT boot (this dir), P4 ext4 rootfs")
     build.add_argument("--boot-size-mib", type=int, default=DEFAULT_BOOT_SIZE_MIB)
+    build.add_argument("--boot-layout", choices=("vf2", "boot-root"), default="vf2")
     build.add_argument("--root-size-mib", type=int,
                        help="root partition size when --extra-image is used")
     build.add_argument("--extra-image", dest="extra_images", action="append", type=Path,
@@ -817,6 +886,7 @@ def parser() -> argparse.ArgumentParser:
                         help="expected paths come from this staging tree instead of a manifest")
     verify.add_argument("--boot-dir", type=Path,
                         help="expected boot files come from this directory")
+    verify.add_argument("--boot-layout", choices=("vf2", "boot-root"), default="vf2")
     verify.add_argument("--extra-image", dest="extra_images", action="append", type=Path,
                         default=[], help="expected raw filesystem image for P2+")
     return result
@@ -835,7 +905,8 @@ def main(argv: list[str] | None = None) -> int:
                                                   if args.source_root else None)
             partition = verify_image(args.output.resolve(), required, expected,
                                      getattr(args, "boot_dir", None),
-                                     [path.resolve() for path in args.extra_images])
+                                     [path.resolve() for path in args.extra_images],
+                                     getattr(args, "boot_layout", "vf2"))
             print(
                 f"built {args.output}: start={partition.start_sector} "
                 f"sectors={partition.sectors} bytes={args.output.stat().st_size}"
@@ -852,7 +923,8 @@ def main(argv: list[str] | None = None) -> int:
                                                   if args.source_root else None)
             partition = verify_image(args.image.resolve(), required, expected,
                                      getattr(args, "boot_dir", None),
-                                     [path.resolve() for path in args.extra_images])
+                                     [path.resolve() for path in args.extra_images],
+                                     getattr(args, "boot_layout", "vf2"))
             print(
                 f"verified {args.image}: start={partition.start_sector} "
                 f"sectors={partition.sectors}"

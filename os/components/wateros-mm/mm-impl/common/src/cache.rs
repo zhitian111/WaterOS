@@ -159,8 +159,8 @@ pub fn load_or_get_readonly_elf_page<F>(identity : &VfsFileContentIdentity,
         }
 
         let loaded_ppn = frame_alloc_result().map_err(MmError::from)?;
-        let pa = loaded_ppn.0 * PAGE_SIZE;
-        let dst = unsafe { core::slice::from_raw_parts_mut(pa as *mut u8, PAGE_SIZE) };
+        let pa = phys_access_addr(loaded_ppn.0 * PAGE_SIZE);
+        let dst = unsafe { core::slice::from_raw_parts_mut(phys_access_addr(pa) as *mut u8, PAGE_SIZE) };
         dst.fill(0);
         if let Err(error) = load(dst) {
             let _ = frame_dealloc_result(loaded_ppn);
@@ -419,7 +419,7 @@ pub fn load_or_get_readonly_mmap_page<F>(identity : &VfsFileContentIdentity,
 
         let loaded_ppn = frame_alloc_result().map_err(MmError::from)?;
         let pa = loaded_ppn.0 * PAGE_SIZE;
-        let dst = unsafe { core::slice::from_raw_parts_mut(pa as *mut u8, PAGE_SIZE) };
+        let dst = unsafe { core::slice::from_raw_parts_mut(phys_access_addr(pa) as *mut u8, PAGE_SIZE) };
         dst.fill(0);
         if let Err(error) = load(dst) {
             let _ = frame_dealloc_result(loaded_ppn);

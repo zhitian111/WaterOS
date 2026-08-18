@@ -685,7 +685,7 @@ impl LoongArch64AddressSpace {
                 while page.0 < page_end.0 {
                     if let Some(pa) = self.translate_addr(page)? {
                         let src = unsafe {
-                            core::slice::from_raw_parts(pa.page_start().0 as *const u8,
+                            core::slice::from_raw_parts(phys_to_kernel_va(pa.page_start().0) as *const u8,
                                                         PAGE_SIZE)
                         };
                         let file_offset = vma.file_offset + (page.0 - vma.start.0);

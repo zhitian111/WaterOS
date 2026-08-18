@@ -6,9 +6,9 @@ use super::*;
 /// 调用者必须保证 PPN 来自可写 RAM 帧且未被其它别名或 DMA 同时使用。
 #[inline]
 pub fn zero_phys_page(ppn : PhysPageNum) {
-    let pa = ppn.0 * PAGE_SIZE;
+    let pa = phys_access_addr(ppn.0 * PAGE_SIZE);
     unsafe {
-        core::ptr::write_bytes(pa as *mut u8, 0, PAGE_SIZE);
+        core::ptr::write_bytes(phys_access_addr(pa) as *mut u8, 0, PAGE_SIZE);
     }
 }
 
@@ -152,8 +152,8 @@ pub fn map_range_from_loader<S, A, F>(aspace : &mut S,
     let mut page_index = 0usize;
     while vpn.0 < vpn_end.0 {
         let ppn = alloc_zeroed_frame_with_alloc(allocator)?;
-        let pa = ppn.0 * PAGE_SIZE;
-        let page = unsafe { core::slice::from_raw_parts_mut(pa as *mut u8, PAGE_SIZE) };
+        let pa = phys_access_addr(ppn.0 * PAGE_SIZE);
+        let page = unsafe { core::slice::from_raw_parts_mut(phys_access_addr(pa) as *mut u8, PAGE_SIZE) };
         if let Err(e) = load_page(page_index, page) {
             let _ = allocator.dealloc_frame(ppn);
             let _ = aspace.unmap_range_with_alloc(allocator, base, vpn.start_addr());
@@ -172,8 +172,8 @@ pub fn map_range_from_loader<S, A, F>(aspace : &mut S,
 
 /// 用 `src` 对应页片段填充一个物理页；源数据不足一页时其余字节保持零，页索引乘法溢出由调用方避免。
 pub fn fill_phys_page(ppn : PhysPageNum, page_index : usize, src : &[u8]) {
-    let pa = ppn.0 * PAGE_SIZE;
-    let page = unsafe { core::slice::from_raw_parts_mut(pa as *mut u8, PAGE_SIZE) };
+    let pa = phys_access_addr(ppn.0 * PAGE_SIZE);
+    let page = unsafe { core::slice::from_raw_parts_mut(phys_access_addr(pa) as *mut u8, PAGE_SIZE) };
     page.fill(0);
     let start = page_index * PAGE_SIZE;
     if start >= src.len() {
@@ -226,8 +226,8 @@ fn copy_mapped_bytes<S : AddressSpaceOps>(aspace : &S,
         let page_off = offset % PAGE_SIZE;
         let chunk = core::cmp::min(PAGE_SIZE - page_off, len - offset);
         unsafe {
-            core::ptr::copy_nonoverlapping((src_pa.0 + page_off) as *const u8,
-                                           (dst_pa.0 + page_off) as *mut u8,
+            core::ptr::copy_nonoverlapping(phys_access_addr(src_pa.0 + page_off) as *const u8,
+                                           phys_access_addr(dst_pa.0 + page_off) as *mut u8,
                                            chunk);
         }
         offset += chunk;

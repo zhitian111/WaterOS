@@ -34,6 +34,13 @@ use impl_common::{
 
 use crate::pagetable::{zero_phys_page, LoongArch64AddressSpace};
 
+#[inline]
+fn phys_access_addr(pa : usize) -> usize {
+    let kernel_start : usize;
+    unsafe { core::arch::asm!("la {}, kernel_start", out(reg) kernel_start); }
+    (kernel_start & 0xFFFF_0000_0000_0000usize) | pa
+}
+
 #[cfg(feature = "vfs-root-read")]
 use spin::Mutex;
 #[cfg(feature = "vfs-root-read")]
@@ -778,14 +785,14 @@ fn map_segment_from_path_eager<A : AddressSpaceOps>(aspace : &mut A,
             let dst_off = copy_start - page_va;
             let rel = copy_start - vbase;
             let len = copy_end - copy_start;
-            let dst = unsafe { core::slice::from_raw_parts_mut((pb + dst_off) as *mut u8, len) };
+            let dst = unsafe { core::slice::from_raw_parts_mut(phys_access_addr(pb + dst_off) as *mut u8, len) };
             read_path_exact(path, (fo + rel) as u64, dst)?;
         }
 
         let zero_start = cmp::max(seg_start, file_end);
         if zero_start < seg_end {
             unsafe {
-                core::ptr::write_bytes((pb + zero_start - page_va) as *mut u8,
+                core::ptr::write_bytes(phys_access_addr(pb + zero_start - page_va) as *mut u8,
                                        0,
                                        seg_end - zero_start);
             }
@@ -1009,7 +1016,7 @@ fn read_mapped_u32<A : AddressSpaceOps>(aspace : &A, va : usize) -> Result<u32, 
                    .map_err(LoadElfError::Mm)?
                    .ok_or(LoadElfError::Mm(MmError::NotMapped))?
                    .0;
-    let bytes = unsafe { core::slice::from_raw_parts(pa as *const u8, 4) };
+    let bytes = unsafe { core::slice::from_raw_parts(phys_access_addr(pa) as *const u8, 4) };
     Ok(u32::from_le_bytes([bytes[0],
                            bytes[1],
                            bytes[2], bytes[3]]))
@@ -1028,7 +1035,7 @@ fn write_mapped_u32<A : AddressSpaceOps>(aspace : &A,
                          .enumerate()
     {
         unsafe {
-            ((pa + i) as *mut u8).write_volatile(*byte);
+            (phys_access_addr(pa + i) as *mut u8).write_volatile(*byte);
         }
     }
     Ok(())
@@ -1117,7 +1124,7 @@ fn map_signal_trampoline<A : AddressSpaceOps>(aspace : &mut A,
     ];
     let ppn = frame_alloc_result().map_err(|e| LoadElfError::Mm(MmError::from(e)))?;
     zero_phys_page(ppn);
-    let dst = ppn.start_addr().0 as *mut u8;
+    let dst = phys_access_addr(ppn.start_addr().0) as *mut u8;
     unsafe {
         core::ptr::copy_nonoverlapping(CODE.as_ptr(), dst, CODE.len());
     }
@@ -1141,7 +1148,7 @@ fn verify_mapped_entry(aspace : &LoongArch64AddressSpace,
                    .map_err(LoadElfError::Mm)?
                    .ok_or(LoadElfError::Parse)?
                    .0;
-    let mapped = unsafe { core::slice::from_raw_parts(pa as *const u8, 4) };
+    let mapped = unsafe { core::slice::from_raw_parts(phys_access_addr(pa) as *const u8, 4) };
     if mapped != expected {
         runtime::logging::warn!("[elf-load] abort: entry {:#x} mapped insn {:02x?} != file \
                                  {:02x?}",
@@ -1215,7 +1222,7 @@ fn verify_mapped_entry_from_path_at(aspace : &mut LoongArch64AddressSpace,
                    .map_err(LoadElfError::Mm)?
                    .ok_or(LoadElfError::Parse)?
                    .0;
-    let mapped = unsafe { core::slice::from_raw_parts(pa as *const u8, 4) };
+    let mapped = unsafe { core::slice::from_raw_parts(phys_access_addr(pa) as *const u8, 4) };
     if mapped != expected {
         runtime::logging::warn!("[elf-load] abort: entry {:#x} mapped insn {:02x?} != file \
                                  {:02x?}",

@@ -1,0 +1,2 @@
+loadaddr=0x9000000098000000
+bootcmd=tftpboot ${loadaddr} kernel-la2k.ui; bootm ${loadaddr}

@@ -146,6 +146,30 @@ class Ext4IntegrationTests(unittest.TestCase):
                 source.seek(partitions[4].byte_offset)
                 self.assertEqual(source.read(extra.stat().st_size), extra.read_bytes())
 
+    def test_boot_root_layout_contains_fat_boot_and_ext4_root(self) -> None:
+        if shutil.which("sfdisk") is None or shutil.which("mkfs.vfat") is None \
+                or shutil.which("mcopy") is None:
+            self.skipTest("sfdisk, mkfs.vfat and mcopy are required")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            staging = root / "staging"
+            staging.mkdir()
+            make_rootfs(staging)
+            boot = root / "boot"
+            boot.mkdir()
+            (boot / "kernel-la2k.ui").write_bytes(b"synthetic loongarch ui\n")
+            (boot / "boot.scr").write_bytes(b"synthetic boot script\n")
+            disk = root / "wateros-la2k.img"
+            image.create_disk_image(staging, disk, "la", 16, "mbr",
+                                    boot_dir=boot, boot_size_mb=8,
+                                    boot_layout="boot-root")
+            partitions = root_image.read_partitions(disk)
+            self.assertEqual([partition.number for partition in partitions], [1, 2])
+            self.assertEqual([partition.partition_type for partition in partitions],
+                             [0x0C, 0x83])
+            self.assertEqual(partitions[0].start_sector, 2048)
+            self.assertEqual(partitions[1].start_sector, 18432)
+
     def test_overlay_keeps_base_and_writes_allowed_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

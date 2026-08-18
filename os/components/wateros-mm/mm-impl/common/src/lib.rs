@@ -25,6 +25,21 @@ use core::sync::atomic::AtomicU64;
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result, frame_inc_ref, frame_ref_count};
 use vfs_api::VfsFileContentIdentity;
 
+/// Convert a physical byte address to the address usable by kernel code.
+/// LoongArch runs through the high cached DMW window; raw low physical
+/// pointers are not valid after paging is enabled.
+#[inline]
+pub(crate) fn phys_access_addr(pa : usize) -> usize {
+    #[cfg(target_arch = "loongarch64")]
+    {
+        let kernel_start : usize;
+        unsafe { core::arch::asm!("la {}, kernel_start", out(reg) kernel_start); }
+        (kernel_start & 0xFFFF_0000_0000_0000usize) | pa
+    }
+    #[cfg(not(target_arch = "loongarch64"))]
+    { pa }
+}
+
 /// 私有匿名映射的惰性缺页 loader：缺页时不做任何加载，
 /// 直接保留 `handle_lazy_page_fault` 预先清零的页（等价于按需零页）。
 ///

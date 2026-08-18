@@ -114,6 +114,8 @@ struct ShellCandidate {
     argv0 : &'static str,
 }
 
+static OPERATOR_STARTED : AtomicBool = AtomicBool::new(false);
+
 fn shell_candidates(requested : Option<&str>) -> Vec<ShellCandidate> {
     let mut result = Vec::new();
     if let Some(path) = requested {
@@ -127,8 +129,10 @@ fn shell_candidates(requested : Option<&str>) -> Vec<ShellCandidate> {
         result.push(ShellCandidate { program : path.to_string(),
                                      argv0 });
     }
-    for (program, argv0) in [("/bin/bash", "bash"),
-                             ("/bin/sh", "sh"),
+    // The LoongArch image ships a native BusyBox `/bin/sh`; `/bin/bash` may
+    // be left over from a RISC-V rootfs and would execute as garbage code.
+    for (program, argv0) in [("/bin/sh", "sh"),
+                             ("/bin/bash", "bash"),
                              ("/glibc/busybox", "sh"),
                              ("/musl/busybox", "sh")]
     {
@@ -187,7 +191,13 @@ fn run_shell_once(requested : Option<&str>, script : Option<&str>) -> bool {
     false
 }
 
-pub(crate) fn start() { task::spawn_kernel_task(operator_main, 0); }
+pub(crate) fn start() {
+    if OPERATOR_STARTED.swap(true, Ordering::AcqRel) {
+        warn!("[{LOG_TAG}] duplicate start ignored");
+        return;
+    }
+    task::spawn_kernel_task(operator_main, 0);
+}
 
 fn configure_tty(mode : TtyMode) {
     let mode = match mode {
@@ -248,13 +258,14 @@ extern "C" fn operator_main(_arg : usize) -> ! {
         ExitPolicy::Shell => {}
     }
 
+    // Run the selected shell once.  A failed user program must not be
+    // relaunched forever: that hides the original failure and floods UART.
+    let _ = run_shell_once(plan.shell
+                                      .as_deref(),
+                           None);
+    error!("[{LOG_TAG}] shell attempt finished; operator is idle");
     loop {
-        if !run_shell_once(plan.shell
-                               .as_deref(),
-                           None)
-        {
-            task::sleep_for_ticks(100);
-        }
+        task::sleep_for_ticks(1000);
     }
 }
 
@@ -290,8 +301,8 @@ mod tests {
                                           })
                                           .collect();
         assert_eq!(paths, ["/musl/busybox",
-                           "/bin/bash",
                            "/bin/sh",
+                           "/bin/bash",
                            "/glibc/busybox"]);
     }
 }

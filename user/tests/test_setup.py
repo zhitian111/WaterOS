@@ -4,6 +4,7 @@ import hashlib
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tools import setup
 
@@ -20,6 +21,18 @@ class SetupTests(unittest.TestCase):
         self.assertIn("libc6-dev-loong64-cross", setup.LA_DEBIAN_PACKAGES)
         self.assertIn("libgcc-s1-loong64-cross", setup.LA_DEBIAN_PACKAGES)
         self.assertEqual(setup.LA_COMPILER_PREFIX, "loongarch64-linux-gnu-")
+
+    def test_archlinux_loongarch_toolchain_requires_complete_prefix(self) -> None:
+        prefix = setup.LA_ARCHLINUX_COMPILER_PREFIX
+
+        def which(tool: str) -> str | None:
+            if tool == f"{prefix}readelf":
+                return None
+            return f"/usr/bin/{tool}"
+
+        with mock.patch.object(setup.shutil, "which", side_effect=which):
+            with self.assertRaisesRegex(setup.SetupError, f"{prefix}readelf"):
+                setup.validate_archlinux_loongarch_toolchain()
 
     def test_loongarch_launchers_use_private_host_libraries(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

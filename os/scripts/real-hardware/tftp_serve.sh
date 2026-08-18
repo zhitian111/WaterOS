@@ -2,7 +2,7 @@
 # 启动 WaterOS 2K1000 真机 TFTP 服务（dnsmasq 前台运行，Ctrl-C 停止）。
 #
 # 用法：
-#   tftp_serve.sh [listen_ip] [tftp_root]
+#   tftp_serve.sh [listen_ip] [tftp_root] [disk_image]
 #
 # 默认：
 #   listen_ip = 192.168.1.2
@@ -16,6 +16,7 @@ source "$HERE/../source/console.bash"
 
 LISTEN_IP="${1:-192.168.1.2}"
 TFTP_ROOT="${2:-/srv/tftp}"
+DISK_IMAGE="${3:-$OS_DIR/../user/build/images/wateros-la.img}"
 
 die() {
     error "$*" 1
@@ -48,12 +49,16 @@ sync_file() {
 
 sync_file "$OS_DIR/kernel-la2k.ui" "$TFTP_ROOT/kernel-la2k.ui"
 sync_file "$OS_DIR/build/wateros-2k1000.scr" "$TFTP_ROOT/wateros-2k1000.scr"
+sync_file "$OS_DIR/build/wateros-2k1000-flash.scr" "$TFTP_ROOT/wateros-2k1000-flash.scr"
+sync_file "$DISK_IMAGE" "$TFTP_ROOT/wateros-la.img"
 
 info "================ TFTP 服务 ================"
 info "监听地址: $LISTEN_IP"
 info "TFTP 根目录: $TFTP_ROOT"
 info "内核: $(ls -l "$TFTP_ROOT/kernel-la2k.ui" | awk '{print $5}') bytes"
 info "启动脚本: $(ls -l "$TFTP_ROOT/wateros-2k1000.scr" | awk '{print $5}') bytes"
+info "烧录脚本: $(ls -l "$TFTP_ROOT/wateros-2k1000-flash.scr" | awk '{print $5}') bytes"
+info "SATA 镜像: $(ls -l "$TFTP_ROOT/wateros-la.img" | awk '{print $5}') bytes"
 info "停止方法: Ctrl-C"
 info "=========================================="
 

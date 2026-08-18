@@ -82,8 +82,8 @@ pub fn handle_lazy_file_fault<S, A>(aspace : &mut S,
     }
 
     let ppn = alloc_zeroed_frame_with_alloc(allocator)?;
-    let pa = ppn.0 * PAGE_SIZE;
-    let dst = unsafe { core::slice::from_raw_parts_mut(pa as *mut u8, PAGE_SIZE) };
+    let pa = phys_access_addr(ppn.0 * PAGE_SIZE);
+    let dst = unsafe { core::slice::from_raw_parts_mut(phys_access_addr(pa) as *mut u8, PAGE_SIZE) };
 
     if let Err(error) = aspace.lazy_vma_set_mut()
                               .get_mut(index)

@@ -15,6 +15,7 @@ TOOLCHAIN_ARCHIVE ?=
 FORCE ?=0
 BOOT_DIR ?=
 BOOT_SIZE_MB ?= 64
+BOOT_LAYOUT ?= vf2
 # 整盘镜像（带 GPT/MBR 分区表）开关与参数。
 DISK ?= 0
 PARTITION_TABLE ?= gpt
@@ -127,8 +128,8 @@ image:
 		$(if $(strip $(OUTPUT)),--output $(OUTPUT),) \
 		$(if $(filter 1,$(DISK)),--disk --partition-table $(PARTITION_TABLE) \
 			$(if $(strip $(DISK_SIZE_MB)),--disk-size-mb $(DISK_SIZE_MB),) \
-			$(if $(strip $(BOOT_DIR)),--boot-dir $(BOOT_DIR) \
-				--boot-size-mb $(BOOT_SIZE_MB),) \
+		$(if $(strip $(BOOT_DIR)),--boot-dir $(BOOT_DIR) \
+				--boot-size-mb $(BOOT_SIZE_MB) --boot-layout $(BOOT_LAYOUT),) \
 			$(FILESYSTEM_IMAGE_ARGS) $(FILESYSTEM_TYPE_ARGS),)
 
 disk:

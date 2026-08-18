@@ -104,6 +104,17 @@ def _archlinux_rv_musl_prefix() -> str | None:
     return str(prefix)
 
 
+def _archlinux_la_glibc_prefix() -> str | None:
+    """Return Arch's complete LoongArch GNU toolchain prefix when installed."""
+    if not _is_arch_linux():
+        return None
+    prefix = "loongarch64-unknown-linux-gnu-"
+    required = ("gcc", "ar", "ranlib", "strip", "readelf")
+    if not all(shutil.which(f"{prefix}{suffix}") for suffix in required):
+        return None
+    return prefix
+
+
 def load_architecture(name: str) -> Architecture:
     raw = load_toml(CONFIG_ROOT / "architectures.toml").get("architectures", {})
     if name not in raw:
@@ -114,7 +125,8 @@ def load_architecture(name: str) -> Architecture:
         managed_prefix = (BUILD_ROOT / "toolchains" / name / "bin"
                           / entry["cross_compile"])
         managed_compiler = Path(f"{managed_prefix}gcc")
-        compat_prefix = _archlinux_rv_musl_prefix() if name == "rv" else None
+        compat_prefix = (_archlinux_rv_musl_prefix() if name == "rv"
+                         else _archlinux_la_glibc_prefix())
         cross = (str(managed_prefix) if managed_compiler.is_file()
                  else compat_prefix or entry["cross_compile"])
     if not cross:
@@ -610,6 +622,7 @@ def parse_arguments() -> argparse.Namespace:
     image_parser.add_argument("--boot-dir", type=Path,
                               help="VisionFive 2 layout: P3 FAT boot from this dir, P4 ext4 rootfs")
     image_parser.add_argument("--boot-size-mb", type=int, default=64)
+    image_parser.add_argument("--boot-layout", choices=("vf2", "boot-root"), default="vf2")
     image_parser.add_argument("--filesystem-image", dest="filesystem_images", action="append",
                               type=Path, default=[],
                               help="raw unpartitioned filesystem image for P2+")
@@ -659,7 +672,10 @@ def main() -> int:
                 raise UserlandError("--filesystem-image requires --disk")
             if args.filesystem_types and len(args.filesystem_types) != len(args.filesystem_images):
                 raise UserlandError("--filesystem-type count must match --filesystem-image count")
-            max_filesystem_images = 0 if args.boot_dir is not None and args.partition_table == "mbr" else 3
+            if args.boot_dir is not None and args.partition_table == "mbr":
+                max_filesystem_images = 0 if args.boot_layout == "vf2" else 2
+            else:
+                max_filesystem_images = 3
             if args.partition_table == "mbr" and len(args.filesystem_images) > max_filesystem_images:
                 raise UserlandError("MBR does not have enough primary partitions for the requested layout")
             staging = build_packages(architecture, package_names, args.jobs)
@@ -675,7 +691,7 @@ def main() -> int:
                                              image_size_mb, args.partition_table,
                                              args.boot_dir, args.boot_size_mb,
                                              args.filesystem_images, args.filesystem_types,
-                                             disk_size)
+                                             disk_size, args.boot_layout)
             return 0
         if args.command == "overlay":
             staging = build_packages(architecture, package_names, args.jobs)

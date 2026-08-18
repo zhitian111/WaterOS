@@ -498,6 +498,14 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                       cx.user_pc(),
                       cx.fault_addr(),
                       signal);
+                if matches!(trap_cause, TrapCause::Exception(Exception::Breakpoint)) {
+                    // Breakpoint has no meaningful BadV; dump the LoongArch
+                    // argument/return registers so a user abort can be tied
+                    // to the preceding syscall or ABI failure.
+                    warn!("[trap] breakpoint regs args={:?} sp={:#x}",
+                          cx.syscall_args(),
+                          cx.user_sp());
+                }
                 if !syscall::raise_current_fault_signal(signal, code, address) {
                     kill_current_user_task("user exception", trap_cause, cx, signal);
                 }

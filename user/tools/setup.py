@@ -60,12 +60,46 @@ LA_DEBIAN_PACKAGES = (
     "linux-libc-dev-loong64-cross",
 )
 LA_COMPILER_PREFIX = "loongarch64-linux-gnu-"
+LA_ARCHLINUX_COMPILER_PREFIX = "loongarch64-unknown-linux-gnu-"
 
 
 def release_for(architecture: str) -> ToolchainRelease:
     if architecture == "rv":
         return RV_RELEASE
     raise SetupError(f"{architecture} uses a managed Debian toolchain, not a tar release")
+
+
+def _is_arch_linux() -> bool:
+    try:
+        return "ID=arch" in Path("/etc/os-release").read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
+def validate_archlinux_loongarch_toolchain() -> str:
+    """Validate the system toolchain supplied by Arch's GCC/libc package."""
+    prefix = LA_ARCHLINUX_COMPILER_PREFIX
+    required = tuple(f"{prefix}{suffix}"
+                     for suffix in ("gcc", "ar", "ranlib", "strip", "readelf"))
+    missing = [tool for tool in required if shutil.which(tool) is None]
+    if missing:
+        raise SetupError(
+            "Arch LoongArch toolchain is incomplete; install "
+            "loongarch64-linux-gnu-gcc-libc:\n  - " + "\n  - ".join(missing)
+        )
+    compiler = required[0]
+    machine = subprocess.run([compiler, "-dumpmachine"], check=True, text=True,
+                             capture_output=True).stdout.strip()
+    if "loongarch64" not in machine:
+        raise SetupError(f"installed compiler has unexpected target: {machine}")
+    with tempfile.TemporaryDirectory(prefix="wateros-la-arch-toolchain-") as temporary:
+        source = Path(temporary) / "probe.c"
+        binary = Path(temporary) / "probe"
+        source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+        subprocess.run([compiler, "-mabi=lp64d", "-static", str(source),
+                        "-o", str(binary)], check=True, capture_output=True)
+    print(f"[setup] using Arch Linux system compiler prefix: {prefix}")
+    return prefix
 
 
 def _write_launcher(path: Path, body: str) -> None:
@@ -334,7 +368,10 @@ def main() -> int:
         if args.arch == "la":
             if args.archive is not None:
                 raise SetupError("TOOLCHAIN_ARCHIVE is currently supported only for ARCH=rv")
-            install_loongarch_debian(args.force)
+            if _is_arch_linux():
+                validate_archlinux_loongarch_toolchain()
+            else:
+                install_loongarch_debian(args.force)
         else:
             install(release_for(args.arch), args.archive, args.force)
         return 0

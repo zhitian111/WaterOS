@@ -605,8 +605,19 @@ fn with_zeroed_frame_pool<R>(f : impl FnOnce(&mut ZeroedFramePool) -> R) -> R {
 #[inline]
 fn zero_frame(frame : PhysPageNum) {
     // 调用者保证 frame 已由分配器标记为 allocated 且具有内核 RAM 直映射；否则写入会破坏设备或页表。
+    // LoongArch enters Rust through the high cached window.  During kernel
+    // page-table construction the low physical alias is not installed yet,
+    // so using `ppn * PAGE_SIZE` here faults on the first top-of-RAM frame.
+    #[cfg(target_arch = "loongarch64")]
+    let addr = {
+        let kernel_start : usize;
+        unsafe { core::arch::asm!("la {}, kernel_start", out(reg) kernel_start); }
+        (kernel_start & 0xFFFF_0000_0000_0000usize) | (frame.0 * PAGE_SIZE)
+    };
+    #[cfg(not(target_arch = "loongarch64"))]
+    let addr = frame.0 * PAGE_SIZE;
     unsafe {
-        core::ptr::write_bytes((frame.0 * PAGE_SIZE) as *mut u8, 0, PAGE_SIZE);
+        core::ptr::write_bytes(addr as *mut u8, 0, PAGE_SIZE);
     }
 }
 

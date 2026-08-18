@@ -16,7 +16,7 @@ BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 .PHONY: rv_pre_run-gdb rv_final_run-gdb rv_final_run_log-gdb rv_final_debug_run-gdb
 .PHONY: rv_qemu_run rv_qemu_run_snapshot
 .PHONY: rv_qemu_run_with_log
-.PHONY: la_check la2k_check jh7110_check kernel-la2k la2k_uimage la2k_bootscr la2k_tftp kernel-jh7110 jh7110_uimage jh7110_bootdir vf2_img_latest dd_img_vf2 dd_img_2k1000 la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
+.PHONY: la_check la2k_check jh7110_check kernel-la2k la2k_uimage la2k_bootdir la2k_bootscr la2k_image la2k_flashscr la2k_tftp kernel-jh7110 jh7110_uimage jh7110_bootdir vf2_img_latest dd_img_vf2 dd_img_2k1000 la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
 .PHONY: kernel-la kernel-la-best kernel-la-pre kernel-la-final la_pre_run la_final_run la_final_run_log
 .PHONY: la_pre_run-gdb la_final_run-gdb la_final_run_log-gdb
 .PHONY: la_qemu_run la_qemu_run_snapshot
@@ -195,9 +195,10 @@ help:
 	@echo "  make gdb                             手动挡：终端二连接"
 	@echo "  make dd_img_vf2 DEVICE=/dev/sdX     烧录 VisionFive 2 整盘镜像（先 cd user && make disk）"
 	@echo "  make vf2_img_latest                  UI 有更新时自动重建 VisionFive 2 整盘镜像"
-	@echo "  make dd_img_2k1000 DEVICE=/dev/sdX  烧录 Loongson 2K1000 整盘镜像（先 make disk ARCH=la）"
+	@echo "  make dd_img_2k1000 DEVICE=/dev/sdX  烧录 Loongson 2K1000 可启动整盘镜像"
 	@echo "  FILESYSTEM_IMAGES=a.ext4,b.ext4 FILESYSTEM_TYPES=83,83  为 user 整盘镜像追加文件系统分区"
-	@echo "  make la2k_tftp                       启动 2K1000 TFTP 服务并同步最新启动文件"
+	@echo "  make la2k_tftp                       构建 SATA 镜像、内核并启动 2K1000 TFTP 服务"
+	@echo "  make la2k_flashscr                    生成通过 TFTP 写 SATA 的 U-Boot 脚本"
 	@echo "  make snapshot / make watch           附加当前活动会话"
 	@echo "  make doctor                          检查 GDB/QEMU/符号工具"
 	@echo "  make show-config                     显示当前最终生效配置"
@@ -531,22 +532,54 @@ la2k_uimage: kernel-la2k
 			--name "WaterOS 2K1000LA"; \
 	fi
 
-la2k_bootscr:
-	@mkdir -p ./build
+LA2K_BOOT_DIR ?= ./build/la2k-boot
+LA2K_BOOT_SIZE_MB ?= 16
+
+la2k_bootdir: la2k_uimage
+	@mkdir -p "$(LA2K_BOOT_DIR)/extlinux"
+	@cp ./kernel-la2k.ui "$(LA2K_BOOT_DIR)/kernel-la2k.ui"
 	@mkimage -T script -C none -n "WaterOS 2K1000 boot" \
-		-d ./scripts/root_image/boot-loongson2k1000.cmd ./build/wateros-2k1000.scr
-	$(call INFO, "Loongson 2K1000 网络启动脚本生成完成：./build/wateros-2k1000.scr")
+		-d ./scripts/root_image/boot-loongson2k1000.cmd "$(LA2K_BOOT_DIR)/boot.scr"
+	@cp ./scripts/root_image/loongson2k1000-extlinux.conf \
+		"$(LA2K_BOOT_DIR)/extlinux/extlinux.conf"
+	@cp ./scripts/root_image/loongson2k1000-uEnv.txt "$(LA2K_BOOT_DIR)/uEnv.txt"
+	$(call INFO, "Loongson 2K1000 启动素材目录：$(LA2K_BOOT_DIR)")
+
+la2k_bootscr: la2k_bootdir
+	@cp "$(LA2K_BOOT_DIR)/boot.scr" ./build/wateros-2k1000.scr
+	$(call INFO, "Loongson 2K1000 SATA 启动脚本生成完成：./build/wateros-2k1000.scr")
+
+# 2K1000 SATA 整盘布局：P1 FAT 启动分区（UI/boot.scr），P2 EXT4 rootfs。
+LA2K_PACKAGE ?= minimal
+LA2K_PARTITION_TABLE ?= mbr
+LA2K_IMAGE ?= ../user/build/images/wateros-la.img
+
+la2k_image: la2k_bootscr
+	@$(MAKE) -C ../user disk ARCH=la PACKAGE="$(LA2K_PACKAGE)" \
+		PARTITION_TABLE="$(LA2K_PARTITION_TABLE)" OUTPUT="$(LA2K_IMAGE:.img=.ext4)" \
+		BOOT_DIR="$(abspath $(LA2K_BOOT_DIR))" BOOT_LAYOUT=boot-root \
+		BOOT_SIZE_MB="$(LA2K_BOOT_SIZE_MB)" \
+		FILESYSTEM_IMAGES="$(FILESYSTEM_IMAGES_ABS)" FILESYSTEM_TYPES="$(FILESYSTEM_TYPES)"
+
+la2k_flashscr: la2k_image
+	@mkdir -p ./build
+	@mkimage -T script -C none -n "WaterOS 2K1000 SATA flash" \
+		-d ./scripts/root_image/flash-loongson2k1000.cmd ./build/wateros-2k1000-flash.scr
+	$(call INFO, "Loongson 2K1000 SATA 网络烧录脚本生成完成：./build/wateros-2k1000-flash.scr")
 
 TFTP_LISTEN ?= 192.168.1.2
 TFTP_ROOT ?= /srv/tftp
 
-la2k_tftp: la2k_uimage la2k_bootscr
+
+la2k_tftp: la2k_uimage la2k_bootscr la2k_flashscr la2k_image
 	@echo "备忘录：请在连接串口进入uboot后依次执行："
 	@echo "setenv serverip 192.168.1.2"
 	@echo "setenv ipaddr 192.168.1.20"
-	@echo "tftpboot 0x9000000091000000 wateros-2k1000.scr"
+	@echo "tftpboot 0x9000000091000000 wateros-2k1000-flash.scr  # 首次/更新 SATA 镜像"
 	@echo "source 0x9000000091000000"
-	@bash ./scripts/real-hardware/tftp_serve.sh "$(TFTP_LISTEN)" "$(TFTP_ROOT)"
+	@echo "tftpboot 0x9000000091000000 wateros-2k1000.scr       # 写盘后启动"
+	@echo "source 0x9000000091000000"
+	@bash ./scripts/real-hardware/tftp_serve.sh "$(TFTP_LISTEN)" "$(TFTP_ROOT)" "$(LA2K_IMAGE)"
 
 # VisionFive 2 / JH7110（U-Boot/uImage）构建与打包
 kernel-jh7110:

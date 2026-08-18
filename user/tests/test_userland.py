@@ -35,6 +35,29 @@ class ConfigurationTests(unittest.TestCase):
                 str(compiler.parent / "riscv64-buildroot-linux-musl-"),
             )
 
+    def test_archlinux_loongarch_toolchain_is_discovered(self) -> None:
+        prefix = "loongarch64-unknown-linux-gnu-"
+
+        def which(tool: str) -> str | None:
+            return f"/usr/bin/{tool}" if tool.startswith(prefix) else None
+
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(userland, "BUILD_ROOT", Path(temporary)), \
+                mock.patch.object(userland, "_is_arch_linux", return_value=True), \
+                mock.patch.object(userland.shutil, "which", side_effect=which), \
+                mock.patch.dict("os.environ", {}, clear=True):
+            architecture = userland.load_architecture("la")
+        self.assertEqual(architecture.cross_compile, prefix)
+
+    def test_incomplete_archlinux_loongarch_toolchain_uses_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(userland, "BUILD_ROOT", Path(temporary)), \
+                mock.patch.object(userland, "_is_arch_linux", return_value=True), \
+                mock.patch.object(userland.shutil, "which", return_value=None), \
+                mock.patch.dict("os.environ", {}, clear=True):
+            architecture = userland.load_architecture("la")
+        self.assertEqual(architecture.cross_compile, "loongarch64-linux-gnu-")
+
     def test_packages_resolve_dependencies_once(self) -> None:
         packages = userland.resolve_packages(("operator-tools",), "rv")
         self.assertEqual([package.name for package in packages],

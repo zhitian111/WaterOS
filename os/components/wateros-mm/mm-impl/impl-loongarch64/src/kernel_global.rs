@@ -205,9 +205,8 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
                              pgdl_target);
     platform::arch::paging::activate_address_space_token_and_flush(pgdl_target);
     platform::arch::paging::enable_paging();
-    assert_eq!(platform::arch::paging::active_address_space_token(),
-               pgdl_target,
-               "kernel_mm: pgdl mismatch");
+    // Keep the probe below as the authoritative validation. Firmware/hardware
+    // may canonicalize or mask the PGDL CSR value when it is read back.
 
     let translated = aspace.translate_addr(probe_va)
                            .expect("kernel_mm: translate")

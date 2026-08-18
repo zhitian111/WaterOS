@@ -50,16 +50,17 @@ def create_disk_image(staging: Path, output: Path, arch: str,
                       boot_size_mb: int = 64,
                       extra_images: list[Path] | None = None,
                       extra_partition_types: list[str] | None = None,
-                      disk_size_mb: int | None = None) -> Path:
+                      disk_size_mb: int | None = None,
+                      boot_layout: str = "vf2") -> Path:
     """Build a partitioned (GPT/MBR) whole-disk image from a staging tree.
 
     The rootfs partition is produced by `user/tools/root_image.py`
     (loopback, no root required) and verified with `e2fsck -fn`. The raw EXT4
     from [`create_image`] remains the QEMU-facing artifact. With extra images,
     `size_mb` is the fixed P1 rootfs size and the disk size is calculated from
-    all partitions unless `disk_size_mb` is supplied. When `boot_dir` is given,
-    the legacy VisionFive 2 layout is used (P1/P2 placeholders, P3 FAT boot,
-    P4 ext4 rootfs); extra images are appended as P5 onward.
+    all partitions unless `disk_size_mb` is supplied. `boot_layout=vf2` uses
+    P1/P2 placeholders, P3 FAT boot and P4 rootfs. `boot_layout=boot-root`
+    uses P1 FAT boot and P2 rootfs for conventional U-Boot disks.
     """
     del arch
     staging = staging.resolve()
@@ -70,10 +71,12 @@ def create_disk_image(staging: Path, output: Path, arch: str,
         raise ImageError("root filesystem size must be at least 16 MiB")
     extra_images = [path.resolve() for path in (extra_images or [])]
     extra_partition_types = list(extra_partition_types or [])
+    if boot_layout not in ("vf2", "boot-root"):
+        raise ImageError(f"unsupported boot layout: {boot_layout}")
     if extra_partition_types and len(extra_partition_types) != len(extra_images):
         raise ImageError("filesystem partition type count must match filesystem image count")
     if table == "mbr":
-        max_extra = 0 if boot_dir is not None else 3
+        max_extra = (0 if boot_layout == "vf2" else 2) if boot_dir is not None else 3
         if len(extra_images) > max_extra:
             raise ImageError("MBR does not have enough primary partitions for the requested layout")
     for extra_image in extra_images:
@@ -88,7 +91,8 @@ def create_disk_image(staging: Path, output: Path, arch: str,
             # placeholder partitions (6 MiB total) and the FAT boot partition;
             # do not make those consume the package-derived rootfs capacity.
             if boot_dir is not None:
-                payload += (6 + boot_size_mb) * alignment
+                layout_overhead = 6 if boot_layout == "vf2" else 1
+                payload += (layout_overhead + boot_size_mb) * alignment
             payload += sum(((path.stat().st_size + alignment - 1) // alignment) * alignment
                            for path in extra_images)
             if boot_dir is None and extra_images:
@@ -118,8 +122,10 @@ def create_disk_image(staging: Path, output: Path, arch: str,
         if not boot_dir.is_dir():
             raise ImageError(f"boot directory does not exist: {boot_dir}")
         build_command += ["--boot-dir", str(boot_dir),
-                          "--boot-size-mib", str(boot_size_mb)]
-        verify_command += ["--boot-dir", str(boot_dir)]
+                          "--boot-size-mib", str(boot_size_mb),
+                          "--boot-layout", boot_layout]
+        verify_command += ["--boot-dir", str(boot_dir),
+                           "--boot-layout", boot_layout]
     if extra_images:
         build_command += ["--root-size-mib", str(size_mb)]
         for extra_image in extra_images:

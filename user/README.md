@@ -33,6 +33,7 @@ make setup ARCH=rv
 
 # Arch Linux：安装 riscv64-gnu-toolchain-musl-bin 后可直接构建；
 # 构建器会自动配对它的 musl GCC 与 GNU binutils。
+# LoongArch 安装 loongarch64-linux-gnu-gcc-libc 后同样可直接构建。
 
 # 构建当前架构支持的全部 package，并生成 EXT4 镜像
 make image ARCH=rv
@@ -636,6 +637,29 @@ Arch 的 `riscv64-gnu-toolchain-musl-bin` 通常只以 `riscv64-linux-musl-` 前
 而 `ar`、`strip`、`readelf` 位于 `riscv64-linux-gnu-` 前缀。构建器检测到这一组合时会在
 `user/build/toolchains/rv/archlinux-compat/bin/` 生成私有兼容前缀；无需手动设置
 `RV_CROSS_COMPILE`。
+
+## Arch Linux 的 LoongArch glibc 工具链
+
+安装 `loongarch64-linux-gnu-gcc-libc` 后，构建器会自动探测该包提供的
+`loongarch64-unknown-linux-gnu-` 前缀及其静态 glibc，无需设置
+`LA_CROSS_COMPILE`。`make setup ARCH=la` 会验证系统工具链，后续可直接构建：
+
+```bash
+make image ARCH=la PACKAGE=minimal DISK=1 PARTITION_TABLE=mbr
+```
+
+Loongson 2K1000 的可启动实机镜像应从仓库根目录构建：
+
+```bash
+make la2k_image
+```
+
+产物 `user/build/images/wateros-la.img` 使用 MBR：P1 是包含
+`kernel-la2k.ui`、`boot.scr`、extlinux 和 uEnv 配置的 FAT 启动分区，P2 是 EXT4 根文件系统。
+启动脚本从 `scsi 0:1` 加载内核，WaterOS 从 `/dev/vda2` 挂载根文件系统。
+
+显式设置 `LA_CROSS_COMPILE` 时仍以环境变量为准；仓库中已经准备好的托管工具链也优先于
+Arch 系统工具链。
 
 构建当前图形用户空间（Nano-X、mGBA 与 WaterFM，且避开 OpenJDK）使用：
 
