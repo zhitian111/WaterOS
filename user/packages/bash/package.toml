@@ -1,0 +1,11 @@
+[package]
+name = "bash"
+version = "5.2.37-wateros1"
+source = ""
+architectures = ["rv", "la"]
+default = true
+dependencies = ["base-layout", "busybox"]
+build = "build.py"
+install_prefix = "/usr"
+allow_overwrite = []
+inputs = []
