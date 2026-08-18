@@ -211,6 +211,13 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                       cx,
                       raw_cause);
     let trap_cause = cx.trap_cause();
+    #[cfg(feature = "loongson2k1000la")]
+    let unaligned_emulated = cx.returns_to_user() &&
+                             matches!(trap_cause,
+                                      TrapCause::Exception(Exception::AddressError)) &&
+                             platform::arch::trap::emulate_unaligned_access(cx);
+    #[cfg(not(feature = "loongson2k1000la"))]
+    let unaligned_emulated = false;
     let mut restart = None;
     match trap_cause {
         TrapCause::Exception(Exception::UserEnvCall) => {
@@ -480,6 +487,10 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             }
         }
         _ => {
+            if unaligned_emulated {
+                // LA264 has no hardware UAL support; the arch layer advanced
+                // ERA after byte-wise emulation, so resume the same task.
+            } else {
             if cx.returns_to_user() {
                 let (signal, code, address) = match trap_cause {
                     // ILL_ILLOPC and the faulting instruction address.
@@ -522,6 +533,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                               trap_cause,
                               raw_cause,
                               cx);
+            }
         }
     }
 

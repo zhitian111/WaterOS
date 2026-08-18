@@ -87,6 +87,8 @@ pub mod trap {
 
     #[cfg(feature = "impl-loongarch64")]
     pub use impl_loongarch64::trap::timer_slice_ticks;
+    #[cfg(feature = "loongson2k1000la")]
+    pub use impl_loongarch64::trap::emulate_unaligned_access;
     #[cfg(feature = "impl-riscv64")]
     pub use impl_riscv64::trap::timer_slice_ticks;
 

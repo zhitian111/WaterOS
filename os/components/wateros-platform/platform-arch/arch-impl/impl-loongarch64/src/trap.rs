@@ -129,6 +129,143 @@ pub fn init_trap() {
     }
 }
 
+/// Emulate an integer unaligned access on LA264, whose UAL bit is disabled.
+///
+/// Some statically linked user programs (notably BusyBox/libgcc's DWARF
+/// reader) still contain intentional unaligned loads. QEMU's la464 accepts
+/// them in hardware, while the 2K1000 raises ADEM. The trap frame remains in
+/// the current user address space, so byte accesses are sufficient here.
+#[cfg(feature = "loongson2k1000la")]
+pub fn emulate_unaligned_access(cx : &mut TrapContext) -> bool {
+    let inst = unsafe { core::ptr::read_volatile(cx.era as *const u32) } as usize;
+    let read_bytes = |addr : usize, len : usize| -> usize {
+        let mut value = 0usize;
+        for index in 0..len {
+            value |= (unsafe { core::ptr::read_volatile((addr + index) as *const u8) } as usize) <<
+                     (index * 8);
+        }
+        value
+    };
+    let write_bytes = |addr : usize, value : usize, len : usize| {
+        for index in 0..len {
+            unsafe {
+                core::ptr::write_volatile((addr + index) as *mut u8,
+                                           ((value >> (index * 8)) & 0xff) as u8);
+            }
+        }
+    };
+
+    // 2RI12: ld/st.{b,h,w,d} with a signed 12-bit byte offset.
+    let opcode10 = (inst >> 22) & 0x3ff;
+    if (0xa0..=0xaa).contains(&opcode10) {
+        let immediate = ((inst >> 10) & 0xfff) as isize;
+        let immediate = if immediate & 0x800 != 0 { immediate - 0x1000 } else { immediate };
+        let base = (inst >> 5) & 0x1f;
+        let register = inst & 0x1f;
+        let address = (cx.x[base] as isize).wrapping_add(immediate) as usize;
+        let (size, store) = match opcode10 {
+            0xa0 | 0xa8 => (1, false),
+            0xa1 | 0xa9 => (2, false),
+            0xa2 | 0xaa => (4, false),
+            0xa3 => (8, false),
+            0xa4 => (1, true),
+            0xa5 => (2, true),
+            0xa6 => (4, true),
+            0xa7 => (8, true),
+            _ => return false,
+        };
+        if store {
+            write_bytes(address, cx.x[register], size);
+        } else {
+            let value = read_bytes(address, size);
+            let value = match opcode10 {
+                0xa0 => (value as u8 as i8) as isize as usize,
+                0xa1 => (value as u16 as i16) as isize as usize,
+                0xa2 => (value as u32 as i32) as isize as usize,
+                _ => value,
+            };
+            if register != 0 {
+                cx.x[register] = value;
+            }
+        }
+        cx.era = cx.era.wrapping_add(4);
+        return true;
+    }
+
+    // 3R: indexed ldx/stx forms, including unsigned loads.
+    let opcode17 = (inst >> 15) & 0x1ffff;
+    if (0x7000..=0x7050).contains(&opcode17) {
+        let index = (inst >> 10) & 0x1f;
+        let base = (inst >> 5) & 0x1f;
+        let register = inst & 0x1f;
+        let address = cx.x[base].wrapping_add(cx.x[index]);
+        let (size, store) = match opcode17 {
+            0x7000 | 0x7040 => (1, false),
+            0x7008 | 0x7048 => (2, false),
+            0x7010 | 0x7050 => (4, false),
+            0x7018 => (8, false),
+            0x7020 => (1, true),
+            0x7028 => (2, true),
+            0x7030 => (4, true),
+            0x7038 => (8, true),
+            _ => return false,
+        };
+        if store {
+            write_bytes(address, cx.x[register], size);
+        } else {
+            let value = read_bytes(address, size);
+            let value = match opcode17 {
+                0x7000 => (value as u8 as i8) as isize as usize,
+                0x7008 => (value as u16 as i16) as isize as usize,
+                0x7010 => (value as u32 as i32) as isize as usize,
+                _ => value,
+            };
+            if register != 0 {
+                cx.x[register] = value;
+            }
+        }
+        cx.era = cx.era.wrapping_add(4);
+        return true;
+    }
+
+    // 2RI14: ll/sc/ldptr/stptr use a signed offset scaled by four bytes.
+    let opcode8 = (inst >> 24) & 0xff;
+    if (0x20..=0x27).contains(&opcode8) {
+        let immediate = ((inst >> 10) & 0x3fff) as isize;
+        let immediate = if immediate & 0x2000 != 0 { immediate - 0x4000 } else { immediate } << 2;
+        let base = (inst >> 5) & 0x1f;
+        let register = inst & 0x1f;
+        let address = (cx.x[base] as isize).wrapping_add(immediate) as usize;
+        let (size, store) = match opcode8 {
+            0x20 | 0x24 => (4, false),
+            0x22 | 0x26 => (8, false),
+            0x21 | 0x25 => (4, true),
+            0x23 | 0x27 => (8, true),
+            _ => return false,
+        };
+        if store {
+            write_bytes(address, cx.x[register], size);
+            if (opcode8 == 0x21 || opcode8 == 0x23) && register != 0 {
+                cx.x[register] = 1;
+            }
+        } else {
+            let value = read_bytes(address, size);
+            let value = if size == 4 {
+                (value as u32 as i32) as isize as usize
+            } else {
+                value
+            };
+            if register != 0 {
+                cx.x[register] = value;
+            }
+        }
+        cx.era = cx.era.wrapping_add(4);
+        return true;
+    }
+
+    false
+}
+
 /// LoongArch64 当前不需要 RISC-V `SUM` 一类的用户页访问准备。
 #[inline]
 pub fn prepare_user_trap_frame_access() {}
