@@ -1,8 +1,7 @@
 # Fdb version 4
-["pdflatex"] 1787060990.00986 "/Users/x/code/WaterOS/docs/technical_document/optimization/main.tex" "main.pdf" "main" 1787060990.44769 2
+["pdflatex"] 1787061669.77181 "/Users/x/code/WaterOS/docs/technical_document/optimization/main.tex" "main.pdf" "main" 1787061670.17607 2
   "../wateros-latex/setup/package.tex" 1784124940.54014 3269 a7f9a40dae79cc000023968a58df497b ""
-  "/System/Library/Fonts/Menlo.ttc" 1782354543 2156036 ec05dfca6821d85440da0899493002c3 ""
-  "/Users/x/code/WaterOS/docs/technical_document/optimization/main.tex" 1787060476.19806 792 8dd2035ae30125ab3dbf2973ac8ca67a ""
+  "/Users/x/code/WaterOS/docs/technical_document/optimization/main.tex" 1787061545.77492 807 6584f57788650cca43c7173754c64e1c ""
   "/usr/local/texlive/2026/texmf-dist/fonts/map/fontname/texfonts.map" 1577235249 3524 cb3e574dea2d1052e39280babc910dc8 ""
   "/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/cm/cmr10.tfm" 1136768653 1296 45809c5a464d5f32c8f98ba97c1bb47f ""
   "/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/cm/cmr12.tfm" 1136768653 1288 655e228510b4c2a1abe905c368440826 ""
@@ -40,8 +39,7 @@
   "/usr/local/texlive/2026/texmf-dist/tex/latex/ctex/ctexpatch.sty" 1657829894 8448 194e901f66d106236c72ef098b091d00 ""
   "/usr/local/texlive/2026/texmf-dist/tex/latex/ctex/ctexspa.def" 1657829894 10881 81f1c81c512ebcc46745af438dfa73d9 ""
   "/usr/local/texlive/2026/texmf-dist/tex/latex/ctex/engine/ctex-engine-pdftex.def" 1657829894 20297 90a9347d15e74883d4c66bd8b9fe695e ""
-  "/usr/local/texlive/2026/texmf-dist/tex/latex/ctex/fontset/ctex-fontset-mac.def" 1657829894 1427 79eb29fe9bbec6915ffdfbe3a6667c81 ""
-  "/usr/local/texlive/2026/texmf-dist/tex/latex/ctex/fontset/ctex-fontset-macold.def" 1657829894 2068 ddcbc0831d61a7afac273e7e344c11b3 ""
+  "/usr/local/texlive/2026/texmf-dist/tex/latex/ctex/fontset/ctex-fontset-fandol.def" 1657829894 4554 a06551e6ead244098a98564198bab657 ""
   "/usr/local/texlive/2026/texmf-dist/tex/latex/ctex/scheme/ctex-scheme-chinese-book.def" 1657829894 5190 6db06d3d939498f1818b4586bbae8cfa ""
   "/usr/local/texlive/2026/texmf-dist/tex/latex/fontspec/fontspec.sty" 1759176595 3804 debc05110ffb506cef68ea4e72c7bcee ""
   "/usr/local/texlive/2026/texmf-dist/tex/latex/geometry/geometry.sty" 1772916678 41904 7711079366884e0d15963c9d40019853 ""
@@ -61,8 +59,8 @@
   "/usr/local/texlive/2026/texmf-dist/web2c/texmf.cnf" 1770478701 43630 e9fa012910491fe5ae08a72c3c2997a7 ""
   "/usr/local/texlive/2026/texmf-var/web2c/pdftex/pdflatex.fmt" 1775292978 3636769 55ad326c811d4c04fce790d72c997a67 ""
   "/usr/local/texlive/2026/texmf.cnf" 1774209515 577 648cd9f92f9c0eac486f4c71c85cfbbe ""
-  "main.aux" 1787060982.00923 32 3985256e7290058c681f74d7a3565a19 "pdflatex"
-  "main.tex" 1787060476.19806 792 8dd2035ae30125ab3dbf2973ac8ca67a ""
+  "main.aux" 1787061661.77133 32 3985256e7290058c681f74d7a3565a19 "pdflatex"
+  "main.tex" 1787061545.77492 807 6584f57788650cca43c7173754c64e1c ""
   (generated)
   "main.aux"
   "main.log"

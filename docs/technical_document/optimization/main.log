@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.4)  18 AUG 2026 21:49
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.4)  18 AUG 2026 22:01
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -303,30 +303,28 @@ File: zhnumber-utf8.cfg 2022/07/14 v3.0 Chinese numerals with UTF8 encoding
 File: ctex-scheme-chinese-book.def 2022/07/14 v2.5.10 Chinese scheme for book (CTEX)
  (/usr/local/texlive/2026/texmf-dist/tex/latex/ctex/config/ctex-name-utf8.cfg
 File: ctex-name-utf8.cfg 2022/07/14 v2.5.10 Caption with encoding UTF-8 (CTEX)
-)) (/usr/local/texlive/2026/texmf-dist/tex/latex/ctex/fontset/ctex-fontset-mac.def
-File: ctex-fontset-mac.def 2022/07/14 v2.5.10 macOS fonts definition (CTEX)
- (/usr/local/texlive/2026/texmf-dist/tex/latex/ctex/fontset/ctex-fontset-macold.def
-File: ctex-fontset-macold.def 2022/07/14 v2.5.10 macOS fonts definition for Yosemite or earlier version (CTEX)
+)) (/usr/local/texlive/2026/texmf-dist/tex/latex/ctex/fontset/ctex-fontset-fandol.def
+File: ctex-fontset-fandol.def 2022/07/14 v2.5.10 Fandol fonts definition (CTEX)
 
 
-/usr/local/texlive/2026/texmf-dist/tex/latex/ctex/fontset/ctex-fontset-macold.def:44: Critical Class ctexbook Error: CTeX fontset `mac' is unavailable in current
-(ctexbook)                       mode.
+/usr/local/texlive/2026/texmf-dist/tex/latex/ctex/fontset/ctex-fontset-fandol.def:103: Critical Class ctexbook Error: CTeX fontset `fandol' is unavailable in
+(ctexbook)                       current mode.
 
 Type <return> to continue.
  ...                                              
                                                   
-l.44   }
-        
+l.103   }
+         
 
 LaTeX does not know anything more about this error, sorry.
 
 Try typing <return> to proceed.
 If that doesn't work, type X <return> to quit.
 
-Reading the current file 'ctex-fontset-macold' will stop.
+Reading the current file 'ctex-fontset-fandol' will stop.
 
 
-))) (/usr/local/texlive/2026/texmf-dist/tex/latex/ctex/config/ctex.cfg
+)) (/usr/local/texlive/2026/texmf-dist/tex/latex/ctex/config/ctex.cfg
 File: ctex.cfg 2022/07/14 v2.5.10 Configuration file (CTEX)
 ) (../wateros-latex/setup/package.tex (/usr/local/texlive/2026/texmf-dist/tex/latex/geometry/geometry.sty
 Package: geometry 2026/03/07 v6.0 Page Geometry
@@ -523,10 +521,10 @@ l.101 \msg_fatal:nn {fontspec} {cannot-use-pdftex}
 
  
 Here is how much of TeX's memory you used:
- 7141 strings out of 467525
- 134363 string characters out of 5418983
- 522357 words of memory out of 5000000
- 35972 multiletter control sequences out of 15000+600000
+ 7134 strings out of 467525
+ 134013 string characters out of 5418983
+ 522583 words of memory out of 5000000
+ 35968 multiletter control sequences out of 15000+600000
  629669 words of font info for 44 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
  78i,0n,92p,748b,348s stack positions out of 10000i,1000n,20000p,200000b,200000s

@@ -17,16 +17,24 @@
       BoldFont=msyhbd.ttc,
       BoldFeatures={Path=/mnt/c/Windows/Fonts/}
     ]{SimSun}}
-  {\setCJKmainfont{Noto Serif CJK SC}}
+  {\IfFontExistsTF{Noto Serif CJK SC}
+    {\setCJKmainfont{Noto Serif CJK SC}}
+    {\setCJKmainfont{FandolSong-Regular.otf}[
+       BoldFont=FandolSong-Bold.otf
+     ]}}
 \IfFileExists{/mnt/c/Windows/Fonts/msyh.ttc}
   {\setCJKsansfont[
       Path=/mnt/c/Windows/Fonts/,
       BoldFont=msyhbd.ttc
     ]{msyh.ttc}}
-  {\setCJKsansfont{Noto Sans CJK SC}}
-\IfFontExistsTF{NSimSun}
-  {\setCJKmonofont{NSimSun}}
+  {\IfFontExistsTF{Noto Sans CJK SC}
+    {\setCJKsansfont{Noto Sans CJK SC}}
+    {\setCJKsansfont{FandolHei-Regular.otf}[
+       BoldFont=FandolHei-Bold.otf
+     ]}}
+\IfFontExistsTF{Noto Sans Mono CJK SC}
   {\setCJKmonofont{Noto Sans Mono CJK SC}}
+  {\setCJKmonofont{FandolFang-Regular.otf}}
 
 \setlength{\emergencystretch}{3em}
 
@@ -43,7 +51,11 @@
 }{%
   \IfFontExistsTF{DejaVu Sans Mono}
     {\setmonofont{DejaVu Sans Mono}}
-    {\setmonofont{Nimbus Mono PS}}
+    {\setmonofont{lmmono10-regular.otf}[
+       BoldFont=lmmonolt10-bold.otf,
+       ItalicFont=lmmono10-italic.otf,
+       BoldItalicFont=lmmonolt10-boldoblique.otf
+     ]}
 }
 
 \input{setup/minted-setup}
