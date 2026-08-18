@@ -84,7 +84,7 @@ pub fn handle_lazy_file_fault<S, A>(aspace : &mut S,
     let ppn = alloc_zeroed_frame_with_alloc(allocator)?;
     let pa = ppn.0 * PAGE_SIZE;
     let dst = unsafe { core::slice::from_raw_parts_mut(pa as *mut u8, PAGE_SIZE) };
-
+    // 取得可修改的惰性 VMA 集合；加载文件页时可能需要更新 loader 的内部状态。
     if let Err(error) = aspace.lazy_vma_set_mut()
                               .get_mut(index)
                               .ok_or(MmError::InvalidAddress)?
@@ -102,4 +102,3 @@ pub fn handle_lazy_file_fault<S, A>(aspace : &mut S,
 
     Ok(true)
 }
-    /// 取得可修改的惰性 VMA 集合；加载文件页时可能需要更新 loader 的内部状态。
