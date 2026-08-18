@@ -1,1240 +1,794 @@
-% 第3章关键模块实现。
-%
-% 按WaterOS一级组件的职责边界组织为平台、任务、MM、IPC、VFS、FS、驱动、
-% 网络与系统调用九节。每节依次说明职责、接口、数据结构、实现机制和设计取舍，
-% 并从当前源码摘录一段能够代表实现方式的代码。
-
 \chapter{关键模块实现}
 
-本章按照\wateros{}的一级组件划分关键实现。平台、任务、内存、IPC、VFS、文件系统、
-设备驱动、网络协议栈和系统调用各自拥有明确的状态与接口；跨组件流程只在承担相应职责
-的位置展开。表\ref{tab:chapter3-boundary}给出本章九节与源码目录的对应关系。
+本章按当前一级组件说明实现。各节采用相同结构：先说明模块解决的问题和边界，再列出由该
+模块持有的核心数据结构，随后描述主要执行路径，最后给出当前限制。这样的组织方式便于把
+接口、实现和验证对象对应起来，也为后续替换架构图或补充时序图保留稳定位置。
 
-\begin{longtable}{L{3.2cm}L{4.2cm}L{5.9cm}}
-  \caption{关键模块与源码目录}\label{tab:chapter3-boundary}\\
+\begin{longtable}{L{3.1cm}L{4.2cm}L{5.9cm}}
+  \caption{关键模块与实现关注点}\label{tab:chapter3-boundary}\\
   \toprule
-  模块 & 主要目录 & 本章关注内容 \\
+  模块 & 主要源码目录 & 本章关注内容 \\
   \midrule
   \endfirsthead
   \toprule
-  模块 & 主要目录 & 本章关注内容 \\
+  模块 & 主要源码目录 & 本章关注内容 \\
   \midrule
   \endhead
-  平台与架构 & \code{wateros-platform} & 启动、trap、时间、中断、IPI、SMP和架构上下文。 \\
-  任务管理 & \code{wateros-task} & 任务、进程线程、调度、等待、退出与回收。 \\
-  内存管理 & \code{wateros-mm} & 页帧、地址空间、VMA、缺页、COW和用户内存访问。 \\
-  IPC & \code{wateros-ipc} & waitqueue、pipe、futex、signal和共享内存。 \\
-  虚拟文件系统 & \code{wateros-vfs} & 路径、挂载、打开文件描述、fd会话和页缓存。 \\
-  文件系统 & \code{wateros-fs} & ext4、rootfs、procfs、devfs及文件系统后端。 \\
-  设备驱动 & \code{wateros-driver} & 设备发现、注册和块、字符、网卡、输入、显示设备。 \\
-  网络协议栈 & \code{wateros-network} & IP配置、TCP/UDP、socket状态和网络事件。 \\
-  系统调用 & \code{wateros-syscall}、\code{wateros-abi} & 调用号、参数、分发、用户拷贝和errno。 \\
+  平台与运行时 & \code{wateros-platform/runtime} & 启动、时间、IPI、CPU上线、堆与日志。\\
+  任务管理 & \code{wateros-task} & TCB/PCB、调度、等待、退出和回收。\\
+  内存管理 & \code{wateros-mm} & 页帧、页表、VMA、缺页、COW与TLB。\\
+  IPC与信号 & \code{wateros-ipc} & pipe、futex、共享内存、signal及丢失唤醒防护。\\
+  虚拟文件系统 & \code{wateros-vfs} & 路径、挂载、fd/cwd、稳定节点和页缓存。\\
+  文件系统 & \code{wateros-fs} & 后端选择、根挂载、ext4适配和伪文件系统。\\
+  用户根文件系统 & 构建组件 & 软件包依赖、目录合并与ext4镜像生成。\\
+  驱动与终端 & \code{wateros-driver/tty} & 设备发现、注册、块缓存、DMA与PTY。\\
+  网络 & \code{wateros-network} & 协议栈、socket生命周期、收发reservation。\\
+  系统调用 & \code{wateros-syscall} & ABI分发、用户复制、errno、poll/epoll附属状态。\\
+  凭证 & \code{wateros-cred} & uid/gid、groups、凭证共享与任务生命周期侧表。\\
   \bottomrule
 \end{longtable}
 
-以下各节统一采用“职责与边界、接口设计、核心数据结构、实现机制、设计取舍”的顺序。
-代码均摘自当前源码，只省略与讨论无关的分支，并用注释标出省略位置。
+\section{平台与运行时}
 
-\section{平台与架构支持}
+\subsection{功能概述}
 
-\subsection{职责与边界}
+平台组件位于内核和ISA/机器固件之间，向上提供启动参数、物理内存上界、时钟、控制台、
+复位和IPI等能力。架构实现负责CSR、trap、页表寄存器和本地中断，机器实现负责OpenSBI、
+DTB、IOCSR和QEMU平台约定。runtime在这条路径上补充panic、日志和全局堆，使上层组件不
+需要各自处理早期输出与内存分配。
 
-\code{wateros-platform}负责把固件、指令集和QEMU平台差异收束为上层可调用的统一能力，
-包括启动参数、CPU编号、从核启动、核间通知、时钟、中断、页表切换、TLB操作和系统
-复位。平台层不维护进程、VMA、文件或socket等内核对象；它只提供操作硬件及架构状态
-所需的边界。
+平台层不决定调度策略，也不拥有用户页表内容。它只完成硬件操作并报告结果。例如发送IPI
+只负责发布原因并触发硬件通知，目标CPU是否在线、收到后是否重新调度由task或MM决定。
 
-RISC-V64路径对接OpenSBI和QEMU virt，LoongArch64路径对接对应的架构入口、CSR和IOCSR
-中断机制。早期控制台、panic处理和堆分配器由\code{wateros-runtime}提供，使复杂组件
-初始化前已经具备输出错误和分配内存的条件。
-
-\subsection{接口设计}
-
-平台接口进一步区分机器级能力和架构级能力。\code{PlatformBootArgs}描述固件传入的
-启动槽位，\code{PlatformSmp}描述会离开当前CPU的SMP操作；\code{ArchTaskContext}、
-\code{TrapFrameRead}和\code{TrapFrameWrite}描述任务及trap上下文；\code{ArchTime}与
-\code{PlatformTime}提供计时能力。
-
-这些trait按能力而不是按平台型号拆分。\code{PlatformSmp}只包含启动CPU、查询状态、发送
-IPI和远端TLB失效等机器级操作；本地中断pending位、trap frame寄存器访问和页表token
-切换分别留在架构接口。这样，RISC-V平台实现可以把SMP操作映射到OpenSBI，LoongArch64
-实现可以映射到IOCSR或平台中断控制器，而task和MM看到的调用约束保持不变。
-
-平台能力均由编译期选定的零尺寸实现类型提供，trait方法不接收\code{self}。这一形式表达
-“当前内核只有一个活动平台”，并避免为每次IPI或TLB操作传递全局对象。可能由固件拒绝的
-操作统一返回\code{PlatformSmpResult}；上层据此区分参数错误、能力不支持和固件错误，
-而不是依赖某个SBI错误码。
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[height=0.72\textheight,keepaspectratio]{pic/平台架构图.png}
+  \caption{平台与架构组件的能力分层}
+  \label{fig:platform-architecture}
+\end{figure}
+\FloatBarrier
 
 \subsection{核心数据结构}
 
-\code{CpuId}与\code{CpuMask}表示逻辑CPU及CPU集合；\code{HartStatus}表示固件观察到的
-处理器状态；\code{IpiKind}记录一次软件层核间请求的原因。固件报告的
-\code{Started}不等于内核已经将该CPU标记为online，二者分别表示硬件启动进度与OS初始化
-进度。
+\begin{table}[htbp]
+  \centering
+  \caption{平台模块核心状态}
+  \begin{tabularx}{\textwidth}{L{3.5cm}L{4.1cm}Y}
+    \toprule
+    状态 & 存储形式 & 主要不变量 \\
+    \midrule
+    \shortstack[l]{\code{TIMEBASE\_HZ}\\\code{\_CACHE}} & \code{AtomicU64}，0表示未覆盖 & 启动阶段发布后不再修改；
+    timer换算读到的频率必须与硬件tick同源。\\
+    \code{PENDING\_IPI} & 每CPU的\code{AtomicU8}位图 & 先Release发布原因，再发送硬件IPI；
+    目标CPU以AcqRel一次取走合并原因。\\
+    \code{CPU\_STATES}与configured mask & LoongArch profile中的原子数组/位图 & 固件状态、
+    配置CPU和scheduler online集合是三套不同状态。\\
+    \shortstack[l]{\code{PlatformTimer}\\\code{Deadline}} & 绝对tick值 & RISC-V直接交给SBI；LoongArch转换为本CPU
+    相对deadline并满足硬件对齐要求。\\
+    启动参数与RAM上界 & profile静态缓存 & 物理内存上界不包含端点，MM据此建立恒等映射和帧池。\\
+    \bottomrule
+  \end{tabularx}
+\end{table}
 
-下面摘录自
-\code{wateros-platform/platform-api/api-v0/src/smp.rs}。接口只传递CPU集合和操作结果，
-不向上暴露SBI或IOCSR寄存器布局。
+\subsection{具体实现}
 
-\begin{rustcode}
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IpiKind {
-    Reschedule = 1 << 0,
-    TlbShootdown = 1 << 1,
-    TaskNotify = 1 << 2,
-}
+BSP从架构入口进入后保存平台参数，建立早期控制台和堆，再初始化trap与内存。RISC-V64
+入口接收hart id和DTB物理地址，时间频率、RAM范围和VirtIO窗口主要从DTB取得；LoongArch64
+使用QEMU \code{virt}约定和本地CSR/IOCSR能力。AP使用独立启动栈，只初始化本CPU的trap、
+timer、CPU-local状态和idle task，完成后才加入scheduler online集合。
 
-pub trait PlatformSmp {
-    fn start_cpu(
-        cpu: CpuId,
-        start_addr: usize,
-        opaque: usize,
-    ) -> PlatformSmpResult<()>;
+定时器接口把时长向上取整为tick，检查加法溢出后编程绝对deadline。timer中断只表示本CPU
+到达deadline，时间片、超时队列和唤醒仍由task处理。IPI路径先在\code{PENDING\_IPI[cpu]}
+中合并reschedule、TLB或task notification原因，再调用SBI或IOCSR运输。目标trap先清本地
+中断源，再取走原因，避免硬件通知先于软件状态可见。
 
-    fn cpu_status(cpu: CpuId) -> PlatformSmpResult<HartStatus>;
-    fn configured_cpu_mask() -> CpuMask;
-    fn send_ipi(mask: CpuMask) -> PlatformSmpResult<()>;
-    fn flush_tlb_remote(mask: CpuMask) -> PlatformSmpResult<()>;
-    fn init_ipi() -> PlatformSmpResult<()>;
-}
-\end{rustcode}
+runtime堆是固定内核虚拟区间上的全局分配器。它与Guest物理内存统计不是同一个概念；
+forkheavy中\code{/proc/meminfo}仍有大量空闲，并不能排除内核堆对象泄漏。分配失败时记录
+请求大小、对齐、已用与容量，便于区分容量不足、碎片和对象未回收。
 
-\subsection{实现机制}
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.96\textwidth]{pic/多核ipi与tlb图.png}
+  \caption{多核启动、IPI分发与TLB shootdown流程}
+  \label{fig:smp-ipi-tlb}
+\end{figure}
+\FloatBarrier
 
-启动CPU完成全局地址空间、堆、任务、驱动和文件系统等共享服务初始化。从CPU使用独立
-启动栈进入Rust，依次建立本核trap、timer、IPI接收状态、CPU-local槽位和idle task，
-完成后才由task组件发布到online集合。只允许执行一次的初始化由发布状态保护，避免
-从CPU重复扫描设备或重复挂载文件系统。
+\subsection{限制与小结}
 
-核间请求采用“先写软件状态，再发送硬件通知”的顺序。调度请求在发送IPI前已经写入
-目标CPU的pending状态；TLB shootdown在页表更新对其他CPU可见后才发出。目标CPU在IPI、
-timer tick及返回用户态边界均会检查相应状态，使通知合并或延迟不会成为永久丢失请求
-的原因。
+当前平台只覆盖QEMU RISC-V/OpenSBI和QEMU LoongArch \code{virt}。LoongArch远程TLB
+shootdown尚未实现；timebase也没有运行期重配置协议。平台接口已经隔离大部分硬件差异，
+但上层仍需显式处理不支持的能力，不能假设两个profile完全对称。
 
-下面摘录自
-\code{wateros-platform/platform-impl/impl-qemu-riscv64-opensbi/src/smp.rs}，展示
-RISC-V平台如何实现同一SMP契约。\code{start\_cpu}只表示固件接受启动请求，CPU是否真正
-可调度仍以task组件发布的online状态为准；IPI与远端TLB失效分别使用SBI IPI和RFENCE。
+\section{任务、进程与调度}
 
-\begin{rustcode}
-impl PlatformSmp for QemuRiscv64OpenSbiSmp {
-    fn start_cpu(
-        cpu: CpuId,
-        start_addr: usize,
-        opaque: usize,
-    ) -> PlatformSmpResult<()> {
-        if !cpu.fits_capacity(MAX_CPUS) {
-            return Err(PlatformSmpError::InvalidCpu);
-        }
-        result(sbi::hart_start(cpu.raw(), start_addr, opaque))
-            .map(|_| ())
-    }
+\subsection{功能概述}
 
-    fn send_ipi(mask: CpuMask) -> PlatformSmpResult<()> {
-        let hart_mask = sbi::HartMask::from_mask_base(
-            mask.bits() as usize,
-            0,
-        );
-        result(sbi::send_ipi(hart_mask)).map(|_| ())
-    }
+task组件同时管理可调度执行流和用户进程关系。一个任务对应一份可切换上下文，进程则是
+地址空间、线程组、父子关系和退出状态的所有者。fork创建新进程，clone按flag选择共享资源，
+exec替换当前用户映像，wait/reap完成zombie回收。调度器按CPU组织实时、公平和idle队列，
+并通过waitqueue连接IPC、VFS和网络的阻塞操作。
 
-    fn flush_tlb_remote(mask: CpuMask) -> PlatformSmpResult<()> {
-        let hart_mask = sbi::HartMask::from_mask_base(
-            mask.bits() as usize,
-            0,
-        );
-        result(sbi::remote_sfence_vma(
-            hart_mask,
-            0,
-            usize::MAX,
-        ))
-            .map(|_| ())
-    }
-}
-\end{rustcode}
-
-这里没有把软件pending位写入平台实现：调度原因属于task，待确认的TLB事务属于MM。平台
-实现仅负责把已经发布的软件请求送到目标CPU，从而保持trait的硬件边界。
-
-\subsection{设计取舍}
-
-平台实现由Cargo feature在编译期选择，而不是在运行时保留两套架构分支。这减少了裸机
-内核中的无效代码路径，也让平台接口成为编译期契约。SMP接口只负责跨CPU操作，本地
-调度状态仍由task维护，页表与地址空间生命周期仍由MM维护，从而避免平台层逐渐变成
-保存所有全局状态的中心模块。
-
-\designrule{CPU只有在本核trap、timer、IPI和idle task就绪后才能进入online集合；跨核
-请求必须先发布软件状态，再发送通知。}
-
-\section{任务管理与调度}
-
-\subsection{职责与边界}
-
-\code{wateros-task}管理可运行任务、用户进程与线程之间的关系，负责创建、入队、切换、
-阻塞、唤醒、退出和父进程回收。任务组件维护“谁能够运行、当前在哪个CPU运行、处于
-什么生命周期状态”，但不保存地址空间内部页表、打开文件内容或信号队列。
-
-调度器与进程语义位于同一一级组件的不同层次：调度器面向TCB和per-CPU运行队列，进程
-注册表面向PID、线程组、父子关系及wait语义。二者通过稳定的任务ID连接。
-
-\subsection{接口设计}
-
-task API以数据类型和函数入口为主，不为了形式统一而设置一个覆盖全部行为的大trait。
-\code{TaskId}用于内核调度实体，\code{ProcessId}和\code{ThreadId}用于Linux可见身份；
-\code{CloneFlags}描述资源共享方式；\code{TaskSnapshot}与\code{ProcessSnapshot}向
-procfs和调试工具提供脱离内部锁的只读状态。
-
-调度策略通过\code{SchedPolicy}、\code{Priority}和\code{Nice}表达。具体策略位于
-\code{task-scheduler}子组件，任务生命周期入口不依赖某个特定就绪队列算法。当前
-\code{MultiClassScheduler}是调度器内部类型，不通过\code{dyn Trait}暴露；跨组件只调用
-\code{spawn}、\code{block\_current}、\code{wake}和\code{schedule\_tick}等语义入口。
-
-这里选择函数式门面有两个原因。其一，调度器是唯一的全局内核服务，不存在运行时切换
-多个调度器实例的需求；其二，上下文切换要求调用方同时满足关中断、持有调度临界区等
-约束，直接暴露可变调度器对象反而容易绕过这些入口。对外可扩展的部分是策略数据和任务
-属性，而不是TCB、运行队列或锁的可变引用。
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.92\textwidth,height=0.72\textheight,keepaspectratio]{pic/任务总览图.png}
+  \caption{任务、进程与调度组件总览}
+  \label{fig:task-overview}
+\end{figure}
+\FloatBarrier
 
 \subsection{核心数据结构}
 
-\code{TaskControlBlock}保存调度实体和架构上下文，\code{ProcessControlBlock}保存线程组
-及进程资源引用，\code{ProcessRegistry}提供PID/TID查询。\code{TaskState}表示调度状态，
-\code{ProcessState}则表示进程级生命周期。两者不能合并，因为一个多线程进程可能已经
-进入退出阶段，但仍有线程尚未离开CPU。
+\begin{longtable}{L{3.4cm}L{5.1cm}L{4.4cm}}
+  \caption{任务管理核心数据结构}\label{tab:task-structures}\\
+  \toprule
+  结构 & 关键内容 & 生命周期与不变量 \\
+  \midrule
+  \endfirsthead
+  \toprule
+  结构 & 关键内容 & 生命周期与不变量 \\
+  \midrule
+  \endhead
+  \code{TaskControlBlock} & task id、状态、policy/priority/nice、vruntime、上下文、内核栈、
+  地址空间token、trap frame、affinity和CPU归属。 & 一个任务至多位于一个ready queue；
+  Running时不在ready queue；Exited不得再次入队。\\
+  \shortstack[l]{\code{ProcessControl}\\\code{Block}} & PID/PPID、leader、线程表、地址空间引用、PGID/SID、rlimit、
+  umask、退出状态和exec状态。 & 全部线程退出后保留为zombie，父进程reap后才移除索引。\\
+  \code{ProcessRegistry} & PCB主表、PID到task及TID到task索引。 & 在关中断的多核安全临界区
+  更新；可能触发析构的对象移到锁外释放。\\
+  \shortstack[l]{\code{MultiClass}\\\code{Scheduler}/\\\code{CPUState}} & 每CPU current/idle、online、五类运行队列、
+  need-resched和统计。 & current、ready和任务状态三者必须同步；迁移必须满足affinity。\\
+  \code{WaitQueues} & wait target、可选wake tick和Woken/TimedOut/Interrupted结果。 &
+  在调度临界区复查条件后再阻塞，避免检查与入队之间丢唤醒。\\
+  \bottomrule
+\end{longtable}
 
-下面的状态定义摘自
-\code{wateros-task/task-api/api-v0/src/task.rs}和\code{process.rs}。
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.92\textwidth]{pic/任务状态机.png}
+  \caption{任务状态及其转换关系}
+  \label{fig:task-state-machine}
+\end{figure}
+\FloatBarrier
 
-\begin{rustcode}
-pub enum TaskState {
-    Ready,
-    Running,
-    Blocking(TaskWaitTarget),
-    Sleeping { wake_tick: TaskTick },
-    Exited(TaskExitCode),
-}
+\subsection{具体实现}
 
-pub enum ProcessTaskState {
-    Runnable,
-    Exited(TaskExitCode),
-}
+新任务采用两阶段发布。首先分配TCB、栈和上下文，再为地址空间、fd/cwd、凭证、信号和
+epoll等侧表建立记录；全部成功后才选择CPU并加入ready queue。任何中途错误都沿相反顺序
+回滚，从而避免另一个CPU调度到只有一半资源的任务。
 
-pub enum ProcessState {
-    Running,
-    Stopped { signo: u8 },
-    Exiting(TaskExitCode),
-    Exited(TaskExitCode),
-}
-\end{rustcode}
+调度器支持FIFO、RR及普通/Batch/Idle等策略。每个CPU维护自己的运行状态，timer tick更新
+时间片和统计，公平类依据vruntime选择任务。任务被唤醒时先根据affinity和online集合选择
+目标CPU；若目标不是当前CPU，则设置need-resched并发送IPI。全局超时由timekeeper CPU推进，
+其他CPU只更新本地时间片，避免同一超时被重复处理。
 
-\subsection{实现机制}
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.96\textwidth,height=0.31\textheight,keepaspectratio]{pic/调度流程图.png}
+  \caption{调度器的任务选择与上下文切换流程}
+  \label{fig:scheduling-flow}
+\end{figure}
+\FloatBarrier
 
-每个online CPU拥有current task、idle task和调度请求状态。任务进入
-\code{Running}前必须从就绪结构移除，并在同一调度临界区记录CPU归属。block、sleep、
-exit、yield和时间片耗尽均通过统一状态转换离开运行态；真正切换上下文前释放调度器锁，
-避免把旧任务的临界区带到新任务。
+阻塞路径调用\code{schedule\_wait}时，在同一调度临界区复查目标条件、从running移除当前
+任务、登记阻塞/超时队列并切换上下文。退出路径先把任务变为Exited并停止调度，再处理
+clear-child-tid、robust futex、共享内存和其他侧表；父进程wait取得退出信息后执行reap，
+进程索引删除与大对象析构分离，缩短全局registry锁的持有时间。
 
-就绪队列按调度类别保存任务，per-CPU状态记录当前任务、idle task、是否需要重调度及本地
-时间。入队时同时考虑affinity和online CPU集合；如果新任务应在另一CPU运行，调度器先
-设置该CPU的重调度标记，再由平台层发送IPI。CPU下线或affinity变化时，任务必须先迁出
-不再允许的运行队列，不能只修改一个可见的CPU掩码。
+\subsection{限制与小结}
 
-\syscall{fork}和\syscall{clone}先准备地址空间、fd、cwd、凭证和信号对象，全部成功后
-才把新任务发布到就绪队列。\syscall{execve}先装载新映像并准备用户栈，再在短临界区
-替换当前进程资源；旧地址空间在锁外销毁。\syscall{exit\_group}先把进程发布为
-\code{Exiting}，每个线程分别退出，最后一个线程离开后才转为\code{Exited}并允许父进程
-回收。
-
-timer tick除了推进调度时间，还会处理延迟或合并的本地重调度请求。下面摘录自
-\code{task-scheduler/scheduler-impl/impl-multi-class/src/lib.rs}：
-
-\begin{rustcode}
-pub fn schedule_tick() {
-    let guard = InterruptGuard::new();
-    let cpu_id = cpu::current_cpu_id();
-    publish_schedule_reason(cpu_id, 4);
-    let (switch_pair, targets) = with_scheduler(|scheduler| {
-        let mut switch_pair =
-            scheduler.schedule(ScheduleReason::Tick, cpu_id);
-        let mut targets = scheduler.take_pending_reschedule_cpus();
-        targets.remove(cpu_id);
-        let local_requested = scheduler.take_need_resched(cpu_id);
-        if switch_pair.is_none() && local_requested {
-            switch_pair =
-                scheduler.schedule(ScheduleReason::Reschedule, cpu_id);
-        }
-        (switch_pair, targets)
-    });
-
-    dispatch_reschedules(targets, cpu_id);
-    if let Some(switch_pair) = switch_pair {
-        switch_and_unlock(guard, switch_pair);
-    }
-}
-\end{rustcode}
-
-上段省略了源码注释，保留了完整控制顺序：推进本地调度、取出远端通知目标、消费本地
-请求、发送远端IPI，最后按需要切换。
-
-\subsection{设计取舍}
-
-任务状态、CPU归属和就绪结构在同一调度边界内提交，以换取清晰的不变量。跨组件读取
-任务状态时使用快照，而不把TCB内部可变引用暴露给procfs或syscall。较重的地址空间销毁、
-文件关闭和页回收放在注册表锁外完成，减少长临界区对其他CPU的影响。
-
-\designrule{同一任务在任意时刻只能属于一个CPU或一个非运行状态；退出状态先于唤醒
-发布；大型资源销毁不得在调度器或进程注册表锁内执行。}
+当前进程注册表仍是单一全局结构，没有NUMA或分片设计；clone、ptrace、资源限制和复杂
+Linux进程语义只覆盖工作负载需要的子集。高频fork验证应同时观察TCB、内核栈、进程索引、
+页表和fd侧表是否在退出后回落，不能只以测试进程返回0判断回收正确。
 
 \section{内存管理}
 
-\subsection{职责与边界}
+\subsection{功能概述}
 
-\code{wateros-mm}管理物理页帧、内核和用户地址空间、VMA、页表、缺页处理、用户内存
-访问、ELF装载及用户栈准备。文件映射的数据来源由VFS提供，任务组件只持有地址空间
-句柄，平台组件只负责安装页表token和执行TLB操作。
+MM组件从平台提供的物理RAM范围建立帧分配器和内核页表，为每个用户进程创建独立地址
+空间，并提供ELF装载、brk、mmap、munmap、mprotect、缺页、COW和用户缓冲区访问。页表
+格式分别由Sv39与LoongArch实现，VMA和上层语义保持共用。
 
-用户地址空间可能被多个CPU上的同进程线程同时访问，也会同时参与系统调用、缺页、
-fork和exec。VMA与PTE修改因此由地址空间对象统一同步，不能依赖调用者处于单核环境。
-
-\subsection{接口设计}
-
-\code{AddressSpaceOps}定义页表无关的映射、解除映射、权限修改和地址翻译；
-\code{MmapOps}在此基础上增加匿名、文件和设备映射、缺页处理、\syscall{mprotect}、
-\syscall{mremap}与\syscall{msync}；\code{UserMemoryOps}提供受检查的用户缓冲区访问。
-
-文件按需映射通过\code{DemandPageLoader}连接VFS与MM。MM只要求加载指定文件偏移的一页，
-不依赖具体文件系统或页缓存类型；VFS负责保持文件对象在映射存活期间有效。设备映射则
-持有\code{DeviceMappingLease}，其职责不是执行I/O，而是保证用户VMA存在时底层显存或
-DMA缓冲区不会被驱动提前释放。
-
-各trait的粒度对应不同的所有权边界。\code{AddressSpaceOps}由task、trap和装载器共同使用；
-\code{MmapOps}需要帧分配器并修改VMA，只在MM受控入口中使用；\code{UserMemoryOps}面向
-syscall，只暴露经过权限检查的复制操作。\code{DemandPageLoader}使用trait object保存于
-VMA中，是因为文件后备对象需要跨越\syscall{mmap}调用的生命周期，并可能在fork时复制。
-
-下面摘录自\code{wateros-mm/mm-api/api-v0/src/mmap.rs}。loader既支持把数据复制到新页，
-也允许只读映射直接取得页缓存中的共享物理页；写回与flush只有共享可写映射需要覆盖。
-
-\begin{rustcode}
-pub trait DemandPageLoader {
-    fn duplicate_box(
-        &self,
-    ) -> MmResult<Box<dyn DemandPageLoader>>;
-
-    fn mapping_kind(&self) -> DemandMappingKind {
-        DemandMappingKind::File
-    }
-
-    fn load_page(
-        &mut self,
-        file_offset: usize,
-        dst: &mut [u8],
-    ) -> MmResult<()>;
-
-    fn load_shared_page(
-        &mut self,
-        _file_offset: usize,
-    ) -> MmResult<Option<PhysPageNum>> {
-        Ok(None)
-    }
-
-    fn write_page(
-        &mut self,
-        _file_offset: usize,
-        _src: &[u8],
-    ) -> MmResult<()> {
-        Err(crate::error::MmError::Unsupported)
-    }
-
-    fn flush(&mut self) -> MmResult<()> { Ok(()) }
-}
-\end{rustcode}
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.9\textwidth]{pic/内存图.png}
+  \caption{内存管理组件及双架构页表实现}
+  \label{fig:mm-overview}
+\end{figure}
+\FloatBarrier
 
 \subsection{核心数据结构}
 
-\code{VirtAddr}、\code{PhysAddr}、\code{VirtPageNum}和\code{PhysPageNum}区分不同地址
-类别；\code{PagePerm}表示页权限；\code{MmapRequest}保存地址提示、长度、权限、标志和
-后备类型；\code{PageFaultAccess}区分读、写和执行缺页。\code{AddressSpaceId}用于架构
-地址空间标识。
+\begin{longtable}{L{3.4cm}L{5.0cm}L{4.5cm}}
+  \caption{内存管理核心数据结构}\label{tab:mm-structures}\\
+  \toprule
+  结构 & 关键内容 & 生命周期与不变量 \\
+  \midrule
+  \endfirsthead
+  \toprule
+  结构 & 关键内容 & 生命周期与不变量 \\
+  \midrule
+  \endhead
+  \shortstack[l]{\code{StackFrame}\\\code{Allocator}} & 帧区间、allocated位图、引用计数和recycled栈。 & 保留帧不
+  分配；引用降为零才回到空闲集合；BSP初始化后以原子状态发布。\\
+  \code{OwnedPhysPage} & 唯一持有的物理页号和一页可借用切片。 & 不可复制，Drop时归还；
+  \code{alloc\_zeroed}保证新页清零。\\
+  用户地址空间 & 架构页表、ASID、VMA集合、用户栈/堆位置和活动CPU信息。 & task持有引用；
+  页表修改与活动CPU集合共同决定本地或远程TLB失效。\\
+  \code{VmaBacking}与VMA & 半开虚拟区间、权限、匿名/ELF/文件/设备后备。 & VMA不等于
+  已分配物理页；区间不得非法重叠；解除映射同时更新页表和后备引用。\\
+  文件映射loader/lease & VFS提供的稳定文件访问能力。 & MM只持有需求分页所需引用，不
+  接管fd槽和inode生命周期。\\
+  \bottomrule
+\end{longtable}
 
-下面摘录自\code{wateros-mm/mm-api/api-v0/src/address\_space.rs}和\code{mmap.rs}，
-展示上层MM语义如何避免依赖Sv39或LoongArch页表项格式。
+\subsection{具体实现}
 
-\begin{rustcode}
-pub trait AddressSpaceOps {
-    fn satp_value(&self) -> usize;
-    fn map_page_to_ppn(
-        &mut self,
-        vpn: VirtPageNum,
-        ppn: PhysPageNum,
-        perm: PagePerm,
-    ) -> MmResult<()>;
-    fn unmap_page_to_ppn(
-        &mut self,
-        vpn: VirtPageNum,
-    ) -> MmResult<Option<PhysPageNum>>;
-    fn protect_page(
-        &mut self,
-        vpn: VirtPageNum,
-        perm: PagePerm,
-    ) -> MmResult<()>;
-    fn translate_addr(
-        &self,
-        va: VirtAddr,
-    ) -> MmResult<Option<PhysAddr>>;
-}
+启动时帧分配器排除内核镜像、DTB和DMA保留区，再建立内核恒等映射。创建用户进程时，
+ELF program header先转换成VMA和懒加载信息，用户栈单独建立；首次返回用户态前切换页表
+token/ASID。代码段和只读文件页可以延迟到实际访问时加载，避免为未执行区域提前分配页。
 
-pub enum PageFaultAccess {
-    Read,
-    Write,
-    Execute,
-}
-\end{rustcode}
+mmap首先选择不冲突的虚拟区间并记录VMA。匿名首次写入分配零页；文件缺页调用loader读取
+对应offset；设备映射使用驱动提供的物理范围。fork对可写私有页建立COW：父子页表暂时指向
+同一物理页并移除写权限，后续写缺页再复制。用户内存复制逐页校验范围和权限，因此可以
+跨页执行，并把已经完成的前缀返回给syscall层。
 
-\subsection{实现机制}
+地址空间进入/离开CPU时更新活动集合。页表权限或映射改变后，本CPU失效对应TLB；其他活动
+CPU需要收到shootdown并确认后，旧页才可安全回收。销毁地址空间时先停止新使用，逐项撤销
+映射，再释放页表帧和私有页。文件共享页仍归VFS缓存管理，VMA销毁不能绕过缓存引用直接
+释放。shootdown超时会记录失败，目前没有自动恢复策略。
 
-RISC-V64使用\code{Sv39AddressSpace}，LoongArch64使用
-\code{LoongArch64AddressSpace}。两种实现分别完成页表walk和PTE编码，但共享VMA区间、
-ELF装载、mmap请求与用户拷贝语义。ELF段和文件mmap可以先登记VMA，首次访问时再按页
-分配和装入内容。
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.96\textwidth]{pic/缺页与COW流程图.png}
+  \caption{VMA校验、缺页填充与COW处理流程}
+  \label{fig:mm-fault-cow}
+\end{figure}
+\FloatBarrier
 
-fork采用copy-on-write。父子地址空间共享只读映射，可写用户页被标为COW；写缺页发生后
-再次确认映射与引用计数，必要时分配新页并复制内容，然后更新PTE。若目标地址空间仍
-可能在其他CPU上运行，页表写入后对相应CPU执行TLB shootdown，并等待失效完成后再释放
-旧页。
+\subsection{限制与小结}
 
-用户拷贝首先验证地址区间和访问权限，再按页访问当前地址空间。路径字符串使用有界NUL
-扫描，跨页时重新翻译；页表查询或按需装页失败统一转换为可识别的MM错误，由syscall层
-映射为\code{EFAULT}等errno。
+当前API只支持4 KiB页，内核映射依赖RAM恒等映射，没有大页和任意高半内核布局。早期
+栈式帧分配器实现简单，诊断能力有限；LoongArch远程TLB失效尚未接通。MM已经完成用户
+地址空间主路径，但文件生命周期、设备发现和Linux ABI错误仍由相邻组件负责。
 
-缺页入口按VMA种类逐级处理，而不是在trap层判断栈、堆或文件后备。下面摘录自
-\code{wateros-mm/mm-impl/impl-sv39/src/user\_heap\_mmap.rs}：
+\section{IPC与信号}
 
-\begin{rustcode}
-fn handle_page_fault<A>(
-    &mut self,
-    allocator: &mut A,
-    fault_addr: VirtAddr,
-    access: PageFaultAccess,
-) -> MmResult<bool>
-where
-    A: PhysicalFrameAllocator<FrameId = PhysPageNum>,
-{
-    if self.handle_stack_page_fault(
-        allocator,
-        fault_addr,
-        access,
-    )? {
-        return Ok(true);
-    }
-    if self.handle_brk_page_fault(
-        allocator,
-        fault_addr,
-        access,
-    )? {
-        return Ok(true);
-    }
-    self.handle_lazy_page_fault(allocator, fault_addr, access)
-}
-\end{rustcode}
+\subsection{功能概述}
 
-返回值区分“已处理”和“该地址不属于可恢复缺页”，错误则保留分配、装页或页表操作失败的
-原因。trap层只负责在处理成功后重试用户指令，未处理的访问再进入用户异常或信号路径。
+IPC组件是一组共享任务等待能力的独立机制，而不是统一消息总线。pipe提供字节流，futex
+把用户同步字映射到等待队列，SysV共享内存管理可被多个地址空间附加的物理页，signal维护
+进程/线程级待处理状态。eventfd目前位于syscall/VFS，不属于IPC门面。
 
-\subsection{设计取舍}
-
-页表格式放在架构实现中，VMA、COW和用户拷贝留在公共语义层，使双架构能够共享绝大多数
-内存管理逻辑。文件映射选择按页加载以避免在\syscall{mmap}中读取整个文件，但VMA因此
-必须保存稳定loader和文件偏移。TLB失效按单页、地址空间和跨核目标选择范围，在正确性
-边界内减少不必要的全局刷新。
-
-\designrule{页表更新对其他CPU可见后才能发送失效请求；目标CPU完成失效并离开旧执行
-上下文前，不得释放相关地址空间或物理页。}
-
-\section{进程间通信与信号}
-
-\subsection{职责与边界}
-
-\code{wateros-ipc}由waitqueue、pipe、futex、signal、共享内存和事件等子组件组成。
-IPC负责等待关系、通知状态及IPC对象生命周期，但不自行实现另一套调度器或页表管理。
-任务阻塞与唤醒委托task，用户地址及共享页映射委托MM，Linux参数解释委托syscall。
-
-pipe最终表现为VFS文件描述符；futex服务线程同步；signal连接trap返回路径与进程状态；
-SysV共享内存则把独立物理页对象映射进多个地址空间。
-
-\subsection{接口设计}
-
-\code{IpcWaitQueueOps}是IPC与任务调度之间的薄接口，提供条件等待、带超时等待、唤醒和
-requeue。\code{PipeEndpointOps}描述管道端点，\code{SignalSet}和
-\code{SignalAction}描述信号mask与处置，\code{ShmRegistry}管理共享段。
-
-futex队列键不能仅使用用户虚拟地址。private futex还需要包含地址空间作用域，shared
-futex则必须使用MM解析出的稳定共享身份，保证不同进程对同一共享字得到相同键。
-
-等待队列trait不暴露任务状态或调度器锁，只接受一个短小的条件闭包。闭包由task实现放入
-调度临界区再次执行，从而把“检查条件”和“把当前任务登记为等待者”组成一个不可被wake
-插入的状态转换。requeue同样由一个接口完成唤醒与迁移，futex组件不需要先取出任务再
-逐个加入另一条队列。
-
-下面摘录自
-\code{wateros-ipc/ipc-waitqueue/waitqueue-api/api-v0/src/lib.rs}，保留了futex、pipe和
-事件对象共同依赖的几项操作。
-
-\begin{rustcode}
-pub trait IpcWaitQueueOps: Sized {
-    fn new() -> Self;
-    fn id(&self) -> WaitQueueId;
-    fn wait_target(&self) -> TaskWaitTarget;
-
-    fn wait_current_while<F>(
-        &self,
-        condition: F,
-    ) -> TaskWaitResult
-    where
-        F: FnOnce() -> bool;
-
-    fn wake_one(&self) -> Option<TaskId>;
-    fn wake_all(&self) -> usize;
-
-    fn requeue_to(
-        &self,
-        target: Self,
-        wake_count: usize,
-        requeue_count: usize,
-    ) -> usize;
-}
-\end{rustcode}
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.9\textwidth]{pic/ipc图.png}
+  \caption{IPC机制与相关内核组件的协作关系}
+  \label{fig:ipc-overview}
+\end{figure}
+\FloatBarrier
 
 \subsection{核心数据结构}
 
-\code{FutexKey}由地址身份、private标记及地址空间作用域组成；
-\code{FutexWaitOutcome}表示唤醒、超时或中断结果；\code{PendingSignal}与
-\code{SignalDispatch}描述待处理信号和一次投递；\code{ShmSegmentInfo}与
-\code{ShmAttachInfo}描述共享段及单个进程的附着关系。
+\begin{longtable}{L{3.3cm}L{5.2cm}L{4.4cm}}
+  \caption{IPC核心数据结构}\label{tab:ipc-structures}\\
+  \toprule
+  结构 & 关键内容 & 生命周期与不变量 \\
+  \midrule
+  \endfirsthead
+  \toprule
+  结构 & 关键内容 & 生命周期与不变量 \\
+  \midrule
+  \endhead
+  \code{PipeState} / \code{PipeEndpoint} & 环形字节区、segment、读reservation、端点引用和
+  OFD关闭状态。 & 最后写端关闭产生EOF；close/Drop至多减少一次端点引用。\\
+  \code{FutexRegistry} & key到队列映射、task反查、robust登记和active users。 & 一个task
+  至多登记一个等待；锁外wait期间队列不能提前回收。\\
+  \code{FutexQueue} & waitqueue、wake sequence和使用计数。 & 条件二次检查与sequence共同
+  封住最终丢失唤醒窗口。\\
+  \code{ShmRegistry} & 段表、SysV key索引、task attachment和删除标记。 & \code{IPC\_RMID}
+  隐去key但保留已有映射，\code{nattch=0}后才释放。\\
+  \code{SignalRegistry} & disposition、process/thread pending、mask、alt stack和timer。 &
+  普通信号按位保存，同号信号不累计；线程退出需要清除对应状态。\\
+  \bottomrule
+\end{longtable}
 
-下面摘录自\code{ipc-futex/futex-api/api-v0/src/key.rs}。构造函数把private与shared
-两种等价关系写入类型入口，避免等待路径临时拼接不一致的键。
+\subsection{具体实现}
 
-\begin{rustcode}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct FutexKey {
-    pub uaddr: usize,
-    pub is_private: bool,
-    pub private_scope: usize,
-}
+pipe在对象锁内尝试读写，空间不足或数据为空时在锁外等待。读取先建立reservation，复制到
+用户缓冲成功后只消费已提交前缀；copy fault或取消会把未提交数据保持在原顺序。所有写端
+关闭后空读返回EOF，所有读端关闭后写入返回BrokenPipe并由syscall处理相应信号语义。
 
-impl FutexKey {
-    pub const fn private(
-        uaddr: usize,
-        private_scope: usize,
-    ) -> Self {
-        Self { uaddr, is_private: true, private_scope }
-    }
+futex key包含用户地址及private/shared映射身份。WAIT先读取用户值，再在IPC注册表内建立
+等待对象，锁外进入task waitqueue前执行条件和wake sequence复查。WAKE/REQUEUE修改队列
+后在registry锁外唤醒任务，避免持全局IPC锁进入scheduler。线程退出时遍历robust登记，修正
+用户futex word并唤醒潜在等待者。
 
-    pub const fn shared(shared_identity: usize) -> Self {
-        Self {
-            uaddr: shared_identity,
-            is_private: false,
-            private_scope: 0,
-        }
-    }
-}
-\end{rustcode}
+共享内存attach采用预留、锁外映射、提交/回滚三阶段，防止持registry锁调用MM。signal投递
+在返回用户态前选择未屏蔽信号，由syscall/trap路径构造signal frame；\code{sigreturn}恢复寄存
+器、mask和备用栈。组退出、父进程等待和系统调用restart都通过显式生命周期钩子衔接。
 
-\subsection{实现机制}
+% 后续可加入 figures/ipc-wait-wake.pdf。
+\IfFileExists{figures/ipc-wait-wake.pdf}{
+  \begin{figure}[htbp]\centering
+    \includegraphics[width=0.9\textwidth]{figures/ipc-wait-wake.pdf}
+    \caption{Futex条件复查、阻塞与唤醒时序}
+  \end{figure}
+}{}
 
-futex wait先通过MM读取用户值，只有值仍等于期望值时才进入等待队列。条件在调度临界区
-内再次检查，以覆盖首次读取与真正阻塞之间的wake竞态。wake、requeue和timeout使用稳定
-任务ID操作；线程退出时处理\code{clear\_child\_tid}和robust list，再唤醒用户态等待者。
+\subsection{限制与小结}
 
-具体顺序是：由用户地址构造\code{FutexKey}，取得或创建对应队列，读取用户值，随后调用
-\code{wait\_current\_while}完成二次检查与阻塞。wake先修改或观察IPC对象状态，再调用
-\code{wake\_one}或\code{wake\_all}使任务回到就绪队列；若唤醒发生在二次检查之前，闭包
-会发现条件已经变化并取消阻塞，因此不需要依赖IPI恰好到达某个时间点。
-
-signal实现区分进程级pending与线程级pending，并在投递时应用mask和处置。系统调用被
-信号中断后，trap返回路径根据调用类型决定返回\code{EINTR}或恢复原调用。signal frame
-的寄存器编码由平台\code{SignalFrameCodec}实现，公共信号状态不保存某个架构专用布局。
-
-共享内存注册表拥有段身份和物理页，MM只负责把这些外部所有权页面映射到指定地址空间。
-fork增加附件引用，exec与exit解除当前进程映射；标记删除的段在最后一个附件释放后回收。
-pipe也采用“预留、复制、提交”的路径：在pipe锁内预留可读区间，释放锁后复制到用户
-缓冲区，再根据实际复制长度提交读指针。用户拷贝发生缺页时，只取消或部分提交本次预留，
-不会在持有pipe锁时进入MM缺页处理。
-
-\subsection{设计取舍}
-
-waitqueue直接复用任务组件的等待语义，避免IPC内部出现第二套超时和唤醒模型。futex键
-显式区分private和shared，使地址相同但地址空间不同的锁不会误相互唤醒。信号投递被放在
-trap返回安全点处理，代价是需要保存pending状态，但避免在任意内核临界区直接改写用户
-trap frame。
+futex不支持PI，bitset wait/wake只支持\code{FUTEX\_BITSET\_MATCH\_ALL}；IPC event子模块
+尚未接入门面。信号和SysV语义也只覆盖当前用户负载所需范围。模块实现重点在对象生命周期
+和无丢失唤醒，用户指针、errno及signal frame仍由syscall/trap边界处理。
 
 \section{虚拟文件系统}
 
-\subsection{职责与边界}
+\subsection{功能概述}
 
-\code{wateros-vfs}位于系统调用与具体文件系统之间，负责路径规范化、挂载表、命名空间、
-打开文件描述、per-task fd会话、工作目录和页缓存。VFS不解析ext4磁盘格式，也不负责
-VirtIO块传输；这些能力分别属于FS和driver组件。
+VFS把路径、挂载、fd和不同类型的打开对象组织为统一文件访问视图。普通文件经FS桥接和
+全局页缓存访问，pipe、TTY、socket、eventfd等对象则直接实现\code{VfsIoHandle}。VFS拥有
+路由、打开描述生命周期和缓存一致性，但不解析ext4磁盘格式，也不负责Linux系统调用号。
 
-普通文件、目录、pipe、控制台、socket和设备节点最终都以VFS句柄进入fd表。对象类型
-不同，但dup、fork继承、CLOEXEC、poll和close等文件描述符语义由VFS统一组织。
-
-\subsection{接口设计}
-
-\code{VfsBackend}组合路径打开、挂载、设备清单和根视图能力；\code{VfsIoHandle}定义
-已打开对象的读写、seek、flush、ioctl、poll和duplicate入口；\code{VfsOpenOps}把路径
-解析结果转换为句柄。\code{VfsFdSession}则面向当前任务管理fd编号及生命周期。
-
-接口使用对象安全的trait object保存不同句柄。只对普通文件有效的操作拥有默认
-\code{Unsupported}实现，具体文件、pipe、socket或设备句柄按能力覆盖所需方法。
-
-句柄trait还刻意区分三层状态：fd槽保存\code{CLOEXEC}等描述符标志；打开文件描述保存
-dup和fork共享的偏移及状态标志；后端句柄保存文件、pipe或socket对象。\code{duplicate}
-复制的是第二层引用，而不是重新按路径open，因此多个fd能够共享文件偏移，两个独立open
-则各自拥有偏移。
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.9\textwidth]{pic/文件图.png}
+  \caption{VFS、文件系统与块设备访问路径}
+  \label{fig:vfs-fs-overview}
+\end{figure}
+\FloatBarrier
 
 \subsection{核心数据结构}
 
-\code{NormalizedPath}保存规范化路径；\code{VfsOpenFlags}保存VFS可理解的打开标志；
-\code{VfsOpenDescriptionState}表示dup及fork共享的打开文件状态；\code{VfsFd}表示文件
-描述符；\code{VfsMetadata}与\code{VfsDirEntry}提供统一元数据和目录项。
+\begin{longtable}{L{3.5cm}L{5.1cm}L{4.3cm}}
+  \caption{VFS核心数据结构}\label{tab:vfs-structures}\\
+  \toprule
+  结构 & 关键内容 & 生命周期与不变量 \\
+  \midrule
+  \endfirsthead
+  \toprule
+  结构 & 关键内容 & 生命周期与不变量 \\
+  \midrule
+  \endhead
+  \code{PerTaskFdRegistry} & task到fd槽、\code{SharedIoHandle}、CLOEXEC和path-only标志。 &
+  OFD由\code{Arc<Mutex<...>>}共享；close一次；fork复制槽，线程可共享。\\
+  \shortstack[l]{\code{PerTaskCwd}\\\code{Registry}} & cwd、虚拟root和\code{CLONE\_FS}共享关系。 & 路径解析不得
+  越过虚拟root；任务回收时清理。\\
+  \code{MountNamespace} / \code{MountEntry} & mount id、路径前缀、文件系统类型和传播属性。 &
+  最长前缀路由；卸载后拒绝新路由，已有句柄按引用继续存活。\\
+  \code{StableNodeLease} & \code{(mount\_id,node\_id)}到稳定inode的弱引用。 & unlink后打开
+  句柄仍可访问detached数据，最后引用释放才清理。\\
+  \shortstack[l]{\code{GlobalFile}\\\code{PageCache}} & 文件key、帧池、LRU、脏页和内容版本。 & I/O在state锁外进行；
+  只有版本匹配的写回完成才能把页标为clean。\\
+  \bottomrule
+\end{longtable}
 
-下面摘录自\code{wateros-vfs/vfs-api/api-v0/src/backend.rs}和\code{handle.rs}，
-展示后端能力组合与统一打开句柄。
+\subsection{具体实现}
 
-\begin{rustcode}
-pub trait VfsBackend:
-    SingleRootReadView
-    + VfsMountOps
-    + VfsDevInventory
-    + VfsOpenOps
-    + VfsMountTable
-{
-}
+openat路径先结合dirfd、cwd和进程root规范化，按挂载点最长前缀选择路由，再由\code{FsBridge}
+取得文件系统节点和打开描述。fd分配只在槽表内完成；后续read/write先克隆共享句柄，释放
+registry锁后才进入对象，避免持fd全局状态执行可能阻塞的I/O。dup共享同一OFD偏移，fork复制
+fd槽引用，exec按CLOEXEC关闭对应项。
 
-pub trait VfsIoHandle: Send + VfsHandleAny {
-    fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
-        let _ = buf;
-        Err(VfsError::Unsupported)
-    }
-    fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
-        let _ = buf;
-        Err(VfsError::Unsupported)
-    }
-    fn duplicate(&self) -> VfsResult<Box<dyn VfsIoHandle>> {
-        Err(VfsError::Unsupported)
-    }
-    fn open_accmode(&self) -> u32;
-    // metadata、seek、flush、ioctl、poll等按句柄能力覆盖。
-}
-\end{rustcode}
+普通文件读取先查询\code{GlobalFilePageCache}。未命中时预留缓存页，锁外调用FS读取，再提交
+结果；顺序读取可触发预取。write或共享可写mmap更新页内容、文件大小与脏版本。写回线程取得
+页和版本快照，锁外写入FS，成功后只有当前版本仍等于快照时才清除dirty；若期间再次写入，
+新版本保持脏状态，避免旧完成通知覆盖新数据。
 
-可能阻塞或访问用户内存的读取没有被强行塞入一个\code{read}调用。下面同样摘录自
-\code{handle.rs}，\code{prepare\_read}在短临界区内取得可转移的操作对象，
-\code{acquire}在fd槽锁外等待或读取数据，最后由\code{finish}依据实际复制进度提交源偏移。
+unlink只取消目录可见性，已打开句柄通过stable lease继续访问。挂载代次进入cache key，重新
+挂载后旧inode编号不会错误命中新文件系统实例。淘汰按LRU选择无活动引用的clean页；脏页必须
+先写回，失败时保留缓存和错误信息，不能把未持久化数据当作可回收页。
 
-\begin{rustcode}
-pub trait VfsReadLease: Send {
-    fn bytes(&self) -> &[u8];
+% 后续可加入 figures/vfs-path-cache.pdf。
+\IfFileExists{figures/vfs-path-cache.pdf}{
+  \begin{figure}[htbp]\centering
+    \includegraphics[width=0.92\textwidth]{figures/vfs-path-cache.pdf}
+    \caption{路径解析、挂载路由、fd与页缓存关系}
+  \end{figure}
+}{}
 
-    fn finish(
-        self: Box<Self>,
-        progress: VfsCopyProgress,
-    ) -> VfsResult<VfsReadFinish>;
-}
+\subsection{限制与小结}
 
-pub trait VfsPreparedRead: Send {
-    fn acquire(
-        self: Box<Self>,
-    ) -> VfsResult<Box<dyn VfsReadLease>>;
-}
+页缓存并发与异常路径测试仍不完整，尤其是共享映射、truncate、地址空间销毁和写回失败的
+组合。部分VFS接口按后端返回Unsupported。VFS通过稳定句柄和脏版本解决对象身份与并发写回
+问题，但文件系统自身的journal、掉电恢复和块传输错误仍属于FS/driver边界。
 
-pub trait VfsIoHandle: Send + VfsHandleAny {
-    fn prepare_read(
-        &mut self,
-        _max_len: usize,
-    ) -> VfsResult<Box<dyn VfsPreparedRead>> {
-        Err(VfsError::Unsupported)
-    }
-    // 其余方法省略。
-}
-\end{rustcode}
+\section{文件系统}
 
-这一接口不仅服务普通文件，也被pipe、PTY、socket、eventfd、timerfd和inotify复用。各对象
-可以有不同的等待条件，但都遵守“准备阶段不长期阻塞、复制失败不错误推进源状态”的契约。
+\subsection{功能概述}
 
-\subsection{实现机制}
-
-路径解析逐段处理cwd、dirfd、符号链接、挂载点和搜索权限，并限制符号链接展开次数。
-打开成功后建立稳定的打开文件描述，后续read、write、seek和mmap从句柄操作，不因rename
-或unlink重新按原路径查找。每个任务拥有fd会话，fork按语义复制句柄，exec关闭带
-\code{CLOEXEC}标志的fd。
-
-路径入口先把相对路径与cwd或dirfd合成为规范化绝对路径，再由最长前缀匹配选择挂载点。
-解析目录的过程中逐级检查节点类型和执行权限；最后一段根据open标志决定只查找、创建或
-截断。挂载表返回后端及相对路径，VFS桥接层再构造稳定节点句柄。这样，挂载点选择和具体
-文件系统的目录查找分别由VFS与FS负责。
-
-页缓存以文件内容身份和页号作为键，协调普通read/write、文件mmap与后端区间I/O。并发
-miss只安装一个最终槽位；缓存页取得后还会确认它没有在安装窗口被另一CPU驱逐。脏页
-按文件写回，单个文件的后端错误不会污染无关文件的读取结果。
-
-可能阻塞的pipe或poll操作不应长期持有共享fd槽锁。实现提供
-\code{with\_current\_io\_detached}，先复制打开文件描述，再在临时句柄上执行阻塞操作；
-底层偏移、pipe缓冲和socket状态仍按\code{duplicate}语义共享。
-
-读系统调用使用上述两阶段接口时，先从fd会话取出\code{VfsPreparedRead}，随后释放fd槽
-锁并取得lease；数据复制结束后把“已复制字节数”和“是否完成”交给\code{finish}。如果
-用户缓冲区在中途发生\code{EFAULT}，普通文件偏移只推进已经复制的部分，pipe和socket也
-只消费相同数量的数据。
-
-\subsection{设计取舍}
-
-VFS将“路径对象”和“已打开对象”分开，使目录项变化不会破坏已有fd语义。统一
-\code{VfsIoHandle}便于fd表保存多种对象，但能力不匹配必须明确返回
-\code{Unsupported}或对应错误，不能静默成功。页缓存位于VFS而非ext4内部，使普通文件
-读写和文件mmap能够共享页面身份，同时让具体文件系统只承担区间I/O及元数据操作。
-
-\section{文件系统实现}
-
-\subsection{职责与边界}
-
-\code{wateros-fs}负责具体文件系统后端、根卷选择及内核伪文件系统。当前组件包含FS公共
-接口、ext4实现、rootfs管理器、procfs和devfs。FS面向“路径或稳定节点如何映射到文件系统
-数据”，VFS面向“用户进程如何通过路径和fd观察这些对象”。
-
-driver组件只注册块设备，FS从devfs取得默认块设备并探测文件系统类型；挂载成功后再由
-VFS桥接成统一路径视图。系统调用层不直接引用ext4实现。
-
-\subsection{接口设计}
-
-\code{ReadOnlyFs}和\code{ReadWriteFs}分别描述只读与读写后端，避免只读实现被迫暴露
-无意义的写接口。\code{FsImpl}提供名称、探测和挂载入口；\code{RootFsManager}保存当前
-根卷；\code{ProcFsView}与\code{DevFsManager}分别提供动态内核视图和设备节点管理。
-
-读写接口同时提供路径操作和稳定节点操作。路径用于创建、查找和目录修改；打开文件后
-VFS使用\code{FsNodeId}继续访问，使rename或unlink之后的已有fd仍指向原对象。
-
-\code{FsImpl}和\code{ReadWriteFs}承担不同生命周期：前者是静态登记的实现工厂，只负责
-能力查询、卷探测和创建挂载会话；后者是一次挂载产生的有状态对象，保存superblock、
-inode缓存及块设备引用。因而多个卷可以由同一个\code{FsImpl}创建多个互不干扰的会话，
-VFS也不需要知道当前使用的是哪一种ext4实现。
-
-读写trait以文件系统语义为粒度，不泄露ext4块组或inode内存结构。路径方法便于创建和
-目录操作，稳定节点方法保证open后的身份；可选能力使用\code{Unsupported}返回，而不是
-由VFS根据文件系统名称进行分支。\code{FsAsyncIo}单独描述可异步提交的I/O，避免普通同步
-后端被迫实现无意义的异步状态机。
+FS组件定义文件系统后端契约并在启动阶段选择活动实现。默认磁盘后端为another-ext4，另有
+rootfs挂载入口、devfs设备视图、procfs系统信息和ramfs/tmpfs。它管理文件系统句柄、inode操作
+和后端错误转换；路径命名空间、fd编号与文件页缓存由VFS负责。
 
 \subsection{核心数据结构}
 
-\code{FsKind}表示文件系统类型，\code{FsCapability}描述后端能力，
-\code{FsNodeType}、\code{FsMetadata}和\code{FsDirEntry}描述节点类型、元数据和目录项，
-\code{FsNodeId}保存后端稳定节点身份。\code{SharedRwFs}以共享锁保护可写后端会话。
+\begin{table}[htbp]
+  \centering
+  \caption{文件系统核心状态}
+  \begin{tabularx}{\textwidth}{L{3.4cm}L{4.8cm}Y}
+    \toprule
+    状态 & 关键内容 & 生命周期与不变量 \\
+    \midrule
+    \shortstack[l]{\code{registered\_fs}\\\code{\_impls()}} & 编译期\code{'static FsImpl}切片 & feature决定候选；多个
+    ext4实现同时选择时拒绝构建。\\
+    \shortstack[l]{\code{ACTIVE\_FS}\\\code{\_IMPL}} & probe成功的活动后端 & 未注入时挂载返回Unsupported。\\
+    \shortstack[l]{\code{ROOT\_FS}/\\\code{ROOT\_RW\_FS}} & 共享根挂载句柄 & RO/RW句柄共享同一挂载实例；
+    清理时同时撤销并更新设备路径。\\
+    \shortstack[l]{\code{MOUNT}\\\code{\_GENERATION}} & 单调递增\code{AtomicU64} & 每次挂载成功递增，节点ID不得
+    跨代直接复用。\\
+    \code{AnotherExt4Fs} & ext4对象、块设备、查找/负缓存、open与orphan表 & 由共享FS锁
+    串行访问，生命周期由挂载句柄\code{Arc}决定。\\
+    \bottomrule
+  \end{tabularx}
+\end{table}
 
-下面摘录自\code{wateros-fs/fs-api/api-v0/src/handles.rs}。统一注册接口负责能力声明、
-块设备探测和挂载，具体文件操作则由返回的\code{SharedFs}或\code{SharedRwFs}完成。
+\subsection{具体实现}
 
-\begin{rustcode}
-pub trait FsImpl: Sync {
-    fn name(&self) -> &'static str;
-    fn supported(&self) -> &'static [FsCapability];
+驱动初始化后，FS刷新devfs设备快照，取得第一个可用块设备并探测文件系统签名。probe成功
+只设置活动后端，实际根挂载由bring-up阶段调用；挂载成功后同时发布RO/RW句柄、根设备路径
+和新的mount generation。VFS随后挂载devfs与procfs，用户程序才开始通过路径访问设备和
+进程信息。
 
-    fn supports(
-        &self,
-        kind: FsKind,
-        mode: FsAccessMode,
-    ) -> bool {
-        self.supported()
-            .iter()
-            .any(|c| c.kind == kind && c.access == mode)
-    }
+读写请求由\code{FsBridge}转换成后端node操作。another-ext4适配层把文件offset拆成块请求，
+调用共享块设备，再更新inode大小、目录项和时间等元数据。查找使用正向与负向缓存减少重复
+目录遍历；创建、unlink和rename需要同步更新缓存，避免旧目录项继续命中。flush/sync向后端
+提交数据和元数据，但当前不承诺完整journal或掉电恢复。
 
-    fn probe(
-        &self,
-        _device: &SharedBlockDevice,
-    ) -> FsResult<Option<FsKind>> {
-        Ok(None)
-    }
+devfs根据驱动注册表重建块/字符设备节点；procfs按读取时快照生成有限的进程与系统信息；
+ramfs在内存中保存目录和文件内容。不同后端共享FS API，但并不意味着每项操作都有相同能力，
+调用方必须处理Unsupported和只读错误。
 
-    fn mount_ro(
-        &self,
-        device: SharedBlockDevice,
-    ) -> FsResult<SharedFs>;
+% 后续可加入 figures/fs-mount-io.pdf。
+\IfFileExists{figures/fs-mount-io.pdf}{
+  \begin{figure}[htbp]\centering
+    \includegraphics[width=0.9\textwidth]{figures/fs-mount-io.pdf}
+    \caption{块设备探测、根挂载与文件读写路径}
+  \end{figure}
+}{}
 
-    fn mount_rw(
-        &self,
-        _device: SharedBlockDevice,
-    ) -> FsResult<SharedRwFs> {
-        Err(FsError::Unsupported)
-    }
-}
-\end{rustcode}
+\subsection{限制与小结}
 
-\subsection{实现机制}
+异步FS访问尚未实现，替代ext4后端只有启用相应feature才参与注册。当前正常关闭后的ext4
+一致性可以用\code{e2fsck -fn}检查，但没有掉电注入、journal replay和生产级恢复保证。FS层
+已经提供统一后端入口，验证结论仍需按实际启用实现分别给出。
 
-启动时devfs根据驱动注册表刷新设备节点，FS聚合层选择默认块设备并依次调用已登记实现的
-\code{probe}。探测成功后记录活动实现，bring-up阶段再以读写方式挂载rootfs。该顺序把
-设备发现、文件系统识别和用户根目录建立拆成可分别诊断的步骤。
+\section{用户根文件系统}
 
-ext4实现负责inode、目录项、文件大小、link count和块映射。open建立稳定节点引用，
-rename和unlink只改变目录关系；最后一个打开引用关闭后，后端才能回收已经没有目录项的
-节点。写入、truncate、mkdir、link和xattr修改均通过统一错误类型返回VFS。
+\subsection{功能概述}
 
-procfs不从磁盘读取固定文本，而是通过注册回调取得任务、挂载、内存、IPC和网络快照，
-按访问时状态生成内容。devfs将块、字符、输入和显示设备映射为节点，并把打开操作转换为
-对应设备句柄。
+用户根文件系统是独立于内核的构建组件。它负责为目标架构交叉编译用户程序，将基础目录、
+共享库、命令行工具和应用程序组合成统一的根目录，再生成可由WaterOS直接挂载的ext4镜像。
+内核文件系统组件解决“运行时如何访问文件”，根文件系统构建组件解决“启动前镜像中应当
+包含哪些文件”，二者通过ext4格式和用户态ABI衔接，但不共享构建状态。
 
-下面摘录自\code{wateros-fs/src/lib.rs}。聚合层只根据trait能力和探测结果选择实现，
-既不读取ext4 magic，也不直接构造具体后端类型；读写能力优先，只有后端声明不支持时才
-接受只读会话。
-
-\begin{rustcode}
-let mut chosen: Option<(
-    &'static dyn api_v0::FsImpl,
-    api_v0::FsKind,
-)> = None;
-
-for imp in registered_fs_impls() {
-    match imp.probe(&device) {
-        Ok(Some(kind))
-            if imp.supports(
-                kind,
-                api_v0::FsAccessMode::ReadWrite,
-            ) =>
-        {
-            chosen = Some((*imp, kind));
-            break;
-        }
-        Ok(Some(kind))
-            if imp.supports(
-                kind,
-                api_v0::FsAccessMode::ReadOnly,
-            ) =>
-        {
-            chosen = Some((*imp, kind));
-            break;
-        }
-        Ok(_) => {}
-        Err(err) => logging::warn!(
-            "[fs] probe via {} failed: {:?}",
-            imp.name(),
-            err,
-        ),
-    }
-}
-\end{rustcode}
-
-探测错误只淘汰当前实现，不能破坏块设备或阻止后续实现继续识别。同一实现报告的
-\code{FsKind}还要与静态能力表相符，避免“能够识别但不能按请求模式挂载”的后端被误选。
-
-\subsection{设计取舍}
-
-FS和VFS分层使磁盘格式实现不承担per-task fd语义，也使procfs、devfs等伪文件系统能够
-接入同一命名空间。稳定节点接口增加了后端引用管理，但能够正确表达“目录项已删除而
-打开文件仍可访问”的Linux语义。同步写路径明确区分页缓存写回、文件系统同步和块设备
-flush，错误沿调用链返回用户态。
-
-\section{设备管理与驱动}
-
-\subsection{职责与边界}
-
-\code{wateros-driver}负责机器级设备发现、设备类型匹配、具体驱动初始化和设备对象注册。
-其子组件覆盖块设备、字符设备、网络设备、输入设备和显示设备。驱动层处理寄存器、VirtIO
-队列、DMA和中断，不解释ext4、TCP或用户态fd语义。
-
-RISC-V64平台主要从DTB发现VirtIO-MMIO设备；LoongArch64平台通过PCIe配置空间发现
-VirtIO-PCI设备。两条路径最终都登记为公共设备trait object。
-
-\subsection{接口设计}
-
-\code{MachineDriver}定义所选机器在内核基础设施就绪后的设备初始化入口；
-\code{BlockDevice}、\code{CharacterDevice}、\code{NetworkDevice}、
-\code{InputDevice}和\code{DisplayDevice}分别定义设备类别接口。聚合层的
-\code{machine()}根据feature返回当前机器实现。
-
-各设备子系统通过\code{supported\_devices()}声明可绑定的\code{compatible}，机器驱动
-负责扫描并把匹配节点交给具体实现。上层取得的是共享设备对象，不直接持有平台探测结构。
-
-机器trait与设备trait分开，是因为二者的实例数量和调用阶段不同。\code{MachineDriver}
-在启动阶段调用一次，拥有总线枚举和资源解释能力；\code{BlockDevice}等trait则对应每个
-已发现设备，在系统运行期间反复被FS、VFS或network调用。注册表保存
-\code{Arc<Mutex<Box<dyn Trait>>>}，\code{Arc}管理跨组件生命周期，\code{Mutex}串行化设备
-内部队列，trait object负责消除具体VirtIO传输类型。
+当前提供最小命令行环境、现场诊断环境、完整用户环境、Nano-X图形环境和OpenJDK运行环境
+等组合。软件包之间显式声明依赖和支持架构，构建器先解析依赖闭包，再按拓扑顺序执行，
+避免依靠固定脚本顺序偶然得到可用镜像。内核与用户镜像可以独立构建和替换，便于使用同一
+内核比较不同用户环境，也便于在不重编译内核的情况下增加测试程序。
 
 \subsection{核心数据结构}
 
-\code{DeviceType}区分Block、Character、Network、Display和Input；
-\code{DeviceInfo}保存节点名、compatible列表、设备类型、MMIO范围和中断线；
-\code{MmioRegion}与\code{IrqLine}描述硬件资源。\code{SharedBlockDevice}等类型使用
-共享锁保护动态分派的设备对象。
+\begin{table}[htbp]
+  \centering
+  \caption{用户根文件系统构建状态}
+  \label{tab:user-rootfs-state}
+  \begin{tabularx}{\textwidth}{L{3.4cm}L{4.8cm}Y}
+    \toprule
+    对象 & 关键内容 & 作用与约束 \\
+    \midrule
+    \code{Architecture} & 架构名、交叉编译前缀、目标三元组与工具链环境 & RISC-V64和
+    LoongArch64分别解析，软件包不能隐式使用宿主编译器。\\
+    \code{Package} & 名称、版本、依赖、支持架构、构建入口和安装前缀 & 依赖必须无环；
+    不支持目标架构的软件包不会进入构建集合。\\
+    软件包依赖图 & 选定软件包及其传递依赖 & 按拓扑顺序构建；排除底层软件包时，同时排除
+    依赖它的上层软件包。\\
+    staging根目录 & 各软件包安装结果合并后的目录树 & 合并时检查文件所有者和覆盖规则，
+    未声明的路径冲突直接报错。\\
+    镜像清单 & 文件类型、权限、大小与内容摘要 & 用于检查镜像内容，并区分软件包变化与
+    内核变化。\\
+    ext4镜像 & 固定块大小、inode大小、标签和架构标识 & 生成后执行只读一致性检查，同时
+    输出整个镜像的SHA-256摘要。\\
+    \bottomrule
+  \end{tabularx}
+\end{table}
 
-下面摘录自\code{wateros-driver/driver-api/api-v0/src/lib.rs}，可以看到机器级接口与
-单个设备信息之间的边界。
+\subsection{具体实现}
 
-\begin{rustcode}
-pub enum DeviceType {
-    Block,
-    Character,
-    Network,
-    Display,
-    Input,
-    Unknown,
-}
+构建过程分为环境检查、依赖解析、软件包构建、目录合并和镜像生成五个阶段。环境检查确认
+交叉编译器、binutils及ext4工具可用，并编译最小探针验证目标格式。依赖解析读取软件包元
+数据，对依赖图进行深度优先遍历；发现循环依赖、未知软件包或架构不匹配时立即停止。
 
-pub struct DeviceInfo {
-    pub node_name: String,
-    pub compatible: String,
-    pub compatibles: Vec<String>,
-    pub device_type: DeviceType,
-    pub mmio: Option<MmioRegion>,
-    pub irq: Option<IrqLine>,
-}
+每个软件包在独立工作目录中构建并安装到自己的临时根目录。构建缓存键由软件包元数据、
+输入文件、目标架构和编译器版本共同计算，只有这些输入一致时才复用结果。随后构建器按依赖
+顺序把各临时根目录合并到staging目录。普通文件、目录和符号链接分别处理；如果两个软件包
+写入同一路径，只有元数据中明确允许覆盖时才接受，防止后构建的软件包静默替换基础文件。
 
-pub trait MachineDriver {
-    fn init_after_boot(&self) -> DriverResult<()>;
-    fn realtime_ns(&self) -> DriverResult<Option<u64>> {
-        Ok(None)
-    }
-    fn test(&self);
-}
-\end{rustcode}
+合并完成后，构建器写入已安装软件包信息并遍历整个目录树，记录路径类型、权限、大小和
+文件摘要。镜像生成阶段使用staging目录创建无分区表ext4文件系统，规范化UUID、时间戳和
+目录哈希种子等元数据，再检查块大小、inode大小及关键目录。最后执行\code{e2fsck -fn}，
+只有结构检查通过才发布镜像、内容清单和摘要文件。overlay模式则在基础镜像副本上应用
+变更，并在结束前确认基础镜像本身未被修改。
 
-设备类别trait只包含该类设备能够可靠提供的语义。下面摘录自
-\code{wateros-driver/driver-block/block-api/api-v0/src/lib.rs}；整块读写是必需能力，
-任意字节读取由公共默认实现完成，\code{flush}则明确表示此前成功写入必须提交到稳定介质。
+不同预设只决定软件包集合，不改变上述生成流程。最小环境包含根目录布局和BusyBox；图形
+环境在此基础上加入Nano-X、图形终端和Doom；完整环境还可以组合文件管理器、模拟器与JVM。
+这种做法使测试镜像和演示镜像使用同一套依赖与合并规则，减少手工制作镜像造成的差异。
 
-\begin{rustcode}
-pub trait BlockDevice: Send {
-    fn block_size(&self) -> usize { BLOCK_SIZE }
-    fn total_blocks(&self) -> Option<u64> { None }
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.96\textwidth]{pic/根文件系统构建图.png}
+  \caption{用户软件包解析与根文件系统镜像生成流程}
+  \label{fig:user-rootfs-pipeline}
+\end{figure}
+\FloatBarrier
 
-    fn read_blocks(
-        &mut self,
-        start_block: Lba,
-        buf: &mut [u8],
-    ) -> DriverResult<()>;
+\subsection{限制与小结}
 
-    fn write_blocks(
-        &mut self,
-        start_block: Lba,
-        buf: &[u8],
-    ) -> DriverResult<()>;
+该组件是构建期镜像生成器，不提供Guest中的在线软件仓库、依赖求解和升级回滚。不同架构
+的软件包可用性仍受交叉工具链和上游源码支持限制，大型运行环境也需要显式扩大镜像容量。
+当前流程已经把用户软件选择、文件合并和ext4生成固定为可检查的步骤，使根文件系统不再是
+来源不明的测试附件，而是能够与内核版本分别追踪和替换的系统组成部分。
 
-    fn flush(&mut self) -> DriverResult<()>;
-}
-\end{rustcode}
+\section{设备驱动与终端}
 
-块设备接口没有加入路径、页缓存或文件同步概念；相应地，\code{NetworkDevice}只处理完整
-二层帧和链路属性，不出现TCP端点。类别trait保持这一边界后，VirtIO-MMIO、VirtIO-PCI或
-缓存包装器都可以替换，而上层协议不需要修改。
+\subsection{功能概述}
 
-\subsection{实现机制}
+driver把启动期发现的硬件转换成共享设备对象。RISC-V从DTB匹配UART和VirtIO-MMIO，
+LoongArch通过PCI ECAM枚举VirtIO-PCI；块、字符、网络、显示和输入设备分别进入注册表。
+TTY在字符设备之上实现控制台行规程和UNIX98 PTY，设备发现、fd生命周期与终端语义保持分离。
 
-聚合层先选择当前\code{MachineDriver}，随后收集各设备类别的支持条目。RISC-V64实现解析
-DTB的\code{compatible}、\code{reg}与中断属性，对VirtIO-MMIO设备读取设备ID；LoongArch64
-实现枚举PCI函数并解析VirtIO capability。设备握手成功后，具体实现被包装成对应trait
-object并加入全局注册表。
-
-每个匹配项先验证MMIO或PCI资源，再完成VirtIO状态协商、feature确认和队列建立，最后才
-注册共享设备对象。上层因此不会观察到只完成一半初始化的设备。注册表下标保持稳定，
-devfs刷新时根据类别和下标生成节点；刷新只建立视图，不重新初始化硬件。
-
-块设备通过\code{BlockDevice}提供整块读写和flush，可选缓存层在不改变上层接口的情况下
-包装真实设备；字符设备包括UART、RTC及空设备；输入和显示设备通过devfs向用户态暴露。
-网卡驱动只提供帧收发能力，协议解析和socket状态由下一节的network组件负责。
-
-初始化失败会记录设备及错误信息，并允许其他设备继续探测。根文件系统是否能够挂载由FS
-阶段单独判断，不把“某个非必需设备缺失”直接等同于平台启动失败。
-
-中断路径只确认设备状态并推进相应队列，耗时的数据处理由上层在受控入口继续完成。DMA
-缓冲区由具体驱动持有，并在设备对象仍被注册或被VMA lease引用时保持有效；设备对象的
-共享生命周期因此先于devfs句柄和用户映射结束。
-
-\subsection{设计取舍}
-
-按设备类别拆分trait，使块设备的flush语义、字符设备的流式I/O和网卡的帧队列不会被塞入
-一个巨大的通用设备接口。机器驱动集中处理总线差异，设备类别组件集中处理设备行为。
-共享trait object带来一次动态分派，但换取了FS、VFS和network对MMIO/PCI实现的解耦。
-
-\section{网络协议栈}
-
-\subsection{职责与边界}
-
-\code{wateros-network}负责网络配置、协议栈推进、TCP/UDP/ICMP socket、连接状态、收发
-缓冲和网络事件。它从driver组件取得\code{NetworkDevice}收发以太网帧，但不负责PCI或
-VirtIO队列初始化；它通过VFS把socket包装成fd，但不管理通用fd编号。
-
-因此，网卡属于设备驱动，IP、TCP、UDP和socket属于网络协议栈。两者在
-\code{NetworkDevice}边界处连接，章节上也分别说明。
-
-\subsection{接口设计}
-
-network API定义后端无关的地址、端点、socket类型、状态、错误和快照；当前具体协议栈
-由\code{impl-smoltcp}提供。聚合层只选择性转发创建socket、bind、connect、listen、
-accept、send、receive、poll和选项操作，不把smoltcp内部socket set直接暴露给syscall。
-
-\code{SocketRef}是syscall和VFS使用的主要对象接口。它把底层协议栈句柄放入共享对象，
-使dup、fork和正在执行的系统调用可以共同持有同一打开socket。
-
-网络层没有再定义一个复制smoltcp全部能力的“协议栈trait”。当前后端由feature静态选择，
-对外变化点是稳定的\code{SocketRef}方法和数据类型；真正需要动态替换的网卡使用上一节的
-\code{NetworkDevice} trait。这样可以避免内部TCP状态、socket set借用和设备token穿过
-组件边界，同时仍允许syscall层独立实现Linux地址族、标志位和errno转换。
-
-接口中的快照与租约分别解决只读观察和有副作用读取。\code{SocketPollSnapshot}在一次
-协议栈临界区内复制可读、可写、连接错误和accept状态，调用方不能持有内部socket引用；
-\code{SocketReceiveLease}则持有一次接收预留，只有显式\code{finish}才消费数据。二者都
-允许任务在等待期间完全释放协议栈锁。
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[height=0.72\textheight,keepaspectratio]{pic/设备驱动图.png}
+  \caption{设备模型、驱动实现与上层使用者}
+  \label{fig:driver-overview}
+\end{figure}
+\FloatBarrier
 
 \subsection{核心数据结构}
 
-\code{NetworkAddress}支持IPv4与IPv6，\code{NetworkEndpoint}保存地址、端口和scope id；
-\code{SocketDomain}和\code{SocketKind}表示地址族与类型；\code{SocketState}描述内核侧
-状态机；\code{SocketPollSnapshot}在一次协议栈临界区中取得poll所需的完整状态。
+\begin{longtable}{L{3.4cm}L{5.1cm}L{4.4cm}}
+  \caption{驱动与TTY核心数据结构}\label{tab:driver-structures}\\
+  \toprule
+  结构 & 关键内容 & 生命周期与不变量 \\
+  \midrule
+  \endfirsthead
+  \toprule
+  结构 & 关键内容 & 生命周期与不变量 \\
+  \midrule
+  \endhead
+  \code{DeviceInfo} & compatible、设备类型、首个MMIO区间和可选IRQ。 & 枚举锁内建立
+  快照，构造设备时释放枚举锁。\\
+  各类设备注册表 & \code{Vec<Arc<Mutex<Box<dyn Device>>>>} & 表锁只保护索引；取得
+  \code{Arc}后再锁具体设备；当前只追加，不注销。\\
+  \shortstack[l]{\code{CachingBlock}\\\code{Device}} & raw后端、预分配数据、LBA索引、recent集合和LRU。 & 第二次
+  访问才准入；写穿后端成功后再更新缓存；默认16384块。\\
+  VirtIO DMA区 & linker保留的连续页池与staging buffer。 & 普通帧分配器不得返回DMA
+  保留区；share/unshare按方向复制。\\
+  \code{TTY}/\code{TtyState} & termios、窗口、前台进程组、editing/readable队列和读预约。 &
+  状态由单锁保护，不能在TTY锁内阻塞或唤醒。\\
+  \shortstack[l]{\code{PtyRegistry}/\\\code{PtyState}} & PTY pair、会话映射、master/slave队列、打开计数和hangup。 &
+  最后一个共享引用释放后回收pair；两端关闭要唤醒对端。\\
+  \bottomrule
+\end{longtable}
 
-下面摘录自\code{wateros-network/src/socket/object.rs}。共享对象的最后一个引用释放时
-才关闭底层socket，accept则在同一监听句柄锁内完成连接取出与替换。
+\subsection{具体实现}
 
-\begin{rustcode}
-struct SocketShared {
-    handle: Mutex<StackSocketHandle>,
-    domain: SocketDomain,
-    status_flags: AtomicUsize,
-}
+RISC-V枚举先解析DTB，再读取VirtIO-MMIO magic与device id，按类型构造块、网卡、显示或输入
+设备。LoongArch枚举PCI bus 0，为BAR分配平台MMIO窗口并构造对应transport。设备完整构造
+后才追加到注册表，避免上层取得半初始化对象；成功初始化允许设备表为空，上层必须检查。
 
-impl Drop for SocketShared {
-    fn drop(&mut self) {
-        let handle = *self.handle.get_mut();
-        if let Err(err) = stack::socket_close(handle) {
-            log::warn!(
-                "[socket-ref] final close failed handle={:?} err={:?}",
-                handle,
-                err,
-            );
-        }
-    }
-}
+块请求先验证块大小、缓冲区整除、LBA溢出和容量边界。启用缓存时，命中直接复制并更新LRU；
+未命中访问raw VirtIO，写操作先完成raw写入再write-allocate。VirtIO descriptor和DMA连续页
+由保留池提供，普通文件页通过staging copy参与DMA，因此VFS页缓存不需要承诺物理连续。
 
-#[derive(Clone)]
-pub struct SocketRef {
-    inner: Arc<SocketShared>,
-    inode: u64,
-}
+控制台输入进入TTY行规程。canonical模式处理erase、kill、EOF和换行提交，非规范模式根据
+\code{VMIN}/\code{VTIME}决定返回；ISIG识别控制字符并生成待投递信号。PTY master写入slave
+行规程，slave输出与回显进入master队列；每侧独立维护数据/空间waitqueue和hangup状态。
 
-impl SocketRef {
-    pub fn accept(
-        &self,
-        status_flags: usize,
-    ) -> NetworkResult<(SocketRef, NetworkEndpoint)> {
-        let mut listener = self.inner.handle.lock();
-        let (established, replacement, peer) =
-            stack::socket_accept(*listener)?;
-        *listener = replacement;
-        Ok((
-            Self::from_stack_handle(
-                established,
-                self.domain(),
-                status_flags,
-            ),
-            peer,
-        ))
-    }
-}
-\end{rustcode}
+% 后续可加入 figures/driver-device-stack.pdf。
+\IfFileExists{figures/driver-device-stack.pdf}{
+  \begin{figure}[htbp]\centering
+    \includegraphics[width=0.92\textwidth]{figures/driver-device-stack.pdf}
+    \caption{设备发现、注册表、设备接口与上层消费者}
+  \end{figure}
+}{}
 
-\subsection{实现机制}
+\subsection{限制与小结}
 
-协议栈初始化时取得网卡设备并安装IP地址、前缀和网关。受控poller从设备队列收取帧、
-推进协议状态并发送待输出帧；等待网络事件前释放协议栈全局锁，避免任务睡眠期间阻塞
-其他socket。
+设备注册表不支持热拔插，VirtIO完成等待由第三方驱动库处理，WaterOS驱动层没有独立的
+IRQ-to-wakeup队列与中断亲和策略。TTY尚未覆盖完整Linux job control、ioctl和设备权限。
+当前实现重点是稳定的启动发现、共享句柄和不丢数据的reservation协议。
 
-listen和accept维护监听句柄与已建立连接，send根据当前发送容量推进数据，receive使用
-预留与提交两阶段接口，避免把用户拷贝放在协议栈锁内。poll/epoll从
-\code{SocketPollSnapshot}取得可读、可写、连接完成、连接错误和pending accept状态，
-等待后重新获取快照，而不长期保存内部可变引用。
+\section{网络模块}
 
-socket作为VFS句柄进入fd表，网络模块仍拥有底层状态和最终close语义。procfs使用
-\code{NetworkSocketSnapshot}生成\code{/proc/net}内容，格式化过程只读取快照。
+\subsection{功能概述}
 
-下面摘录自\code{wateros-network/src/socket/lease.rs}。接收前先用快照快速判断状态，
-随后在协议栈中预留数据并复制到内核暂存区；lease同时持有\code{SocketRef}，保证用户
-复制期间底层socket不会被最后一个fd关闭。
+network组件基于smoltcp实现IPv4、TCP和UDP，维护全局网络接口、socket集合及WaterOS可见
+状态，并把socket包装成VFS可持有对象。网卡驱动只提供以太网帧收发，syscall只处理用户ABI；
+协议状态、连接推进和INET socket生命周期由network所有。
 
-\begin{rustcode}
-impl SocketRef {
-    pub fn prepare_receive(
-        &self,
-        max_len: usize,
-    ) -> Result<SocketReceiveLease, SocketRecvError> {
-        let snapshot = self.poll_snapshot()
-            .map_err(|_| SocketRecvError::InvalidSocket)?;
-        if !snapshot.can_recv {
-            if snapshot.kind == SocketKind::Tcp && !snapshot.may_recv {
-                return Err(SocketRecvError::Finished);
-            }
-            return Err(SocketRecvError::Empty);
-        }
-
-        let mut data = Vec::new();
-        data.try_reserve_exact(max_len)
-            .map_err(|_| SocketRecvError::NoMemory)?;
-        data.resize(max_len, 0);
-        let reservation = self.with_handle(|handle| {
-            stack::socket_prepare_recv(handle, &mut data)
-        })?;
-        data.truncate(reservation.staged_len());
-        Ok(SocketReceiveLease {
-            _socket: self.clone(),
-            reservation: Some(reservation),
-            data,
-        })
-    }
-}
-\end{rustcode}
-
-正常路径按实际复制长度提交；若用户拷贝失败或lease提前析构，drop路径以零字节、未完成
-状态取消预留。TCP字节流可提交部分数据，UDP数据报则由完成标志决定整报文消费语义。
-
-\subsection{设计取舍}
-
-网络API不直接暴露smoltcp类型，使协议栈实现与Linux socket ABI之间保留转换层。
-\code{SocketRef}以共享生命周期表达dup和fork，比按fd复制底层连接更符合打开对象语义。
-poll使用一次性快照，代价是唤醒后需要重新检查，但可以避免跨睡眠持有协议栈锁。
-
-\section{系统调用与Linux ABI}
-
-\subsection{职责与边界}
-
-\code{wateros-syscall}是用户态进入内核服务的统一入口，负责识别调用号、读取寄存器参数、
-安全访问用户内存、检查标志和权限、调用状态所属组件，并把内部错误转换成Linux errno。
-\code{wateros-abi}维护Linux generic 64位调用号及ABI类型，两者分别承担“编号与布局”和
-“具体行为”。
-
-系统调用组件不保存进程、文件、地址空间或socket的权威状态。新增调用如果需要新的内核
-机制，应先在task、MM、VFS、IPC或network中建立通用接口，再由syscall完成ABI适配。
-
-\subsection{接口设计}
-
-\code{SyscallNumber}封装调用号，\code{SyscallArgs}按ABI顺序保存参数寄存器，
-\code{SyscallPacket}组合一次完整请求。\code{UserRet}统一编码非负成功值与负errno，
-\code{KernelResult<T>}用于实现内部传递未编码的错误。
-
-trap路径只构造参数并调用\code{dispatch\_syscall\_from\_trap}。具体分发按文件、进程、MM、
-IPC、网络、时间和凭证等功能文件组织；是否能够自动重启由单独表记录，避免所有被信号
-打断的调用一律重试。
-
-这里同样没有设置覆盖全部系统调用的trait。调用号集合是编译期确定的Linux ABI，使用
-直接分发表可以在入口处看到“编号到实现”的一一对应；各\code{sys\_*}函数再依赖所属
-组件的稳定接口。可替换实现位于MM、FS、driver等组件内部，syscall层自身不是运行时插件。
-
-每个实现按“ABI解析、权限与范围检查、取得内核对象、执行组件操作、写回用户结果”的顺序
-组织。用户指针不会转换为可长期保存的Rust引用，可能睡眠的路径也不会跨等待保留用户页
-或fd槽的借用。内部trait返回领域错误，syscall文件在离ABI最近的位置完成errno映射，
-使组件接口不依赖Linux错误号。
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.92\textwidth,height=0.72\textheight,keepaspectratio]{pic/网络图.png}
+  \caption{网络协议栈与socket收发路径}
+  \label{fig:network-overview}
+\end{figure}
+\FloatBarrier
 
 \subsection{核心数据结构}
 
-\code{ErrNo}封装Linux错误号；stat、statx、socket地址、timespec和signal frame等用户
-结构体在ABI或syscall实现层定义，不与内核内部对象共用布局。用户指针始终以整数进入
-分发层，再通过MM用户拷贝接口读写。
+\begin{table}[htbp]
+  \centering
+  \caption{网络模块核心数据结构}
+  \begin{tabularx}{\textwidth}{L{3.5cm}L{4.8cm}Y}
+    \toprule
+    结构 & 关键内容 & 生命周期与不变量 \\
+    \midrule
+    \shortstack[l]{\code{NETWORK}\\\code{\_STACK}} & 全局\code{TrackedMutex<Option<NetworkStack>>} & 只安装一次；
+    所有协议状态在同一栈锁下更新。\\
+    \code{NetworkStack} & interface、route、socket set、meta表和poll时间。 & socket与meta必须
+    对应；poll时间单调，不能让smoltcp时间倒退。\\
+    \code{SocketMeta} & WaterOS状态、connect错误、选项和接收reservation。 & 同一socket同时
+    最多一个接收reservation。\\
+    \shortstack[l]{\code{SocketRef}/\\\code{SocketShared}} & \code{Arc}、句柄锁和status flags。 & fd与在途syscall
+    共享；最后引用释放时只关闭一次。\\
+    \code{SocketReceiveLease} & 暂存数据、reservation和socket引用。 & finish只消费已复制
+    前缀，Drop取消预留但保留数据。\\
+    \bottomrule
+  \end{tabularx}
+\end{table}
 
-下面摘录自\code{wateros-syscall/syscall-api/api-v0/src/args.rs}和
-\code{return\_value.rs}。数据结构只承载ABI，不解释某个参数槽位的具体含义。
+\subsection{具体实现}
 
-\begin{rustcode}
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct SyscallArgs {
-    pub args: [usize; MAX_SYSCALL_ARGS],
-}
+启动时网卡注册表中的共享设备被包装为smoltcp adapter，建立IPv4地址、路由和socket set。
+poller在栈锁内从驱动收取有限批次帧，交给smoltcp处理，再发送产生的帧。每次socket操作通过
+句柄锁串行化同一socket的accept、connect、send、recv和close，同时全局栈锁保护协议栈内部
+结构，调用点必须遵守先取得句柄意图、再短时进入全局栈的顺序。
 
-impl SyscallArgs {
-    pub const fn from_regs(
-        regs: [usize; MAX_SYSCALL_ARGS],
-    ) -> Self {
-        Self { args: regs }
-    }
+TCP connect可能异步完成，结果保存在\code{SocketMeta}；listen/accept在取出已连接socket后
+替换监听句柄状态。发送先复制用户数据，再提交协议栈；接收只peek并建立reservation，用户
+复制完成后才消费相应前缀。该协议与VFS/pipe的读取租约一致，避免EFAULT造成报文静默丢失。
 
-    pub const fn arg(&self, idx: usize) -> usize {
-        self.args[idx]
-    }
-}
+阻塞socket和poll会重复检查可读写状态、信号和deadline，并通过task等待让出CPU。当前网卡
+接收没有直接定位并唤醒具体socket等待者的完整链路，周期poller和系统调用重试仍承担协议
+推进。AF\_UNIX在syscall附属实现中维护，不进入smoltcp栈。
 
-#[repr(transparent)]
-pub struct UserRet(pub isize);
+% 后续可加入 figures/network-socket-path.pdf。
+\IfFileExists{figures/network-socket-path.pdf}{
+  \begin{figure}[htbp]\centering
+    \includegraphics[width=0.9\textwidth]{figures/network-socket-path.pdf}
+    \caption{网卡、协议栈、socket对象与fd的收发路径}
+  \end{figure}
+}{}
 
-impl UserRet {
-    pub const fn from_success(v: usize) -> Self {
-        Self(v as isize)
-    }
-    pub const fn from_error(errno: ErrNo) -> Self {
-        Self(errno.user_ret())
-    }
-}
-\end{rustcode}
+\subsection{限制与小结}
 
-\subsection{实现机制}
+当前不支持IPv6，socket buffer选项只保存查询值，不会改变创建时的固定后端缓冲区；协议栈
+仍以全局锁串行化。后续需要建立网卡事件到socket waitqueue的直接唤醒关系，并在不破坏
+reservation语义的前提下缩短全局栈锁持有时间。
 
-用户态\code{ecall}进入架构trap后，trap frame提供调用号和最多六个参数。分发入口记录
-调用统计，按调用号选择实现，并在调用完成且不再持有VFS或设备锁后更新进程I/O统计。
-普通调用返回时推进用户PC并写回\code{UserRet}；\syscall{execve}成功后已经换成新映像
-的trap frame，不能再按普通返回路径覆盖。
+\section{系统调用模块}
 
-具体实现先检查指针、长度、fd和标志，再调用对应组件。路径和结构体通过有界user copy
-进入内核；产生副作用的调用在修改状态前完成权限检查。内部的\code{VfsError}、
-\code{MmError}、\code{ProcessError}和\code{NetworkError}分别映射为稳定errno。不支持
-的调用或功能返回\code{ENOSYS}，而不是成功占位或直接panic。
+\subsection{功能概述}
 
-procfs相关系统调用使用task、MM、VFS、IPC和network快照生成内容。CPU online信息与
-affinity使用同一CPU集合，计时接口使用平台单调时间，避免不同用户接口对同一内核状态
-给出互相矛盾的结果。
+syscall是用户态ABI事务层。trap层提供调用号和寄存器参数后，本模块完成generic64路由、
+flag、长度和结构体校验、用户内存复制及errno编码，再调用真正拥有状态的组件。它不长期
+持有进程、地址空间、文件或socket，只维护epoll、poll和AF\_UNIX适配所需的少量附属状态。
 
-下面摘录自\code{wateros-syscall/syscall-impl/impl-kernel/src/lib.rs}。统一入口完成分发，
-并在调用结束、不再持有VFS或设备锁后记录I/O统计。
+\subsection{核心数据结构}
 
-\begin{rustcode}
-pub fn dispatch_syscall_from_trap(
-    syscall_nr: usize,
-    syscall_args: SyscallArgs,
-) -> isize {
-    sys::record_syscall();
-    let result = syscall_nr_dispatch::dispatch_syscall_by_nr(
-        syscall_nr,
-        syscall_args,
-    );
-    if result >= 0 {
-        account_process_io(syscall_nr, result as u64);
-    }
-    result
-}
-\end{rustcode}
+\begin{longtable}{L{3.5cm}L{5.0cm}L{4.4cm}}
+  \caption{系统调用模块核心数据结构}\label{tab:syscall-structures}\\
+  \toprule
+  结构 & 关键内容 & 生命周期与不变量 \\
+  \midrule
+  \endfirsthead
+  \toprule
+  结构 & 关键内容 & 生命周期与不变量 \\
+  \midrule
+  \endhead
+  \shortstack[l]{\code{SyscallArgs}/\\\code{SyscallPacket}} & 调用号与六个参数槽。 & 寄存器顺序固定；号常量
+  存在不表示handler已实现。\\
+  \shortstack[l]{\code{ErrNo}/\\\code{KernelResult}/\\\code{UserRet}} & 内部正errno和最终用户返回值。 & 只在
+  最后一步编码\code{-errno}，避免跨层重复取负。\\
+  分发表 & 普通handler表、特殊签名表和restart白名单。 & 越界或空槽稳定返回\code{ENOSYS}。\\
+  \code{UserWriteProgress} & 已复制字节和可选错误。 & 已有进度时优先返回部分完成，不把
+  跨页fault伪装成全失败。\\
+  epoll/poll附属状态 & epoll兴趣项、edge/oneshot位和一次poll上下文。 & 扫描时复制兴趣项，
+  锁外查询VFS/network，避免持epoll锁阻塞。\\
+  \bottomrule
+\end{longtable}
 
-trap返回部分摘录自\code{os/src/trap\_handler.rs}。这里必须单独处理\syscall{execve}和
-可重启调用，不能机械地推进旧trap frame。
+\subsection{具体实现}
 
-\begin{rustcode}
-let exec_succeeded = syscall_nr == EXEC && syscall_ret >= 0;
-if !exec_succeeded {
-    cx.add_user_pc(SYSCALL_INSN_BYTES);
-    cx.set_syscall_ret(UserRet(syscall_ret));
-    if syscall_ret == syscall::ErrNo::EINTR.user_ret()
-        && syscall::is_restartable_syscall(syscall_nr)
-    {
-        restart = Some((syscall_nr, syscall_args));
-    }
-}
-\end{rustcode}
+通用入口记录调用统计后检查号表，普通调用转到\code{sys/*}目录中的handler。handler先验证
+ABI输入：路径按块复制并限制长度，mmap检查页对齐与flag组合，futex检查u32对齐和映射身份，
+socket检查结构长度。通过校验后才调用VFS、MM、task、IPC或network，并把各自错误映射为
+Linux errno。未登记或架构不适用的调用返回\code{ENOSYS}。
 
-\syscall{execve}成功时，新映像的入口、栈和寄存器已经写入trap frame，继续使用旧frame的
-普通返回逻辑会破坏新上下文。可重启调用则保存原调用号与参数，待信号投递完成后由返回
-路径恢复；不在重启表中的调用保持\code{EINTR}，由用户态决定是否重试。
+用户复制通过当前task的地址空间逐页进行。NUL字符串跨无效页时回退到逐字节读取，确保NUL
+之前的有效前缀不被错误拒绝；read/recv等操作把复制进度交回对象reservation，只提交成功
+字节。临时内核缓冲使用可失败分配并设置调用点上限，分配失败返回\code{ENOMEM}，避免大
+用户请求直接触发全局OOM handler。
 
-\subsection{设计取舍}
+poll每轮导入或扫描fd就绪状态，检查signal和deadline后进入短时等待；当前实现按tick重扫，
+不是完整事件驱动Linux poll。epoll把兴趣项保存在syscall附属对象，扫描时在锁内复制interest，
+锁外查询VFS或network的就绪状态，再短暂加锁更新edge/oneshot标志。fork、线程共享和退出
+通过独立生命周期hook维护这些附属对象。
 
-调用号表和行为实现分离，使ABI编号能够保持稳定，同时允许内核机制逐项接入。系统调用
-层集中做用户拷贝与errno转换，可以防止相同Linux结构体解析散落到各组件。代价是分发层
-需要依赖多个组件，因此通过“只转换、不持有状态”的边界控制其复杂度。
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.96\textwidth,height=0.31\textheight,keepaspectratio]{pic/系统调用图.png}
+  \caption{系统调用分发、用户复制、子系统调用与错误返回}
+  \label{fig:syscall-dispatch}
+\end{figure}
+\FloatBarrier
 
-\designrule{成功路径和错误路径同属ABI；参数无效、权限不足或用户地址不可访问时，必须
-在产生不可回滚副作用之前返回相应errno。}
+\subsection{限制与小结}
+
+generic64号表没有全覆盖，自动重启只适用于显式白名单。poll、公平性、AF\_UNIX附属语义和
+少用flag仍与Linux存在差异。因此文档只声明已实现系统调用的主要ABI兼容，不把调用号常量
+或接口数量解释为全部Linux系统调用均已实现。
+
+\section{凭证模块}
+
+\subsection{功能概述}
+
+cred组件为每个任务保存身份与授权上下文，连接任务生命周期、set*id系统调用和VFS权限入口。
+它保存real、effective、saved及filesystem UID/GID，并记录supplementary groups。组件只拥有
+凭证侧表，不拥有TCB、地址空间或inode；任务创建、fork、clone、exec、退出与reap通过明确
+hook通知凭证模块。
+
+\subsection{核心数据结构}
+
+\begin{table}[htbp]
+  \centering
+  \caption{凭证模块核心数据结构}
+  \label{tab:cred-structures}
+  \begin{tabularx}{\textwidth}{L{3.5cm}L{4.9cm}Y}
+    \toprule
+    结构 & 关键内容 & 生命周期与不变量 \\
+    \midrule
+    \code{ProcessCredentials} & 四类UID/GID以及supplementary groups。 &
+    以快照形式保存；修改前检查当前实现允许的身份转换。\\
+    \code{creds} & owner task id到凭证快照的\code{BTreeMap}。 & 每个有效owner必须存在一份
+    credentials；缺失时可查询接口返回\code{None}。\\
+    \code{owners} & task id到有效凭证owner的映射。 & 独立进程指向自身；共享凭证的线程指向
+    同一owner。\\
+    \code{ref\_counts} & owner到共享任务数量的映射。 & share递增、task清理递减，归零后才删除
+    owner对应的凭证快照。\\
+    \shortstack[l]{\code{Capability}/\\\code{AccessCheck}} & capability枚举和inode访问查询接口。 & 当前后端只
+    实现有限root判断，接口存在不代表完整Linux权限语义。\\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{具体实现}
+
+首个用户任务建立独立凭证owner和初始root快照。fork为子任务复制父凭证，后续修改互不影响；
+\code{CLONE\_THREAD}则让线程映射到同一owner并增加引用计数，使线程组观察到一致身份。
+如果child已有旧映射，重新绑定前先释放旧owner引用，避免重复初始化留下不可回收快照。
+
+setuid、setgid及groups相关系统调用由syscall完成ABI校验，再调用cred更新快照。读取凭证时，
+模块先通过\code{owners}归一化到有效owner；VFS权限入口也只查询凭证结果，不直接访问任务
+内部字段。exec保留当前凭证对象并调用\code{on\_exec}处理实现支持的转换；任务退出或reap时
+删除task映射并减少引用，最后一个共享者离开后才回收credentials。
+
+当前\code{impl-root}以有效UID 0作为有限capability判断，非root返回无权限。该规则可满足部分
+bring-up和系统调用检查，但不是Linux capability集合、user namespace或inode mode/ACL的完整
+实现。
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.96\textwidth]{pic/凭证生命周期.png}
+  \caption{凭证在fork、线程共享、exec与退出时的生命周期}
+  \label{fig:credential-lifecycle}
+\end{figure}
+\FloatBarrier
+
+\subsection{限制与小结}
+
+当前exec尚未完整解析并应用SUID/SGID文件位，capability只包含有限枚举和root判断，inode访问
+检查仍有占位实现；supplementary groups也由syscall层限制数量。凭证组件目前解决的是身份
+状态的复制、共享和回收问题，不能据此宣称已经具备完整Linux安全模型。

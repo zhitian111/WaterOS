@@ -1,548 +1,245 @@
-\chapter{测试与调试工具}
+\chapter{构建、运行与测试}
 
-本章介绍WaterOS提供的测试与调试工具，包括统一构建与运行、用户空间及镜像制作、测试
-日志分析、终端与图形环境、性能与压力分析以及内核调试，并说明常用命令和输出内容。
-除用户空间工具外，命令均从\code{os/}目录执行。
+WaterOS的验证从同一套Makefile入口开始。构建参数决定目标架构、内核配置、CPU数量和
+根文件系统，Guest中的测试脚本再覆盖系统调用、进程、内存、文件和网络等路径。本章先
+说明如何得到可运行环境，再给出测试方法和已经保存的测试结果。性能数字只用于
+描述本次QEMU配置下的运行情况，不与裸机或其他操作系统作未经控制的横向比较。
 
-\section{使用约定}
+\section{构建与运行}
 
-日常构建和运行优先使用\code{os/Makefile}，不需要手工组合Cargo feature或完整QEMU
-参数。所有命令共用以下主要参数：
+内核构建入口统一处理Cargo feature、内核文件名、用户镜像和QEMU参数。常用参数为
+\code{ARCH=rv|la}、\code{PROFILE=pre|final}与\code{SMP}。\code{pre}用于初赛镜像及其
+自动测试队列，\code{final}用于完整用户环境；两种profile选择的根文件系统和启动任务不同，
+因此测试记录必须同时写明架构与profile。
 
 \begin{table}[htbp]
   \centering
-  \caption{构建与运行参数}
-  \begin{tabularx}{\textwidth}{L{3.8cm}L{3.8cm}Y}
+  \caption{主要构建与运行入口}
+  \label{tab:build-entry}
+  \begin{tabularx}{\textwidth}{L{3.0cm}L{4.8cm}Y}
     \toprule
-    参数 & 可选值或示例 & 用途 \\
+    目标 & 示例命令 & 用途 \\
     \midrule
-    \code{ARCH} & \code{rv}、\code{la} & 选择RISC-V64或LoongArch64。 \\
-    \code{PROFILE} & \code{pre}、\code{final} & 选择对应的内核feature及默认根文件系统镜像。 \\
-    \code{SMP} & \code{1}至\code{8} & 指定QEMU虚拟CPU数量，默认值为8。 \\
-    \code{MODE} & \code{auto}、\code{shell}、\code{run} & 选择自动测例、交互终端或指定脚本。 \\
-    \code{SCRIPT} & Guest绝对路径 & 仅在\code{MODE=run}时使用。 \\
-    \code{SDCARD} & 镜像路径 & 覆盖当前架构与profile的默认镜像。 \\
-    \code{SNAPSHOT} & \code{0}、\code{1} & 是否丢弃本次QEMU的磁盘写入，默认值为1。 \\
-    \code{WRITE\_DISK} & \code{0}、\code{1} & 显式允许把修改写回指定镜像。 \\
-    \code{EXTRA\_FEATURES} & 逗号分隔feature & 临时增加诊断、网络或图形能力。 \\
+    查看配置 & \code{make show-config ARCH=rv PROFILE=final SMP=8} & 确认目标架构、镜像、
+    feature和QEMU参数。\\
+    静态检查 & \code{make check ARCH=rv PROFILE=final} & 检查目标架构上的类型、依赖与
+    条件编译组合。\\
+    构建内核 & \code{make build ARCH=rv PROFILE=final} & 生成对应架构和profile的内核镜像。\\
+    自动运行 & \code{make run ARCH=rv PROFILE=pre SMP=8} & 启动Guest并执行镜像预置的测试队列。\\
+    交互运行 & \code{make shell ARCH=rv PROFILE=final SMP=8} & 进入串口shell，执行定向测试
+    或应用演示。\\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-开始一轮测试前可以先用\code{show-config}确认最终解析出的架构、内核、镜像、CPU数和运行
-模式。它只打印配置，不构建也不启动QEMU。
+双架构构建应分别执行，不能以RISC-V64结果代替LoongArch64结果。日常测试默认使用QEMU
+snapshot，Guest对磁盘的修改不会写回基础镜像；需要检查持久化结果时，应复制基础镜像，
+再显式设置\code{WRITE\_DISK=1 SNAPSHOT=0}。若QEMU提示\code{hostfwd}端口已占用，应先
+释放端口或修改转发配置，这属于宿主运行环境冲突，不是内核编译错误。
 
 \begin{bashcode}
-cd os
-make help
-make show-config ARCH=rv PROFILE=final SMP=8
-make show-config ARCH=la PROFILE=final SMP=8
-\end{bashcode}
-
-\section{统一构建与运行入口}
-
-\subsection{静态检查与构建}
-
-\code{make check}执行所选目标的Cargo检查，\code{make build}生成命名明确的内核文件。
-四种常用组合如下：
-
-\begin{bashcode}
-make check ARCH=rv PROFILE=pre
 make check ARCH=rv PROFILE=final
-make check ARCH=la PROFILE=pre
 make check ARCH=la PROFILE=final
-
 make build ARCH=rv PROFILE=final
 make build ARCH=la PROFILE=final
+
+# 自动测试与交互环境
+make run   ARCH=rv PROFILE=pre   SMP=8
+make shell ARCH=rv PROFILE=final SMP=8
 \end{bashcode}
 
-final构建产物为\code{kernel-rv-final}与\code{kernel-la-final}；pre构建采用相同命名规则。
-\code{make all}用于同时构建两个final目标，并生成兼容名称\code{kernel-rv}和
-\code{kernel-la}。
+\section{测试方法}
 
-\subsection{自动运行与交互终端}
+测试按“能否构建、能否启动、接口是否正确、完整负载能否结束”逐层进行。上一层通过只是
+进入下一层的前提。例如，脚本返回0说明测试队列执行完毕，但仍需查看每个测试程序自己的
+结果；性能程序能够输出数字，也不能代替功能测试和长期稳定性检查。
 
-\code{make run}先构建所选内核，再由\code{scripts/run/qemu\_run.py}统一生成QEMU参数。
-\code{MODE=auto}使用镜像对应的bring-up队列；\code{make shell}进入交互终端。
+\begin{longtable}{L{2.8cm}L{5.2cm}L{5.3cm}}
+  \caption{测试层次与判定方法}\label{tab:test-method}\\
+  \toprule
+  层次 & 测试内容 & 判定依据 \\
+  \midrule
+  \endfirsthead
+  \toprule
+  层次 & 测试内容 & 判定依据 \\
+  \midrule
+  \endhead
+  构建检查 & RISC-V64和LoongArch64的\code{check/build}，分别覆盖pre与final配置。 &
+  构建进程正常退出，目标文件生成，feature组合与预期一致。\\
+  启动检查 & 1核、8核启动，挂载根文件系统并进入自动队列或交互shell。 & BSP与AP完成
+  初始化，根文件系统可访问，用户态首进程能够运行。\\
+  功能回归 & BusyBox、libctest、LTP及定向系统调用程序。 & 以测例自身的断言、退出状态
+  和分项汇总为准，不用测试脚本的总退出码覆盖分项失败。\\
+  综合负载 & CAgent、BuildStorm、libc-bench、lmbench、iozone和stress-ng。 & 工作负载
+  完整结束，随后仍能创建进程、读写文件并执行shell命令。\\
+  应用演示 & Nano-X桌面、图形终端、输入设备和Doom。 & framebuffer与evdev可用，窗口
+  能创建和刷新，键鼠事件及PTY输入能够到达用户程序。\\
+  \bottomrule
+\end{longtable}
 
-\begin{bashcode}
-# 自动执行镜像对应的工作负载
-make run ARCH=rv PROFILE=final SMP=8
-make run ARCH=la PROFILE=final SMP=8
+自动测试日志由测试组起止标记和runner记录组成。统计时先确认每个测试组同时出现
+\code{START}与\code{END}，再检查程序退出状态和组内结果。LTP会为不同用例分别输出
+\code{Summary}，不能把这些局部统计直接累加；否则同一批累计数字会被重复计算。原始串口
+日志应与内核commit、用户镜像摘要、QEMU版本和完整命令一同保存。
 
-# 使用 pre 镜像进入交互 shell
-make shell ARCH=rv PROFILE=pre SMP=8
-\end{bashcode}
+\section{当前测试数据}
 
-如需运行镜像内的单个脚本，使用\code{MODE=run}和Guest中的绝对路径。该命令不会把宿主
-文件自动复制进镜像，指定脚本必须已经存在于Guest文件系统中。
+\subsection{系统调用与基准测试}
 
-\begin{bashcode}
-make run ARCH=rv PROFILE=final SMP=8 \
-  MODE=run SCRIPT=/glibc/cagent_testcode.sh
-
-make run ARCH=rv PROFILE=final SMP=8 \
-  MODE=run SCRIPT=/glibc/buildstorm_testcode.sh
-\end{bashcode}
-
-\section{用户空间与镜像工具}
-
-\code{user/}是与内核工程分离的用户空间构建系统，负责交叉编译package、合并rootfs
-staging并生成可直接由QEMU挂载的EXT4镜像。内核和用户镜像可以分别构建和替换，因而
-修改一个用户程序不需要重新编译内核，内核测试也可以选择比赛镜像或自有镜像。
-
-该工具不是把若干二进制直接复制到固定目录。每个package通过\code{package.toml}声明
-版本、支持架构、依赖、构建入口和允许安装的路径；构建器完成依赖拓扑排序、补丁应用、
-独立\code{DESTDIR}安装、路径冲突检查及缓存键计算。目前提供minimal、operator、graphics、
-jvm等组合，也可以传入逗号分隔的package列表。
-
-\subsection{构建和检查自有镜像}
-
-以下命令从仓库的\code{user/}目录执行。\code{doctor}检查交叉编译器并实际链接目标程序；
-\code{image}构建package和EXT4镜像；\code{inspect}显示文件系统信息及镜像内的package
-元数据；\code{test}执行宿主单元测试和镜像集成测试。
-
-\begin{bashcode}
-cd user
-
-make doctor ARCH=rv
-make image ARCH=rv PACKAGE=operator
-make inspect ARCH=rv
-make test
-\end{bashcode}
-
-RISC-V64默认产物为\code{build/images/wateros-rv.ext4}，LoongArch64采用相同命名规则。
-构建器同时生成\code{.manifest.json}和\code{.sha256}，分别记录镜像内路径、权限、文件
-摘要以及整个镜像的校验和。制作过程中使用\code{mke2fs}生成文件系统，随后执行只读
-\code{e2fsck -fn}检查，避免把结构损坏的镜像直接交给内核运行。
-
-自有镜像可以通过\code{SDCARD}交给统一运行入口：
-
-\begin{bashcode}
-cd ../os
-make shell ARCH=rv PROFILE=pre \
-  SDCARD=../user/build/images/wateros-rv.ext4
-\end{bashcode}
-
-\subsection{向比赛镜像叠加工具}
-
-自有镜像不包含比赛镜像中的固定测试目录。需要在原测试环境中增加诊断程序时，使用
-\code{overlay}复制基础镜像并向副本写入选定package，而不是重新制作或直接修改原镜像。
-
-\begin{bashcode}
-cd user
-make overlay ARCH=rv PACKAGE=operator \
-  BASE_IMAGE=../os/sdcard-rv.img \
-  OUTPUT=/tmp/sdcard-rv-with-tools.ext4
-\end{bashcode}
-
-overlay只允许写入\code{/bin}、\code{/sbin}、\code{/usr/bin}、\code{/usr/sbin}、
-\code{/etc/wateros}、\code{/opt/wateros}等受限目录，并显式保护\code{/glibc}与
-\code{/musl}测试树。完成后再次
-运行\code{e2fsck -fn}，生成\code{.changes.json}和SHA-256文件；变更清单保存基础镜像
-摘要、输出摘要及每个新增或替换路径，便于说明测试环境相对baseline发生了哪些变化。
-
-operator镜像中的\code{wos-syscall-smoke}是目标机程序，直接覆盖sendfile、splice、
-timerfd、signalfd和批量socket收发等链路。它用于确认自有用户程序能够通过真实VFS、IPC、
-网络、信号和用户内存复制路径运行，而不是用宿主程序模拟系统调用返回值。
-
-\begin{bashcode}
-# 在 Guest shell 中执行
-wos-syscall-smoke
-\end{bashcode}
-
-\section{测试与日志工具}
-
-除直接使用\code{make run}外，仓库还提供串口操作、结果解析和LTP汇总工具。表
-\ref{tab:test-log-tools}列出各工具的入口与输出；所有脚本均支持\code{--help}查看完整
-参数。
+表\ref{tab:current-log-groups}来自一次保存完整的串口测试记录。该记录使用
+\code{ARCH=rv PROFILE=pre SMP=8}运行，Preliminary镜像依次执行了五个测试组。五条runner
+命令均以退出码0结束，测试队列从启动第一个程序到最后一项结束约14分28秒。这里的“完成”
+表示程序返回并留下完整结果，不等同于其中每个子测例都通过。
 
 \begin{table}[htbp]
   \centering
-  \caption{测试与日志工具}
-  \label{tab:test-log-tools}
-  \begin{tabularx}{\textwidth}{L{4.1cm}L{4.5cm}Y}
+  \caption{本次自动测试包含的测试组}
+  \label{tab:current-log-groups}
+  \begin{tabularx}{\textwidth}{L{3.5cm}C{2.4cm}L{3.0cm}Y}
     \toprule
-    工具 & 用途 & 输出 \\
+    测试组 & 运行时间 & runner状态 & 日志中可确认的结果 \\
     \midrule
-    \code{operator\_smoke.py} & 驱动operator shell，执行命令或Guest脚本，并检查串口交互。 & 指定的串口日志及进程退出状态。 \\
-    \code{parse\_qemu\_test\_log.py} & 按bring-up脚本块汇总basic、BusyBox、libctest、LTP等测试组。 & 标准输出中的分组摘要。 \\
-    \code{ltp\_sum\_passed.py} & 汇总一个或多个LTP日志中Summary段的通过数量。 & 各日志及合计通过数。 \\
+    cyclictest-glibc & 20.794 s & exit 0 & 无负载/有负载、1线程/8线程四组均运行结束。\\
+    ltp-musl & 369.519 s & exit 0 & 调度341个不同的LTP用例并到达测试组结束标记。\\
+    libcbench-glibc & 10.098 s & exit 0 & malloc、字符串、线程、stdio、UTF-8和正则项目完成。\\
+    lmbench-glibc & 340.408 s & exit 0 & 系统调用、进程、pipe、缺页等延迟项目完成。\\
+    iozone-glibc & 127.237 s & exit 0 & 4进程文件I/O测试完成并输出吞吐量。\\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-operator工具可以选择架构、profile、CPU数、运行模式、Guest脚本及超时。下面的命令在
-RISC-V64 final镜像中执行CAgent，并把完整串口输出保存到\code{/tmp}：
-
-\begin{bashcode}
-python3 scripts/testing/operator_smoke.py \
-  --arch rv --profile final --smp 8 --timeout 300 \
-  --mode run --script /glibc/cagent_testcode.sh \
-  --log /tmp/wateros-cagent.log
-\end{bashcode}
-
-已有QEMU日志可以脱离内核运行过程重复解析。解析器用于快速定位首个异常分组，最终结论
-仍需检查原始日志中的panic、异常退出和脚本结束标记。
-
-\begin{bashcode}
-python3 scripts/testing/parse_qemu_test_log.py \
-  /tmp/wateros-cagent.log
-
-python3 scripts/testing/ltp_sum_passed.py \
-  /tmp/ltp-run-1.log /tmp/ltp-run-2.log
-\end{bashcode}
-
-\section{终端与图形环境}
-
-除自动运行入口外，WaterOS还提供串口终端、PTY测试程序、图形终端和两种图形环境。
-本节只说明这些入口的用途和启动方法；TTY、显示设备及窗口系统的内部实现归入相应模块的
-设计说明。
+表\ref{tab:lmbench-result}列出lmbench日志中较容易复核的项目。所有值都来自QEMU中的本次
+运行，单位为微秒；它们适合用于同一环境下修改前后的回归比较。
 
 \begin{table}[htbp]
   \centering
-  \caption{终端与图形环境入口}
-  \begin{tabularx}{\textwidth}{L{4.0cm}L{4.2cm}Y}
+  \caption{本次lmbench部分延迟数据}
+  \label{tab:lmbench-result}
+  \begin{tabularx}{\textwidth}{L{4.2cm}C{2.8cm}L{4.2cm}C{2.8cm}}
     \toprule
-    入口 & 环境 & 用途 \\
+    项目 & 延迟/\textmu s & 项目 & 延迟/\textmu s \\
     \midrule
-    \code{make shell} & QEMU串口 & 进入Guest shell并执行交互命令。 \\
-    \code{pty-smoke} & Guest用户态 & 检查PTY创建、master/slave传输及子进程退出。 \\
-    \code{nxterm} & Nano-X图形环境 & 在独立PTY中运行交互shell。 \\
-    \code{gui} feature & 内核GUI & 通过\code{EXTRA\_FEATURES}启用内核窗口系统。 \\
-    \code{start-nanox} & 用户态图形环境 & 启动Nano-X server并管理运行所需的socket。 \\
-    \code{start-doom} & 用户态图形环境 & 启动图形应用并检查显示和输入是否可用。 \\
+    简单系统调用 & 31.0560 & 简单read & 59.9029 \\
+    简单write & 72.9876 & 简单stat & 233.2609 \\
+    pipe往返 & 378.7794 & 保护异常 & 259.0301 \\
+    fork后退出 & 1757.2500 & fork后execve & 2027.3333 \\
+    文件缺页 & 69.8401 & 打开并关闭文件 & 501.9091 \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-\subsection{终端环境}
+iozone使用4个并发进程、1 MiB文件和1 KiB记录。表\ref{tab:iozone-result}采用日志中的
+children aggregate值，避免把单进程最小值与总吞吐量混在一起。
 
-日常交互使用\code{make shell}。包含graphics package的自有镜像还安装了
-\code{pty-smoke}；需要图形终端时，在Nano-X启动后运行\code{nxterm}。
+\begin{table}[htbp]
+  \centering
+  \caption{本次iozone部分吞吐量数据}
+  \label{tab:iozone-result}
+  \begin{tabularx}{\textwidth}{L{5.0cm}C{3.1cm}Y}
+    \toprule
+    项目 & 吞吐量/(KiB/s) & 测试说明 \\
+    \midrule
+    4进程首次写入 & 2523.87 & 普通write路径，1 KiB记录。\\
+    4进程顺序读取 & 34926.56 & 普通read路径，读取已有文件。\\
+    4进程pwrite & 36041.69 & 按偏移写入。\\
+    4进程pread & 38778.26 & 按偏移读取。\\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\FloatBarrier
+\subsection{双架构综合负载}
+
+另一组Final镜像测试分别在RISC-V64和LoongArch64上运行CAgent与BuildStorm。RISC-V64
+配置为8个虚拟CPU和16 GiB内存，LoongArch64配置为12个虚拟CPU和36 GiB内存。两组配置
+并不相同，因此表\ref{tab:dual-arch-workloads}中的时间只用于说明负载完整运行，不用于比较
+两种架构的性能。
+
+CAgent启动本地HTTP服务，通过请求触发模板推理和系统操作。十个用例覆盖CPU信息、磁盘
+使用、日期、阶乘、文件创建、文件读写、内核信息、文件搜索、目录操作和网络连接。两种
+架构均输出十条success记录，测试组正常结束且runner退出码为0。
+
+BuildStorm先检查Rust工具链并执行最小构建，再以multi模式编译ArceOS HelloWorld。该过程
+会密集使用进程创建、\code{execve}、文件映射、目录遍历、并发文件读写和内存分配。编译
+结束后，脚本继续启动生成的内核产物，以免把“文件已经生成”误判为“产物可以运行”。两种
+架构的工具链检查、最小构建、正式编译和产物启动均返回OK。
+
+\begin{table}[htbp]
+  \centering
+  \caption{双架构CAgent与BuildStorm测试结果}
+  \label{tab:dual-arch-workloads}
+  \begin{tabularx}{\textwidth}{L{4.4cm}C{4.1cm}C{4.1cm}}
+    \toprule
+    项目 & RISC-V64 & LoongArch64 \\
+    \midrule
+    Final运行配置 & 8 vCPU，16 GiB & 12 vCPU，36 GiB \\
+    CAgent通过情况 & 10/10 & 10/10 \\
+    CAgent测试组耗时 & 5.830 s & 3.661 s \\
+    BuildStorm模式 & multi，8 cores & multi，12 cores \\
+    BuildStorm计时构建 & 2142.57 s & 1855.00 s \\
+    生成产物大小 & 1681000 bytes & 1714568 bytes \\
+    产物启动 & OK & OK \\
+    两个测试组runner状态 & exit 0 & exit 0 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+这组结果补充了pre自动队列未覆盖的完整应用路径：CAgent侧重服务进程、socket与文件操作，
+BuildStorm侧重用户态工具链、多进程编译和持续文件I/O。它们共同表明两种架构都能够在
+Final用户环境中完成较长执行链，而不仅是启动到shell或通过单个系统调用测例。
+
+\FloatBarrier
+\section{Nano-X图形演示}
+
+Nano-X适合作为综合功能测试，而不只是界面展示。桌面启动会经过VirtIO GPU、framebuffer
+mmap、evdev、VFS设备节点和Unix socket；\code{nxterm}进一步覆盖UNIX98 PTY、shell、
+\code{poll/select}与信号；Doom则持续产生窗口刷新和输入事件。因而一次可交互的图形演示
+可以同时检查驱动、文件系统、进程和IPC路径。
+
+RISC-V64图形镜像和内核可按以下方式启动：
+
+在用户空间构建环境中生成图形根文件系统：
 
 \begin{bashcode}
-# 宿主：准备包含 PTY 测试程序的用户镜像
-cd user
 make image ARCH=rv PACKAGE=graphics
-
-cd ../os
-make shell ARCH=rv PROFILE=pre \
-  SDCARD=../user/build/images/wateros-rv.ext4
-
-# Guest shell
-pty-smoke
-ls -l /dev/ptmx /dev/pts
 \end{bashcode}
 
-\code{pty-smoke}执行成功后会返回零状态。\code{ls}用于确认PTY设备节点已经挂载；
-进一步的交互检查可在\code{nxterm}中执行，每个窗口通过独立PTY运行\code{/bin/sh}。
-
-\subsection{图形环境}
-
-仓库提供内核GUI和用户态图形环境两种启动方式。\code{EXTRA\_FEATURES=gui}启用
-\code{wateros-gui}内核窗口系统；\code{EXTRA\_FEATURES=user-graphics}向用户态提供
-\code{/dev/fb0}和输入设备节点，用于运行Nano-X、\code{nxterm}和Doom。两种方式不能在
-同一次构建中同时启用。
-
-内核GUI不依赖用户镜像中的窗口服务器，可直接从\code{os/}运行：
+随后在内核构建环境中指定生成的镜像并启动：
 
 \begin{bashcode}
-make run ARCH=rv PROFILE=pre EXTRA_FEATURES=gui
-make run ARCH=la PROFILE=pre EXTRA_FEATURES=gui
-\end{bashcode}
-
-用户态图形环境需要先制作graphics镜像，再以\code{user-graphics}启动内核。进入Guest
-串口后，先运行\code{start-nanox}，再按需启动图形终端或应用程序。
-
-\begin{bashcode}
-# 宿主
-make shell ARCH=rv PROFILE=pre \
-  SDCARD=../user/build/images/wateros-rv.ext4 \
+make shell ARCH=rv PROFILE=pre SMP=8 \
+  SDCARD=$ROOTFS_IMAGE \
   EXTRA_FEATURES=user-graphics
+\end{bashcode}
 
-# Guest shell
+进入串口shell后，先启动Nano-X server和桌面，再分别检查终端与Doom：
+
+\begin{bashcode}
 start-nanox >/tmp/nanox.log 2>&1 &
 nxterm &
 start-doom
 \end{bashcode}
 
-需要记录图形运行状态时，可设置\code{NANOX\_STATS=1}或\code{DOOM\_STATS=1}输出脏区
-提交、present次数和帧率等信息。自动运行环境可以增加\code{GRAPHICS\_BACKEND=none}，
-不在宿主侧创建图形窗口。
-
-\section{性能和压力分析工具}
-
-WaterOS的性能测试分为单项测量、组合压力和热点定位三类。单项测量用于获得上下文切换、
-系统调用、调度和I/O等可比较指标；\code{stress-ng}还用于构造CPU、内存、进程和文件系统
-压力，检查系统在资源竞争下能否持续运行。出现性能回退后，再使用宿主侧QEMU TCG plugin
-定位执行热点、等待位置和系统调用组成。三类工具的输出含义不同，不将压力测试中的
-\code{bogo ops}直接作为单次操作延迟。
-
-\subsection{工具分工}
-
-\begin{table}[htbp]
+\begin{figure}[htbp]
   \centering
-  \caption{性能与压力分析工具}
-  \begin{tabularx}{\textwidth}{L{3.8cm}L{5.0cm}Y}
-    \toprule
-    工具 & 用途 & 主要输出 \\
-    \midrule
-    \code{pc-hot} & 按CPU统计执行PC，并将地址归并到内核函数。 & 热点函数、指令计数和各CPU分布。 \\
-    \code{wait-hot} & 统计各CPU进入WFI的等待位置和时间。 & 每个CPU的等待统计。 \\
-    \code{syscall-profile} & 聚合系统调用次数、参数、路径和返回情况。 & 原始画像及Markdown摘要。 \\
-    \code{stress-ng} & 在Guest内执行单项stressor或组合压力。 & 一致性结果及stressor提供的附加指标。 \\
-    \bottomrule
-  \end{tabularx}
-\end{table}
+  \begin{minipage}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{pic/nanox.png}
+    \par\small Nano-X桌面与图形应用
+  \end{minipage}
+  \hfill
+  \begin{minipage}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{pic/doom.png}
+    \par\small Doom运行画面
+  \end{minipage}
+  \caption{Nano-X图形环境与Doom应用演示}
+  \label{fig:nanox-doom-demo}
+\end{figure}
+\FloatBarrier
 
-三个宿主工具均以\code{rv}和\code{la}脚本区分Guest架构。\code{build}构建插件；
-\code{run}在\code{--}之后接收完整QEMU命令；\code{analyze}读取已经生成的原始数据。
-例如，已有的PC采样和系统调用采样可按下列方式生成摘要：
-
-\begin{bashcode}
-# 查看参数并构建 RISC-V64 插件
-./scripts/pc-hot/pc-hot-rv.sh --help
-./scripts/pc-hot/pc-hot-rv.sh build
-./scripts/pc-hot/wait-hot-rv.sh build
-./scripts/syscall-profile/syscall-profile-rv.sh build
-
-# 将已有 PC 采样归并为前 50 个热点函数
-./scripts/pc-hot/pc-hot-rv.sh analyze \
-  /tmp/pcs-rv.txt kernel-rv-final 50
-
-# 生成系统调用画像摘要
-python3 scripts/syscall-profile/analyze.py \
-  /tmp/syscalls.txt --top 30
-\end{bashcode}
-
-\subsection{在比赛镜像中安装stress-ng}
-
-\code{stress-ng}通过比赛镜像的软件源安装。为保留原始镜像，先复制一份镜像并以可写模式
-启动；安装完成后的镜像作为性能测试镜像保存。以下以RISC-V64比赛镜像为例：
-
-\begin{bashcode}
-# Host，当前目录为 os/
-cp --reflink=auto --sparse=always sdcard-rv-pub.img \
-  /tmp/sdcard-rv-stress.img
-make shell ARCH=rv PROFILE=final SMP=8 \
-  SDCARD=/tmp/sdcard-rv-stress.img WRITE_DISK=1 SNAPSHOT=0
-
-# Guest
-apt update
-apt install -y stress-ng
-stress-ng --version
-stress-ng --stressors
-mkdir -p /tmp/wateros-perf
-\end{bashcode}
-
-LoongArch64镜像采用相同流程，但应先执行\code{apt-cache policy stress-ng}确认软件源提供
-对应架构的软件包。测试记录中保存\code{stress-ng --version}的完整输出；baseline与
-WaterOS使用同一版本，避免不同版本的stressor实现影响结果。
-
-\subsection{单项测量方法}
-
-\code{stress-ng}的部分stressor会输出可直接解释的附加指标。例如，\code{switch}输出
-每次内核上下文切换的纳秒数，\code{cyclic}输出唤醒延迟分位数，\code{hdd}输出实际读写
-速率。六类测量项目及其统计口径如表\ref{tab:perf-measurements}所示。
-
-\begin{table}[htbp]
-  \centering
-  \caption{性能测量项目与统计口径}
-  \label{tab:perf-measurements}
-  \begin{tabularx}{\textwidth}{L{3.1cm}L{4.7cm}Y}
-    \toprule
-    项目 & 测量方法 & 记录指标 \\
-    \midrule
-    上下文切换开销 & 两个进程通过单字节pipe相互阻塞和唤醒，固定在一个CPU上运行。 &
-      \code{switch}给出的ns/context switch；另测跨两个CPU的结果。 \\
-    系统调用延迟 & \code{syscall}逐项计时；固定接口使用直接\code{syscall}循环复测。 &
-      每个调用的平均、最小和最大延迟，另记录调用成功情况。 \\
-    内存分配/释放延迟 & 固定对象大小执行\code{malloc--touch--free}配对循环；
-      \code{malloc} stressor只承担混合压力。 & 64 B、4 KiB、64 KiB和1 MiB四档的平均延迟。 \\
-    调度延迟 & 实时任务按固定周期休眠，比较计划唤醒时间与实际恢复运行时间。 &
-      mean、p50、p95、p99和max唤醒延迟。 \\
-    文件I/O & 在比赛镜像的ext4可写目录中分别执行顺序读写和同步写。 &
-      read、write及combined MiB/s；同步写单独列出。 \\
-    网络吞吐与延迟 & Guest与宿主固定peer建立TCP连接；大块单向发送测吞吐，
-      定长请求/响应测RTT。 & MiB/s以及RTT的p50、p95、p99和max。 \\
-    \bottomrule
-  \end{tabularx}
-\end{table}
-
-可由\code{stress-ng}直接执行的四项命令如下。单CPU和跨CPU上下文切换必须分开记录；
-\code{--switch}触发内核调度，不能用只执行用户态\code{swapcontext()}的\code{--context}
-替代。
-
-\begin{bashcode}
-# 单 CPU pipe 上下文切换
-stress-ng --switch 1 --switch-method pipe --taskset 0 \
-  --timeout 30s --verify --metrics-brief
-
-# 允许两个 vCPU 参与，用于观察跨 CPU 调度的影响
-stress-ng --switch 1 --switch-method pipe --taskset 0,1 \
-  --change-cpu --timeout 30s --verify --metrics-brief
-
-# 系统调用计时并打印最快的 20 项
-stress-ng --syscall 1 --syscall-method all --syscall-top 20 \
-  --taskset 0 --timeout 30s --metrics-brief
-
-# 1 ms 周期、10000 个样本的实时任务唤醒延迟
-stress-ng --cyclic 1 --cyclic-policy fifo --cyclic-prio 80 \
-  --cyclic-method clock_ns --cyclic-sleep 1000000 \
-  --cyclic-samples 10000 --taskset 0 --timeout 30s \
-  --metrics-brief
-
-# 页缓存下的顺序读写
-stress-ng --hdd 1 --hdd-bytes 512M \
-  --temp-path /tmp/wateros-perf --timeout 60s \
-  --verify --metrics-brief
-
-# 每次写入均同步提交，单独观察同步写路径
-stress-ng --hdd 1 --hdd-bytes 512M --hdd-opts sync \
-  --temp-path /tmp/wateros-perf --timeout 60s \
-  --verify --metrics-brief
-\end{bashcode}
-
-\code{syscall}会跳过权限不足或当前系统不支持的接口，因此结果中还要记录成功参与计时的
-系统调用集合。若需要比较某个固定接口，例如\code{getpid}，使用直接
-\code{syscall(SYS\_getpid)}的批量循环，避免libc缓存或vDSO改变调用路径。计时采用
-\code{CLOCK\_MONOTONIC\_RAW}，先执行预热，再用一次起止计时包围至少$10^6$次调用，并
-减去相同次数的空循环开销。
-
-内存分配测试同样采用批量计时。每一档对象大小分别完成至少$10^5$次
-\code{malloc--touch--free}，触碰对象覆盖的页面后再释放；各档独立启动进程，避免前一档
-改变分配器状态。该结果表示libc分配器、缺页和内核虚拟内存路径的组合成本。若要单独观察
-内核映射开销，再增加同尺寸的\code{mmap--touch--munmap}组。\code{stress-ng --malloc}
-用于在不同尺寸和并发线程间制造分配压力，其\code{bogo ops}不写入“单次分配延迟”一栏。
-
-\begin{bashcode}
-# 混合分配压力；用于稳定性和压力下退化观察
-stress-ng --malloc 2 --malloc-bytes 64K --malloc-max 4096 \
-  --malloc-touch --mmap 2 --mmap-bytes 512M \
-  --timeout 60s --verify --metrics-brief
-\end{bashcode}
-
-网络测试需要区分回环协议栈和VirtIO数据路径。\code{stress-ng --sock}的client与server
-都在Guest内，只能用于socket接口和回环协议栈压力，不能作为VirtIO网卡吞吐：
-
-\begin{bashcode}
-stress-ng --sock 2 --sock-domain ipv4 --sock-msgs 1000 \
-  --timeout 60s --verify --metrics-brief
-\end{bashcode}
-
-VirtIO网络数据采用Guest到宿主peer的固定拓扑。吞吐测试保持一条TCP连接，Guest以
-64 KiB块发送1 GiB有效载荷，按“有效载荷字节数/单调时钟耗时”计算MiB/s；延迟测试在同一
-连接上执行10000次8字节请求/响应，直接报告RTT分位数。单向时钟未同步，因此不将
-\code{RTT/2}写成单向延迟。peer程序的缓冲区大小、TCP选项和方向均作为测试参数保存。
-
-\subsection{组合压力与热点定位}
-
-单项测量完成后，再将待测项与其他stressor并行运行，观察竞争下的延迟增长。例如8核配置
-中保留一个CPU运行\code{cyclic}，其余CPU运行计算压力；内存和文件系统压力使用显式容量，
-避免由默认值变化导致不同轮次的负载不同。
-
-\begin{bashcode}
-# 调度延迟叠加 CPU 压力
-stress-ng --cpu 7 --taskset 1-7 --timeout 35s \
-  --metrics-brief &
-stress-ng --cyclic 1 --cyclic-policy fifo --cyclic-prio 80 \
-  --cyclic-sleep 1000000 --cyclic-samples 10000 \
-  --taskset 0 --timeout 30s --metrics-brief
-wait
-
-# 内存、进程和文件系统组合压力
-stress-ng --vm 2 --vm-bytes 1G --malloc 2 --forkheavy 2 \
-  --hdd 1 --hdd-bytes 512M --temp-path /tmp/wateros-perf \
-  --timeout 60s --verify --metrics-brief
-\end{bashcode}
-
-发现某项指标回退后，用完全相同的工作负载分别采集\code{pc-hot}、\code{wait-hot}和
-\code{syscall-profile}。前者用于确认新增指令集中在哪些内核函数，\code{wait-hot}用于
-判断vCPU是否长期空闲或等待不均，系统调用画像用于比较调用数量、返回值和路径组成。
-QEMU plugin和Debug选项会改变运行开销，插桩结果只用于解释性能变化，不与无插桩的数值
-混在同一张性能表中。
-
-\subsection{对照与结果记录}
-
-WaterOS和baseline在同一宿主机、同一QEMU版本和同一比赛镜像上运行，固定
-\code{PROFILE=final}、\code{SMP=8}、Guest内存、块设备和网络参数。每个单项先预热一次，
-再独立启动Guest测量五次；吞吐和平均开销取五次结果的中位数，调度及网络延迟同时保留
-p50、p95、p99和最大值。每轮保存内核提交、完整启动命令、工具版本、原始输出和退出状态。
-
-\section{Debug工具}
-
-\subsection{主机端入口与报告}
-
-\code{scripts/debug/wateros\_debug.py}统一封装QEMU启动、GDB连接、停滞检测和现场归档。
-\code{doctor}检查QEMU、GDB、交叉binutils和内核符号；\code{debug}构建并启动调试内核，
-持续观察CPU、任务、trap、syscall、IPI和锁事件。
-
-\begin{bashcode}
-make doctor
-make debug ARCH=rv PROFILE=final SMP=8
-\end{bashcode}
-
-需要人工检查时使用双终端模式。第一个终端启动GDB server，第二个终端连接后可交互调试，
-也可直接采集快照或启动停滞监测。
-
-\begin{bashcode}
-# 终端一
-make debug-server ARCH=rv PROFILE=final SMP=8
-
-# 终端二
-make gdb
-make snapshot
-make watch
-\end{bashcode}
-
-GDB会话加载\code{scripts/gdb/wateros.py}后，可以使用\code{wos-cpus}、
-\code{wos-tasks}、\code{wos-task}、\code{wos-events}、\code{wos-locks}和
-\code{wos-snapshot}查看内核导出的稳定诊断状态。工具会核对Guest与本地ELF的build ID；
-符号不匹配时不继续生成可能错误的源码位置。
-
-报告保存在\code{os/debug-reports/}下以时间、架构和build ID命名的目录中。
-\code{summary.txt}给出人工可读结论，\code{snapshot.json}和\code{events.json}保存CPU、
-任务与最近事件，\code{gdb.txt}保存寄存器、反汇编和调用栈，\code{serial.log}及
-\code{serial-tail.txt}保存串口现场，\code{metadata.json}记录Git、ELF和调试器版本。
-
-\subsection{内核诊断ABI与锁跟踪}
-
-主机脚本能够读取稳定状态，是因为\code{wateros-debug}在内核侧定义了版本化诊断ABI。
-调试构建导出架构、ABI版本、build ID及frame pointer标记，主机连接后先校验这些字段，再
-按固定布局读取每CPU状态和事件环。诊断组件只依赖最底层配置，不反向依赖调度器、MM或
-日志系统，避免调试代码自身形成新的锁依赖。
-
-每个CPU拥有两个状态槽。内核先填写非活动槽，再使用Release顺序发布活动槽编号；即使
-GDB恰好把CPU停在更新中间，也只能读到上一份完整状态。每CPU事件环保存最近256项调度、
-系统调用、trap、IPI、futex、TLB和锁事件，记录的sequence最后发布；主机忽略sequence
-不完整的槽位，并通过\code{dropped\_events}判断是否因回卷丢失较早现场。
-
-调试热路径不分配内存、不打印日志，也不获取额外内核锁。\code{TrackedMutex}在真实锁的
-lock和drop边界同步发布“正在等待、已经持有、已经释放”状态，首批覆盖调度器、进程注册表、
-futex、帧分配器、地址空间、VFS、网络和klog关键锁。未启用\code{gdb-debug}时，事件记录
-入口编译为空操作，普通构建不保留事件环写入开销。
-
-加载\code{scripts/gdb/wateros.py}后，常用命令及其用途如下：
-
-\begin{table}[htbp]
-  \centering
-  \caption{WaterOS GDB诊断命令}
-  \begin{tabularx}{\textwidth}{L{3.5cm}Y}
-    \toprule
-    命令 & 用途 \\
-    \midrule
-    \code{wos-cpus} & 查看各CPU的current task、地址空间、调度计数、trap、syscall和IPI状态。 \\
-    \code{wos-tasks} & 列出各CPU当前任务的state、policy、nice、等待目标和地址空间。 \\
-    \code{wos-task} & 结合当前CPU状态和最近事件环查询指定任务。 \\
-    \code{wos-events} & 按sequence读取最近的调度、异常、IPI、futex、TLB和锁事件。 \\
-    \code{wos-locks} & 根据等待锁和持有锁关系检查阻塞链与可能的锁序问题。 \\
-    \code{wos-snapshot} & 输出CPU状态、近期事件和锁等待关系的统一快照。 \\
-    \bottomrule
-  \end{tabularx}
-\end{table}
-
-因此，Debug工具的工作不只是一组GDB启动命令，而是由“内核低开销状态发布、主机端版本
-校验、命令化状态解释、停滞监测和报告归档”组成的完整链路。出现并发停滞时，可以先用
-\code{make watch}自动识别长期不推进的CPU，再用\code{wos-locks}和\code{wos-events}定位
-等待关系，通过\code{wos-snapshot}核对统一快照，最后用\code{make snapshot}归档现场。
+演示时应记录四项现象：桌面是否完整显示；键盘和指针能否操作窗口；\code{nxterm}中能否
+执行shell命令并响应Ctrl-C；Doom能否持续刷新并接收输入。需要量化图形路径时，可以使用
+\code{NANOX\_STATS=1}和\code{DOOM\_STATS=1}输出提交次数、像素量和FPS。当前
+本次自动测试记录不包含图形测试，因此Nano-X应作为独立演示记录，不并入表
+\ref{tab:current-log-groups}的五项结果。

@@ -1,8 +1,10 @@
+%!TEX program = xelatex
 % WaterOS决赛设计文档入口。
 % 内部结论与证据映射保存在 data/evidence.tsv，不进入提交 PDF。
 
 \documentclass[12pt,openany,oneside,AutoFakeBold=true]{ctexbook}
 
+% 引入文档配置（字体已在其中设置）
 \input{setup/document}
 
 \begin{document}
@@ -18,6 +20,7 @@
 \ctexset{chapter/pagestyle=fancy}
 \defaultfont
 \sloppy\raggedbottom
+
 \input{chapters/01-evolution}
 \input{chapters/02-architecture}
 \input{chapters/03-final-design}

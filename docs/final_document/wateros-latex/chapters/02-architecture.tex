@@ -1,190 +1,241 @@
 \chapter{总体架构设计}
 
-\wateros{}采用组件化的单体内核结构。内核服务仍运行在同一地址空间中，但代码按照
-职责划分为若干\code{wateros-*} crate，并在组件内部进一步区分公共接口、通用实现和
-平台实现。总体架构关注的是组件边界及依赖关系；CPU启动、调度、页表维护等具体机制
-放在第3章对应模块中说明。
-
-\section{组件分层}
-
-从用户程序发起的系统调用向下经过ABI转换和内核服务，最终到达平台或设备实现。
-\code{wateros-base}、\code{wateros-utils}和\code{wateros-klog}等基础组件被多层复用，
-不单独承担业务流程。图\ref{fig:architecture}给出主要组件之间的分层关系。
+\wateros{}采用组件化的单体内核结构。内存管理、调度、文件系统与网络等服务运行在同一
+内核地址空间中，跨模块调用仍是普通函数调用；代码则按稳定职责拆成独立crate，通过明确
+接口控制依赖方向。这样做的主要目的不是增加抽象层，而是把“谁拥有状态、谁决定策略、谁
+负责清理”固定下来。发生跨模块故障时，可以沿对象所有权和调用链定位，而不必从系统调用
+入口一路追查所有全局变量。
 
 \begin{figure}[htbp]
   \centering
-  \resizebox{0.94\textwidth}{!}{%
-  \begin{tikzpicture}[
-    node distance=5mm,
-    box/.style={draw=WaterBlue,rounded corners,fill=SoftBlue,align=center,text width=12cm,minimum height=9mm,font=\small},
-    arr/.style={-{Latex[length=2mm]},thick,draw=black!65}
-  ]
-    \node[box] (user) {用户程序与运行库};
-    \node[box,below=of user] (abi) {系统调用与ABI：\code{wateros-syscall}、\code{wateros-abi}};
-    \node[box,below=of abi] (service) {内核服务：\code{wateros-task}、\code{wateros-ipc}、\code{wateros-mm}、\code{wateros-vfs}、\code{wateros-fs}、\code{wateros-network}};
-    \node[box,below=of service] (support) {平台与设备：\code{wateros-platform}、\code{wateros-driver}、\code{wateros-runtime}};
-    \node[box,below=of support] (arch) {RISC-V64 / LoongArch64架构实现与QEMU virt平台};
-    \draw[arr] (user) -- (abi);
-    \draw[arr] (abi) -- (service);
-    \draw[arr] (service) -- (support);
-    \draw[arr] (support) -- (arch);
-  \end{tikzpicture}
-  }
-  \caption{WaterOS主要组件分层}
-  \label{fig:architecture}
+  \includegraphics[height=0.76\textheight,keepaspectratio]{pic/系统架构图.png}
+  \caption{WaterOS总体架构与主要调用层次}
+  \label{fig:system-architecture}
 \end{figure}
+\FloatBarrier
 
-这种分层不表示调用只能逐层单向传递。例如，设备中断会由平台层进入任务或网络模块，
-文件映射会同时使用VFS与内存管理接口。分层的作用是确定状态归属：进程状态由任务组件
-维护，VMA和页表由内存组件维护，打开文件及挂载关系由VFS维护，架构组件不复制这些
-上层状态。
+\section{系统分层与组件职责}
 
-\section{组件目录与职责}
+从硬件到用户程序，系统可以分为平台运行层、资源管理层、内核服务层、ABI入口层和用户
+环境层。前四层位于内核中，用户环境层由独立的根文件系统构建组件生成。同一层的组件可以
+互相协作，但长期状态只能由一个组件负责；上层通过句柄或稳定ID访问下层对象，不能复制
+下层内部状态作为另一份事实来源。
 
-\begin{longtable}{L{3.7cm}L{9.6cm}}
-  \caption{主要组件及职责}\label{tab:component-responsibility}\\
+\begin{table}[htbp]
+  \centering
+  \caption{WaterOS逻辑分层}
+  \label{tab:architecture-layers}
+  \begin{tabularx}{\textwidth}{L{2.7cm}L{4.5cm}Y}
+    \toprule
+    层次 & 主要组件 & 负责的系统能力 \\
+    \midrule
+    用户环境层 & 根文件系统构建器、用户软件包 & 交叉编译用户程序、解析软件包依赖、合并
+    根目录并生成ext4镜像。\\
+    ABI入口层 & \code{syscall}、\code{abi}、\code{cred} & generic64调用号、参数与用户
+    指针校验、errno、有限凭证与用户可见语义。\\
+    内核服务层 & \code{vfs}、\code{fs}、\code{ipc}、\code{network}、\code{tty} & 路径与fd、
+    文件系统、进程通信、socket和终端对象。\\
+    资源管理层 & \code{task}、\code{mm} & CPU时间、任务生命周期、进程关系、地址空间、
+    页表和物理页帧。\\
+    平台运行层 & \code{platform}、\code{runtime}、\code{driver} & 启动、trap、时钟、IPI、
+    堆、日志、设备发现和实际I/O。\\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\begin{longtable}{L{3.4cm}L{6.6cm}L{3.3cm}}
+  \caption{主要组件的职责与非职责}\label{tab:component-responsibility}\\
   \toprule
-  组件 & 主要职责 \\
+  组件 & 主要职责 & 不负责的内容 \\
   \midrule
   \endfirsthead
   \toprule
-  组件 & 主要职责 \\
+  组件 & 主要职责 & 不负责的内容 \\
   \midrule
   \endhead
-  \code{wateros-platform} & 封装启动参数、CPU、时钟、中断、IPI、页表切换和复位等平台能力，并提供RISC-V64与LoongArch64实现。 \\
-  \code{wateros-driver} & 定义块、字符、网络、输入和显示设备接口，完成VirtIO-MMIO或VirtIO-PCI设备接入。 \\
-  \code{wateros-task} & 管理任务、进程、线程、调度、等待和退出回收，维护per-CPU运行状态。 \\
-  \code{wateros-mm} & 管理物理页帧、用户地址空间、VMA、页表、缺页处理、用户内存访问及ELF装载。 \\
-  \code{wateros-ipc} & 提供pipe、futex、signal、共享内存、事件和等待队列等进程间协作机制。 \\
-  \code{wateros-vfs} & 维护路径解析、挂载命名空间、打开文件描述、文件描述符会话和页缓存。 \\
-  \code{wateros-fs} & 提供文件系统后端接口及rootfs、ext4、procfs和devfs等具体文件系统能力。 \\
-  \code{wateros-network} & 管理协议栈、socket对象、连接状态和网络事件，并通过统一网卡接口收发数据。 \\
-  \code{wateros-syscall} & 解析系统调用号和参数，执行用户内存拷贝、权限检查、错误码转换及子系统调用。 \\
-  \code{wateros-abi}、\code{wateros-cred}、\code{wateros-tty} & 分别维护ABI类型与常量、进程凭证及终端语义。 \\
-  \code{wateros-base}、\code{wateros-utils}、\code{wateros-klog} & 提供CPU编号、同步与通用数据结构、日志等跨组件基础能力。 \\
+  \code{wateros-platform} & 启动参数、RAM边界、时钟、控制台、复位、IPI以及架构能力聚合。 &
+  调度策略、页表内容、设备协议。\\
+  \code{wateros-runtime} & panic处理、日志输出和全局堆分配器等内核运行环境。 &
+  进程内存、用户态C运行时。\\
+  \code{wateros-driver} & DTB/PCI设备发现，块、字符、网络、显示与输入设备注册。 &
+  文件语义、TCP/IP协议、GUI绘制。\\
+  \code{wateros-task} & TCB/PCB、调度、阻塞唤醒、fork/clone/exec及wait/reap。 &
+  VMA内容、fd对象和信号帧格式。\\
+  \code{wateros-mm} & 物理页、地址空间、VMA、页表、缺页、COW、ELF和用户内存访问。 &
+  文件句柄生命周期、ABI错误编码。\\
+  \code{wateros-ipc} & pipe、futex、SysV共享内存和signal状态。 &
+  eventfd门面、用户指针复制。\\
+  \code{wateros-vfs} & 路径、挂载、打开对象、每任务fd/cwd和文件页缓存。 &
+  ext4磁盘格式、块设备传输。\\
+  \code{wateros-fs} & 文件系统后端选择，ext4、rootfs、devfs、procfs和ramfs。 &
+  fd编号、系统调用ABI。\\
+  \code{wateros-network} & smoltcp接口、IPv4 TCP/UDP socket状态和fd适配。 &
+  AF\_UNIX、网卡枚举。\\
+  \code{wateros-tty} & 控制台行规程、UNIX98 PTY及终端缓冲。 &
+  UART驱动、fd表和实际信号投递。\\
+  \code{wateros-syscall} & generic64分发、ABI校验、用户复制、errno和部分完成语义。 &
+  下游对象的长期所有权。\\
+  \code{wateros-cred} & uid/gid、supplementary groups和凭证生命周期侧表。 &
+  完整Linux capability与inode权限模型。\\
+  用户根文件系统构建器 & 解析软件包元数据与依赖，交叉编译用户程序，合并staging目录并
+  生成ext4镜像、内容清单和摘要。 & 内核运行时挂载、VFS路径解析和运行时包管理。\\
   \bottomrule
 \end{longtable}
 
-顶层内核crate负责选择组件并组织初始化，不在顶层重新实现页表、调度器或文件系统逻辑。
-因此，阅读某项功能时可以先从顶层调用点确定入口，再进入对应组件查看状态和实现。
+\section{API、实现与聚合门面}
 
-\section{接口与实现分离}
+多数一级组件采用\code{api-v0 + impl-* + facade}的组织方式。\code{api-v0}只定义跨层可见
+的trait、句柄、错误类型和数据结构，不依赖具体平台；\code{impl-*}持有可变状态并实现机制；
+组件门面根据Cargo feature选择活动实现，再以稳定模块名导出。顶层内核只依赖
+这些门面，不直接写入某个\code{impl-*}的全局状态。
 
-多数核心组件采用“API crate、实现crate、聚合crate”的组织方式。API crate只公开跨组件
-需要的trait、参数类型、错误类型和快照结构；实现crate持有锁、队列、缓存及硬件对象；
-聚合crate选择具体实现并向内核其他部分提供稳定入口。典型目录关系如下：
-
-\begin{textcode}
-wateros-<component>/
-|-- <component>-api/api-v0/       公共接口与数据类型
-|-- <component>-impl/impl-*/      通用或平台相关实现
-`-- src/                          实现选择与对外导出
-\end{textcode}
-
-接口并不要求所有组件都强行抽象为单一trait。设备、文件系统和地址空间需要替换具体后端，
-分别定义\code{BlockDevice}、\code{ReadWriteFs}、\code{AddressSpaceOps}等trait；任务和
-系统调用组件则以明确的数据类型和函数入口为主。这样可以避免仅为形式统一而增加无实际
-替换需求的抽象层。
-
-跨组件读取运行状态时优先使用快照或稳定句柄。例如任务组件导出\code{TaskSnapshot}，
-网络组件导出\code{NetworkSocketSnapshot}，VFS以打开文件描述持有对象。调用者不会把
-实现内部的可变引用带出锁保护范围。
-
-\section{组件依赖与调用关系}
-
-系统调用层是用户态语义与内核机制之间的主要连接点。它负责参数校验和Linux errno
-转换，但对象生命周期仍由对应组件决定。几类主要调用关系见表\ref{tab:component-call}。
+这种划分需要满足三条规则：第一，接口只表达调用方真正需要的能力，不把实现内部容器暴露
+出去；第二，同一策略的互斥实现由feature和\code{compile\_error!}保证只能选择一个；第三，
+实现选择发生在构建期，运行期对象仍需经过初始化与发布，不能把“feature已启用”等同于
+“设备或服务已经可用”。例如启用VirtIO块设备实现只表示代码被编译，实际设备仍需DTB或
+PCI枚举成功后才进入注册表。
 
 \begin{table}[htbp]
   \centering
-  \caption{主要组件调用关系}
-  \label{tab:component-call}
-  \begin{tabularx}{\textwidth}{L{3.0cm}L{4.3cm}Y}
+  \caption{API与实现分离的典型示例}
+  \begin{tabularx}{\textwidth}{L{3.0cm}L{4.7cm}Y}
     \toprule
-    入口 & 使用的组件 & 状态归属 \\
+    能力 & 稳定接口 & 当前实现选择 \\
     \midrule
-    \syscall{fork}/\syscall{clone} & task、MM、VFS、signal & 任务组件提交进程关系；MM和VFS分别处理地址空间及文件对象共享。 \\
-    \syscall{execve} & VFS、MM、task、ABI & VFS解析可执行文件，MM建立新映像，task提交进程状态转换。 \\
-    \syscall{mmap}/缺页 & MM、VFS、platform & MM维护VMA和PTE，文件页由VFS提供，架构层执行TLB操作。 \\
-    文件读写 & syscall、VFS、FS、driver & VFS维护fd与缓存，文件系统维护元数据，块设备完成最终I/O。 \\
-    socket与poll & network、driver、IPC、task & network维护socket状态，等待和唤醒使用IPC与任务接口。 \\
-    signal/futex & IPC、task、MM、platform & IPC维护等待或pending状态，MM安全访问用户地址，task完成阻塞与唤醒。 \\
+    页表与地址空间 & \code{mm-api/api-v0} & RISC-V Sv39或LoongArch64三级页表。\\
+    平台能力 & \code{platform-api/api-v0} & QEMU RISC-V/OpenSBI或QEMU LoongArch \code{virt}。\\
+    块设备 & \code{driver-block/*-api} & VirtIO-MMIO或VirtIO-PCI，可选写穿LRU缓存。\\
+    文件系统 & \code{fs-api/api-v0} & another-ext4为默认后端，另有伪文件系统和可选实现。\\
+    网络协议栈 & \code{network-api/api-v0} & smoltcp IPv4 TCP/UDP实现。\\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-初始化依赖也遵守同样的状态归属。顶层只保证依赖已经可用，例如块设备注册后再挂载
-rootfs、VFS就绪后再装载用户程序；组件内部的注册表和对象仍由组件自身维护。本设计使
-调用关系能够从Cargo依赖和接口类型中直接追踪，减少隐式的跨模块全局状态访问。
+\FloatBarrier
+\section{依赖与调用方向}
 
-\section{SMP执行模型}
-
-WaterOS采用对称多处理（Symmetric Multiprocessing，SMP）执行模型。所有已上线CPU
-共享内核地址空间、任务和进程对象、用户地址空间、文件系统及设备资源，同时维护独立的
-per-CPU运行状态。SMP在这里不是单独的内核组件，而是平台、任务、内存和IPC组件共同
-遵守的执行约束；各类状态仍由原组件负责，不另设一份“多核状态”。
-
-启动CPU负责堆、共享页表、任务系统、驱动和文件系统等全局资源的一次性初始化。其他CPU
-使用各自的启动栈进入内核，完成本地trap、timer、IPI接收、CPU-local槽位和idle task
-初始化后，才加入online集合并参与调度。当前比赛配置使用8个虚拟CPU，但CPU数量属于
-运行参数，不改变上述状态划分。
+组件依赖不是简单的自上而下树形结构。任务阻塞需要调度器，文件映射同时关联VFS和MM，
+信号返回又连接task、IPC、syscall与trap。WaterOS对这种交叉关系采用“状态所有权不反转，
+生命周期通过钩子接线”的办法：下游组件拥有对象，上游组件保存句柄；创建、复制、exec和
+退出时，由明确的编排层依次通知相关侧表，而不是让底层组件相互反向依赖。
 
 \begin{table}[htbp]
   \centering
-  \caption{SMP状态划分与核间协作}
-  \begin{tabularx}{\textwidth}{L{2.6cm}L{4.2cm}L{3.4cm}Y}
+  \caption{跨组件对象的所有权与使用者}
+  \label{tab:cross-component-ownership}
+  \begin{tabularx}{\textwidth}{L{3.0cm}L{3.3cm}Y}
     \toprule
-    组件 & 共享状态 & CPU本地状态 & 核间协作 \\
+    对象或状态 & 所有者 & 主要使用者与访问方式 \\
     \midrule
-    platform & CPU拓扑与online集合 & trap、timer和IPI接收状态 & 从核启动、IPI与远端TLB失效 \\
-    task & 任务、进程关系与就绪状态 & current task、idle task与重调度状态 & 跨核唤醒、任务迁移与重调度通知 \\
-    MM & 地址空间、VMA与页表 & 当前地址空间token和本地TLB & 页表更新后的TLB shootdown \\
-    IPC & 等待队列、futex及信号状态 & 当前线程的阻塞与投递状态 & 唤醒目标任务并通知其所在CPU \\
+    任务/进程控制块 & task & scheduler通过稳定ID调度；syscall查询进程关系。\\
+    用户地址空间/VMA & MM & task保存地址空间引用；syscall经MM操作；VFS提供文件映射loader。\\
+    打开文件描述与fd槽 & VFS & syscall按当前任务查询；task生命周期钩子触发复制或清理。\\
+    文件系统inode/节点 & FS & VFS通过\code{FsBridge}和稳定node lease访问。\\
+    futex/pipe/signal状态 & IPC & syscall转换ABI；task waitqueue完成阻塞和唤醒。\\
+    TCP/UDP socket & network & VFS持有socket fd对象；syscall解释socket ABI。\\
+    uid/gid凭证 & cred & syscall读取和修改；VFS权限入口查询，但当前检查能力有限。\\
+    设备对象 & driver & FS取得块设备，network取得网卡，TTY/VFS取得字符设备。\\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-调度器保证同一任务在任意时刻至多由一个CPU执行。任务状态、CPU归属和就绪结构在同一
-调度边界内更新；目标任务位于其他CPU时，先发布软件状态，再发送重调度IPI。地址空间
-同样可能被多个CPU上的线程共享，修改页表后需要先保证页表项对其他CPU可见，再向相关
-CPU发起TLB shootdown，完成失效后才能回收旧映射。
+% 后续可加入 figures/component-dependency.pdf，建议使用实线表示直接调用、虚线表示生命周期钩子。
+\IfFileExists{figures/component-dependency.pdf}{
+  \begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.96\textwidth]{figures/component-dependency.pdf}
+    \caption{组件依赖、状态所有权与生命周期钩子}
+    \label{fig:component-dependency}
+  \end{figure}
+}{}
 
-短临界区使用自旋锁或原子状态保护，可能等待较长时间的操作通过等待队列让出CPU。
-平台层只提供CPU启动、核间通知和本地架构操作，不持有任务、VMA或文件对象；上层组件
-也不直接操作架构中断控制器。具体接口、数据结构和执行顺序分别在第3章的平台、任务、
-内存及IPC部分说明。
+\subsection{文件读取调用链}
+
+用户执行\code{read(fd, buf, len)}后，trap层只负责取出调用号和六个参数槽。syscall层检查fd、
+长度和用户缓冲区，再从当前任务的fd表取得\code{SharedIoHandle}。普通文件经VFS页缓存和
+\code{FsBridge}访问具体文件系统，缓存未命中时才由FS向块设备发起I/O。数据返回后，syscall
+层逐页复制到用户地址；若跨页复制中途失败，VFS的读取租约只提交已成功复制的前缀，返回
+部分字节数，未提交数据仍保留在对象中。
+
+\begin{center}
+\begin{tikzpicture}[node distance=5mm and 5mm, every node/.style={font=\small},
+  box/.style={draw,rounded corners,align=center,minimum height=8mm,fill=SoftBlue},
+  arr/.style={-{Latex[length=2mm]},thick}]
+  \node[box] (u) {用户\code{read}};
+  \node[box,right=of u] (s) {syscall\\参数与用户复制};
+  \node[box,right=of s] (v) {VFS\\fd与页缓存};
+  \node[box,right=of v] (f) {FS\\inode/ext4};
+  \node[box,right=of f] (d) {driver\\块设备};
+  \draw[arr] (u)--(s); \draw[arr] (s)--(v); \draw[arr] (v)--(f); \draw[arr] (f)--(d);
+\end{tikzpicture}
+\end{center}
+
+\subsection{进程创建与退出调用链}
+
+fork不是task组件内的一次对象复制。编排层先创建TCB/PCB和子地址空间，MM把父进程私有可写
+页建立为COW关系，VFS复制fd与cwd，cred复制凭证，IPC/signal建立子进程状态。所有侧表完成后，
+子任务才发布到ready queue。退出时顺序相反：先撤销调度可见性并记录退出状态，再关闭任务级
+资源、处理robust futex和共享内存附件，最后保留zombie供父进程wait；reap后才删除进程索引并
+在锁外释放可能触发大量析构的地址空间和fd对象。
+
+\subsection{文件映射与缺页调用链}
+
+\code{mmap}先由syscall校验flag、权限、长度和offset。匿名映射直接交给MM建立VMA；文件映射
+先从VFS取得稳定文件句柄和映射loader，再由MM记录后备关系。首次访问触发page fault，MM按
+VMA类型填零、从文件读取或执行COW。共享可写文件页变脏后由VFS页缓存负责写回，VMA销毁只
+撤销当前地址空间映射，不能在仍有缓存引用时直接释放底层文件页。
+
+\subsection{网络收发调用链}
+
+socket系统调用由syscall解析地址族和用户结构，INET socket交给network创建，并以VFS对象
+进入fd表。发送时数据从用户页复制到协议栈，再由网卡驱动传输以太网帧；接收时network先
+建立\code{SocketReceiveLease}，用户复制成功后才消费对应字节。协议栈当前由全局poller推进，
+poll/阻塞调用会重扫状态；网卡事件还没有直接唤醒每个socket等待队列的完整链路。
+
+\section{初始化与发布顺序}
+
+启动必须遵循依赖顺序。堆和物理帧可用之前不能构造需要动态内存或DMA的设备；trap入口未
+安装之前不能打开中断；任务侧表尚未初始化时不能发布第一个用户任务。BSP完成全局服务，
+AP只初始化本CPU状态，最终通过online集合向调度器发布可用性。
+
+\begin{longtable}{C{1.1cm}L{4.4cm}L{7.7cm}}
+  \caption{内核主要初始化阶段}\label{tab:boot-order}\\
+  \toprule
+  阶段 & 初始化对象 & 顺序要求 \\
+  \midrule
+  \endfirsthead
+  \toprule
+  阶段 & 初始化对象 & 顺序要求 \\
+  \midrule
+  \endhead
+  1 & 平台入口、早期控制台、启动参数 & 保存hart/DTB或平台参数，建立最早期日志能力。\\
+  2 & runtime堆、平台架构、trap入口 & 架构trap向量就绪后才能开放中断。\\
+  3 & 物理帧与内核页表 & 根据平台RAM上界排除内核、DTB和DMA保留区。\\
+  4 & task、waitqueue和CPU-local状态 & BSP建立全局注册表，AP建立idle task与本地定时器。\\
+  5 & 驱动与设备注册表 & 帧分配器可用后构造VirtIO队列和DMA缓冲。\\
+  6 & FS、VFS与根文件系统 & 先探测文件系统后端，再挂载rootfs、devfs和procfs。\\
+  7 & 用户任务及其侧表 & MM、fd、cred、signal等状态建立完成后才加入ready queue。\\
+  8 & timer与全局中断 & 所有中断消费者就绪后开始正常抢占和设备推进。\\
+  \bottomrule
+\end{longtable}
 
 \section{双架构适配边界}
 
-RISC-V64与LoongArch64共享任务、IPC、MM上层语义、VFS、文件系统、网络和系统调用实现；
-启动协议、trap frame、页表格式、TLB操作、核间中断及设备总线由平台和驱动实现隔离。
+RISC-V64路径使用OpenSBI、Sv39和DTB/VirtIO-MMIO；LoongArch64路径使用本地CSR/IOCSR、
+独立三级页表以及PCI ECAM/VirtIO-PCI。二者共享task、VFS、FS、IPC、network和大部分
+syscall实现。共享接口保证调用形式一致，但不自动保证硬件能力相同：RISC-V64已有远程TLB
+失效路径，LoongArch64目前仍返回\code{Unsupported}。涉及页表并发修改、IPI、定时器和设备
+枚举的验证必须分别执行，不能以一种架构的结果替代另一种。
 
-\begin{table}[htbp]
-  \centering
-  \caption{双架构实现边界}
-  \begin{tabularx}{\textwidth}{L{3.0cm}Y Y}
-    \toprule
-    项目 & RISC-V64 & LoongArch64 \\
-    \midrule
-    启动环境 & QEMU virt与OpenSBI & QEMU virt平台入口 \\
-    从核与IPI & SBI HSM及SBI IPI & LoongArch启动路径及IOCSR核间中断 \\
-    页表与TLB & Sv39及RISC-V TLB操作 & LoongArch页表及TLB操作 \\
-    VirtIO总线 & MMIO & PCI \\
-    对上接口 & \multicolumn{2}{p{9.0cm}}{CPU编号、启动参数、中断、时间、页表切换、TLB失效及统一设备trait} \\
-    \bottomrule
-  \end{tabularx}
-\end{table}
+\section{并发、错误与可观测性约定}
 
-上层代码不根据指令集名称修改业务语义。例如调度器只使用CPU编号与核间通知接口，MM
-只通过架构页表与TLB接口提交映射变化，网络层只持有\code{NetworkDevice}对象。新增平台
-时应实现这些边界，而不在task、VFS或syscall中加入平台分支。
+全局注册表通常只在锁内查询或克隆\code{Arc}，真正的设备I/O、文件系统操作和任务阻塞在
+释放表锁后完成。可阻塞路径采用“检查条件—登记等待—释放对象锁—调度”的顺序，并在调度
+临界区复查条件，以封住丢失唤醒窗口。创建路径先完成初始化再发布，销毁路径先撤销可见性
+再释放资源，这两条顺序贯穿task、MM、VFS、IPC和network。
 
-\section{构建期组合}
-
-架构、平台、阶段和附加能力由\code{os/Makefile}与Cargo feature在编译期确定。
-\code{ARCH=rv|la}选择目标架构，\code{PROFILE=pre|final}选择用户态工作负载配置，
-\code{EXTRA\_FEATURES}用于显式增加诊断、网络或图形能力。每个目标只链接对应的平台、
-页表和驱动实现，不在运行时保留另一架构代码。
-
-构建配置的职责是选择实现，不改变公共接口的含义。配置解析结果可通过
-\code{make show-config}检查；完整的构建、运行及专项工具用法见第4章。
+组件内部先保留原始错误语义，直到syscall边界才统一转换成errno。未实现调用返回
+\code{ENOSYS}，设备或平台不具备的能力返回\code{Unsupported}，不会伪造成功。读写、pipe、socket和终端的
+用户复制使用reservation/finish/cancel模式，使部分成功和copy fault都有明确结果。调试构建
+按CPU记录调度、trap、IPI、futex、TLB和锁事件；普通构建保留低频状态与错误日志，避免
+诊断本身改变高并发路径的行为。
