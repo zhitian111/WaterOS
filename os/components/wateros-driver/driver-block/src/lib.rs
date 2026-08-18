@@ -12,7 +12,7 @@ pub use driver_api::{DeviceType, SupportedDeviceEntry};
 
 #[cfg(feature = "impl-virtio-mmio")]
 #[doc(inline)]
-pub use impl_virtio_mmio::{enable_runtime_dispatch, notify_irq, VirtioBlkDevice};
+pub use impl_virtio_mmio::{enable_runtime_dispatch, VirtioBlkDevice};
 
 #[cfg(feature = "impl-virtio-pci")]
 #[doc(inline)]

@@ -41,7 +41,7 @@ static BLK_IRQ_BASE : [AtomicUsize; MAX_IRQ_BLK_DEVICES] =
 /// 已验证；任务上下文走 waitqueue 睡眠等待 + bottom-half 唤醒。IRQ 模式在用户态
 /// block IRQ 完成模式（历史单请求原型的移植：IRQ top-half 无锁 ack + 唤醒，
 /// 等待任务持设备锁在 waitqueue 上睡眠）。测试期间置 `true`。
-const BLOCK_IRQ_MODE_ENABLED : bool = false;
+const BLOCK_IRQ_MODE_ENABLED : bool = true;
 
 /// block IRQ top-half：无锁原始 MMIO ack 设备 ISR（`dev_id` = MMIO 基址），
 /// 不触碰设备锁、不做 PLIC mask，避免 ISR 重入与 mask 卡死；唤醒由 bottom-half
@@ -66,8 +66,10 @@ fn blk_irq_top(_virq : irq::types::Virq, dev_id : usize) -> irq::action::IrqRetu
 
 /// block IRQ bottom-half：置完成标志并唤醒等待任务；由 bottom-half 内核任务在
 /// 可调度上下文调用，安全进 scheduler 锁。完成回收由等待者自己执行。
-fn blk_irq_bottom(_virq : irq::types::Virq, _dev_id : usize) {
-    block::notify_irq();
+fn blk_irq_bottom(_virq : irq::types::Virq, dev_id : usize) {
+    if let Some(dev) = block::block_device_at(dev_id) {
+        let _ = dev.irq_bottom_half();
+    }
 }
 
 /// 成功注册为 virtio-blk 的 MMIO 窗口列表（供自检读取块 0）。
