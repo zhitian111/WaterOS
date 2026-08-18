@@ -1,17 +1,17 @@
 # 启动、SMP 与用户态 bring-up 手册
 
-本文用于判断内核停在启动日志的哪一层、初始化函数为何必须处在当前顺序，以及 `make run/shell` 最终会启动什么用户程序。入口源码是 [`src/main.rs`](../../src/main.rs)，用户态发布入口是 [`src/user_bringup_bus.rs`](../../src/user_bringup_bus.rs)。
+本文用于判断内核停在启动日志的哪一层、初始化函数为何必须处在当前顺序，以及 `make run/shell` 最终会启动什么用户程序。入口源码是 [`src/main.rs`](../../os/src/main.rs)，用户态发布入口是 [`src/user_bringup_bus.rs`](../../os/src/user_bringup_bus.rs)。
 
 ## 1. 四个配置维度
 
-| 维度 | 可选值 | 决定什么 | 不决定什么 |
-| --- | --- | --- | --- |
-| `ARCH` | `rv` / `la` | Rust target、平台 feature、QEMU 类型 | 用户态测试队列 |
-| `PROFILE` | `pre` / `final` | 默认镜像与产物名 | Cargo feature、`auto/shell/run` 模式 |
-| `MODE` | `auto` / `shell` / `run` | 编译期 `operator-*` feature | QEMU bootargs |
-| 根镜像内容 | 是否存在 `/glibc/cagent_testcode.sh` | auto 模式选择初赛或决赛命令队列 | 内核编译 feature |
+| 维度       | 可选值                               | 决定什么                             | 不决定什么                           |
+| ---------- | ------------------------------------ | ------------------------------------ | ------------------------------------ |
+| `ARCH`     | `rv` / `la`                          | Rust target、平台 feature、QEMU 类型 | 用户态测试队列                       |
+| `PROFILE`  | `pre` / `final`                      | 默认镜像与产物名                     | Cargo feature、`auto/shell/run` 模式 |
+| `MODE`     | `auto` / `shell` / `run`             | 编译期 `operator-*` feature          | QEMU bootargs                        |
+| 根镜像内容 | 是否存在 `/glibc/cagent_testcode.sh` | auto 模式选择初赛或决赛命令队列      | 内核编译 feature                     |
 
-`MODE` 由 [`Makefile`](../../Makefile) 转成 `operator-shell` 或 `operator-run` feature。`SCRIPT` 与 `GUEST_SHELL` 通过构建环境进入 `option_env!`，修改后必须重新构建。`pre`/`final` 使用相同的内核 feature；auto 模式不按 `PROFILE` 猜测试队列，而是在根文件系统挂载后检查镜像标志，并用同一探针结果选择 TTY 与 LTP 初始化策略。复现前先保存：
+`MODE` 由 [`Makefile`](../../os/Makefile) 转成 `operator-shell` 或 `operator-run` feature。`SCRIPT` 与 `GUEST_SHELL` 通过构建环境进入 `option_env!`，修改后必须重新构建。auto 模式不按 `PROFILE` 猜测试队列，而是在根文件系统挂载后检查镜像标志。复现前先保存：
 
 ```sh
 make show-config ARCH=rv PROFILE=final MODE=auto
@@ -66,11 +66,11 @@ RISC-V 的入口是 `qemu_riscv64_opensbi::wateros_kernel_main(cpu_raw, dtb_pa, 
 5. AP 以 `Acquire` 观察标志，初始化 CPU、IPI、内核页表和中断，登记 online 后进入调度器。
 6. BSP 有限自旋等待 `online_cpu_mask` 覆盖请求的 AP；超时 panic，不带残缺 SMP 进入用户态。
 
-| 最后日志 | 第一检查点 |
-| --- | --- |
-| `AP entered Rust` 后停止 | AP 的 arch/paging/IPI 初始化 |
-| `hart_start accepted` 后 `AP online timeout` | `task::set_cpu_online`、OpenSBI HSM |
-| 所有 AP online 后无用户输出 | 服务初始化返回值、根挂载和 operator 入队 |
+| 最后日志                                     | 第一检查点                               |
+| -------------------------------------------- | ---------------------------------------- |
+| `AP entered Rust` 后停止                     | AP 的 arch/paging/IPI 初始化             |
+| `hart_start accepted` 后 `AP online timeout` | `task::set_cpu_online`、OpenSBI HSM      |
+| 所有 AP online 后无用户输出                  | 服务初始化返回值、根挂载和 operator 入队 |
 
 ## 4. LoongArch BSP/AP 差异
 
@@ -91,7 +91,7 @@ make check ARCH=la PROFILE=pre
 
 ## 6. 根文件系统与伪文件系统发布
 
-[`user_bringup_bus::run`](../../src/user_bringup_bus.rs) 的顺序是：
+[`user_bringup_bus::run`](../../os/src/user_bringup_bus.rs) 的顺序是：
 
 ```text
 fs::mount_default_root_rw()
@@ -109,13 +109,13 @@ fs::mount_default_root_rw()
 
 ## 7. operator 三种模式
 
-[`src/user_operator.rs`](../../src/user_operator.rs) 中的 `BootPlan` 是策略真相源。
+[`src/user_operator.rs`](../../os/src/user_operator.rs) 中的 `BootPlan` 是策略真相源。
 
-| 模式 | TTY | 执行内容 | 退出策略 |
-| --- | --- | --- | --- |
-| `auto` | pre 为 fixture，final 为 closed | 按镜像标志选择评测队列 | 队列结束关机 |
-| `shell` | interactive | 指定 shell、bash、sh、glibc/musl busybox | shell 退出后继续拉起 shell |
-| `run` | interactive | 用候选 shell 执行 `SCRIPT` | 脚本结束关机 |
+| 模式    | TTY                             | 执行内容                                 | 退出策略                   |
+| ------- | ------------------------------- | ---------------------------------------- | -------------------------- |
+| `auto`  | pre 为 fixture，final 为 closed | 按镜像标志选择评测队列                   | 队列结束关机               |
+| `shell` | interactive                     | 指定 shell、bash、sh、glibc/musl busybox | shell 退出后继续拉起 shell |
+| `run`   | interactive                     | 用候选 shell 执行 `SCRIPT`               | 脚本结束关机               |
 
 interactive 模式会启动 `console_input_main`。Ctrl-C 无效时检查：
 
@@ -130,7 +130,7 @@ shell 候选显式添加 `-i`。否则 SMP 下 shell 可能在控制终端状态
 
 ## 8. auto 评测队列
 
-[`src/user_bringup_busybox.rs`](../../src/user_bringup_busybox.rs) 检查 `/glibc/cagent_testcode.sh`：
+[`src/user_bringup_busybox.rs`](../../os/src/user_bringup_busybox.rs) 检查 `/glibc/cagent_testcode.sh`：
 
 - 存在：执行 final 队列 `cagent_testcode.sh`、`buildstorm_testcode.sh`。
 - 不存在：执行当前启用的 preliminary 队列，包括 cyclictest、musl LTP、glibc libcbench/lmbench/iozone。
@@ -147,7 +147,7 @@ preliminary 队列先处理 LTP 排除项并刷新账号文件。每条命令严
 
 ## 9. 单个用户程序生命周期
 
-公共执行函数在 [`src/user_bringup_common.rs`](../../src/user_bringup_common.rs)：
+公共执行函数在 [`src/user_bringup_common.rs`](../../os/src/user_bringup_common.rs)：
 
 ```text
 run_one_elf_argv_env_exit

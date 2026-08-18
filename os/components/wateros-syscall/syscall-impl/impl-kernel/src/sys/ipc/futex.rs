@@ -66,6 +66,9 @@ impl FutexDeadline {
     }
 
     fn remaining_ticks(self) -> Result<TaskTick, ErrNo> {
+        // 这里只把 ABI deadline 转成调度器等待单位；调度器 timekeeper 会按实际
+        // 单调时间补偿 SMP 锁竞争漏过的周期。不可在这里用经验比例缩短 timeout，
+        // 否则不同 SMP 数量及低负载下可能早于 Linux 要求的 deadline 返回。
         Ok(ns_duration_to_ticks(self.target_ns
                                     .saturating_sub(self.now_ns()?)))
     }

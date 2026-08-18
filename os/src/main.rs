@@ -151,26 +151,28 @@ fn bringup_user_and_optional_services() {
         if has_input {
             task::spawn_kernel_task(vfs::user_graphics_input_worker, 0);
         }
-        warn!("[user-graphics] fbdev/evdev ready input_worker={}", has_input);
+        warn!("[user-graphics] fbdev/evdev ready input_worker={}",
+              has_input);
     }
     #[cfg(feature = "gui")]
     match (|| -> gui::GuiResult<()> {
-        gui::initialize()?;
-        gui::install_default_desktop()?;
-        let _ = gui::render()?;
-        Ok(())
-    })() {
+              gui::initialize()?;
+              gui::install_default_desktop()?;
+              let _ = gui::render()?;
+              Ok(())
+          })() {
         Ok(()) => {
             task::spawn_kernel_task(gui_refresh_task, 0);
             info!("[gui] wateros-gui desktop and refresh task ready");
         }
-        Err(error) => warn!("[gui] initialization skipped: {:?}", error),
+        Err(error) => warn!("[gui] initialization skipped: {:?}",
+                            error),
     }
     crate::user_bringup_bus::run();
 }
 
 /// 所有架构共用的启动早期初始化入口。
-fn init_when_boot(dtb_pa: usize) {
+fn init_when_boot(dtb_pa : usize) {
     platform::init_when_boot(dtb_pa);
     driver::init_when_boot();
 }
@@ -179,7 +181,7 @@ fn init_when_boot(dtb_pa: usize) {
 ///
 /// 调用者必须先完成 console、日志、堆和架构原语初始化；本函数只接管
 /// timebase、task、trap 与 MM 的顺序，避免两个架构入口各自漂移。
-fn init_after_boot(dtb_pa: usize, memory_end: usize, cpu_id: task::CpuId) {
+fn init_after_boot(dtb_pa : usize, memory_end : usize, cpu_id : task::CpuId) {
     platform::init_after_boot();
     crate::boot_timebase::probe_and_init_timebase(dtb_pa);
     task::init();
@@ -217,8 +219,10 @@ fn run_self_tests() {
 
 #[cfg(feature = "qemu-riscv64-opensbi")]
 mod qemu_riscv64_opensbi {
-    use crate::{bringup_user_and_optional_services, init_after_boot, init_services_after_boot,
-                init_when_boot};
+    use crate::{
+        bringup_user_and_optional_services, init_after_boot, init_services_after_boot,
+        init_when_boot,
+    };
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use runtime::logging::*;
     /// 固件选择的 boot hart；`usize::MAX` 表示尚无 hart 进入。
@@ -354,8 +358,10 @@ mod qemu_riscv64_opensbi {
 
 #[cfg(feature = "qemu-loongarch64-virt")]
 mod qemu_loongarch64_virt {
-    use crate::{bringup_user_and_optional_services, init_after_boot, init_services_after_boot,
-                init_when_boot};
+    use crate::{
+        bringup_user_and_optional_services, init_after_boot, init_services_after_boot,
+        init_when_boot,
+    };
     use core::sync::atomic::{AtomicBool, Ordering};
     use runtime::logging::*;
 

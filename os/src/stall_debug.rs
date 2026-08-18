@@ -35,7 +35,8 @@ pub fn record_syscall_enter(syscall_nr : usize, args : [usize; 6], user_pc : usi
     SYSCALL_TOTAL.fetch_add(1, Ordering::Relaxed);
     let cpu = platform::arch::cpu::current_cpu_id().raw();
     debug::update_cpu_state(cpu, |state| {
-        state.syscalls = state.syscalls.wrapping_add(1);
+        state.syscalls = state.syscalls
+                              .wrapping_add(1);
         state.last_syscall_nr = syscall_nr as u64;
         state.last_syscall_pc = user_pc as u64;
     });
@@ -44,7 +45,9 @@ pub fn record_syscall_enter(syscall_nr : usize, args : [usize; 6], user_pc : usi
                         task::current_task_id().map_or(debug::NO_TASK, |id| id as u64),
                         debug::DebugEventKind::SyscallEnter,
                         0,
-                        [syscall_nr as u64, user_pc as u64, args[0] as u64]);
+                        [syscall_nr as u64,
+                         user_pc as u64,
+                         args[0] as u64]);
     if cpu >= MAX_CPUS {
         return 0;
     }
@@ -62,7 +65,7 @@ pub fn record_syscall_enter(syscall_nr : usize, args : [usize; 6], user_pc : usi
 
 #[inline]
 pub fn record_syscall_exit(token : usize) {
-    let Some(cpu) = (token & 0xff).checked_sub(1) else {
+    let Some(cpu) = (token & 0xFF).checked_sub(1) else {
         return;
     };
     if cpu < MAX_CPUS {
@@ -72,7 +75,9 @@ pub fn record_syscall_exit(token : usize) {
                             task::current_task_id().map_or(debug::NO_TASK, |id| id as u64),
                             debug::DebugEventKind::SyscallExit,
                             0,
-                            [syscall_nr as u64, 0, 0]);
+                            [syscall_nr as u64,
+                             0,
+                             0]);
         MEMORY_SYSCALL_NR[cpu].store(0, Ordering::Release);
     }
 }
@@ -114,8 +119,8 @@ fn log_execution_snapshot() {
                                     timer_count);
             continue;
         }
-        runtime::logging::warn!("[stall-debug][cpu] cpu={} timers={} memory-syscall={} \
-                                 pc={:#x} args=[{:#x},{:#x},{:#x}]",
+        runtime::logging::warn!("[stall-debug][cpu] cpu={} timers={} memory-syscall={} pc={:#x} \
+                                 args=[{:#x},{:#x},{:#x}]",
                                 cpu,
                                 timer_count,
                                 syscall_nr,

@@ -42,6 +42,11 @@ sequenceDiagram
 当前命令包括 WAIT/WAKE、BITSET、REQUEUE/CMP_REQUEUE 和 WAKE_OP；PI futex 仍不支持。扩展时必须
 同时维护 key、bitset、active-user、requeue 和退出取消，不能只移动 scheduler 队列。
 
+WAIT 的相对超时和 WAIT_BITSET 的绝对超时都先转换为单调/实时时钟 deadline，scheduler 只接收
+向上取整后的等待 tick。多核 timer handler 争用全局调度锁时，timekeeper 按单调时钟补推进漏过的周期，
+因此长超时不会按“实际处理到的中断次数”累计变慢；返回 `ETIMEDOUT` 前仍会复查 ABI deadline，避免
+取整或提前中断造成过早超时。Linux 的 timer slack 合并优化当前没有实现。
+
 ## 信号产生、投递和返回
 
 signal registry 维护 disposition、mask、pending、altstack 和 timer 状态；syscall 层编码 Linux
@@ -52,6 +57,11 @@ signal registry 维护 disposition、mask、pending、altstack 和 timer 状态�
 fork 复制 disposition 并建立新 pending 状态；线程 clone 建线程 mask；exec 重置规定 handler 并清理
 其它线程；exit 移除 timer/pending/线程状态。新增 signal 侧状态必须接入 `on_fork/on_clone_thread/
 on_exec/on_thread_exit/drop_thread_state`。
+
+默认忽略信号需要区分“保留 pending”与“中断阻塞调用”。当前实现会保留 SIGCHLD、SIGURG、SIGWINCH，
+使被屏蔽的信号仍可由 `signalfd`/`sigwait` 读取；若 disposition 仍为默认值且没有同步等待者，则不会唤醒
+`waitpid`、futex 等阻塞调用。安装用户 handler 后会按普通信号唤醒，并由 syscall restart 表与
+`SA_RESTART` 决定重启还是向用户态返回 `EINTR`，这一点与 Linux 的可观察 ABI 一致。
 
 ## SysV message queue
 
@@ -97,8 +107,10 @@ segment 在 `IPC_RMID` 且最后 attach 消失后回收。
 
 ## 当前边界与回归
 
-PI futex 和完整 realtime queued siginfo 尚未实现；普通信号按位合并。SysV msg/sem 已有 registry、阻塞
-和删除语义，不能再按旧文档当成 stub，但仍不是 Linux 全部 namespace/accounting 能力。
+PI futex、`futex_waitv` 和完整 realtime queued siginfo 尚未实现；普通信号按位合并，不能表达 Linux
+实时信号的多实例排队与完整 `siginfo_t` 来源。基础 futex 已实现 WAIT/WAKE、BITSET、REQUEUE、
+CMP_REQUEUE、WAKE_OP、private/shared key、相对/绝对超时与 robust owner-death。SysV msg/sem 已有
+registry、阻塞和删除语义，但仍不包含 Linux 的全部 namespace、资源记账与调优接口。
 
 最小回归应覆盖 futex pthread 压力、robust owner death、signal mask/frame/return、signalfd bad-pointer
 回滚、eventfd counter 边界、SHM fork/detach/remove、msg queue 双接收者和 semaphore 原子组操作。

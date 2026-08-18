@@ -2,7 +2,7 @@
 
 本 crate 用写穿缓存装饰任意同步 [`BlockDevice`](../../block-api/api-v0/README.md)，对上仍暴露
 相同 trait。块设备分层和平台注册链见 [driver-block](../../README.md)，内核内存预算与缓存层
-关系见 [设备、存储、网络与 runtime](../../../../../docs/offline-development/device-storage-network-runtime.md)。
+关系见 [设备、存储、网络与 runtime](../../../../../../docs/offline-development/device-storage-network-runtime.md)。
 
 ## 1. 设计目标与非目标
 
@@ -280,4 +280,3 @@ write-allocate、容量 0 和索引碰撞。继续修改时至少增加：
 
 只通过内存 `CountingMem` 测试不能证明 virtio flush、DMA 可见性或真实文件系统持久化；线下最终
 回归必须包含 guest 内端到端写入、flush/卸载/重启和内容校验。
-

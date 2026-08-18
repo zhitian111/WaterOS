@@ -35,6 +35,8 @@ pub(super) struct MultiClassScheduler {
     pub next_placement_cpu : usize,
     /// 唯一推进全局 sleep/wait timeout 时间的 BSP。
     pub timekeeper_cpu : Option<CpuId>,
+    /// 上次已折算进全局 timeout tick 的单调时钟基准。
+    pub timekeeper_last_ns : Option<u128>,
     /// 入队时在 scheduler 锁内累计，锁外再实际发送定向 IPI。
     pub pending_reschedule_cpus : CpuMask,
 }
@@ -61,6 +63,7 @@ impl MultiClassScheduler {
                cpu_states : cpu_states.into_boxed_slice(),
                next_placement_cpu : 0,
                timekeeper_cpu : None,
+               timekeeper_last_ns : None,
                pending_reschedule_cpus : CpuMask::EMPTY }
     }
 
@@ -70,6 +73,7 @@ impl MultiClassScheduler {
             .init();
         self.next_placement_cpu = 0;
         self.timekeeper_cpu = None;
+        self.timekeeper_last_ns = None;
         self.pending_reschedule_cpus = CpuMask::EMPTY;
         // 为每个 CPU 创建 idle 任务
         for (cpu_id, cpu_state) in self.cpu_states
@@ -241,10 +245,28 @@ impl MultiClassScheduler {
 
     /// Tick 前置处理：推进时间、检查时间片与抢占条件。
     fn tick(&mut self, cpu_id : CpuId) -> Option<()> {
-        // 1. 推进全局 tick
+        // 1. 推进全局 timeout tick。SMP timer handler 共用调度器锁，timekeeper
+        // 可能晚于 10ms 才取得锁；按单调时钟补齐经过的周期，不能假设一次中断
+        // 永远恰好等于一个周期，否则 futex/poll/sleep 会随核数产生稳定超时漂移。
         if self.is_timekeeper_cpu(cpu_id) {
+            let period_ns = (config::task::SCHED_TIMER_PERIOD_MS as u128).max(1) * 1_000_000;
+            let now_ns = platform::wall_clock::monotonic_ns().ok();
+            let elapsed_ticks = match (self.timekeeper_last_ns, now_ns) {
+                (Some(last), Some(now)) => {
+                    let ticks = now.saturating_sub(last) / period_ns;
+                    if ticks != 0 {
+                        self.timekeeper_last_ns = Some(last.saturating_add(ticks * period_ns));
+                    }
+                    u64::try_from(ticks).unwrap_or(u64::MAX)
+                }
+                (_, Some(now)) => {
+                    self.timekeeper_last_ns = Some(now);
+                    1
+                }
+                _ => 1,
+            };
             self.wait_queues
-                .tick();
+                .advance_ticks(elapsed_ticks.max(1));
         }
         // 2. 仅推进 CPU 本地缓存；任务统计会在离开 CPU 时统一回写 TCB。
         // 3. 推进当前任务的时间片/vruntime（由 CPUState::tick 按策略分发）

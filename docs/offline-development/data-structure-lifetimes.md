@@ -34,7 +34,7 @@
 
 ## 3. 新用户进程：先构造，后发布
 
-bring-up 创建流程在 [`src/user_bringup_common.rs`](../../src/user_bringup_common.rs)，fork/clone 在 [`clone.rs`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/sys/task/clone.rs)。共同规则是：
+bring-up 创建流程在 [`src/user_bringup_common.rs`](../../os/src/user_bringup_common.rs)，fork/clone 在 [`clone.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/task/clone.rs)。共同规则是：
 
 ```text
 分配地址空间/任务对象（scheduler 尚不可运行）
@@ -92,7 +92,7 @@ pthread 典型 `CLONE_VM|CLONE_THREAD|CLONE_SIGHAND`：
 
 ## 6. exec：准备阶段与不可回退点
 
-[`execve.rs`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/sys/task/execve.rs) 先装载新 ELF、准备用户栈和 signal state；这些步骤失败时，旧进程映像仍可运行。之后终止兄弟线程并切换资源：
+[`execve.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/task/execve.rs) 先装载新 ELF、准备用户栈和 signal state；这些步骤失败时，旧进程映像仍可运行。之后终止兄弟线程并切换资源：
 
 ```text
 准备 new ELF/aspace/stack（可失败、可回退）
@@ -115,7 +115,7 @@ exec 不创建新 PID/TID，且不会普通地关闭全部 fd；只关闭 `CLOEX
 
 ## 7. exit-time 与 reap-time 必须分开
 
-退出路径在 [`task.rs`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/sys/task/task.rs)，最终资源清理在 [`wait.rs`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/sys/task/wait.rs)。
+退出路径在 [`task.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/task/task.rs)，最终资源清理在 [`wait.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/task/wait.rs)。
 
 exit-time 的目标是立即解除会阻塞系统或具有用户可见副作用的资源：
 

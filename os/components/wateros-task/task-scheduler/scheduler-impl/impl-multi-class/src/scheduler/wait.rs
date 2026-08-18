@@ -120,7 +120,8 @@ impl MultiClassScheduler {
             self.registry
                 .finish_wait(task_id, TaskWaitResult::Woken);
             self.activate_ready_task(task_id, ReadyPlacement::LastCpu);
-            result.woken.push(task_id);
+            result.woken
+                  .push(task_id);
         }
         for (task_id, _) in moved {
             if self.registry
@@ -135,7 +136,8 @@ impl MultiClassScheduler {
             }
             self.registry
                 .mark_blocking(task_id, to_target);
-            result.moved.push(task_id);
+            result.moved
+                  .push(task_id);
         }
         result
     }
@@ -169,14 +171,13 @@ impl MultiClassScheduler {
                                      requeue_count))
     }
 
-    pub fn requeue_wait_queue_detailed_while(
-        &mut self,
-        from_wait_queue_id : WaitQueueId,
-        to_wait_queue_id : WaitQueueId,
-        wake_count : usize,
-        requeue_count : usize,
-        condition : impl FnOnce() -> bool)
-        -> Option<WaitQueueRequeueResult> {
+    pub fn requeue_wait_queue_detailed_while(&mut self,
+                                             from_wait_queue_id : WaitQueueId,
+                                             to_wait_queue_id : WaitQueueId,
+                                             wake_count : usize,
+                                             requeue_count : usize,
+                                             condition : impl FnOnce() -> bool)
+                                             -> Option<WaitQueueRequeueResult> {
         if !condition() {
             return None;
         }

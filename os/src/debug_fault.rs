@@ -14,10 +14,13 @@ static ABBA_ARRIVED : AtomicUsize = AtomicUsize::new(0);
 
 fn current_cpu() -> usize { platform::arch::cpu::current_cpu_id().raw() }
 
-static ABBA_A : debug::TrackedMutex<()> =
-    debug::TrackedMutex::new((), debug::DebugLockKind::Scheduler, current_cpu);
+static ABBA_A : debug::TrackedMutex<()> = debug::TrackedMutex::new((),
+                                                                   debug::DebugLockKind::Scheduler,
+                                                                   current_cpu);
 static ABBA_B : debug::TrackedMutex<()> =
-    debug::TrackedMutex::new((), debug::DebugLockKind::ProcessRegistry, current_cpu);
+    debug::TrackedMutex::new((),
+                             debug::DebugLockKind::ProcessRegistry,
+                             current_cpu);
 
 /// 返回 true 表示本次 timer trap 仍可返回，但必须跳过 scheduler tick。
 pub fn on_timer(cpu : usize) -> bool {
@@ -33,7 +36,11 @@ pub fn on_timer(cpu : usize) -> bool {
             core::hint::spin_loop();
         },
         2 if cpu < 2 => {
-            let (first, second) = if cpu == 0 { (&ABBA_A, &ABBA_B) } else { (&ABBA_B, &ABBA_A) };
+            let (first, second) = if cpu == 0 {
+                (&ABBA_A, &ABBA_B)
+            } else {
+                (&ABBA_B, &ABBA_A)
+            };
             let _first = first.lock();
             ABBA_ARRIVED.fetch_or(1usize << cpu, Ordering::AcqRel);
             while ABBA_ARRIVED.load(Ordering::Acquire) & 0b11 != 0b11 {

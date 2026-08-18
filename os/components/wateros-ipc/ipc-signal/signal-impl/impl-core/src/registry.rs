@@ -222,8 +222,10 @@ impl SignalRegistry {
         }
         let pid = self.thread(task_id)?
                       .pid;
-        action.mask.remove(SIGKILL);
-        action.mask.remove(SIGSTOP);
+        action.mask
+              .remove(SIGKILL);
+        action.mask
+              .remove(SIGSTOP);
         let process = self.processes
                           .get_mut(&pid)
                           .ok_or(SignalError::NoSuchProcess)?;
@@ -376,6 +378,33 @@ impl SignalRegistry {
         }
     }
 
+    /// 判断一个已经进入 pending 集的普通信号是否应打断 `task_id` 的阻塞等待。
+    ///
+    /// Linux ABI 要求默认忽略的 SIGCHLD/SIGURG/SIGWINCH 仍可在被屏蔽时由
+    /// signalfd/sigwait 消费，但默认处置且未被同步等待时不能令 waitpid、futex 等
+    /// 阻塞系统调用返回 EINTR。pending 与“中断睡眠”因此是两个不同的判断。
+    fn pending_should_wake(&self, task_id : usize, sig : usize) -> bool {
+        let Ok(thread) = self.thread(task_id) else {
+            return false;
+        };
+        if thread.waiting_for
+                 .is_some_and(|set| set.contains(sig))
+        {
+            return true;
+        }
+        if thread.mask
+                 .contains(sig)
+        {
+            return false;
+        }
+        self.processes
+            .get(&thread.pid)
+            .is_some_and(|process| {
+                let action = process.action(sig);
+                !(action.is_default() && default_ignored(sig))
+            })
+    }
+
     /// `FLOW:` 向指定线程投递信号（`tkill` / `pthread_kill` 路径）。
     ///
     /// 线程定向信号只进入 `ThreadSignalState::pending`。结果中的 target 仅供锁外唤醒，
@@ -400,12 +429,9 @@ impl SignalRegistry {
             SignalDelivery::Stop => Ok(SignalDispatch::stop(Some(task_id))),
             SignalDelivery::Pending => {
                 let thread = self.thread_mut(task_id)?;
-                thread
-                    .pending
-                    .insert(sig);
-                let should_wake = !thread.mask.contains(sig) ||
-                                  thread.waiting_for
-                                        .is_some_and(|set| set.contains(sig));
+                thread.pending
+                      .insert(sig);
+                let should_wake = self.pending_should_wake(task_id, sig);
                 Ok(SignalDispatch::pending(should_wake.then_some(task_id)))
             }
         }
@@ -429,7 +455,10 @@ impl SignalRegistry {
                          .get(&thread.pid)
                          .ok_or(SignalError::NoSuchProcess)?
                          .action(sig);
-        if thread.mask.contains(sig) || action.is_ignore() {
+        if thread.mask
+                 .contains(sig) ||
+           action.is_ignore()
+        {
             self.processes
                 .get_mut(&thread.pid)
                 .ok_or(SignalError::NoSuchProcess)?
@@ -439,7 +468,8 @@ impl SignalRegistry {
                 .remove(sig);
         }
         let target = self.thread_mut(task_id)?;
-        target.pending.insert(sig);
+        target.pending
+              .insert(sig);
         target.waiting_for = None;
         Ok(SignalDispatch::pending(Some(task_id)))
     }
@@ -492,12 +522,9 @@ impl SignalRegistry {
                               .iter()
                               .filter(|(_, thread)| thread.pid == pid)
                               .find_map(|(task_id, _)| {
-                                  self.has_deliverable(*task_id)
-                                      .ok()
-                                      .filter(|v| *v)
-                                      .map(|_| *task_id)
-                              })
-                              .or(target);
+                                  self.pending_should_wake(*task_id, sig)
+                                      .then_some(*task_id)
+                              });
         Ok(SignalDispatch::pending(wake_target))
     }
 
@@ -533,7 +560,10 @@ impl SignalRegistry {
         };
         if self.threads
                .get(&task_id)
-               .is_some_and(|thread| thread.pending.contains(SIGKILL))
+               .is_some_and(|thread| {
+                   thread.pending
+                         .contains(SIGKILL)
+               })
         {
             self.threads
                 .get_mut(&task_id)
@@ -602,14 +632,17 @@ impl SignalRegistry {
                                   task_id : usize,
                                   record : TakenPendingSignal)
                                   -> SignalResult<()> {
-        let pid = self.thread(task_id)?.pid;
+        let pid = self.thread(task_id)?
+                      .pid;
         match record.scope {
-            PendingSignalScope::Thread => self.thread_mut(task_id)?.pending.insert(record.signal),
+            PendingSignalScope::Thread => self.thread_mut(task_id)?
+                                              .pending
+                                              .insert(record.signal),
             PendingSignalScope::Process => self.processes
-                                                       .get_mut(&pid)
-                                                       .ok_or(SignalError::NoSuchProcess)?
-                                                       .pending
-                                                       .insert(record.signal),
+                                               .get_mut(&pid)
+                                               .ok_or(SignalError::NoSuchProcess)?
+                                               .pending
+                                               .insert(record.signal),
         }
         Ok(())
     }
@@ -779,6 +812,36 @@ mod tests {
     }
 
     #[test]
+    fn default_ignored_sigchld_stays_pending_without_interrupting_waits() {
+        let mut registry = registry_with_process();
+
+        let dispatch = registry.send_process(10, SIGCHLD)
+                               .unwrap();
+        assert_eq!(dispatch, SignalDispatch::pending(None));
+        assert!(registry.pending(100)
+                        .unwrap()
+                        .contains(SIGCHLD));
+        // 普通安全点会消费默认忽略信号，但发送动作本身不能产生 scheduler interrupt。
+        assert_eq!(registry.take_deliverable(100), None);
+    }
+
+    #[test]
+    fn sigwait_still_wakes_for_default_ignored_sigchld() {
+        let mut registry = registry_with_process();
+        let mut wait_set = SignalSet::empty();
+        wait_set.insert(SIGCHLD);
+        registry.begin_signal_wait(100, wait_set)
+                .unwrap();
+
+        let dispatch = registry.send_process(10, SIGCHLD)
+                               .unwrap();
+        assert_eq!(dispatch,
+                   SignalDispatch::pending(Some(100)));
+        assert_eq!(registry.take_pending(100, wait_set),
+                   Some(SIGCHLD));
+    }
+
+    #[test]
     fn handler_effect_preserves_thread_or_process_pending_scope() {
         let mut registry = registry_with_process();
         let action = SignalAction { handler : 0x1000,
@@ -792,21 +855,19 @@ mod tests {
                 .unwrap();
         let thread_effect = registry.take_deliverable(100);
         assert!(matches!(thread_effect,
-                         Some(SignalEffect::Handler(PendingSignal {
-                             signal: SIGILL,
-                             scope: PendingSignalScope::Thread,
-                             ..
-                         }))));
+                         Some(SignalEffect::Handler(PendingSignal { signal : SIGILL,
+                                                                    scope:
+                                                                        PendingSignalScope::Thread,
+                                                                    .. }))));
 
         registry.send_process(10, SIGSEGV)
                 .unwrap();
         let process_effect = registry.take_deliverable(100);
         assert!(matches!(process_effect,
-                         Some(SignalEffect::Handler(PendingSignal {
-                             signal: SIGSEGV,
-                             scope: PendingSignalScope::Process,
-                             ..
-                         }))));
+                         Some(SignalEffect::Handler(PendingSignal { signal : SIGSEGV,
+                                                                    scope:
+                                                                        PendingSignalScope::Process,
+                                                                    .. }))));
     }
 
     #[test]
@@ -966,7 +1027,7 @@ mod tests {
                 .unwrap();
 
         let SignalEffect::Handler(pending) = registry.take_deliverable(100)
-                                                      .unwrap()
+                                                     .unwrap()
         else {
             panic!("expected handler delivery");
         };
@@ -996,7 +1057,8 @@ mod tests {
 
         let dispatch = registry.send_thread(100, SIGTERM)
                                .unwrap();
-        assert_eq!(dispatch.delivery, SignalDelivery::Pending);
+        assert_eq!(dispatch.delivery,
+                   SignalDelivery::Pending);
         assert_eq!(dispatch.target_task_id, None);
         assert!(registry.pending(100)
                         .unwrap()
@@ -1017,8 +1079,10 @@ mod tests {
 
         let dispatch = registry.force_thread_signal(100, SIGSEGV)
                                .unwrap();
-        assert_eq!(dispatch, SignalDispatch::pending(Some(100)));
-        assert_eq!(registry.get_action(100, SIGSEGV).unwrap(),
+        assert_eq!(dispatch,
+                   SignalDispatch::pending(Some(100)));
+        assert_eq!(registry.get_action(100, SIGSEGV)
+                           .unwrap(),
                    SignalAction::default_action());
         assert_eq!(registry.take_deliverable(100),
                    Some(SignalEffect::Terminate { signal : SIGSEGV }));
@@ -1034,8 +1098,11 @@ mod tests {
 
         registry.force_thread_signal(100, SIGSEGV)
                 .unwrap();
-        assert!(!registry.current_mask(100).unwrap().contains(SIGSEGV));
-        assert_eq!(registry.get_action(100, SIGSEGV).unwrap(),
+        assert!(!registry.current_mask(100)
+                         .unwrap()
+                         .contains(SIGSEGV));
+        assert_eq!(registry.get_action(100, SIGSEGV)
+                           .unwrap(),
                    SignalAction::default_action());
         assert_eq!(registry.take_deliverable(100),
                    Some(SignalEffect::Terminate { signal : SIGSEGV }));
@@ -1103,21 +1170,17 @@ mod tests {
         registry.send_thread(100, NSIG)
                 .unwrap();
         assert!(matches!(registry.take_deliverable(100),
-                         Some(SignalEffect::Handler(PendingSignal {
-                             signal: NSIG,
-                             ..
-                         }))));
+                         Some(SignalEffect::Handler(PendingSignal { signal : NSIG, .. }))));
 
         registry.set_action(100, SIGCONT, handler)
                 .unwrap();
         let dispatch = registry.send_process(10, SIGCONT)
                                .unwrap();
-        assert_eq!(dispatch.delivery, SignalDelivery::Continue);
+        assert_eq!(dispatch.delivery,
+                   SignalDelivery::Continue);
         assert!(matches!(registry.take_deliverable(100),
-                         Some(SignalEffect::Handler(PendingSignal {
-                             signal: SIGCONT,
-                             ..
-                         }))));
+                         Some(SignalEffect::Handler(PendingSignal { signal : SIGCONT,
+                                                                    .. }))));
     }
 
     #[test]

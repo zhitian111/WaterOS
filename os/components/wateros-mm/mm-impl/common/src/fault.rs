@@ -14,6 +14,7 @@ use api_v0::mmap::PageFaultAccess;
 pub trait LazyVmaAccess {
     /// 只读取得当前地址空间的惰性 VMA 集合。
     fn lazy_vma_set(&self) -> &LazyVmaSet;
+    /// 取得可修改的惰性 VMA 集合；加载文件页时可能需要更新 loader 的内部状态。
     fn lazy_vma_set_mut(&mut self) -> &mut LazyVmaSet;
 }
 

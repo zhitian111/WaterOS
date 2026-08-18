@@ -28,7 +28,7 @@ const WUNTRACED : usize = 2;
 const WCONTINUED : usize = 8;
 const WEXITED : usize = 4;
 const WNOWAIT : usize = 0x0100_0000;
-const WAITPID_IGNORED_OPTIONS : usize = WUNTRACED | WCONTINUED;
+const WAITPID_EVENT_OPTIONS : usize = WUNTRACED | WCONTINUED;
 const WAITID_EVENT_OPTIONS : usize = WEXITED | WUNTRACED | WCONTINUED;
 const WAITID_ALLOWED_OPTIONS : usize = WNOHANG
     | WAITID_EVENT_OPTIONS
@@ -38,6 +38,8 @@ const WAITID_ALLOWED_OPTIONS : usize = WNOHANG
     | 0x2000_0000; // WTHREAD
 const CLD_STOPPED : i32 = 5;
 const CLD_CONTINUED : i32 = 6;
+const CLD_KILLED : i32 = 2;
+const CLD_DUMPED : i32 = 3;
 const WAITID_P_ALL : i32 = 0;
 const WAITID_P_PID : i32 = 1;
 const WAITID_P_PGID : i32 = 2;
@@ -144,6 +146,13 @@ fn write_exit_code(exit_code_ptr : usize, exit_code : isize) -> Result<(), ErrNo
     copy_to_user_struct(exit_code_ptr, &wait_status)
 }
 
+fn write_wait_status(status_ptr : usize, status : i32) -> Result<(), ErrNo> {
+    if status_ptr == 0 {
+        return Ok(());
+    }
+    copy_to_user_struct(status_ptr, &status)
+}
+
 fn drop_exited_task_resources(exited : &task::ExitedTask) {
     let aspace = exited.trap_frame
                        .as_ref()
@@ -205,12 +214,20 @@ pub(crate) fn drop_reaped_task_runtime_resources(task_id : task::TaskId, aspace 
 // ── 子进程等待辅助 ─────────────────────────────────────────────
 
 fn user_siginfo_exited(pid : task::ProcessId, exit_code : isize) -> UserSigInfo {
-    let status = if exit_code < 0 {
-        (-exit_code) as i32
+    let (status, code) = if exit_code < 0 {
+        // 内部负退出码保存 wait status 的低字节（signal + core bit）；waitid
+        // 的 si_status 只暴露信号号，并以 si_code 区分 killed/dumped。
+        let wait_status = (-exit_code) as i32;
+        (wait_status & 0x7F,
+         if wait_status & 0x80 != 0 {
+             CLD_DUMPED
+         } else {
+             CLD_KILLED
+         })
     } else {
         // waitid 的 siginfo_t.si_status 是原始退出码；只有 wait4/waitpid
         // 写入的 int status 才使用高 8 位编码。
-        (exit_code as i32) & 0xFF
+        ((exit_code as i32) & 0xFF, CLD_EXITED)
     };
     #[repr(C)]
     struct SigchldFields {
@@ -226,7 +243,7 @@ fn user_siginfo_exited(pid : task::ProcessId, exit_code : isize) -> UserSigInfo 
                                  utime : 0,
                                  stime : 0 };
     let mut info = UserSigInfo::for_signal(SIGCHLD as usize);
-    info.code = CLD_EXITED;
+    info.code = code;
     unsafe {
         core::ptr::copy_nonoverlapping(&fields as *const SigchldFields as *const u8,
                                        info.payload
@@ -245,10 +262,11 @@ fn user_siginfo_stopped(pid : task::ProcessId, signo : u8) -> UserSigInfo {
         utime : isize,
         stime : isize,
     }
-    let status = (signo as i32) << 8 | 0x7F;
     let fields = SigchldFields { pid : pid.raw() as i32,
                                  uid : 0,
-                                 status,
+                                 // waitid.si_status 是原始 stop signal；wait4 的 status
+                                 // 才编码为 (signal << 8) | 0x7f。
+                                 status : signo as i32,
                                  utime : 0,
                                  stime : 0 };
     let mut info = UserSigInfo::for_signal(SIGCHLD as usize);
@@ -273,7 +291,9 @@ fn user_siginfo_continued(pid : task::ProcessId) -> UserSigInfo {
     }
     let fields = SigchldFields { pid : pid.raw() as i32,
                                  uid : 0,
-                                 status : 0xFFFF,
+                                 // CLD_CONTINUED 配套的 waitid.si_status 为 SIGCONT；
+                                 // 0xffff 是 wait4/waitpid 的 WIFCONTINUED status 编码。
+                                 status : ipc::signal::SIGCONT as i32,
                                  utime : 0,
                                  stime : 0 };
     let mut info = UserSigInfo::for_signal(SIGCHLD as usize);
@@ -337,6 +357,43 @@ fn finish_waitid_process_result(parent_pid : task::ProcessId,
     UserRet::from_success(0)
 }
 
+/// 以 `WNOWAIT` 方式读取退出事件，不消费 zombie，也不把其 CPU 时间计入父进程。
+///
+/// Linux 允许调用方随后再次用 `waitid`/`wait4` 取得同一个退出事件。因而这里不能
+/// 调用 `reap_exited_process`，更不能提前释放 task、凭证和地址空间等 reap 阶段资源。
+fn finish_waitid_exited_nowait_result(child : task::ProcessSnapshot,
+                                      siginfo_ptr : usize,
+                                      rusage_ptr : usize)
+                                      -> UserRet {
+    let task::ProcessState::Exited(exit_code) = child.state else {
+        return UserRet::from_error(ErrNo::ECHILD);
+    };
+    let info = user_siginfo_exited(child.pid, exit_code);
+    if let Err(error) = copy_to_user_struct(siginfo_ptr, &info) {
+        return UserRet::from_error(error);
+    }
+
+    // zombie 的调度器 TCB 尚未 reap，可以只读其最终 tick 统计。保持与普通 reap
+    // 路径相同的当前记账口径，但不调用 account_child_cpu，避免后续真正 reap 时重复累计。
+    let ticks = task::task_ids_for_process(child.pid).unwrap_or_default()
+                                                     .into_iter()
+                                                     .filter_map(task::task_snapshot)
+                                                     .map(|snapshot| {
+                                                         snapshot.stats
+                                                                 .tick_count
+                                                         as isize
+                                                     })
+                                                     .sum();
+    if let Err(error) = write_child_rusage(rusage_ptr, ChildCpuTicks { utime:
+                                                                           ticks,
+                                                                       stime:
+                                                                           ticks })
+    {
+        return UserRet::from_error(error);
+    }
+    UserRet::from_success(0)
+}
+
 fn finish_waitid_stopped_result(pid : task::ProcessId,
                                 signo : u8,
                                 siginfo_ptr : usize,
@@ -372,6 +429,37 @@ fn finish_waitid_continued_result(pid : task::ProcessId,
     }
     task::consume_continued_wait(pid, nowait);
     UserRet::from_success(0)
+}
+
+fn finish_waitpid_stopped_result(pid : task::ProcessId,
+                                 signo : u8,
+                                 status_ptr : usize,
+                                 rusage_ptr : usize)
+                                 -> UserRet {
+    // Linux wait status: low byte 0x7f marks WIFSTOPPED，下一字节保存 WSTOPSIG。
+    if let Err(error) = write_wait_status(status_ptr, (signo as i32) << 8 | 0x7F) {
+        return UserRet::from_error(error);
+    }
+    if let Err(error) = write_zero_rusage(rusage_ptr) {
+        return UserRet::from_error(error);
+    }
+    // 仅在所有用户输出成功后消费事件；EFAULT 时调用方可以修正指针后重试。
+    task::consume_stop_wait(pid, false);
+    UserRet::from_success(pid.raw())
+}
+
+fn finish_waitpid_continued_result(pid : task::ProcessId,
+                                   status_ptr : usize,
+                                   rusage_ptr : usize)
+                                   -> UserRet {
+    if let Err(error) = write_wait_status(status_ptr, 0xFFFF) {
+        return UserRet::from_error(error);
+    }
+    if let Err(error) = write_zero_rusage(rusage_ptr) {
+        return UserRet::from_error(error);
+    }
+    task::consume_continued_wait(pid, false);
+    UserRet::from_success(pid.raw())
 }
 
 fn wait_target_from_pid(pid : isize, caller_pgid : task::ProcessId) -> Result<WaitTarget, ErrNo> {
@@ -470,12 +558,14 @@ fn has_waitable_child(parent_pid : task::ProcessId, target : WaitTarget) -> bool
     }
 }
 
-fn wait_for_child_exit(parent_pid : task::ProcessId,
-                       target : WaitTarget,
-                       exit_code_ptr : usize,
-                       rusage_ptr : usize,
-                       nohang : bool)
-                       -> UserRet {
+fn wait_for_child(parent_pid : task::ProcessId,
+                  target : WaitTarget,
+                  status_ptr : usize,
+                  rusage_ptr : usize,
+                  nohang : bool,
+                  want_stopped : bool,
+                  want_continued : bool)
+                  -> UserRet {
     loop {
         if let Some(child) = find_exited_child_for_wait(parent_pid, target) {
             let Some(exited) = task::reap_exited_process(child.pid) else {
@@ -485,11 +575,22 @@ fn wait_for_child_exit(parent_pid : task::ProcessId,
                 }
                 return UserRet::from_error(ErrNo::ECHILD);
             };
-            return finish_wait_process_result(parent_pid,
-                                              child.pid,
-                                              exited,
-                                              exit_code_ptr,
+            return finish_wait_process_result(parent_pid, child.pid, exited, status_ptr,
                                               rusage_ptr);
+        }
+        if want_stopped {
+            if let Some(child) = find_stopped_child_for_wait(parent_pid, target) {
+                let signo = match child.state {
+                    task::ProcessState::Stopped { signo } => signo,
+                    _ => ipc::signal::SIGSTOP as u8,
+                };
+                return finish_waitpid_stopped_result(child.pid, signo, status_ptr, rusage_ptr);
+            }
+        }
+        if want_continued {
+            if let Some(child) = find_continued_child_for_wait(parent_pid, target) {
+                return finish_waitpid_continued_result(child.pid, status_ptr, rusage_ptr);
+            }
         }
         if !has_waitable_child(parent_pid, target) {
             return UserRet::from_error(ErrNo::ECHILD);
@@ -497,10 +598,21 @@ fn wait_for_child_exit(parent_pid : task::ProcessId,
         if nohang {
             return UserRet::from_success(0);
         }
-        if waitpid_wait_for_child(parent_pid, target) == task::TaskWaitResult::Interrupted {
+        if wait_for_child_event(parent_pid,
+                                target,
+                                true,
+                                want_stopped,
+                                want_continued) ==
+           task::TaskWaitResult::Interrupted
+        {
             // SIGCHLD 可能在子进程退出等待队列唤醒前刚刚 pending。优先返回此时已可观察的子进程结果，
             // 否则不重试 EINTR 的调用方会让每次 fork 留下一个 zombie 和一份内核栈。
-            if find_exited_child_for_wait(parent_pid, target).is_some() {
+            if has_pending_wait_event(parent_pid,
+                                      target,
+                                      true,
+                                      want_stopped,
+                                      want_continued)
+            {
                 continue;
             }
             return UserRet::from_error(ErrNo::EINTR);
@@ -521,6 +633,9 @@ fn waitid_for_child(parent_pid : task::ProcessId,
     loop {
         if want_exited {
             if let Some(child) = find_exited_child_for_wait(parent_pid, target) {
+                if nowait {
+                    return finish_waitid_exited_nowait_result(child, siginfo_ptr, rusage_ptr);
+                }
                 let Some(exited) = task::reap_exited_process(child.pid) else {
                     if task::process_snapshot(child.pid).is_some() {
                         task::yield_now();
@@ -586,7 +701,7 @@ fn validate_wait_options(options : usize, allow_exited : bool) -> Result<(), Err
     let allowed = if allow_exited {
         WAITID_ALLOWED_OPTIONS
     } else {
-        WNOHANG | WAITPID_IGNORED_OPTIONS
+        WNOHANG | WAITPID_EVENT_OPTIONS
     };
     if options & !allowed != 0 {
         return Err(ErrNo::EINVAL);
@@ -622,11 +737,13 @@ pub(crate) fn sys_waitpid(args : SyscallArgs) -> UserRet {
             None => return UserRet::from_error(ErrNo::ECHILD),
         }
     }
-    wait_for_child_exit(current_process.pid,
-                        target,
-                        exit_code_ptr,
-                        rusage_ptr,
-                        nohang)
+    wait_for_child(current_process.pid,
+                   target,
+                   exit_code_ptr,
+                   rusage_ptr,
+                   nohang,
+                   (options & WUNTRACED) != 0,
+                   (options & WCONTINUED) != 0)
 }
 
 /// `waitid(idtype, id, infop, options, rusage)`。
@@ -715,13 +832,6 @@ fn wait_for_child_event(parent_pid : task::ProcessId,
                                 want_stopped,
                                 want_continued)
     })
-}
-
-/// `waitpid`/`wait4` 使用的子进程退出等待。
-fn waitpid_wait_for_child(parent_pid : task::ProcessId,
-                          target : WaitTarget)
-                          -> task::TaskWaitResult {
-    wait_for_child_event(parent_pid, target, true, false, false)
 }
 
 #[cfg(test)]

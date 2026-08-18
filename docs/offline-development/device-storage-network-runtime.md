@@ -30,7 +30,7 @@ user_bringup_bus::run
 
 ## 2. 设备模型与注册表
 
-驱动聚合层入口是 [`components/wateros-driver/src/lib.rs`](../../components/wateros-driver/src/lib.rs)。各子系统使用统一模式：
+驱动聚合层入口是 [`components/wateros-driver/src/lib.rs`](../../os/components/wateros-driver/src/lib.rs)。各子系统使用统一模式：
 
 ```text
 静态 SupportedDeviceEntry
@@ -54,7 +54,7 @@ user_bringup_bus::run
 
 ## 3. DTB 与 MMIO 排障
 
-RISC-V 平台的 [`enumerate.rs`](../../components/wateros-driver/driver-impl/impl-qemu-riscv64-virt/src/enumerate.rs) 遍历全部带 `compatible` 的节点，并解析首个 MMIO region 和 IRQ。VirtIO-MMIO 额外读取：
+RISC-V 平台的 [`enumerate.rs`](../../os/components/wateros-driver/driver-impl/impl-qemu-riscv64-virt/src/enumerate.rs) 遍历全部带 `compatible` 的节点，并解析首个 MMIO region 和 IRQ。VirtIO-MMIO 额外读取：
 
 - offset 0：magic `0x74726976`；
 - offset 2：device id，当前识别 net=1、block=2、display=16、input=18。
@@ -85,7 +85,7 @@ RISC-V 平台的 [`enumerate.rs`](../../components/wateros-driver/driver-impl/im
 
 ## 5. 块设备到根文件系统
 
-文件系统聚合入口是 [`components/wateros-fs/src/lib.rs`](../../components/wateros-fs/src/lib.rs)：
+文件系统聚合入口是 [`components/wateros-fs/src/lib.rs`](../../os/components/wateros-fs/src/lib.rs)：
 
 ```text
 block registry
@@ -183,13 +183,13 @@ virtio-net DeviceInfo
   -> network_poller_task 周期 poll
 ```
 
-无网卡时 [`stack::init`](../../components/wateros-network/network-impl/impl-smoltcp/src/stack/init.rs) 会建立 loopback-only adapter，127.0.0.1 测试仍应工作。外网不通但 loopback 正常时，优先检查设备、QEMU user-net、地址/网关和 poller；loopback 也不通则检查 stack/socket 状态机。
+无网卡时 [`stack::init`](../../os/components/wateros-network/network-impl/impl-smoltcp/src/stack/init.rs) 会建立 loopback-only adapter，127.0.0.1 测试仍应工作。外网不通但 loopback 正常时，优先检查设备、QEMU user-net、地址/网关和 poller；loopback 也不通则检查 stack/socket 状态机。
 
 当前默认 IPv4 为 `10.0.2.15/24`，网关 `10.0.2.2`，并安装 `127.0.0.0/8` 路由。prefix 大于 32 返回 invalid argument。
 
 ## 11. socket 对象、fd 与最后关闭
 
-[`SocketRef`](../../components/wateros-network/src/socket/object.rs) 包装 `Arc<SocketShared>`：
+[`SocketRef`](../../os/components/wateros-network/src/socket/object.rs) 包装 `Arc<SocketShared>`：
 
 - 底层 `StackSocketHandle` 由 mutex 串行化；
 - status flags 是打开文件描述级共享状态；
@@ -202,7 +202,7 @@ VFS handle 的 `close()` 本身不关闭底层 socket。若在每个 fd close �
 
 ## 12. socket 接收事务与阻塞
 
-接收使用 [`SocketReceiveLease`](../../components/wateros-network/src/socket/lease.rs)：
+接收使用 [`SocketReceiveLease`](../../os/components/wateros-network/src/socket/lease.rs)：
 
 ```text
 poll_snapshot

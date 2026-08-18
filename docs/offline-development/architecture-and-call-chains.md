@@ -31,7 +31,7 @@ flowchart TD
 
 ## 启动链
 
-顶层入口在 [`src/main.rs`](../../src/main.rs)。理解初始化顺序时关注“首次可用”的边界：
+顶层入口在 [`src/main.rs`](../../os/src/main.rs)。理解初始化顺序时关注“首次可用”的边界：
 
 1. 架构和串口足以输出早期日志；
 2. runtime heap 建立后才允许普通 `alloc`；
@@ -69,7 +69,7 @@ sequenceDiagram
 ## 系统调用：从用户寄存器到返回
 
 跨架构 trap 契约位于
-[`platform-arch/arch-api/api-v0/src/trap.rs`](../../components/wateros-platform/platform-arch/arch-api/api-v0/src/trap.rs)。
+[`platform-arch/arch-api/api-v0/src/trap.rs`](../../os/components/wateros-platform/platform-arch/arch-api/api-v0/src/trap.rs)。
 RISC-V 和 LoongArch 各自实现 `TrapFrameRead/TrapFrameWrite`，将不同寄存器布局转换成共同的
 `SyscallArgs`、调用号和 `UserRet`。
 
@@ -104,14 +104,14 @@ sequenceDiagram
 - 可重启 syscall 返回 `EINTR` 后，trap 层保存 `(nr,args)`，信号返回路径决定是否重入。
 - 未登记调用号由 `sys_enosys` 返回 `ENOSYS`；handler 文件存在不等于已接入。
 
-相关源码：[`src/trap_handler.rs`](../../src/trap_handler.rs)、
-[`syscall_nr_dispatch.rs`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/syscall_nr_dispatch.rs)、
-[`args.rs`](../../components/wateros-syscall/syscall-api/api-v0/src/args.rs)。
+相关源码：[`src/trap_handler.rs`](../../os/src/trap_handler.rs)、
+[`syscall_nr_dispatch.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/syscall_nr_dispatch.rs)、
+[`args.rs`](../../os/components/wateros-syscall/syscall-api/api-v0/src/args.rs)。
 
 ## 用户内存访问链
 
 syscall handler 不能直接解引用用户地址。所有用户指针都必须经过
-[`user_copy.rs`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/user_copy.rs)，最终由
+[`user_copy.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/user_copy.rs)，最终由
 MM 的 `UserMemoryOps` 跨页校验、处理合法缺页/COW 并复制。
 
 ```text
@@ -157,7 +157,7 @@ VFS，inode/磁盘写入属于 FS，Linux open flag 和 errno 属于 syscall。
 
 ## `mmap`、缺页、共享写回与销毁
 
-[`sys/mem/mmap.rs`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/sys/mem/mmap.rs)
+[`sys/mem/mmap.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/mem/mmap.rs)
 负责 Linux 参数和 VFS 文件句柄；MM 负责 VMA/PTE/帧。
 
 ```mermaid
@@ -188,9 +188,9 @@ sequenceDiagram
 ## fork、clone、exec、exit、reap 生命周期
 
 这条链是最常见的资源泄漏来源。主要编排在
-[`sys/task/clone.rs`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/sys/task/clone.rs)、
-[`execve.rs`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/sys/task/execve.rs) 和
-[`wait.rs`](../../components/wateros-syscall/syscall-impl/impl-kernel/src/sys/task/wait.rs)。
+[`sys/task/clone.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/task/clone.rs)、
+[`execve.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/task/execve.rs) 和
+[`wait.rs`](../../os/components/wateros-syscall/syscall-impl/impl-kernel/src/sys/task/wait.rs)。
 
 | 资源 | fork 进程 | `CLONE_THREAD` | exec 成功 | exit/reap |
 | --- | --- | --- | --- | --- |

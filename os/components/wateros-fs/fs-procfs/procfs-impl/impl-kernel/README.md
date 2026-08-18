@@ -133,6 +133,9 @@ vfs::mount[_bootstrap]_procfs_at:
 
 一些 `/proc/sys` 值是兼容常量而非真实可配置状态，且整个 procfs 只读。不要在文档或工具输出
 中把 `pid_max`、`somaxconn`、overcommit 等常量误称为已实现 sysctl。
+`/proc/sys/kernel/core_pattern` 同样是只读兼容值：它供 libc/LTP 判断 core-dump ABI，但 WaterOS
+当前不会按该路径生成 core 文件；wait4 的 WCOREDUMP 与 waitid 的 CLD_DUMPED 只反映信号默认动作和
+RLIMIT_CORE 条件。
 
 ## namespace magic link
 

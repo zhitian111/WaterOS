@@ -1,6 +1,6 @@
 # VFS API v0 开发手册
 
-[VFS 总览](../../README.md) · [离线开发手册](../../../../docs/offline-development/README.md)
+[VFS 总览](../../README.md) · [离线开发手册](../../../../../docs/offline-development/README.md)
 
 本 crate 是 syscall/task/MM 与具体 VFS/FS 实现之间的稳定契约。它定义路径、元数据、打开句柄、fd 会话、挂载和错误，但不依赖 `wateros-fs`，也不返回 Linux `-errno`。
 
@@ -52,4 +52,3 @@ prepare_read(max_len)
 3. 若操作会改变内容，推进 `VfsFileContentIdentity` version 并维护页缓存一致性。
 4. syscall 层完成用户结构和 errno 转换，VFS API 不引用 Linux ABI 常量。
 5. 测试 close/dup/fork/exec、并发 I/O、unlink-open、用户拷贝部分失败和非阻塞行为。
-

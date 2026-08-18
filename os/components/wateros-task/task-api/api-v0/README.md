@@ -1,6 +1,6 @@
 # Task API v0 开发手册
 
-[Task 总览](../../README.md) · [离线开发手册](../../../../docs/offline-development/README.md)
+[Task 总览](../../README.md) · [离线开发手册](../../../../../docs/offline-development/README.md)
 
 本 crate 定义任务、进程、调度和等待的跨实现数据契约，不持有全局 registry，也不实现队列或上下文切换。新增字段时要先明确它属于线程、进程还是一次快照；放错层级通常会在 clone/fork/exec 后产生语义错误。
 
@@ -47,4 +47,3 @@
 - `ExitedTask` 被 reap 后，任何 PID/TID/TaskId 反向索引不能继续指向已释放 TCB。
 - wait 返回结果必须区分正常唤醒、超时和中断；不能把虚假唤醒直接解释成条件成立。
 - API 变更需同时编译聚合层、impl-core、scheduler-api 和 multi-class 实现。
-

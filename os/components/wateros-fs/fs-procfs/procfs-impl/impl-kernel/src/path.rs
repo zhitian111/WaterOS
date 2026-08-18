@@ -63,7 +63,8 @@ impl ProcNamespace {
     }
 
     pub(crate) fn parse(name : &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|namespace| namespace.name() == name)
+        Self::ALL.into_iter()
+                 .find(|namespace| namespace.name() == name)
     }
 }
 
@@ -112,6 +113,7 @@ pub(crate) enum ProcNode {
     SysVmDir,
     SysFsDir,
     SysKernelPidMax,
+    SysKernelCorePattern,
     SysKernelTainted,
     SysKernelCapLastCap,
     SysKernelOsType,
@@ -230,6 +232,7 @@ pub(crate) fn proc_inode(node : ProcNode) -> u64 {
         ProcNode::SysVmDir => 28,
         ProcNode::SysFsDir => 29,
         ProcNode::SysKernelPidMax => 4,
+        ProcNode::SysKernelCorePattern => 76,
         ProcNode::SysKernelTainted => 5,
         ProcNode::SysKernelCapLastCap => 19,
         ProcNode::SysKernelOsType => 30,
@@ -308,7 +311,9 @@ pub(crate) fn proc_inode(node : ProcNode) -> u64 {
             0x3500_0000_0000_0000 | ((pid.raw() as u64) << 32) | (tid as u64)
         }
         ProcNode::PidFd(pid, fd) => 0x2000_0000_0000_0000 | ((pid.raw() as u64) << 32) | fd as u64,
-        ProcNode::PidFdInfo(pid, fd) => 0x2100_0000_0000_0000 | ((pid.raw() as u64) << 32) | fd as u64,
+        ProcNode::PidFdInfo(pid, fd) => {
+            0x2100_0000_0000_0000 | ((pid.raw() as u64) << 32) | fd as u64
+        }
     }
 }
 
@@ -429,6 +434,7 @@ pub(crate) fn parse_node(path : &str) -> Option<ProcNode> {
         ["sys", "net", "core"] => Some(ProcNode::SysNetCoreDir),
         ["sys", "net", "ipv4"] => Some(ProcNode::SysNetIpv4Dir),
         ["sys", "kernel", "pid_max"] => Some(ProcNode::SysKernelPidMax),
+        ["sys", "kernel", "core_pattern"] => Some(ProcNode::SysKernelCorePattern),
         ["sys", "kernel", "tainted"] => Some(ProcNode::SysKernelTainted),
         ["sys", "kernel", "cap_last_cap"] => Some(ProcNode::SysKernelCapLastCap),
         ["sys", "kernel", "ostype"] => Some(ProcNode::SysKernelOsType),
@@ -483,11 +489,14 @@ pub(crate) fn parse_node(path : &str) -> Option<ProcNode> {
         [pid_name, "fdinfo"] => Some(ProcNode::PidFdInfoDir(parse_pid(pid_name)?)),
         [pid_name, "ns"] => Some(ProcNode::PidNsDir(parse_pid(pid_name)?)),
         [pid_name, "ns", namespace] => {
-            Some(ProcNode::PidNamespace(parse_pid(pid_name)?, ProcNamespace::parse(namespace)?))
+            Some(ProcNode::PidNamespace(parse_pid(pid_name)?,
+                                        ProcNamespace::parse(namespace)?))
         }
         [pid_name, "task"] => Some(ProcNode::PidTaskRoot(parse_pid(pid_name)?)),
         [pid_name, "fd", fd] => Some(ProcNode::PidFd(parse_pid(pid_name)?, fd.parse().ok()?)),
-        [pid_name, "fdinfo", fd] => Some(ProcNode::PidFdInfo(parse_pid(pid_name)?, fd.parse().ok()?)),
+        [pid_name, "fdinfo", fd] => {
+            Some(ProcNode::PidFdInfo(parse_pid(pid_name)?, fd.parse().ok()?))
+        }
         [pid_name, "task", tid_name] => {
             let pid = parse_pid(pid_name)?;
             Some(ProcNode::PidTaskDir(pid, parse_thread_task(pid, tid_name)?))

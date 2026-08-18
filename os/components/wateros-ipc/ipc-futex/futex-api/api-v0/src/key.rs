@@ -3,17 +3,16 @@
 /// Linux `futex(2)` 操作码中的 private 标志位。
 pub const FUTEX_PRIVATE_FLAG : u32 = 128;
 
-/// DATA: 由用户 futex 地址与作用域派生的队列键。
-///
-/// ABI: private key 的相等性包含地址空间 scope；shared key 的 `uaddr` 必须是
-/// MM 解析出的稳定共享身份，而不是任意进程的用户虚拟地址。
+///  futex 等待队列的键
+/// 内核用它在等待队列里唯一地标识"你在等哪一个 futex"
+/// futex 有两种作用域：private futex同一进程内线程间同步、	shared futex跨进程同步
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FutexKey {
-    /// private futex 为用户 VA；shared futex 为 MM 解析出的共享字身份。
+    /// private futex 是用户虚拟地址 VA；shared futex 为 MM 解析出的「共享身份」（不是任意 VA）
     pub uaddr : usize,
     /// 是否为进程私有 futex（`FUTEX_PRIVATE_FLAG`）。
     pub is_private : bool,
-    /// private futex 所属地址空间；shared futex 固定为 0。
+    /// private futex 为所属地址空间； shared futex 忽略该字段：0。
     pub private_scope : usize,
 }
 
