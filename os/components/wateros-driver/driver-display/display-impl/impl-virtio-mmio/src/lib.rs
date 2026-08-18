@@ -93,6 +93,7 @@ pub struct VirtioGpuMmioDevice {
 impl VirtioGpuMmioDevice {
     /// 从 DTB 枚举得到的 VirtIO-MMIO 窗口初始化 GPU 并创建 framebuffer。
     pub fn from_mmio(mmio : MmioRegion) -> DriverResult<Self> {
+        // 先检查窗口基址和传输长度，再让 virtio 驱动读取寄存器，避免非法 MMIO 访问。
         let header = NonNull::new(mmio.base as *mut VirtIOHeader).ok_or(DriverError::InvalidParam)?;
         let transport =
             unsafe { MmioTransport::new(header, mmio.size) }.map_err(|_| DriverError::Unsupported)?;
@@ -110,6 +111,7 @@ impl VirtioGpuMmioDevice {
         let mapped_len = byte_len.checked_add(PAGE_SIZE - 1)
                                  .ok_or(DriverError::InvalidParam)? /
                          PAGE_SIZE * PAGE_SIZE;
+        // 设备返回的 DMA 缓冲区必须覆盖全部像素；不足时不能截断 framebuffer。
         if framebuffer.len() < byte_len {
             return Err(DriverError::IoError);
         }

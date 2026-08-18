@@ -17,7 +17,9 @@ const PROCESS_EXIT_GRACE_TICKS : task::TaskTick = 64;
 /// bring-up 阶段一次用户态启动：`program` 为待装载 ELF，`argv` 为完整参数（busybox 时
 /// `argv[0]` 须为 applet 名，如 `"sh"` / `"timeout"`，而非 busybox 路径）。
 pub struct BringupCommand {
+    /// 要装载并执行的 ELF 路径；路径必须存在于已挂载根卷。
     pub program : &'static str,
+    /// 传给新任务的完整参数数组；`argv[0]` 遵循目标程序约定。
     pub argv : &'static [&'static str],
 }
 
@@ -71,15 +73,15 @@ pub fn run_one_elf_argv_exit(log_tag : &str, elf_path : &str, argv : &[&str]) ->
     run_one_elf_argv_env_exit(log_tag, elf_path, argv, &envp)
 }
 
-/// Execute one program with an explicit initial environment. Operator mode
-/// uses this instead of the competition-image path heuristic.
+/// 使用显式初始环境执行一个程序；operator 模式使用此入口，
+/// 不根据比赛镜像路径做启发式判断。
 pub fn run_one_elf_argv_env_exit(log_tag : &str,
                                  elf_path : &str,
                                  argv : &[&str],
                                  envp : &[&str])
                                  -> Option<isize> {
-    // Let the ELF loader be the source of truth.  Some rootfs backends do not
-    // implement `exists`, although opening and loading the file works.
+    // 以 ELF 装载器结果为准；部分根文件系统后端不实现 `exists`，
+    // 但实际打开并装载文件仍然可行。
     let load_result = load_program_without_timer_preemption(elf_path, argv);
     let loaded_program = match load_result {
         Ok(program) => program,
@@ -148,8 +150,8 @@ pub fn run_one_elf_argv_env_exit(log_tag : &str,
         }
         exit_code
     } else {
-        // Keep the old leader-only fallback for a malformed process registry;
-        // purge_all_user_processes below remains the final bounded cleanup.
+        // 对损坏的进程 registry 保留仅清理 leader 的旧回退路径；
+        // 下方 purge_all_user_processes 仍是有界清理的最后保障。
         task::reap_exited_task(tid).map(|exited| {
                                                drop_reaped_task_runtime_resources(&exited);
                                                exited.exit_code
@@ -179,11 +181,9 @@ pub fn run_one_elf_argv_env_exit(log_tag : &str,
     Some(exit_code)
 }
 
-/// The scheduler publishes a leader task's exit before remote siblings have
-/// necessarily unwound their interrupted syscalls.  Linux wait semantics make
-/// the process observable as exited only after the whole thread group is done,
-/// so give exit_group siblings a bounded chance to reach TaskState::Exited and
-/// then reap the process atomically.  The caller retains a hard purge fallback.
+/// 调度器可能先发布 leader 退出，而远端同组线程尚未完成被中断 syscall 的展开。
+/// 按 Linux wait 语义，整个线程组完成后进程才可观察为退出；因此给 exit_group
+/// 同组线程一个有界机会到达 `TaskState::Exited`，再原子回收进程，调用方仍保留强制清理回退。
 fn wait_and_reap_user_process(pid : task::ProcessId) -> Option<Vec<task::ExitedTask>> {
     let deadline = task::current_tick().saturating_add(PROCESS_EXIT_GRACE_TICKS);
     loop {
@@ -211,7 +211,7 @@ fn wait_and_reap_user_process(pid : task::ProcessId) -> Option<Vec<task::ExitedT
             let remaining = deadline.saturating_sub(now).max(1);
             let _ = task::wait_for_task_exit_for_ticks(task_id, remaining);
         } else {
-            // Registry state can trail the scheduler by a very short window.
+            // registry 状态可能在极短窗口内落后于 scheduler。
             task::yield_now();
         }
     }

@@ -20,9 +20,13 @@ const MSG_DONTWAIT : usize = 0x40;
 #[derive(Copy, Clone)]
 // 本结构代码由AI完成
 struct SockAddrIn {
+    /// 地址族。
     sin_family : u16,
+    /// 网络字节序端口。
     sin_port : u16,
+    /// IPv4 地址。
     sin_addr : [u8; 4],
+    /// ABI 填充。
     sin_zero : [u8; 8],
 }
 

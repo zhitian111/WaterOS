@@ -109,8 +109,8 @@ pub mod arch {
     }
 }
 
-/// Platform SMP lifecycle. Only the RISC-V OpenSBI profile currently starts
-/// secondaries; other profiles deliberately report `Unsupported`.
+/// 平台 SMP 生命周期。目前只有 RISC-V OpenSBI profile 启动辅助 CPU；其它 profile
+/// 会明确返回 `Unsupported`。
 #[cfg(feature = "api-v0")]
 pub mod smp;
 

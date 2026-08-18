@@ -6,42 +6,42 @@
 /// RISC-V 8 vCPU、LoongArch 12 vCPU；按目标架构收紧容量可避免所有 per-CPU
 /// 静态数组都按无用的 32 项分配，同时仍由 platform topology 决定实际 online CPU。
 #[cfg(target_arch = "riscv64")]
-pub const MAX_CPUS : usize = 8;
+pub const MAX_CPUS: usize = 8;
 
 #[cfg(target_arch = "loongarch64")]
-pub const MAX_CPUS : usize = 12;
+pub const MAX_CPUS: usize = 12;
 
 /// 宿主工具与单元测试不承载目标机 SMP，保留足够容量供配置/API 测试使用。
 #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
-pub const MAX_CPUS : usize = 32;
+pub const MAX_CPUS: usize = 32;
 
 const _ : () = assert!(MAX_CPUS > 0 && MAX_CPUS <= u64::BITS as usize);
 
 /// 监督态定时器重武装间隔（毫秒），与 [`trap_handler`] 及 clock syscall 的 sleep 换算一致。
 ///
 /// [`trap_handler`]: 组合层内核 trap 路由（`os/src/trap_handler.rs`）。
-pub const SCHED_TIMER_PERIOD_MS : u64 = 10;
+pub const SCHED_TIMER_PERIOD_MS: u64 = 10;
 
 /// 每个任务在被 Tick 抢占前可连续运行的逻辑 tick 数。
 ///
 /// 实际时间片 = `MAX_TICKS_PER_TASK` × 定时器间隔（当前为 10ms/tick）。
 /// 增大此值可使调度行为更接近 FCFS，并减少 lmbench 等微基准在测量窗口内被
 /// 非自愿 tick 抢占（lat_ctx 非法样本 → score=0）。
-pub const MAX_TICKS_PER_TASK : u64 = 50;
+pub const MAX_TICKS_PER_TASK: u64 = 50;
 
 /// `pick_next` 连续跳过多少 stale ready 条目后触发一次 lazy compact。
 ///
 /// 高 churn 场景（如 lat_ctx fork N 进程 pipe 乒乓）下 stale 会膨胀 pick 成本；
 /// compact 仅删除已失效条目，不改变调度语义。
-pub const READY_QUEUE_STALE_COMPACT_THRESHOLD : usize = 8;
+pub const READY_QUEUE_STALE_COMPACT_THRESHOLD: usize = 8;
 /// 内核任务栈大小（字节）。
-pub const KERNEL_TASK_STACK_SIZE : usize = 32 * 1024;
+pub const KERNEL_TASK_STACK_SIZE: usize = 32 * 1024;
 
 /// Linux/CFS 兼容的 `nice -20..=19` 到调度权重映射。
 ///
 /// 下标为 `nice + 20`。权重越大，SCHED_OTHER 任务相同实际运行时间累积的
 /// vruntime 越少；实时调度类不得使用本表决定 FIFO/RR 优先级。
-pub const NICE_TO_WEIGHT : [u64; 40] = [
+pub const NICE_TO_WEIGHT: [u64; 40] = [
     88761, 71755, 56483, 46273, 36291,  // -20 ~ -16
     29154, 23254, 18705, 14949, 11916,  // -15 ~ -11
     9548, 7620, 6100, 4904, 3906,       // -10 ~ -6
@@ -53,4 +53,4 @@ pub const NICE_TO_WEIGHT : [u64; 40] = [
 ];
 
 /// `nice = 0` 的基准权重，用于把实际运行时间换算为 vruntime。
-pub const NICE_0_WEIGHT : u64 = 1024;
+pub const NICE_0_WEIGHT: u64 = 1024;

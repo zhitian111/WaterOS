@@ -277,8 +277,7 @@ pub struct Sv39AddressSpace {
     pub(crate) device_vmas : Vec<DeviceVma>,
 }
 
-// The address space is accessed through MultiprocessorSafeCell.  The lock
-// serializes the non-Send lazy-loader state as well as page-table mutation.
+// 地址空间通过 MultiprocessorSafeCell 访问；该锁同时串行化非 Send 的惰性加载器状态和页表修改。
 unsafe impl Send for Sv39AddressSpace {}
 unsafe impl Sync for Sv39AddressSpace {}
 
@@ -994,10 +993,8 @@ impl Sv39AddressSpace {
             log::warn!("[mm] shared file writeback during address-space destroy failed: {error:?}");
         }
         self.destroy_page_tables();
-        // UserAddressSpaceCell remains as a small tombstone so stale raw
-        // handles can observe `dropped` without a use-after-free. The VMA
-        // vectors are no longer consulted after page-table teardown, so free
-        // their backing allocations and demand-page loaders here.
+        // UserAddressSpaceCell 保留为小型墓碑，使过期裸句柄能观察 `dropped` 而不发生 UAF。
+        // 页表拆除后不再访问 VMA 向量，因此此处释放其后备分配和按需分页装载器。
         drop(self.lazy_file_vmas
                  .take());
         drop(core::mem::take(&mut self.shared_anon_vmas));
@@ -1047,7 +1044,7 @@ impl Sv39AddressSpace {
         Ok(changed)
     }
 
-    /// Same as [`Self::handle_cow_fault`], but the caller owns TLB invalidation.
+    /// 与 [`Self::handle_cow_fault`] 相同，但 TLB 失效由调用方负责。
     pub(crate) fn handle_cow_fault_no_flush(&mut self, fault_addr : VirtAddr) -> MmResult<bool> {
         self.handle_cow_page(fault_addr.floor_page())
     }

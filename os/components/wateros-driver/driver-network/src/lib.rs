@@ -34,6 +34,7 @@ pub fn supported_devices() -> &'static [SupportedDeviceEntry] { NETWORK_SUPPORTE
 
 /// 网络子系统是否声明可处理该 DTB 设备（仅基于 `compatible` 列表与探测到的 [`DeviceType`]，不含具体初始化成败）。
 pub fn network_subsystem_claims_device(compatibles : &[String], probed : DeviceType) -> bool {
+    // 兼容字符串和探测类型必须同时匹配；声明归属不代表后端初始化一定成功。
     if probed != DeviceType::Network {
         return false;
     }

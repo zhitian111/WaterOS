@@ -1,4 +1,4 @@
-//内核任务
+//! 内核任务入口与独占内核栈。
 use alloc::boxed::Box;
 use config::task::KERNEL_TASK_STACK_SIZE;
 use core::alloc::Layout;
@@ -9,7 +9,9 @@ pub type KernelTaskEntry = extern "C" fn(usize) -> !;
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct TaskBootstrap {
+    /// 首次运行时调用的内核任务入口。
     pub entry : KernelTaskEntry,
+    /// 原样传递给入口函数的参数。
     pub arg : usize,
 }
 
@@ -27,7 +29,9 @@ impl TaskBootstrap {
 struct AlignedKernelStack([u8; KERNEL_TASK_STACK_SIZE]);
 /// 内核任务独占的内核栈封装。
 pub struct KernelStack {
+    /// 堆上分配并保持 16 字节对齐的栈存储。
     storage : Box<AlignedKernelStack>,
+    /// 向下增长栈的初始栈顶地址。
     top : usize,
 }
 impl KernelStack {

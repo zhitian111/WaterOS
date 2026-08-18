@@ -387,7 +387,7 @@ pub(crate) fn alloc_unix_socket(typ : usize,
     Ok((handle, sock))
 }
 
-/// Create the two registered AF_UNIX endpoints used by `socketpair(2)`.
+/// 创建 `socketpair(2)` 使用的两个已注册 AF_UNIX 端点。
 #[allow(private_interfaces)]
 pub(crate) fn alloc_unix_stream_pair(
     nonblocking : bool)
@@ -415,7 +415,7 @@ pub(crate) fn alloc_unix_stream_pair(
     (make_socket(endpoint0), make_socket(endpoint1))
 }
 
-/// Create a connected AF_UNIX datagram pair with one inbox per endpoint.
+/// 创建已连接的 AF_UNIX 数据报端点对，并为每个端点建立独立收件箱。
 #[allow(private_interfaces)]
 pub(crate) fn alloc_unix_dgram_pair(
     nonblocking : bool)

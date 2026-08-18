@@ -1,12 +1,21 @@
+//! 全局页帧池、按键索引与双 LRU 队列的内部状态。
+
 use super::*;
 
 // 本结构代码由AI完成
+/// 一个固定大小缓存槽的元数据；实际页内容存放在 [`GlobalCacheState::data`] 中。
 pub(crate) struct PageFrame {
+    /// 已装入页的文件键和页号；`None` 表示该槽尚未分配或已脱离缓存。
     pub(crate) key : Option<(FileCacheKey, u64)>,
+    /// 页内容是否尚未可靠写入下层文件系统。
     pub(crate) dirty : bool,
+    /// 最近一次修改的单调版本号；异步写回仅可确认相同版本，避免覆盖并发新写入。
     pub(crate) version : u64,
+    /// 所在 LRU 链表中较旧槽的下标。
     pub(crate) lru_prev : Option<usize>,
+    /// 所在 LRU 链表中较新槽的下标。
     pub(crate) lru_next : Option<usize>,
+    /// 槽当前所属的干净或脏 LRU；空闲/锁外写回槽为 `None`。
     pub(crate) lru_class : Option<LruClass>,
     #[cfg(feature = "diagnostics")]
     pub(crate) referenced : bool,
@@ -16,22 +25,32 @@ pub(crate) struct PageFrame {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LruClass {
+    /// 可直接丢弃、无需 I/O 的已同步页。
     Clean,
+    /// 淘汰前必须写回的页；暂时脱链后由调用者在锁外完成 I/O。
     Dirty,
 }
 
 // 本结构代码由AI完成
+/// 全局缓存的所有可变状态，必须由外层 `state` 互斥锁独占访问。
 pub(crate) struct GlobalCacheState {
+    /// 槽位总数；同时也是 `frames` 和空闲下标的最大长度。
     pub(crate) capacity : usize,
     /// 所有页帧 payload 共用连续池，避免每槽一次 4 KiB 堆分配放大 TLSF 锁竞争与碎片。
     pub(crate) data : Vec<u8>,
+    /// 与 payload 池按下标一一对应的帧元数据。
     pub(crate) frames : Vec<PageFrame>,
+    /// 从 `(文件键, 页号)` 到帧下标的唯一映射。
     pub(crate) index : BTreeMap<(FileCacheKey, u64), usize>,
+    /// 干净 LRU 的最旧、最新端点。
     pub(crate) clean_lru_head : Option<usize>,
     pub(crate) clean_lru_tail : Option<usize>,
+    /// 脏 LRU 的最旧、最新端点。
     pub(crate) dirty_lru_head : Option<usize>,
     pub(crate) dirty_lru_tail : Option<usize>,
+    /// 未绑定文件页的槽下标栈。
     pub(crate) free : Vec<usize>,
+    /// 下一个脏页版本号；零保留为从未写入的哨兵值。
     pub(crate) next_version : u64,
     #[cfg(feature = "diagnostics")]
     pub(crate) diagnostics : PageCacheDiagnostics,
@@ -39,8 +58,13 @@ pub(crate) struct GlobalCacheState {
 
 impl GlobalCacheState {
 // 本方法代码由AI完成
+    /// 以配置的容量创建空缓存。容量为零时所有缺页都由上层绕过缓存处理。
     pub(crate) fn new() -> Self { Self::with_capacity(FILE_PAGE_CACHE_CAPACITY) }
 
+    /// 分配 `cap` 个页槽及连续 payload 池。
+    ///
+    /// `cap * FILE_PAGE_SIZE` 溢出时会请求最大 `usize` 长度而触发分配失败；容量来自受信任的
+    /// 内核配置，启动配置必须保证其乘积可表示且可由内核堆承受。
     pub(crate) fn with_capacity(cap : usize) -> Self {
         let mut frames = Vec::new();
         let mut free = Vec::new();
@@ -199,6 +223,7 @@ impl GlobalCacheState {
     }
 
 // 本方法代码由AI完成
+    /// 将命中的页移动到相应 LRU 尾端，使前端始终是最久未使用页。
     pub(crate) fn touch_lru(&mut self, idx : usize) {
         let class = if self.frames[idx].dirty {
             LruClass::Dirty
@@ -223,13 +248,15 @@ impl GlobalCacheState {
     }
 
 // 本方法代码由AI完成
+    /// 取得可安装页的槽位，优先空闲槽、其次干净 LRU、最后脏 LRU。
+    ///
+    /// 返回脏槽后，调用者必须先按版本协议在锁外写回其旧内容，才可复用该槽。
     pub(crate) fn pop_free_or_lru_index(&mut self) -> Option<usize> {
         if let Some(idx) = self.free.pop() {
             return Some(idx);
         }
-        // Keep clean and dirty slots in separate intrusive LRUs. A miss can
-        // discard the oldest clean page in O(1) without making an unrelated
-        // temporary-file writeback part of an executable-page read.
+        // 分离干净与脏页的侵入式 LRU 后，缺页可在 O(1) 时间淘汰最旧干净页，
+        // 不会把无关临时文件的写回延迟带入一次可执行文件读取。
         if let Some(idx) = self.pop_lru_front(LruClass::Clean) {
             return Some(idx);
         }
@@ -242,6 +269,9 @@ impl GlobalCacheState {
     }
 
 // 本方法代码由AI完成
+    /// 从缓存索引和 LRU 脱离槽，并在旧页为脏页时复制出写回所需的数据与版本号。
+    ///
+    /// 复制使后续 I/O 可在释放 `state` 锁后进行；返回 `None` 不代表原槽无效，而是表示无需写回。
     pub(crate) fn detach_slot_for_reuse(&mut self,
                              idx : usize,
                              _was_dirty : bool)
@@ -301,6 +331,7 @@ impl GlobalCacheState {
     }
 
 // 本方法代码由AI完成
+    /// 将未绑定且不在 LRU 中的槽归还空闲栈；重复归还会被显式抑制。
     pub(crate) fn return_detached_slot(&mut self, idx : usize) {
         if self.frames[idx].key.is_none() &&
            !self.free
@@ -393,4 +424,3 @@ impl GlobalCacheState {
         assert_eq!(self.index.len(), seen.iter().filter(|seen| **seen).count());
     }
 }
-

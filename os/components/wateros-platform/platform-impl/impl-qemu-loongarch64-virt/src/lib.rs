@@ -22,6 +22,7 @@ pub mod time;
 pub mod timer;
 
 #[cfg(feature = "self_test")]
+/// 执行板级常量和物理内存探测的最小自检。
 pub fn self_test() {
     log::info!("[platform/impl-qemu-loongarch64] self_test begin");
     assert!(config::mm::QEMU_VIRT_MMIO_PHYS_START > 0);

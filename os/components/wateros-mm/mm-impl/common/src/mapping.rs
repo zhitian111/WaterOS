@@ -1,6 +1,9 @@
+//! 通用页分配、映射、缺页范围和 mremap 辅助函数。
+
 use super::*;
 
-/// Zero a 4 KiB physical page under the current early-boot direct-access model.
+/// 在当前早期启动的 RAM 直映射模型下清零一个 4 KiB 物理页。
+/// 调用者必须保证 PPN 来自可写 RAM 帧且未被其它别名或 DMA 同时使用。
 #[inline]
 pub fn zero_phys_page(ppn : PhysPageNum) {
     let pa = ppn.0 * PAGE_SIZE;
@@ -22,7 +25,7 @@ pub fn alloc_zeroed_frame_with_alloc<A>(allocator : &mut A) -> MmResult<PhysPage
     Ok(frame)
 }
 
-/// Computes the page-rounded end address for an mmap request.
+/// 计算 mmap 请求按页向上取整后的结束地址；长度加法或地址加法溢出返回错误。
 pub fn mmap_map_end(base : VirtAddr, len : usize) -> MmResult<VirtAddr> {
     let n_pages = len.checked_add(PAGE_SIZE - 1)
                      .ok_or(MmError::InvalidAddress)? /
@@ -34,7 +37,7 @@ pub fn mmap_map_end(base : VirtAddr, len : usize) -> MmResult<VirtAddr> {
 
 const MAX_MMAP_SEARCH_PAGES : usize = 1 << 20;
 
-/// Finds the first fully unmapped page range large enough for an mmap request.
+/// 查找第一个足以容纳请求且完全未映射的页区间；扫描超过上限返回错误，避免无界搜索阻塞 syscall。
 pub fn find_free_mmap_base<S>(aspace : &S, cursor : VirtAddr, len : usize) -> MmResult<VirtAddr>
     where S : AddressSpaceOps {
     if len == 0 {
@@ -73,7 +76,7 @@ pub fn find_free_mmap_base<S>(aspace : &S, cursor : VirtAddr, len : usize) -> Mm
     }
 }
 
-/// Maps `[start, end)` to freshly allocated zeroed frames.
+/// 将 `[start, end)` 映射到新分配的清零帧；空/反向区间不执行操作。
 pub fn map_zeroed_range_with_alloc<S, A>(aspace : &mut S,
                                          allocator : &mut A,
                                          start : VirtAddr,
@@ -95,7 +98,7 @@ pub fn map_zeroed_range_with_alloc<S, A>(aspace : &mut S,
     Ok(())
 }
 
-/// Maps one virtual page to a freshly allocated zeroed frame.
+/// 将一个虚拟页映射到新分配的清零帧；映射失败时调用方需依据分配器契约处理已取帧。
 pub fn map_zeroed_page_with_alloc<S, A>(aspace : &mut S,
                                         allocator : &mut A,
                                         vpn : VirtPageNum,
@@ -108,7 +111,7 @@ pub fn map_zeroed_page_with_alloc<S, A>(aspace : &mut S,
     aspace.map_page_to_ppn(vpn, ppn, perm)
 }
 
-/// Maps `[base, end)` to freshly allocated frames filled from `backing`.
+/// 将 `[base, end)` 映射到新分配的帧，并从 `backing` 按页填充；每页尾部保持清零。
 pub fn map_range_from_backing<S, A>(aspace : &mut S,
                                     allocator : &mut A,
                                     base : VirtAddr,
@@ -132,7 +135,7 @@ pub fn map_range_from_backing<S, A>(aspace : &mut S,
     Ok(())
 }
 
-/// Maps `[base, end)` to freshly allocated frames filled by `load_page`.
+/// 将 `[base, end)` 映射到新分配的帧，并调用加载回调逐页填充；失败时撤销此前已建立的范围。
 pub fn map_range_from_loader<S, A, F>(aspace : &mut S,
                                       allocator : &mut A,
                                       base : VirtAddr,
@@ -167,7 +170,7 @@ pub fn map_range_from_loader<S, A, F>(aspace : &mut S,
     Ok(())
 }
 
-/// Fills one physical page with the corresponding chunk from `src`.
+/// 用 `src` 对应页片段填充一个物理页；源数据不足一页时其余字节保持零，页索引乘法溢出由调用方避免。
 pub fn fill_phys_page(ppn : PhysPageNum, page_index : usize, src : &[u8]) {
     let pa = ppn.0 * PAGE_SIZE;
     let page = unsafe { core::slice::from_raw_parts_mut(pa as *mut u8, PAGE_SIZE) };
@@ -180,7 +183,7 @@ pub fn fill_phys_page(ppn : PhysPageNum, page_index : usize, src : &[u8]) {
     page[..end - start].copy_from_slice(&src[start..end]);
 }
 
-/// Linux `MREMAP_*` flags understood by [`mremap_range`].
+/// [`mremap_range`] 支持的 Linux `MREMAP_*` 标志。
 pub const MREMAP_MAYMOVE : usize = 1;
 pub const MREMAP_FIXED : usize = 2;
 pub const MREMAP_DONTUNMAP : usize = 4;

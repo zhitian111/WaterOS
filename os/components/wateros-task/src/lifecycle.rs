@@ -10,17 +10,23 @@ use crate::{
 pub use impl_core::ParentDeathNotification;
 
 pub struct TaskExitOutcome {
+    /// 若本次退出使整个进程完成，记录已完成的进程 ID。
     pub completed_process : Option<ProcessId>,
+    /// 退出过程中需要向父任务发送的死亡通知。
     pub parent_death_notifications : Vec<ParentDeathNotification>,
 }
 
 pub struct KilledTaskOutcome {
+    /// 目标任务是否确实从可运行状态转为已退出。
     pub killed : bool,
+    /// 杀死任务后产生的父死亡通知。
     pub parent_death_notifications : Vec<ParentDeathNotification>,
 }
 
 pub struct ExecThreadTermination {
+    /// exec 清理过程中被终止的同组线程。
     pub exited_tasks : Vec<ExitedTask>,
+    /// 因线程终止而需投递的父死亡通知。
     pub parent_death_notifications : Vec<ParentDeathNotification>,
 }
 
@@ -216,7 +222,7 @@ pub fn exit_current(exit_code : TaskExitCode) -> ! {
     scheduler::exit_current(exit_code)
 }
 
-/// Publish process-wide exit before notifying or rescheduling sibling tasks.
+/// 在通知或重新调度同组线程前发布整个进程的退出状态。
 pub fn begin_current_process_exit(exit_code : TaskExitCode) -> Vec<ParentDeathNotification> {
     if let Some(process_task) = crate::process::current_process_task_snapshot() {
         return active_impl::with_process_registry(|registry| {

@@ -60,7 +60,7 @@ pub fn normalize_absolute_path(path: &str) -> VfsResult<NormalizedPath> {
     Ok(NormalizedPath { inner: out })
 }
 
-/// Check the normalized-path invariant without allocating or decoding UTF-8 again.
+/// 检查规范化路径不变量，不重新分配内存或解码 UTF-8。
 fn is_normalized_absolute_path(path: &[u8]) -> bool {
     if path == b"/" {
         return true;

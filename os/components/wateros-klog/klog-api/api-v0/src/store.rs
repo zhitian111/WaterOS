@@ -6,9 +6,9 @@ use crate::{AppendResult, KlogError, KlogRecordMeta};
 ///
 /// 视图只能在产生它的 store 锁闭包内使用；不得跨越下一次 append、解锁或调度保存它。
 pub struct KlogRecordView<'a> {
-    /// 记录头。
+    /// 记录头的锁内副本；`seq`、长度和截断标志反映实际提交结果。
     pub meta: KlogRecordMeta,
-    /// 正文。
+    /// 借用环槽的正文，长度等于 `meta.text_len`；它不是以 NUL 结尾的字符串。
     pub text: &'a [u8],
 }
 
@@ -17,10 +17,12 @@ pub struct KlogRecordView<'a> {
 /// `LOCK:` 本 trait 的引用视图方法要求调用方维持实现的互斥保护；实现可用全局锁，但不应把
 /// 锁策略暴露给 API 消费者。
 pub trait KlogStore {
-    /// 追加一条记录；`meta` 中 `seq` 由实现写入。
+    /// 追加一条记录；`meta` 中 `seq`、`text_len` 与截断标志由实现写入。
+    ///
+    /// `text` 可以是任意字节而非 UTF-8。记录过长时实现可截断但必须在返回值和元数据中如实报告。
     fn append(&mut self, meta: &mut KlogRecordMeta, text: &[u8]) -> AppendResult;
 
-    /// 统计快照。
+    /// 取得统计快照；返回后允许并发追加，因此它只描述某一瞬间，不能作为后续读取的承诺。
     fn stats(&self) -> KlogStats;
 
     /// 用户态 READ 游标之后的未读正文字节总和（近似，用于 `SIZE_UNREAD`）。
@@ -32,7 +34,10 @@ pub trait KlogStore {
     /// 取下一条未读记录（sequence 不小于 read cursor 的最小可用记录）。
     fn peek_next_unread(&self) -> Result<KlogRecordView<'_>, KlogError>;
 
-    /// 推进读游标：`after_seq` 为刚消费完的序号；`clear_only` 为 true 时不要求曾 peek。
+    /// 推进读游标：`after_seq` 为刚消费完的序号。
+    ///
+    /// 传入已被覆盖或未来的序号由实现钳制到仍有效的区间；调用者通常只能传入刚由
+    /// [`Self::peek_next_unread`] 返回的 `meta.seq`。
     fn advance_read_cursor(&mut self, after_seq: u64);
 
     /// 将读游标重置到当前最新之后（`CLEAR`：mark 全部已读，环保留）。

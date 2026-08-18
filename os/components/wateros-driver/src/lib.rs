@@ -52,6 +52,7 @@ pub fn machine() -> &'static dyn MachineDriver {
     #[cfg(not(any(feature = "impl-qemu-loongarch64-virt",
                   feature = "impl-qemu-riscv64-virt")))]
     {
+        // 未选择任何平台是配置错误；此分支只作为编译期显式失败的兜底。
         core::unreachable!("no machine driver feature selected")
     }
 }

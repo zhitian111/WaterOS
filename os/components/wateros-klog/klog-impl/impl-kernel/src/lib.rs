@@ -10,10 +10,13 @@ mod global;
 mod state;
 mod syslog;
 
+/// 将格式化参数写入内核日志环的无分配入口。
 pub use format::record_fmt;
+/// 初始化、记录、统计和内核缓冲 syslog 分发入口。
 pub use global::{dispatch_kernel, init, record, stats};
 
 #[cfg(feature = "self_test")]
+/// 写入并统计一条记录，验证最小全局服务链路；会清空已有日志，只能用于显式自测场景。
 pub fn self_test() {
     use api_v0::{LOG_INFO, LOG_KERN};
     init();

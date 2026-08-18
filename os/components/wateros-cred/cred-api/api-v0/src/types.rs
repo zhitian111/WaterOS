@@ -21,15 +21,25 @@ pub const SUPPLEMENTARY_GROUP_COUNT: usize = 32;
 /// 进程凭证快照（八 ID + 固定长度 supplementary 组）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProcessCredentials {
+    /// 创建进程时继承的真实用户 ID。
     pub real_uid: Uid,
+    /// 创建进程时继承的真实组 ID。
     pub real_gid: Gid,
+    /// 当前权限检查使用的有效用户 ID。
     pub effective_uid: Uid,
+    /// 当前权限检查使用的有效组 ID。
     pub effective_gid: Gid,
+    /// 可通过 set*id 恢复的用户 ID。
     pub saved_uid: Uid,
+    /// 可通过 set*id 恢复的组 ID。
     pub saved_gid: Gid,
+    /// 文件系统属主检查使用的用户 ID。
     pub fs_uid: Uid,
+    /// 文件系统属组检查使用的组 ID。
     pub fs_gid: Gid,
+    /// 固定容量数组；只有前 `supplementary_group_len` 项有效。
     pub supplementary_groups: [Gid; SUPPLEMENTARY_GROUP_COUNT],
+    /// 有效 supplementary 组数量，范围必须为 `0..=SUPPLEMENTARY_GROUP_COUNT`。
     pub supplementary_group_len: usize,
 }
 
@@ -55,6 +65,10 @@ impl ProcessCredentials {
     }
 
     /// privileged `setgroups(2)` 语义：替换当前 supplementary 组列表。
+    ///
+    /// # Panics
+    /// `groups.len()` 超过 [`SUPPLEMENTARY_GROUP_COUNT`] 时会因数组越界 panic；
+    /// syscall 层必须在调用前返回 `EINVAL`，不能把用户长度直接传入。
     #[inline]
     pub fn set_supplementary_groups(&mut self, groups: &[Gid]) {
         self.supplementary_group_len = groups.len();
@@ -153,5 +167,3 @@ impl ProcessCredentials {
         self.fs_gid = self.effective_gid;
     }
 }
-
-

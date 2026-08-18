@@ -29,6 +29,7 @@ use wateros_base::sync::{BootOnceCell, MultiprocessorSafeCell};
 use crate::pagetable::LoongArch64AddressSpace;
 
 struct KernelAddressSpaceCell {
+    /// 内核根页表及所有恒等映射；通过多处理器安全单元串行化修改。
     inner : MultiprocessorSafeCell<LoongArch64AddressSpace>,
 }
 
@@ -40,9 +41,13 @@ static PHYS_RAM_END_EXCL : AtomicUsize = AtomicUsize::new(0);
 
 /// QEMU virt LoongArch64 RAM 基址（与 link.ld 一致）。
 const LOONGARCH64_RAM_BASE : usize = 0x9000_0000;
+/// 低地址 UART、PLIC/MSI 等 MMIO 窗口起点（含）。
 const LOONGARCH64_LOW_MMIO_START : usize = 0x1000_0000;
+/// 低地址 MMIO 窗口终点（不含）。
 const LOONGARCH64_LOW_MMIO_END : usize = 0x3000_0000;
+/// VirtIO PCI BAR/ECAM 窗口起点（含）。
 const LOONGARCH64_PCI_MMIO_START : usize = 0x4000_0000;
+/// VirtIO PCI MMIO 窗口终点（不含）。
 const LOONGARCH64_PCI_MMIO_END : usize = 0x8000_0000;
 
 #[inline]
@@ -56,7 +61,7 @@ pub(crate) fn phys_ram_end_exclusive() -> usize {
     }
 }
 
-// `Acquire` 与 `init` 末尾 `Release` 配对；仅在 `init` 完成后合法调用。
+// `KERNEL_ASPACE` 的初始化发布后才允许访问；调用方不得在启动顺序完成前进入此锁。
 #[inline]
 fn with_kernel_aspace<R>(f: impl FnOnce(&mut LoongArch64AddressSpace) -> R) -> R {
     let cell = KERNEL_ASPACE.get().expect("kernel_mm: not initialized");
@@ -76,11 +81,12 @@ pub fn kernel_satp() -> usize { api_v0::kernel_satp::get() }
 /// `ram_end_exclusive` 为物理 RAM 上界（不包含），应与 DTB `/memory` 或
 /// bring-up 约定一致。
 pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
+    // 先发布 RAM 上界，再初始化帧池和页表；后续 ELF/用户地址空间路径依赖这三个状态已一致建立。
     assert!(ram_end_exclusive > LOONGARCH64_RAM_BASE,
             "kernel_mm: ram_end_exclusive must be above RAM base");
     PHYS_RAM_END_EXCL.store(ram_end_exclusive, Ordering::Release);
 
-    // 初始化帧分配器
+    // 内核镜像结束地址之后的帧才可分配，避免覆盖正在执行的内核代码或静态数据。
     let kernel_end_addr : usize;
     unsafe {
         core::arch::asm!("la {}, kernel_end", out(reg) kernel_end_addr);

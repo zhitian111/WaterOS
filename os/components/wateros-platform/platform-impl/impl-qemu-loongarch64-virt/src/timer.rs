@@ -13,7 +13,9 @@ use api_v0::timer::{
 const CSR_TCFG: usize = 0x41;
 /// 定时器中断清除 CSR。
 const CSR_TICLR: usize = 0x44;
+/// TCFG 使能位。
 const TCFG_ENABLE: usize = 1 << 0;
+/// TICLR 定时器清除位。
 const TICLR_CLEAR_TIMER: usize = 1 << 0;
 
 #[inline]

@@ -1,4 +1,4 @@
-//! Linux device-node naming and alias registration.
+//! Linux 设备节点命名与别名注册。
 
 extern crate alloc;
 use alloc::{format, string::String};
@@ -8,6 +8,7 @@ use driver_character_api_v0::SharedCharacterDevice;
 use super::DevFsImpl;
 
 pub(crate) fn linux_vd_disk_path(idx: usize) -> String {
+    // 设备索引超过 25 时饱和到 z，保持旧用户态路径可预测而不发生字节溢出。
     let letter = (b'a' + (idx as u8).min(25)) as char;
     format!("/dev/vd{}", letter)
 }

@@ -8,6 +8,7 @@ mod adapter;
 pub mod stack;
 
 #[cfg(feature = "self_test")]
+/// 执行网络聚合层的最小自检；仅在启用 `self_test` feature 时编译。
 pub fn self_test() {
     use api_v0::{Ipv4Endpoint, NetworkConfig, SocketKind};
 

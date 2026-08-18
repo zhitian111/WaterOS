@@ -27,9 +27,13 @@ use vfs::api::{
 struct MmDeviceLease(#[allow(dead_code)] Arc<dyn VfsDeviceMappingLease>);
 
 struct VfsMmapPageLoader {
+    /// 保持文件句柄和其打开状态，供缺页时读取/写回文件页。
     handle : Box<dyn VfsIoHandle>,
+    /// 文件当前长度，超出部分按零页处理。
     file_size : usize,
+    /// 是否允许在内容身份一致时共享只读物理页。
     allow_readonly_sharing : bool,
+    /// 用于页缓存去重的文件内容身份。
     content_identity : Option<VfsFileContentIdentity>,
     /// 持有 memfd 可写共享映射计数，VMA/地址空间销毁后自动释放。
     memfd_mapping_lease : Option<Arc<crate::sys::fs::memfd::MemFdMappingLease>>,
@@ -118,11 +122,9 @@ impl DemandPageLoader for VfsMmapPageLoader {
     }
 
     fn flush(&mut self) -> MmResult<()> {
-        // munmap/address-space teardown must publish dirty MAP_SHARED pages,
-        // but it is not an implicit fsync of the whole filesystem.  The old
-        // call to `flush()` reached the block driver's cache-flush command;
-        // images/devices that do not support that command returned EIO once
-        // per process even though every page write had succeeded.
+        // munmap/地址空间拆除必须发布脏 MAP_SHARED 页面，但不隐式 fsync 整个文件系统。
+        // 旧的 `flush()` 调用会到达块驱动缓存刷新命令；不支持该命令的镜像/设备即使每页写入成功，
+        // 也会使每个进程额外返回一次 EIO。
         self.handle.writeback().map_err(|error| {
                      let identity = self.content_identity
                                         .as_ref()
@@ -206,11 +208,9 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
         if accmode & O_ACCMODE == O_WRONLY {
             return UserRet::from_error(ErrNo::EACCES);
         }
-        // POSIX/Linux require a writable open file description for a
-        // writable MAP_SHARED mapping.  Accepting an O_RDONLY fd here used to
-        // defer the failure until address-space destruction, where every
-        // resident page was written back and produced an AccessViolation
-        // warning (once per short-lived process under LTP).
+        // POSIX/Linux 要求可写 MAP_SHARED 映射使用可写打开文件描述。
+        // 此处接受 O_RDONLY fd 会将失败延迟到地址空间销毁时，此时每个驻留页回写都会产生
+        // AccessViolation 警告（LTP 中每个短生命周期进程一次）。
         if mf.contains(MapFlags::SHARED) && perm.writable() &&
            accmode & O_ACCMODE != O_RDWR
         {
@@ -305,8 +305,8 @@ pub(crate) fn sys_mmap(args : SyscallArgs) -> UserRet {
                 Ok(loader) => loader,
                 Err(e) => return UserRet::from_error(e),
             };
-            // Writable shared mappings need stable frames across fork. Read-only shared mappings
-            // can retain file-backed lazy faults without changing observable sharing semantics.
+            // 可写共享映射在 fork 间需要稳定页帧；只读共享映射可以保留文件后备的惰性缺页，
+            // 不改变可观察的共享语义。
             let eager_shared = mf.contains(MapFlags::SHARED) && perm.writable();
             match mm::user_aspace::with_user_aspace_mut_and_flush_if_changed(handle, |aspace| {
                       let mut alloc = GlobalPhysFrameAllocator;

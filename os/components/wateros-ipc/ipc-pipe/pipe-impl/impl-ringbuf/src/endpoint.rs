@@ -17,8 +17,8 @@ use waitqueue::TaskWaitResult;
 
 use crate::kernel_pipe::Pipe;
 
-/// Shared backing object for a filesystem FIFO. It owns no endpoint reference,
-/// so EOF and `ENXIO` depend only on currently open file descriptions.
+/// 文件系统 FIFO 的共享后备对象。它不持有任何端点引用，
+/// 因而 EOF 和 `ENXIO` 仅由当前打开的文件描述决定。
 pub struct NamedPipe {
     pipe: Arc<Pipe>,
 }

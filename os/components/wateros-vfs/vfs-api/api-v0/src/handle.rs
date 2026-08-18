@@ -10,16 +10,19 @@ use spin::Mutex;
 use crate::error::{VfsError, VfsResult};
 use crate::meta::VfsMetadata;
 
-/// Stable identity and live content generation for an opened regular file.
+/// 已打开普通文件的稳定身份与内容代数。
 ///
-/// Backends advance the shared version token after content-changing operations.
-/// Consumers may include [`Self::version`] in cache keys; the token's `Arc`
-/// keeps the generation stable across close/reopen while cached consumers exist.
+/// 后端在内容变化操作后推进共享版本令牌。消费者可将 [`Self::version`] 放入缓存键；
+/// 令牌的 `Arc` 会在缓存消费者仍存在时保证关闭/重新打开之间的代数稳定。
 #[derive(Clone)]
 pub struct VfsFileContentIdentity {
+    /// 挂载实例代数，卸载后不可复用。
     mount_generation : u64,
+    /// 挂载实例标识。
     mount_id : u64,
+    /// 后端节点标识。
     node_id : u64,
+    /// 共享内容版本；写入后原子递增。
     version : Arc<AtomicU64>,
 }
 
@@ -44,6 +47,7 @@ impl VfsFileContentIdentity {
     pub fn version(&self) -> u64 { self.version.load(Ordering::Acquire) }
 
     pub fn mark_changed(&self) -> u64 {
+        // AcqRel 让缓存消费者看到写入前后的顺序，并以 wrapping 处理极端回绕。
         self.version.fetch_add(1, Ordering::AcqRel).wrapping_add(1)
     }
 
@@ -53,11 +57,17 @@ impl VfsFileContentIdentity {
 /// framebuffer 的 VFS 中立视图，避免 syscall 层依赖具体 VirtIO 驱动。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VfsFramebufferInfo {
+    /// 像素宽度。
     pub width : u32,
+    /// 像素高度。
     pub height : u32,
+    /// 行跨度（字节）。
     pub stride : usize,
+    /// 有效像素数据长度（字节）。
     pub byte_len : usize,
+    /// DMA 物理起始地址。
     pub phys_base : usize,
+    /// 映射长度（字节，可能含页尾填充）。
     pub mapped_len : usize,
 }
 
@@ -160,13 +170,12 @@ pub struct VfsDeviceMapping {
     pub lease : Arc<dyn VfsDeviceMappingLease>,
 }
 
-/// One Linux open-file-description's shared seek position and status flags.
+/// 一个 Linux 打开文件描述的共享偏移和状态标志。
 ///
-/// Each successful `open` creates a new state. `dup` and `fork` wrappers share
-/// it through an `Arc`; descriptor flags such as `FD_CLOEXEC` do not belong
-/// here. Slow backing I/O must not execute while holding an OFD spin lock, so
-/// these scalar fields use atomics. RIO-04 uses `next_reservation_generation`
-/// to order prepared read reservations.
+/// 每次成功 `open` 创建新状态，`dup` 与 `fork` 包装器通过 `Arc` 共享它；
+/// `FD_CLOEXEC` 等描述符标志不属于此处。持有 OFD 自旋锁时不得执行慢速后端 I/O，
+/// 因此标量字段使用原子操作；RIO-04 使用 `next_reservation_generation`
+/// 为预备读保留排序。
 pub struct VfsOpenDescriptionState {
     offset : AtomicU64,
     status_flags : AtomicU32,
@@ -188,7 +197,7 @@ impl VfsOpenDescriptionState {
     #[inline]
     pub fn set_offset(&self, offset : u64) { self.offset.store(offset, Ordering::Release); }
 
-    /// Atomically add a completed sequential I/O length to the shared offset.
+    /// 将已完成的顺序 I/O 长度原子地累加到共享偏移。
     pub fn advance_offset(&self, amount : u64) -> VfsResult<u64> {
         self.offset
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |offset| {
@@ -198,7 +207,7 @@ impl VfsOpenDescriptionState {
             .map_err(|_| VfsError::Io)
     }
 
-    /// Atomically apply `SEEK_CUR` style signed displacement.
+    /// 原子地应用 `SEEK_CUR` 风格的有符号位移。
     pub fn add_signed_offset(&self, displacement : i64) -> VfsResult<u64> {
         self.offset
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |offset| {
@@ -226,13 +235,13 @@ impl VfsOpenDescriptionState {
         self.status_flags.store(flags, Ordering::Release);
     }
 
-    /// Allocate a monotonically increasing id for a future prepared read.
+    /// 为后续预备读分配单调递增的 ID。
     #[inline]
     pub fn next_reservation_generation(&self) -> u64 {
         self.reservation_generation.fetch_add(1, Ordering::AcqRel)
     }
 
-    /// Reserve the current sequential offset for a prepared read.
+    /// 为预备读保留当前顺序偏移。
     pub fn begin_read(&self) -> VfsResult<VfsReadReservation> {
         let mut active = self.read_reservation.lock();
         if active.is_some() {
@@ -245,7 +254,7 @@ impl VfsOpenDescriptionState {
         Ok(reservation)
     }
 
-    /// Change the captured position while retaining the same active reservation.
+    /// 在保留同一活动保留的同时修改捕获位置。
     pub fn retarget_read(&self,
                          reservation : VfsReadReservation,
                          offset : u64)
@@ -260,7 +269,7 @@ impl VfsOpenDescriptionState {
         Ok(updated)
     }
 
-    /// Commit only bytes that reached userspace, then release the reservation.
+    /// 只提交已到达用户空间的字节，然后释放保留。
     pub fn finish_read(&self,
                        reservation : VfsReadReservation,
                        copied : usize,
@@ -281,7 +290,7 @@ impl VfsOpenDescriptionState {
         Ok(new_offset)
     }
 
-    /// Complete a reserved sequential operation at an explicitly chosen offset.
+    /// 在显式指定的偏移完成保留的顺序操作。
     pub fn finish_read_at(&self,
                           reservation : VfsReadReservation,
                           new_offset : u64)
@@ -295,7 +304,7 @@ impl VfsOpenDescriptionState {
         Ok(new_offset)
     }
 
-    /// Cancel a prepared read without changing the shared offset.
+    /// 取消预备读，不改变共享偏移。
     pub fn cancel_read(&self, reservation : VfsReadReservation) -> VfsResult<()> {
         let mut active = self.read_reservation.lock();
         if active.as_ref().map(|entry| entry.id) != Some(reservation.id) {
@@ -336,7 +345,7 @@ impl VfsOpenDescriptionState {
     }
 }
 
-/// Identity and captured offset of one active sequential read.
+/// 一个活动顺序读的身份和捕获偏移。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VfsReadReservation {
     id : u64,
@@ -360,14 +369,14 @@ pub enum VfsReadFinish {
     Fault,
 }
 
-/// Stable staged data whose source position is committed only by `finish`.
+/// 稳定的暂存数据；源位置仅在 `finish` 时提交。
 pub trait VfsReadLease: Send {
     fn bytes(&self) -> &[u8];
 
     fn finish(self : Box<Self>, progress : VfsCopyProgress) -> VfsResult<VfsReadFinish>;
 }
 
-/// Owned read operation produced while the fd slot lock is held briefly.
+/// 在短暂持有 fd 槽锁期间产生的自有读操作。
 pub trait VfsPreparedRead: Send {
     fn acquire(self : Box<Self>) -> VfsResult<Box<dyn VfsReadLease>>;
 }
@@ -443,7 +452,7 @@ pub trait VfsIoHandle: Send + VfsHandleAny {
         }
     }
 
-    /// Capture owned state for a sequential read without waiting or doing I/O.
+    /// 捕获顺序读所需的自有状态，不等待也不执行 I/O。
     fn prepare_read(&mut self, _max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
         Err(VfsError::Unsupported)
     }
@@ -466,9 +475,8 @@ pub trait VfsIoHandle: Send + VfsHandleAny {
         Err(VfsError::Unsupported)
     }
 
-    /// Stable file identity for content-addressed consumers such as the ELF
-    /// readonly physical-page cache. Non-regular or unstable handles return
-    /// `None`.
+    /// 为 ELF 只读物理页缓存等按内容寻址的消费者提供稳定文件身份。
+    /// 非普通文件或身份不稳定的句柄返回 `None`。
     fn file_content_identity(&self) -> Option<VfsFileContentIdentity> { None }
 
     fn seek(&mut self, _offset: i64, _whence: VfsSeekWhence) -> VfsResult<u64> {
@@ -486,13 +494,11 @@ pub trait VfsIoHandle: Send + VfsHandleAny {
         Err(VfsError::Unsupported)
     }
 
-    /// Write dirty file data back to the filesystem cache without forcing the
-    /// entire backing filesystem to stable storage.
+    /// 将脏文件数据写回文件系统缓存，但不强制整个后端文件系统落到稳定存储。
     ///
     /// `munmap(2)`/address-space teardown need this weaker operation: Linux
-    /// shared mappings remain coherent after unmap, but unmap is not an
-    /// implicit `fsync(2)`.  Handles without a separate page cache may use
-    /// their normal flush implementation.
+    /// 保证共享映射在 unmap 后保持一致，但 unmap 不隐式执行 `fsync(2)`。
+    /// 没有独立页缓存的句柄可以使用其常规刷新实现。
     fn writeback(&mut self) -> VfsResult<()> { self.flush() }
 
     fn flush(&mut self) -> VfsResult<()> {

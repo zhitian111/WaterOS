@@ -1,3 +1,5 @@
+//! 目录创建、删除、设备节点及权限检查相关系统调用。
+
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;

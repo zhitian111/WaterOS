@@ -11,7 +11,9 @@ use crate::HEAP_ALLOCATOR;
 const SIZE_CLASSES : &[usize] = &[64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384];
 
 struct LivePtr {
+    /// 当前仍由压测持有的分配地址。
     ptr : NonNull<u8>,
+    /// 释放该地址时必须原样传回的布局。
     layout : core::alloc::Layout,
 }
 

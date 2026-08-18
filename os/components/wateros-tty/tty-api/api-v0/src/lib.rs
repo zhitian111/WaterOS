@@ -84,11 +84,17 @@ pub enum ConsoleTtyMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub struct TtyTermios {
+    /// 输入处理标志位。
     pub iflag: u32,
+    /// 输出处理标志位。
     pub oflag: u32,
+    /// 控制模式标志位。
     pub cflag: u32,
+    /// 本地行规程标志位。
     pub lflag: u32,
+    /// 行规程编号。
     pub line: u8,
+    /// 控制字符数组，索引由 `VINTR` 等常量定义。
     pub cc: [u8; NCCS],
 }
 
@@ -108,9 +114,13 @@ impl TtyTermios {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub struct TtyWinSize {
+    /// 行数。
     pub row: u16,
+    /// 列数。
     pub col: u16,
+    /// 水平像素数。
     pub xpixel: u16,
+    /// 垂直像素数。
     pub ypixel: u16,
 }
 
@@ -123,6 +133,8 @@ impl TtyWinSize {
 /// 为避免锁顺序反转，实际投递必须在释放 TTY 锁后由 syscall/signal 层完成。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TtyControlEvent {
+    /// 前台进程组 ID。
     pub process_group: usize,
+    /// 要投递的信号编号。
     pub signal: usize,
 }

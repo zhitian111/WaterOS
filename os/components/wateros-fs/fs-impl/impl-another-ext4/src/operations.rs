@@ -1,7 +1,10 @@
+//! another-ext4 的读写、目录、链接和属性操作实现。
+
 use super::*;
 
 impl ReadOnlyFs for AnotherExt4Fs {
     fn mount(&mut self, device : SharedBlockDevice) -> FsResult<()> {
+        // 先建立带错误标记的块适配器，再加载超级块；失败时不发布半初始化状态。
         let io_error_state = Arc::new(AtomicBool::new(false));
         let backend = Arc::new(BlockAdapter { device : device.clone(),
                                               io_error : io_error_state.clone() });
@@ -299,9 +302,8 @@ impl ReadWriteFs for AnotherExt4Fs {
         if metadata(self.get()?, inode)?.node_type == FsNodeType::Directory {
             return Err(FsError::NotAFile);
         }
-        // Give every non-directory unlink a hidden hard link before removing
-        // the public dentry.  If this preparation fails, the public name is
-        // still intact and the syscall returns the failure.
+        // 在移除公开目录项前，为每个非目录 unlink 建立隐藏硬链接；若准备失败，
+        // 公开名称仍保持不变，syscall 返回该失败。
         self.preserve_inode_for_unlink(inode)?;
         self.get_mut()?
             .generic_remove(EXT4_ROOT_INO, path)

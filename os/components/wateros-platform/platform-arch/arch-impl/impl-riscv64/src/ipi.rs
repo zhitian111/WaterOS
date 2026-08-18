@@ -3,10 +3,12 @@
 use base::cpu::CpuMask;
 use sbi::{HartMask, SbiRet};
 
-/// Failure returned by the architecture-neutral IPI facade.
+/// 架构无关 IPI 门面返回的失败原因。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IpiError {
+    /// SBI/固件返回的原始错误码。
     Firmware(usize),
+    /// 当前 profile 未提供 IPI 能力。
     Unsupported,
 }
 

@@ -20,7 +20,9 @@ use crate::FsBridge;
 #[derive(Clone)]
 // 本结构代码由AI完成
 pub struct DirectoryHandle {
+    /// 规范化后的绝对目录路径。
     path : String,
+    /// 打开时的目录元数据快照。
     meta : VfsMetadata,
     dirents : Option<Vec<VfsDirEntry>>,
     description : Arc<VfsOpenDescriptionState>,
@@ -147,8 +149,7 @@ impl VfsIoHandle for DirectoryHandle {
         }
     }
 
-    // Directory fsync commits directory-entry and inode metadata through the
-    // filesystem that owns this opened path.
+    // 目录 fsync 通过拥有该打开路径的文件系统提交目录项和 inode 元数据。
     fn flush(&mut self) -> VfsResult<()> {
         crate::sync_path_filesystem(self.path.as_str())
     }

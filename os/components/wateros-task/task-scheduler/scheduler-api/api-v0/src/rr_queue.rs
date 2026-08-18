@@ -1,4 +1,4 @@
-//!rr queue
+//! 固定优先级时间片轮转队列。
 
 use core::array;
 
@@ -7,8 +7,11 @@ use task_api::Priority;
 use task_api::TaskId;
 use task_api::BUCKET_COUNT;
 pub struct RrQueue {
+    /// 每个优先级桶中的循环任务队列。
     queues : [VecDeque<TaskId>; BUCKET_COUNT],
+    /// 当前任务已消耗的轮转 tick。
     current_ticks : u64,
+    /// 当前队列中任务总数。
     task_count : usize,
 }
 impl RrQueue {

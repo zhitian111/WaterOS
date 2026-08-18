@@ -36,8 +36,11 @@ const VALID_OPEN_FLAGS : u32 = 0o3 | 0o100 | 0o200 | 0o400 | 0o1000 | 0o2000 | 0
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct OpenHow {
+    /// 打开标志，按 Linux openat2 ABI 编码。
     flags : u64,
+    /// 创建文件时使用的权限模式。
     mode : u64,
+    /// 路径解析约束位图。
     resolve : u64,
 }
 

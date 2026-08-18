@@ -22,11 +22,11 @@ use vfs::SingleRootReadView;
 use crate::user_copy::copy_user_path_cstr;
 use crate::vfs_util::vfs_error_to_errno;
 
-/// Linux-compatible upper bound reported for the combined argv/envp payload.
+/// Linux 兼容的 argv/envp 合并载荷上限；超过后返回参数过长错误。
 const EXEC_ARG_MAX : usize = 2 * 1024 * 1024;
-/// Leave room in the fixed 2 MiB initial user stack for argc and auxv.
+/// 在固定的 2 MiB 初始用户栈中预留 argc 与 auxv 所需空间。
 const EXEC_STACK_OVERHEAD : usize = 16 * 1024;
-/// Linux auxv tags needed by the nested-QEMU capability diagnostic.
+/// 嵌套 QEMU 能力诊断所需的 Linux auxv 标签。
 const AT_NULL : usize = 0;
 const AT_HWCAP : usize = 16;
 const AUXV_DIAGNOSTIC_MAX_PAIRS : usize = 64;
@@ -104,8 +104,7 @@ fn do_execve(path_ptr : usize, argv_ptr : usize, envp_ptr : usize) -> Result<(),
             return Err(errno);
         }
     };
-    // Allocate signal state before entering sibling teardown; this is the last
-    // preparation step that can fail independently of the thread group.
+    // 在进入同组线程清理前分配信号状态；这是最后一个可能独立于线程组失败的准备步骤。
     crate::sys::ipc::robust::robust_exit_cleanup_siblings_for_exec();
     let terminated = match task::terminate_other_threads_for_exec() {
         Ok(terminated) => terminated,
@@ -310,8 +309,8 @@ fn is_qemu_system_executable(path : &str) -> bool {
         .is_some_and(|name| name.starts_with("qemu-system-"))
 }
 
-/// Return the nested QEMU path for both direct execution and the image-bundled
-/// `ld-linux --library-path ... qemu-system-*` form used by online BuildStorm.
+/// 返回嵌套 QEMU 路径，同时兼容直接执行和在线 BuildStorm 使用的镜像内
+/// `ld-linux --library-path ... qemu-system-*` 形式。
 fn qemu_system_invocation<'a>(executable_path : &'a str, argv : &'a [&'a str]) -> Option<&'a str> {
     if is_qemu_system_executable(executable_path) {
         return Some(executable_path);
@@ -321,9 +320,8 @@ fn qemu_system_invocation<'a>(executable_path : &'a str, argv : &'a [&'a str]) -
         .find(|argument| is_qemu_system_executable(argument))
 }
 
-/// Read back the auxv bytes from the newly prepared address space.  This checks
-/// what the QEMU process will actually receive instead of merely logging the
-/// constant used while constructing the stack.
+/// 从刚建立的地址空间读回 auxv 字节，确认 QEMU 进程实际收到的内容，
+/// 而不是只记录构造用户栈时使用的常量。
 fn log_qemu_host_capability(elf : &mm::api::kernel_bringup::LoadedElf,
                             path : &str,
                             sp : usize,

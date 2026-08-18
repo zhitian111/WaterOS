@@ -53,41 +53,43 @@ pub type SharedCharacterDevice = Arc<Mutex<Box<dyn CharacterDevice>>>;
 
 static CHARACTER_DEVICES: Mutex<Vec<SharedCharacterDevice>> = Mutex::new(Vec::new());
 
-/// Bytes reserved from a consuming character device but not yet committed.
+/// 从消费型字符设备预留但尚未提交的字节。
 pub struct CharacterReadReservation {
+    /// 后端分配的预留令牌，用于防止错误提交别的读取。
     id: u64,
+    /// 已从设备暂存、等待用户拷贝的字节。
     bytes: Vec<u8>,
 }
 
 impl CharacterReadReservation {
-    /// Construct a reservation owned by one character-device implementation.
+    /// 构造由一个字符设备实现拥有的预留。
     pub fn new(id: u64, bytes: Vec<u8>) -> Self {
         Self { id, bytes }
     }
 
-    /// Stable bytes exposed while the device lock is not held.
+    /// 在不持有设备锁时暴露稳定的暂存字节。
     pub fn bytes(&self) -> &[u8] {
         self.bytes.as_slice()
     }
 
-    /// Return the implementation token and staged bytes for commit or rollback.
+    /// 取出后端令牌和暂存字节，供提交或回滚使用。
     pub fn into_parts(self) -> (u64, Vec<u8>) {
         (self.id, self.bytes)
     }
 }
 
-/// Result of committing or cancelling a character-device read reservation.
+    /// 提交或取消字符设备读取预留的结果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CharacterReadFinish {
-    /// This stream prefix was committed.
+    /// 已提交该流前缀。
     Bytes(usize),
-    /// No byte was committed because user-copy faulted immediately.
+    /// 用户拷贝一开始就缺页，因此没有提交任何字节。
     Fault,
 }
 
 /// 字符设备语义：字节流 I/O + 可选 `ioctl`（默认 [`DriverError::Unsupported`]）。
 pub trait CharacterDevice: Send {
-    /// Reserve up to `max_len` bytes without making them unavailable on cancel.
+    /// 预留最多 `max_len` 字节；取消时必须能恢复这些字节的可读性。
     ///
     /// `Ok(None)` means that a transactional device currently has no data.
     /// Non-consuming devices may retain the default `Unsupported` result.
@@ -95,7 +97,7 @@ pub trait CharacterDevice: Send {
         Err(DriverError::Unsupported)
     }
 
-    /// Commit the copied prefix and restore any uncommitted suffix in order.
+    /// 提交已拷贝前缀，并按原顺序恢复未提交后缀。
     fn finish_read(
         &mut self,
         _reservation: CharacterReadReservation,
@@ -156,12 +158,14 @@ impl<P: SerialPort> SerialPortCharacterDevice<P> {
 
 impl<P: SerialPort> CharacterDevice for SerialPortCharacterDevice<P> {
     fn prepare_read(&mut self, max_len: usize) -> DriverResult<Option<CharacterReadReservation>> {
+        // 零长度读取不消耗数据；并发预留期间返回 None，避免同一流被重复消费。
         if max_len == 0 {
             return Ok(Some(CharacterReadReservation::new(0, Vec::new())));
         }
         if self.active_read.is_some() {
             return Ok(None);
         }
+        // 限制单次预留大小，防止用户给出极大长度导致无界分配。
         let max_len = max_len.min(256);
         let mut bytes = Vec::new();
         bytes
@@ -260,7 +264,7 @@ impl<P: SerialPort> CharacterDevice for SerialPortCharacterDevice<P> {
     }
 }
 
-/// Verify that poll and read rollback never discard serial input.
+/// 验证 poll 和 read 回滚不会丢弃串口输入。
 pub fn test() {
     struct TestPort {
         input: VecDeque<u8>,

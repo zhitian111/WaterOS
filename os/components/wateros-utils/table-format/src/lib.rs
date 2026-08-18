@@ -1,10 +1,10 @@
 #![no_std]
 
 #![forbid(unsafe_code)]
-//! Allocation-free text table formatting over [`core::fmt`].
+//! 基于 [`core::fmt`] 的无分配文本表格格式化。
 //!
-//! The compact layout is derived from the MIT-licensed `tabled` 0.20.0 and
-//! `papergrid` 0.17.0 compact renderers. See `UPSTREAM.md` in the package.
+//! 紧凑布局参考 MIT 许可的 `tabled` 0.20.0 与 `papergrid` 0.17.0 渲染器；
+//! 详见包内 `UPSTREAM.md`。
 
 use core::fmt::{self, Debug, Display, Write};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -14,23 +14,23 @@ pub use fixed_table::{FixedTable, FixedTableWriter};
 mod auto_table;
 pub use auto_table::AutoTable;
 
-/// Horizontal alignment within a column's content area.
+/// 列内容区域内的水平对齐方式。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Alignment {
-    /// Place padding after the value.
+    /// 在值后放置填充。
     Left,
-    /// Split padding around the value.
+    /// 在值两侧分配填充。
     Center,
-    /// Place padding before the value.
+    /// 在值前放置填充。
     Right,
 }
 
-/// Behavior when a formatted value is wider than its column.
+/// 格式化值超过列宽时的处理方式。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Overflow {
-    /// Return [`Error::ContentOverflow`] before writing the row.
+    /// 在写入行之前返回 [`Error::ContentOverflow`]。
     Error,
-    /// Clip the value and append this marker.
+    /// 截断内容并追加此标记。
     Truncate(&'static str),
 }
 
@@ -53,7 +53,7 @@ pub struct Column {
 }
 
 impl Column {
-    /// Create a column. `width` counts content cells, excluding padding.
+    /// 创建列；`width` 只计算内容单元格宽度，不包含内边距。
     pub const fn new(width : usize, alignment : Alignment) -> Self {
         Self { width,
                alignment,
@@ -62,27 +62,27 @@ impl Column {
                overflow : Overflow::Error }
     }
 
-    /// Set left and right padding.
+    /// 设置左右内边距。
     pub const fn padding(mut self, left : usize, right : usize) -> Self {
         self.padding_left = left;
         self.padding_right = right;
         self
     }
 
-    /// Set overflow behavior.
+    /// 设置溢出处理策略。
     pub const fn overflow(mut self, overflow : Overflow) -> Self {
         self.overflow = overflow;
         self
     }
 
-    /// Return the content width.
+    /// 返回内容宽度。
     pub const fn width(&self) -> usize { self.width }
 }
 
-/// Border characters used by a table.
+/// 表格使用的边框字符。
 ///
-/// This is the compact border model used by `papergrid`: a frame plus a
-/// horizontal separator, with one intersection character for each position.
+/// 这是 `papergrid` 使用的紧凑边框模型：包含外框和水平分隔线，
+/// 每个交汇位置使用一个交叉字符。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Style {
     top_left : char,
@@ -122,7 +122,7 @@ impl Style {
                bottom_right : '+' }
     }
 
-    /// Unicode box-drawing style.
+    /// Unicode 方框绘制风格。
     pub const fn modern() -> Self {
         Self { top_left : '┌',
                top : '─',
@@ -142,25 +142,25 @@ impl Style {
     }
 }
 
-/// A borrowed cell value.
+/// 借用的单元格值。
 #[derive(Clone, Copy)]
 pub enum Cell<'a> {
-    /// A string cell.
+    /// 字符串单元格。
     Text(&'a str),
-    /// A value formatted with [`Display`].
+    /// 使用 [`Display`] 格式化的值。
     Display(&'a dyn Display),
-    /// A value formatted with [`Debug`].
+    /// 使用 [`Debug`] 格式化的值。
     Debug(&'a dyn Debug),
 }
 
 impl<'a> Cell<'a> {
-    /// Construct a string cell.
+    /// 构造字符串单元格。
     pub const fn text(value : &'a str) -> Self { Self::Text(value) }
 
-    /// Construct a [`Display`] cell.
+    /// 构造 [`Display`] 单元格。
     pub fn display<T : Display>(value : &'a T) -> Self { Self::Display(value) }
 
-    /// Construct a [`Debug`] cell.
+    /// 构造 [`Debug`] 单元格。
     pub fn debug<T : Debug>(value : &'a T) -> Self { Self::Debug(value) }
 
     fn format(&self, output : &mut dyn Write) -> fmt::Result {
@@ -172,26 +172,26 @@ impl<'a> Cell<'a> {
     }
 }
 
-/// A table formatting failure.
+/// 表格格式化失败。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
-    /// The destination rejected output.
+    /// 目标输出端拒绝写入。
     Fmt,
-    /// A row did not contain exactly one cell per column.
+    /// 行中的单元格数量与列数不一致。
     ColumnCount { expected : usize, actual : usize },
     /// A zero-width column cannot represent its configured truncation marker.
     InvalidWidth { column : usize },
-    /// A cell contained a newline.
+    /// 单元格包含换行符。
     MultilineUnsupported { column : usize },
-    /// A cell exceeded a column configured with [`Overflow::Error`].
+    /// 单元格超出配置为 [`Overflow::Error`] 的列宽。
     ContentOverflow {
         column : usize,
         width : usize,
         actual : usize,
     },
-    /// A truncation marker is wider than its content area.
+    /// 截断标记本身宽于可用内容区域。
     TruncationMarkerTooWide { column : usize },
-    /// The streaming writer has already been finished.
+    /// 流式写入器已经完成，不能再次写入。
     Finished,
 }
 
@@ -199,7 +199,7 @@ impl From<fmt::Error> for Error {
     fn from(_ : fmt::Error) -> Self { Self::Fmt }
 }
 
-/// Border positions shared by the fixed and automatic renderers.
+/// 固定宽度和自动宽度渲染器共用的边框位置。
 #[derive(Clone, Copy)]
 enum BorderKind {
     Top,

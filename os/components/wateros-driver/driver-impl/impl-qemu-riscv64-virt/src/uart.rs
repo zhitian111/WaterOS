@@ -47,6 +47,7 @@ pub fn read_byte_blocking(dev: &mut dyn CharacterDevice) -> u8 {
     loop {
         match dev.read(&mut b) {
             Ok(1) => return b[0],
+            // EOF 或暂时性错误都不伪造字节；伪 shell 继续轮询直到获得一个字节。
             Ok(0) | Err(_) => core::hint::spin_loop(),
             Ok(_) => core::hint::spin_loop(),
         }

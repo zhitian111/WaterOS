@@ -30,19 +30,19 @@ pub const LOG_DEBUG: u8 = 7;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KlogRecordMeta {
-    /// 提交后单调递增序号。
+    /// 提交后由环分配的单调递增序号，用于定位读游标；服务重置后会重新开始计数。
     pub seq: u64,
-    /// 单调时钟纳秒（由聚合层填入）。
+    /// 记录时的单调时钟纳秒（由聚合层填入）；早期启动尚无时间源时为 0，不表示 Unix 时间。
     pub ts_nsec: u64,
-    /// 正文字节数。
+    /// 实际保存的原始正文字节数，不含 traditional syslog 格式化时附加的前缀和换行。
     pub text_len: u16,
-    /// syslog facility。
+    /// syslog facility 分类值；当前写入口不校验范围，读取者应将未知值视作未分类。
     pub facility: u8,
     /// 内部标志（[`KlogFlags`] 编码为 `u8`）。
     pub flags: u8,
-    /// syslog level（0–7）。
+    /// syslog level（0–7）；传统格式化会掩码为低三位，故非法值不会越界但会丢失高位信息。
     pub level: u8,
-    /// 写入时任务 ID，无任务为 0。
+    /// 写入时的内核任务 ID；早期启动、异常上下文或无调度上下文时为 0。
     pub caller_id: u32,
 }
 

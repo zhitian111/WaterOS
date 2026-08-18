@@ -304,7 +304,7 @@ impl NetworkStack {
                                 .unwrap_or(0) as u32;
         let cwnd_segments = (send_capacity / TCP_MSS).clamp(2, 64);
 
-        // Linux uapi struct tcp_info offsets used by iperf3.
+        // 按 Linux UAPI `tcp_info` 布局写入 iperf3 使用的字段偏移。
         write_u32(&mut out, 8, 200_000);
         write_u32(&mut out, 16, TCP_MSS);
         write_u32(&mut out, 20, TCP_MSS);

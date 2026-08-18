@@ -8,7 +8,7 @@
 /// 页大小（字节）；与 RISC-V Sv39 4KiB 叶子页及本仓库 `mm-impl` 一致。
 pub const PAGE_SIZE: usize = 4096;
 
-/// 用户或内核虚拟字节地址。
+/// 用户或内核虚拟字节地址；构造该 newtype 不验证是否位于用户范围或是否已映射。
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct VirtAddr(pub usize);
@@ -18,7 +18,7 @@ pub struct VirtAddr(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PhysAddr(pub usize);
 
-/// 虚拟页号：`VirtAddr::floor_page` / `ceil_page` 与 [`PAGE_SIZE`] 对齐分解得到。
+/// 虚拟页号：`VirtAddr::floor_page` / `ceil_page` 与 [`PAGE_SIZE`] 对齐分解得到，不能直接当作字节地址使用。
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct VirtPageNum(pub usize);
@@ -38,6 +38,8 @@ impl VirtAddr {
     pub const fn floor_page(self) -> VirtPageNum { VirtPageNum(self.0 / PAGE_SIZE) }
 
     /// 向上对齐到页边界对应的虚拟页号（`va` 恰在页边界时与 `floor_page` 相同）。
+    ///
+    /// 调用者必须先保证地址加上页对齐余量不会溢出；来自用户态的范围应在 syscall/MM 层完成此校验。
     #[inline]
     pub const fn ceil_page(self) -> VirtPageNum {
         VirtPageNum((self.0 + PAGE_SIZE - 1) / PAGE_SIZE)
@@ -73,7 +75,7 @@ impl PhysAddr {
 }
 
 impl VirtPageNum {
-    /// 该虚拟页的起始字节地址。
+    /// 该虚拟页的起始字节地址；调用者必须保证页号乘页大小不会溢出。
     #[inline]
     pub const fn start_addr(self) -> VirtAddr { VirtAddr(self.0 * PAGE_SIZE) }
 
@@ -83,7 +85,7 @@ impl VirtPageNum {
 }
 
 impl PhysPageNum {
-    /// 该物理页的起始字节地址。
+    /// 该物理页的起始字节地址；这不保证该地址在当前页表中可访问。
     #[inline]
     pub const fn start_addr(self) -> PhysAddr { PhysAddr(self.0 * PAGE_SIZE) }
 }
@@ -106,4 +108,3 @@ pub fn test() {
 
     log::trace!("[mm-api::addr] test end");
 }
-

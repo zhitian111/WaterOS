@@ -1,7 +1,10 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct IdTriplet {
+    /// real UID/GID。
     pub(crate) real : u32,
+    /// effective UID/GID，用于权限检查。
     pub(crate) effective : u32,
+    /// saved-set UID/GID，用于无特权恢复。
     pub(crate) saved : u32,
 }
 
@@ -140,3 +143,4 @@ mod tests {
                                     saved : 600 }));
     }
 }
+// setuid/setgid 系列系统调用的目标 ID 规划与权限校验。

@@ -36,8 +36,11 @@ const SOCKET_READY_YIELD_SPINS : usize = 4;
 #[derive(Copy, Clone, Default)]
 // 本结构代码由AI完成
 pub(crate) struct PollFd {
+    /// 被监视的文件描述符。
     pub fd : i32,
+    /// 调用方请求的事件位图。
     pub events : i16,
+    /// 内核返回的实际事件位图。
     pub revents : i16,
 }
 
@@ -45,20 +48,25 @@ pub(crate) struct PollFd {
 #[derive(Clone, Copy, Default)]
 // 本结构代码由AI完成
 pub(crate) struct UserTimespec {
+    /// 秒数；超时接口拒绝负值。
     pub sec : isize,
+    /// 纳秒，必须小于 1_000_000_000。
     pub nsec : isize,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct UserTimeVal {
+    /// 秒数。
     pub sec : isize,
+    /// 微秒，必须小于 1_000_000。
     pub usec : isize,
 }
 
 pub(crate) type FdSet = [u64; FD_SET_WORDS];
 
 pub(crate) struct PollDeadline {
+    /// 单调时钟纳秒绝对截止时间；`None` 表示无限等待。
     expire_ns : Option<u128>,
 }
 
@@ -377,10 +385,8 @@ fn poll_block_until_ready(pollfds : PollSet,
         if n > 0 {
             return Ok(n);
         }
-        // A signal can arrive while this task is still running, immediately
-        // before it enters the one-tick sleep. In that window interrupt_task()
-        // cannot remove it from a wait queue, so every loop must also observe
-        // the pending signal explicitly.
+        // 信号可能在任务仍运行、即将进入一个 tick 睡眠前到达。此时 interrupt_task()
+        // 无法从等待队列移除它，因此每轮循环都必须显式检查 pending 信号。
         if current_task_has_deliverable_signal() {
             return Err(ErrNo::EINTR);
         }

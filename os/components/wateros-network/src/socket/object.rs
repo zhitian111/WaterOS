@@ -34,7 +34,9 @@ impl Drop for SocketShared {
 /// WaterOS 网络 socket 的共享引用，也是 syscall 使用的主要对象接口。
 #[derive(Clone)]
 pub struct SocketRef {
+    /// 共享底层句柄及打开状态标志，保证 dup/fork 后最后一个引用才关闭。
     inner : Arc<SocketShared>,
+    /// VFS 对外可见的稳定 inode 标识，不等同于 smoltcp 句柄。
     inode : u64,
 }
 
@@ -78,6 +80,7 @@ impl SocketRef {
                            port : peer_port }))
     }
 
+    /// 返回 TCP 或 UDP 类型。
     pub fn kind(&self) -> NetworkResult<SocketKind> { self.with_handle(stack::socket_kind) }
 
     pub fn bind(&self, local_ip : Option<[u8; 4]>, port : u16) -> NetworkResult<()> {
@@ -112,6 +115,7 @@ impl SocketRef {
         self.with_handle(stack::socket_poll_snapshot)
     }
 
+    /// 发送数据；返回实际写入协议栈发送队列的字节数。
     pub fn send(&self, data : &[u8]) -> Result<usize, SocketSendError> {
         self.with_handle(|handle| stack::socket_send(handle, data))
     }
@@ -134,6 +138,7 @@ impl SocketRef {
         self.with_handle(stack::socket_recv_timeout_ms)
     }
 
+    /// 读取与所有共享 fd 同步的打开状态标志。
     pub fn status_flags(&self) -> usize {
         self.inner
             .status_flags

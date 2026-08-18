@@ -14,11 +14,11 @@ use crate::perm::PagePerm;
 /// mmap 映射类型（先做最小集）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MmapKind {
-    /// 匿名映射：内容来自零填充（当前阶段可先按需延后实现）。
+    /// 匿名映射：内容来自零填充（当前阶段可先按需延后实现），不含文件偏移或文件生命周期。
     Anonymous,
-    /// 文件映射占位：供后续 VFS/文件后备填充。
+    /// 文件映射：`fd` 是 syscall 层已验证的描述符身份，`offset` 为文件字节偏移且应满足页对齐要求。
     File { fd : usize, offset : usize },
-    /// 外部设备物理页映射；页的所有权不属于地址空间。
+    /// 外部设备物理页映射；`offset` 是设备内存中的字节偏移，页的所有权不属于地址空间。
     Device { offset : usize },
 }
 
@@ -33,8 +33,11 @@ impl<T : Send + Sync + ?Sized> DeviceMappingLease for T {}
 /// 一段物理连续、不由通用帧分配器回收的设备内存。
 #[derive(Clone)]
 pub struct DeviceMapping {
+    /// 首个可映射设备物理页号；该页及后续连续页不经普通帧分配器管理。
     pub phys_start : PhysPageNum,
+    /// 可映射区域的字节数；实现必须检查请求长度不会越过该范围。
     pub len : usize,
+    /// 生命周期令牌。只要用户 PTE 仍存在就必须保持它，防止驱动提前释放或重用 DMA 缓冲。
     pub lease : Arc<dyn DeviceMappingLease>,
 }
 
@@ -53,7 +56,7 @@ pub struct MmapRequest {
     pub kind : MmapKind,
 }
 
-/// Demand paging 的 fault 类型，用于权限检查与按需装页。
+/// 按需分页产生的缺页类型，用于权限检查与按需装页。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageFaultAccess {
     Read,
@@ -68,7 +71,7 @@ pub enum DemandMappingKind {
     File,
 }
 
-/// Summary of whether an address-space operation changed any resident leaf PTE.
+/// 地址空间操作是否实际改变了任一已驻留的叶 PTE 的摘要。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PteChange {
     None,
@@ -76,6 +79,7 @@ pub enum PteChange {
 }
 
 impl PteChange {
+    /// 返回是否需要考虑 TLB shootdown；仅更新尚未驻留的 VMA 元数据时为 `false`。
     pub const fn changed(self) -> bool { matches!(self, Self::Changed) }
 }
 
@@ -90,10 +94,8 @@ pub trait DemandPageLoader {
     /// 将文件偏移 `file_offset` 对应的一页加载到已清零的 `dst`。
     fn load_page(&mut self, file_offset : usize, dst : &mut [u8]) -> MmResult<()>;
 
-    /// Optionally return an immutable physical page already populated for this
-    /// file offset. A returned PPN owns one reference for the caller's mapping;
-    /// the caller must release it if page-table installation fails. Writable
-    /// loaders and loaders without a shared cache retain the default `None`.
+    /// 可选地返回已填充的只读共享物理页。返回的 PPN 为调用方映射持有一份引用；若页表安装失败，
+    /// 调用方必须归还它。可写 loader 或没有共享页缓存的 loader 保持默认 `None`。
     fn load_shared_page(&mut self, _file_offset : usize) -> MmResult<Option<PhysPageNum>> {
         Ok(None)
     }
@@ -179,6 +181,7 @@ pub trait MmapOps: AddressSpaceOps {
     fn mprotect(&mut self, addr : VirtAddr, len : usize, perm : PagePerm) -> MmResult<bool>;
 
     /// 调整已有映射大小或地址（Linux `mremap(2)` 语义子集）。
+    /// 实现必须校验旧区间完整属于同一映射、所有长度非零且页对齐；失败时不得破坏原映射。
     fn mremap<A : PhysicalFrameAllocator<FrameId = PhysPageNum>>(&mut self,
                                                                  allocator : &mut A,
                                                                  old_addr : VirtAddr,

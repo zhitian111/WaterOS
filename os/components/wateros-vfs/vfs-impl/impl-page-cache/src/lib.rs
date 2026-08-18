@@ -29,13 +29,16 @@ use spin::{Mutex, RwLock};
 use wateros_base_config::fs::{FILE_PAGE_CACHE_CAPACITY, FILE_PAGE_SIZE, FILE_READ_AHEAD_STRIDE};
 
 // 本变量代码由AI完成
+/// 单次刷盘批次允许合并的连续页上限，限制临时缓冲区占用与单次 I/O 时延。
 const FLUSH_RUN_MAX_PAGES : usize = 64;
 #[cfg(feature = "diagnostics")]
 const DIAGNOSTIC_REPORT_LOOKUPS : u64 = 1 << 18;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InstallSource {
+    /// 由调用者实际读取或写入触发，必须优先完成。
     Demand,
+    /// 顺序读取预测得到；失败或被淘汰不应改变用户可见语义。
     Prefetch,
 }
 
@@ -58,10 +61,13 @@ struct PageCacheDiagnostics {
 
 /// 区间读写下层（通常由 `FsBridge` 委托 `ReadOnlyFs` / `ReadWriteFs`）。
 pub trait PageCacheIo {
+    /// 下层 I/O 返回的具体错误类型，由 VFS 边界转换为 errno。
     type Error;
 // 本方法代码由AI完成
+    /// 从 `path` 的字节偏移 `offset` 读取至 `buf`，返回实际字节数；短读表示 EOF 或后端短读。
     fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> Result<usize, Self::Error>;
 // 本方法代码由AI完成
+    /// 将 `data` 写到 `path` 的字节偏移 `offset`，返回实际写入字节数或后端错误。
     fn write_range(&mut self,
                    path : &str,
                    offset : u64,
@@ -72,10 +78,13 @@ pub trait PageCacheIo {
 /// 页缓存键：根卷挂载代次 + 绝对路径；可带稳定文件 node id 加速 BTree 比较。
 #[derive(Clone, Debug)]
 // 本结构代码由AI完成
+/// 唯一标识缓存页所属的挂载实例与文件。
 pub struct FileCacheKey {
+    /// 根卷装载代次；代次变化后旧缓存不得用于新文件系统实例。
     pub mount_gen : u64,
     /// 稳定文件的 `(mount_id, node_id)`；`None` 表示没有稳定 node 的路径键。
     pub stable : Option<(u64, u64)>,
+    /// 不能取得稳定 node id 时使用的规范化绝对路径。
     pub path : Arc<str>,
 }
 
@@ -171,6 +180,7 @@ pub fn global_cache(mount_gen : u64) -> Arc<GlobalFilePageCache> {
         let current = existing.mount_gen();
         if current != mount_gen {
             if mount_gen < current {
+                // 延迟到达的旧挂载请求不能回退全局代次，否则会让新根卷读取旧缓存页。
                 log::debug!("[page-cache] ignoring stale mount_gen {} (global {})",
                             mount_gen,
                             current);

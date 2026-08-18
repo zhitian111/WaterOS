@@ -17,21 +17,26 @@ use super::types::{NetworkError, SocketKind, SocketState};
 
 #[derive(Clone, Copy)]
 struct TcpListenerSlotConfig {
+    /// 监听槽所属的逻辑 listener 组。
     group_id : u64,
+    /// 绑定地址；`None` 表示监听本机任意地址。
     local_ip : Option<[u8; 4]>,
+    /// 监听端口，必须是已分配的非零端口。
     port : u16,
+    /// 接收超时，单位为毫秒；`None` 表示不设置超时。
     recv_timeout_ms : Option<u64>,
+    /// 是否为该连接启用 TCP_NODELAY。
     tcp_nodelay : bool,
+    /// 发送缓冲区大小，单位为字节。
     snd_buf_size : i32,
+    /// 接收缓冲区大小，单位为字节。
     rcv_buf_size : i32,
 }
 
 pub(super) fn tcp_listener_slot_count(backlog : usize) -> usize {
-    // Linux defines backlog as the queue of fully established connections
-    // still waiting for accept(). The connection currently being accepted
-    // is not part of that queue. Keep one transition slot in addition to
-    // the requested queue depth so a replacement listener is available
-    // while a userspace server handles the accepted connection.
+    // Linux 将 backlog 定义为已建立但仍等待 accept() 的连接队列，
+    // 当前正在交给 accept() 的连接不计入该队列。除请求深度外保留一个过渡槽，
+    // 使用户态服务器处理已接受连接期间仍能创建替代监听器。
     backlog.max(1)
            .saturating_add(1)
            .min(TCP_LISTEN_BACKLOG_MAX)

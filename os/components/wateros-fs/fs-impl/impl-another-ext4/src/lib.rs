@@ -1,10 +1,9 @@
 #![no_std]
 
-//! WaterOS adapter for the vendored `another_ext4` implementation.
+//! WaterOS 对 `another_ext4` 实现的适配层。
 //!
-//! The upstream crate works with fixed 4096-byte filesystem blocks and a
-//! synchronous block-device trait.  This module keeps that detail behind the
-//! stable WaterOS filesystem API.
+//! 上游 crate 使用固定 4096 字节文件系统块和同步块设备 trait；本模块把这些细节
+//! 隔离在稳定的 WaterOS 文件系统 API 之后。
 
 extern crate alloc;
 

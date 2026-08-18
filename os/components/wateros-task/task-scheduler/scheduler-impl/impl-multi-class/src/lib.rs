@@ -38,7 +38,9 @@ pub type SwitchPair = api_v0::SwitchPair;
 /// 侧表；因此同时保留经 scheduler 状态校验后真正被唤醒和迁移的任务 ID。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WaitQueueRequeueResult {
+    /// 被直接唤醒并重新放入就绪队列的任务。
     pub woken : Vec<TaskId>,
+    /// 从一个等待队列迁移到另一个队列、尚未唤醒的任务。
     pub moved : Vec<TaskId>,
 }
 
@@ -542,10 +544,8 @@ pub fn schedule_tick() {
         let mut switch_pair = scheduler.schedule(ScheduleReason::Tick, cpu_id);
         let mut targets = scheduler.take_pending_reschedule_cpus();
         targets.remove(cpu_id);
-        // A remote sender consumes the global pending mask before raising the
-        // IPI, while the per-CPU request remains set until this CPU handles it.
-        // Honor that request from the timer path as a correctness fallback for
-        // a coalesced or delayed hardware IPI.
+        // 远端发送者在触发 IPI 前会消费全局 pending 掩码，而 per-CPU 请求会一直保留到本 CPU 处理。
+        // timer 路径仍需处理该请求，作为硬件 IPI 合并或延迟时的正确性回退。
         let local_requested = scheduler.take_need_resched(cpu_id);
         if switch_pair.is_none() && local_requested {
             switch_pair = scheduler.schedule(ScheduleReason::Reschedule, cpu_id);
@@ -564,10 +564,8 @@ pub fn schedule_reschedule() {
     let cpu_id = cpu::current_cpu_id();
     publish_schedule_reason(cpu_id, 3);
     let (switch_pair, targets) = with_scheduler(|scheduler| {
-        // boot code still executes on the firmware/early-kernel stack while
-        // CPUState is only logically seeded with its idle task.  A local IPI
-        // request caused by spawn must stay pending until run_first_task has
-        // performed the real boot-context switch.
+        // boot 代码仍运行在固件/早期内核栈上，此时 CPUState 只是逻辑上填入 idle 任务。
+        // spawn 产生的本地 IPI 请求必须保持 pending，直到 run_first_task 完成真正的引导上下文切换。
         if scheduler.boot_context_active(cpu_id) {
             return (None, CpuMask::EMPTY);
         }
@@ -1059,8 +1057,7 @@ pub fn kill_task(task_id : TaskId, exit_code : TaskExitCode) -> bool {
 
 /// 当前运行任务号；引导阶段尚未切换时为 `None`。
 pub fn current_task_id() -> Option<TaskId> {
-    // Prevent a local context switch between selecting the per-CPU slot and
-    // reading the task id published by the scheduler.
+    // 防止在选择 per-CPU 槽位与读取 scheduler 发布的任务 ID 之间发生本地上下文切换。
     let _guard = InterruptGuard::new();
     let task_id = CURRENT_TASK_IDS[cpu::current_cpu_id().raw()].load(Ordering::Acquire);
     (task_id != NO_CURRENT_TASK).then_some(task_id)
@@ -1204,7 +1201,7 @@ pub fn set_timekeeper_cpu(cpu_id : CpuId) {
     with_scheduler(|scheduler| scheduler.set_timekeeper_cpu(cpu_id));
 }
 
-/// Snapshot of CPUs that completed scheduler bring-up.
+/// 已完成 scheduler 引导的 CPU 快照。
 pub fn online_cpu_mask() -> CpuMask {
     let _guard = InterruptGuard::new();
     with_scheduler(|scheduler| scheduler.online_cpu_mask())

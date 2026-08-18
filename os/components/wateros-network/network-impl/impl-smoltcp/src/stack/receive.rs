@@ -10,19 +10,29 @@ use super::types::{SocketKind, SocketRecvError, SocketRecvFinish};
 
 /// 一次尚未消费的接收队列前缀；实际数据由上层 lease 持有。
 pub struct SocketRecvReservation {
+    /// 预留数据所属 socket。
     handle : SocketHandle,
+    /// 与 `SocketMeta.recv_reservation` 比较的令牌，防止重复提交。
     id : u64,
+    /// TCP 或 UDP；决定提交时如何消费底层队列。
     kind : SocketKind,
+    /// 已复制到调用者缓冲区的字节数。
     staged_len : usize,
+    /// 当前数据报完整长度；TCP 中等于本次可见字节数。
     datagram_len : usize,
+    /// UDP 来源 IPv4 地址。
     source_ip : [u8; 4],
+    /// UDP 来源端口。
     source_port : u16,
+    /// 是否来自内核维护的本机回环 UDP 队列。
     loopback_udp : bool,
 }
 
 impl SocketRecvReservation {
+    /// 返回已暂存到用户缓冲区的字节数。
     pub fn staged_len(&self) -> usize { self.staged_len }
 
+    /// 返回 UDP 来源端点；TCP 返回连接对端端点。
     pub fn source(&self) -> ([u8; 4], u16) { (self.source_ip, self.source_port) }
 
     pub fn kind(&self) -> SocketKind { self.kind }

@@ -9,6 +9,7 @@ pub fn init_task_mount_ns(task_id: task::TaskId) {
 
 /// 首个用户任务继承启动它的内核任务 namespace；无当前任务时继承 bootstrap。
 pub fn on_user_task_spawned(task_id: task::TaskId) {
+    // 有当前任务时继承其 namespace；启动早期没有父任务则建立 bootstrap namespace。
     if let Some(parent_id) = task::current_task_id() {
         copy_mount_ns_from_parent(task_id, parent_id);
     } else {

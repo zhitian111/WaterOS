@@ -108,15 +108,13 @@ pub struct TaskControlBlock {
     wait_result : Option<TaskWaitResult>,
     task_cx : TaskContext,
     inner : TaskInner,
-    /// The CPU runqueue that owns this task while it is published as Ready.
-    /// `None` is also used for a newly created task that has not been queued.
+    /// 任务处于 Ready 时所属的 CPU runqueue；尚未入队的新任务也为 `None`。
     ready_cpu_id : Option<CpuId>,
-    /// Most recent CPU that executed this task; retained across blocking.
+    /// 最近执行该任务的 CPU；阻塞后仍保留。
     last_cpu_id : Option<CpuId>,
-    /// Sole source of truth for the CPU while `state == Running`.
+    /// `state == Running` 时 CPU 归属的唯一真相来源。
     running_cpu_id : Option<CpuId>,
-    /// CPUs on which this task may run. The scheduler further intersects this
-    /// with its configured and online CPU sets before selecting a runqueue.
+    /// 允许运行该任务的 CPU 集合；调度器选队列前还会与配置集和 online 集求交集。
     affinity : CpuMask,
 }
 

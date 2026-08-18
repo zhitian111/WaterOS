@@ -29,7 +29,8 @@ impl BlockCacheManager {
         Arc::new(Mutex::new(cached))
     }
 
-    /// Flush every registered block device, including uncached devices.
+    /// 刷新所有已注册块设备，包括未使用缓存包装的设备。
+    /// 设备句柄缺失或任一设备刷新失败会立即返回错误，后续设备不会继续刷新。
     pub fn flush_all() -> api_v0::DriverResult<()> {
         for index in 0..api_v0::block_device_count() {
             let device = api_v0::block_device_at(index).ok_or(api_v0::DriverError::IoError)?;

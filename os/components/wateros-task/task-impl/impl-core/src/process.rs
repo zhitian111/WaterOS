@@ -32,11 +32,12 @@ enum ParentDeathSource {
     Process(ProcessId),
 }
 
-/// A parent-death signal captured while the process registry lock is held.
-/// Signal delivery must happen after releasing that lock.
+/// 在进程 registry 锁内捕获的父进程死亡信号；必须释放该锁后才能投递。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ParentDeathNotification {
+    /// 接收信号的进程 ID。
     pub pid : ProcessId,
+    /// 要投递的信号编号。
     pub signal : i32,
 }
 
@@ -143,13 +144,12 @@ pub struct ProcessControlBlock {
     umask : u32,
     /// 父进程死亡时发送给本进程的信号（`prctl PR_SET_PDEATHSIG`）；0 表示未设置。
     parent_death_signal : i32,
-    /// Linux ties PDEATHSIG to the creating thread.  Once orphaned, the
-    /// adopting subreaper/init process becomes the next death source.
+    /// Linux 将 PDEATHSIG 绑定到创建线程；线程成为孤儿后，收养它的 subreaper/init
+    /// 进程成为下一死亡来源。
     parent_death_source : Option<ParentDeathSource>,
 }
 
-/// A process removed from the registry whose owned resources can be dropped
-/// after the registry lock has been released.
+/// 已从 registry 移除的进程；释放 registry 锁后才能丢弃其拥有的资源。
 pub(crate) struct RetiredProcess {
     process : ProcessControlBlock,
 }
@@ -315,10 +315,8 @@ impl ProcessRegistry {
                                          comm : [0u8; 16] };
         let mut map = BTreeMap::new();
         map.insert(task_id, process_task);
-        // A user process launched directly by the kernel is the leader of its
-        // initial login session. Fork children overwrite both fields from the
-        // parent below. Leaving such a process with sid=0 makes controlling
-        // terminal and shell job-control checks impossible to satisfy.
+        // 内核直接启动的用户进程是初始登录会话的 leader；fork 子进程随后从父进程覆盖两个字段。
+        // 若让此类进程的 sid=0，控制终端和 shell 作业控制检查将无法满足。
         let initial_sid = if parent_pid.is_none() {
             pid
         } else {
@@ -666,10 +664,9 @@ impl ProcessRegistry {
         let process = self.process_mut(pid)
                           .ok_or(ProcessError::ProcessNotFound)?;
         process.state = ProcessState::Exiting(exit_code);
-        // Running siblings cannot be declared exited here: a parent could reap
-        // the process and destroy its address space while they are still
-        // executing on remote CPUs. Each sibling observes Exiting at its next
-        // trap boundary and marks itself exited through mark_task_exited.
+        // 运行中的同组线程不能在此处直接标记退出：父进程可能回收进程并销毁地址空间，
+        // 而它们仍在远端 CPU 执行。每个线程在下一次 trap 边界观察到 Exiting，
+        // 再通过 mark_task_exited 标记自身退出。
         if process.tasks
                   .values()
                   .all(|task| matches!(task.state, ProcessTaskState::Exited(_)))

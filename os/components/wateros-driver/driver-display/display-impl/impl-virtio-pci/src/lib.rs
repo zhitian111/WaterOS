@@ -24,10 +24,15 @@ const _ : () = assert!(PAGE_SIZE == mm_api::addr::PAGE_SIZE);
 /// PCI 总线位置与设备 ID，供平台日志和诊断使用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VirtioGpuPciProbeInfo {
+    /// PCI bus 号。
     pub bus : u8,
+    /// PCI device 号。
     pub device : u8,
+    /// PCI function 号。
     pub function : u8,
+    /// vendor ID。
     pub vendor_id : u16,
+    /// device ID。
     pub device_id : u16,
 }
 
@@ -51,6 +56,7 @@ impl VirtioGpuPciBarAllocator {
     pub const fn new(start : u64, end : u64) -> Self { Self { next : start, end } }
 
     fn allocate(&mut self, size : u64) -> Option<u64> {
+        // 零大小、对齐计算或区间末端溢出都拒绝分配，避免 BAR 重叠或回绕。
         if size == 0 {
             return None;
         }
@@ -167,6 +173,7 @@ impl VirtioGpuPciDevice {
         let mapped_len = byte_len.checked_add(PAGE_SIZE - 1)
                                  .ok_or(DriverError::InvalidParam)? /
                          PAGE_SIZE * PAGE_SIZE;
+        // DMA 缓冲区不足以容纳所有像素时不能暴露部分 framebuffer。
         if framebuffer.len() < byte_len {
             return Err(DriverError::IoError);
         }
@@ -231,6 +238,7 @@ fn assign_memory_bars<C : ConfigurationAccess>(root : &mut PciRoot<C>,
                                                df : DeviceFunction,
                                                allocator : &mut VirtioGpuPciBarAllocator)
                                                -> DriverResult<()> {
+    // 为每个内存 BAR 分配不重叠地址；64 位 BAR 占用两个配置槽位。
     let bars = root.bars(df)
                    .map_err(|_| DriverError::Unsupported)?;
     let mut index = 0usize;

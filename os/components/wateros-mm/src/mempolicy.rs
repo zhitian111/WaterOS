@@ -27,6 +27,7 @@ pub struct GetMempolicyResult {
     /// 写入 `*mode` 的值（`MPOL_F_NODE` 时不使用）。
     pub mode: i32,
     /// nodemask 字节数；0 表示不写 nodemask。
+    /// 按 `maxnode` 计算的掩码字节数；调用方必须据此检查用户缓冲区容量。
     pub nodemask_len: usize,
 }
 

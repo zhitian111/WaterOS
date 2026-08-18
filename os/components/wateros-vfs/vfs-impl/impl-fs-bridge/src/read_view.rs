@@ -1,8 +1,11 @@
+//! FsBridge 的路径级只读路由实现。
+
 use super::*;
 
 impl SingleRootReadView for FsBridge {
     // 本方法代码由AI完成
     fn exists(&self, path : &str) -> VfsResult<bool> {
+        // 先处理设备和特殊目录，再按最长挂载前缀路由，避免把伪节点交给根卷。
         let abs = normalize_absolute_path(path)?;
         if char_dev_exists(abs.as_str()) {
             return Ok(true);
@@ -158,4 +161,3 @@ impl SingleRootReadView for FsBridge {
         // bring-up 单 RW 根卷：启动树打印仍可由 fs 层自检触发。
     }
 }
-

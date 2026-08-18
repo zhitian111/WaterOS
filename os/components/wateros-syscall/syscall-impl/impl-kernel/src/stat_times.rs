@@ -13,20 +13,27 @@ use crate::linux_stat::{LinuxStat, LinuxStatx};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 // 本结构代码由AI完成
 pub(crate) struct StatTime {
+    /// Unix epoch 秒数。
     pub sec: i64,
+    /// 纳秒部分。
     pub nsec: i64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct FileKey {
+    /// 设备主编号。
     dev_major: u32,
+    /// 设备次编号。
     dev_minor: u32,
+    /// 文件 inode。
     inode: u64,
 }
 
 #[derive(Clone, Copy)]
 struct FileTimes {
+    /// 访问时间。
     atime: StatTime,
+    /// 修改时间。
     mtime: StatTime,
 }
 

@@ -4,6 +4,8 @@
 //!
 //! 本 crate 只能依赖最底层配置。记录路径不得分配、打印或获取内核锁，否则锁死
 //! 现场可能被调试器本身覆盖。主机端以 [`DEBUG_ABI_VERSION`] 判断布局兼容性。
+//! 固定容量环满时覆盖最旧记录并累计丢弃数；CPU 编号越界、重入写入和未启用
+//! feature 都是无副作用返回路径，诊断代码不能影响内核正常语义。
 
 use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
@@ -40,23 +42,41 @@ pub use locks::{DebugLockRef, TrackedMutex, TrackedMutexGuard};
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct DebugCpuState {
+    /// 状态快照递增代数，用于主机判断读取的一致性。
     pub generation : u64,
+    /// `FLAG_*` 位集合。
     pub flags : u64,
+    /// 当前任务 ID；无任务时为 [`NO_TASK`]。
     pub current_task : u64,
+    /// 当前地址空间标识，0 表示未知或内核地址空间。
     pub current_address_space : u64,
+    /// 本 CPU 已处理的定时器 tick 数。
     pub timer_ticks : u64,
+    /// 上下文切换累计次数。
     pub context_switches : u64,
+    /// 系统调用累计次数。
     pub syscalls : u64,
+    /// trap 累计次数。
     pub traps : u64,
+    /// 发送 IPI 的累计次数。
     pub ipi_sent : u64,
+    /// 接收 IPI 的累计次数。
     pub ipi_received : u64,
+    /// 最近一次 trap 原因编码。
     pub last_trap_cause : u64,
+    /// 最近一次 trap 的程序计数器。
     pub last_trap_pc : u64,
+    /// 最近一次 trap 的栈指针。
     pub last_trap_sp : u64,
+    /// 最近一次缺页或访问异常的地址。
     pub last_fault_addr : u64,
+    /// 最近一次系统调用号。
     pub last_syscall_nr : u64,
+    /// 最近一次系统调用的返回地址。
     pub last_syscall_pc : u64,
+    /// 各调度类的 runnable 计数，槽位含义由调度器 ABI 固定。
     pub runnable : [u32; 5],
+    /// 最近一次调度原因编码。
     pub last_schedule_reason : u32,
     /// 0=unknown, 1=kernel, 2=user。
     pub task_kind : u16,
@@ -125,6 +145,7 @@ pub struct DebugCpuSlots {
     pub published : AtomicUsize,
     /// 防止同一 CPU 的嵌套 trap 同时覆写非活动槽。
     pub writing : AtomicBool,
+    /// 因嵌套写入被丢弃的状态更新数。
     pub dropped_updates : AtomicU64,
     slots : UnsafeCell<[DebugCpuState; 2]>,
 }
@@ -146,14 +167,23 @@ impl DebugCpuSlots {
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct DebugEvent {
+    /// 产生事件时的单调 tick。
     pub tick : u64,
+    /// 关联任务 ID；无任务时为 [`NO_TASK`]。
     pub task : u64,
+    /// [`DebugEventKind`] 的稳定数值。
     pub kind : u16,
+    /// 产生事件的逻辑 CPU 编号。
     pub cpu : u16,
+    /// 事件附加标志位。
     pub flags : u32,
+    /// 调用者程序计数器；未知时为 0。
     pub caller_pc : u64,
+    /// 事件参数 0，具体含义由事件类型决定。
     pub arg0 : u64,
+    /// 事件参数 1，具体含义由事件类型决定。
     pub arg1 : u64,
+    /// 事件参数 2，具体含义由事件类型决定。
     pub arg2 : u64,
 }
 
@@ -189,7 +219,9 @@ impl DebugEventSlot {
 
 #[repr(C)]
 pub struct DebugCpuEvents {
+    /// 下一条事件序号，从 1 开始，单调递增并允许回绕。
     pub next_sequence : AtomicU64,
+    /// 因固定容量覆盖而丢弃的事件数。
     pub dropped_events : AtomicU64,
     pub slots : [DebugEventSlot; EVENT_CAPACITY],
 }
@@ -205,16 +237,25 @@ impl DebugCpuEvents {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct DebugHeader {
+    /// 固定魔数，用于拒绝错误地址或旧布局。
     pub magic : u64,
+    /// 诊断 ABI 版本。
     pub abi_version : u32,
+    /// 编译期允许的最大 CPU 数。
     pub max_cpus : u16,
+    /// 每个 CPU 的事件槽数量。
     pub event_capacity : u16,
+    /// [`DebugCpuState`] 的字节大小。
     pub cpu_state_size : u32,
+    /// [`DebugEvent`] 的字节大小。
     pub event_size : u32,
+    /// build-id 缓冲区中有效字节数。
     pub build_id_size : u32,
     /// 1=RISC-V64，2=LoongArch64。
     pub arch : u16,
+    /// 为 ABI 扩展保留，必须保持为零。
     pub _reserved : u16,
+    /// 构建标识的 UTF-8 字节，尾部以零填充。
     pub build_id : [u8; 64],
 }
 
@@ -275,6 +316,7 @@ pub fn publish_cpu_state(cpu : usize, state : DebugCpuState) {
     #[cfg(feature = "enabled")]
     {
         let Some(cpu_slots) = WATEROS_DEBUG_STATE.cpus.get(cpu) else {
+            // CPU 编号由平台提供，越界只丢弃诊断快照，不能让诊断路径 panic。
             return;
         };
         if cpu_slots.writing.compare_exchange(false,
@@ -283,6 +325,7 @@ pub fn publish_cpu_state(cpu : usize, state : DebugCpuState) {
                                                Ordering::Relaxed)
                             .is_err()
         {
+            // 嵌套 trap 不自旋，避免诊断写入反过来延长原子/锁临界区。
             cpu_slots.dropped_updates.fetch_add(1, Ordering::Relaxed);
             return;
         }

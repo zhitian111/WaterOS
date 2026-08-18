@@ -68,8 +68,7 @@ pub fn init_process_registry() {
 }
 
 fn with_process_io_cached(task_id : TaskId, f : impl Fn(&ProcessIoCounters)) {
-    // Keep the per-CPU slot stable and prevent a switched-in task on this CPU
-    // from spinning on a lock held by the switched-out task.
+    // 保持 per-CPU 槽位稳定，避免切入本 CPU 的任务自旋等待被切出任务持有的锁。
     let _guard = ProcessRegistryInterruptGuard::new();
     let cpu = arch::cpu::current_cpu_id().raw();
     {

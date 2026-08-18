@@ -35,6 +35,7 @@ static DEVFS: Mutex<DevFsImpl> = Mutex::new(DevFsImpl {
 impl DevFsManager for KernelDevFsManager {
 // 本方法代码由AI完成
     fn refresh(&mut self) {
+        // 先复制驱动注册表快照再持有 devfs 锁，避免锁顺序反转和设备句柄递归访问。
         let block_snapshot: alloc::vec::Vec<_> = (0..block_device_count())
             .filter_map(|idx| block_device_at(idx).map(|dev| (idx, dev)))
             .collect();

@@ -26,10 +26,15 @@ const STATFS_MAX_NAME_LEN : isize = 255;
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct LinuxStatFs {
+    /// 文件系统类型 magic。
     f_type : isize,
+    /// 基本块大小，单位为字节。
     f_bsize : isize,
+    /// 文件系统总块数。
     f_blocks : isize,
+    /// 可用块数（含特权保留块）。
     f_bfree : isize,
+    /// 非特权用户可用块数。
     f_bavail : isize,
     f_files : isize,
     f_ffree : isize,

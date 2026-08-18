@@ -9,8 +9,11 @@ use crate::error::VfsResult;
 /// devfs 节点粗分类（VFS 命名空间）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VfsDevNodeType {
+    /// 块设备节点。
     Block,
+    /// 字符设备节点。
     Character,
+    /// 已枚举但未绑定实现的占位节点。
     Unsupported,
 }
 

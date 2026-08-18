@@ -15,7 +15,9 @@ pub enum FutexMappingIdentity {
 /// 内核向用户空间写入时已经完成的前缀及随后发生的错误。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UserCopyProgress {
+    /// 在出错前已经成功写入的连续字节数；不会包含失败页中的任何未确认字节。
     pub copied : usize,
+    /// `None` 表示全部成功；`Some` 表示后续字节未写入，调用方可据此实现部分成功 ABI。
     pub error : Option<MmError>,
 }
 
@@ -64,10 +66,11 @@ pub trait UserMemoryOps {
     }
 
     /// 原子读取一个四字节对齐的用户 `u32`。
+    /// 地址未对齐、跨页不可原子访问或无读权限时必须返回错误，不能退化成普通非原子拷贝。
     fn atomic_load_u32(&self, src : VirtAddr) -> MmResult<u32>;
 
     /// 当用户 `u32` 等于 `expected` 时原子写入 `desired`，无论交换是否
-    /// 成功都返回操作时观察到的旧值。
+    /// 成功都返回操作时观察到的旧值。实现需提供与 futex 等待/唤醒协议相容的原子性，而不仅是关中断。
     fn atomic_compare_exchange_u32(&self,
                                    dst : VirtAddr,
                                    expected : u32,

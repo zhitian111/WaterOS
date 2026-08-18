@@ -1,4 +1,4 @@
-//! Build-time-selectable user supervisor used by the on-site operator profile.
+//! 由构建期 feature 选择的用户态监督器，供现场操作员 profile 使用。
 
 extern crate alloc;
 
@@ -15,8 +15,11 @@ static CONSOLE_INPUT_TASK_STARTED : AtomicBool = AtomicBool::new(false);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
 enum OperatorMode {
+    /// 自动执行预设用户任务。
     Auto,
+    /// 启动交互式 shell。
     Shell,
+    /// 执行指定的一次性命令。
     Run,
 }
 

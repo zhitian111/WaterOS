@@ -1,11 +1,11 @@
-//! `stage-busybox`: mount the root volume, then run the image-appropriate test queue.
+//! `stage-busybox`：挂载根卷后，按镜像内容运行对应的测试队列。
 
 use runtime::logging::*;
 use vfs::api::SingleRootReadView;
 
 use crate::user_bringup_common::BringupCommand;
 
-/// Non-`pub` images carry the preliminary competition scripts.
+/// 非公开镜像携带初赛脚本；命令顺序就是 bring-up 阶段的执行顺序。
 const PRELIMINARY_COMMANDS : &[BringupCommand] =
     &[BringupCommand { program : "/glibc/busybox",
                        argv : &["sh",
@@ -38,15 +38,15 @@ const PRELIMINARY_COMMANDS : &[BringupCommand] =
       argv : &["sh",
                "/musl/iozone_testcode.sh"] }*/];
 
-/// `pub` images carry these two final-round scripts.
+/// `pub` 镜像携带这两个决赛脚本。
 const FINAL_COMMANDS : &[BringupCommand] =
     &[BringupCommand { program : "/glibc/cagent_testcode.sh",
                        argv : &["/glibc/cagent_testcode.sh"] },
       BringupCommand { program : "/glibc/buildstorm_testcode.sh",
                        argv : &["/glibc/buildstorm_testcode.sh"] }];
 
-/// This script is present only in the organizer-provided `pub` image, so it is a stable image
-/// format marker rather than a build-time policy switch.
+/// 该脚本仅存在于组织方提供的 `pub` 镜像，因此是稳定的镜像格式标记，
+/// 而不是构建期策略开关。
 const FINAL_IMAGE_MARKER : &str = "/glibc/cagent_testcode.sh";
 const LOG_TAG : &str = "busybox-bringup";
 
@@ -74,8 +74,8 @@ fn commands_for_image(image : BringupImage) -> &'static [BringupCommand] {
     }
 }
 
-/// Keep the libc search path coupled to the detected image format.  This avoids the generic
-/// loader's build-feature heuristic selecting the final-round environment for an LTP image.
+/// 让 libc 搜索路径与检测出的镜像格式保持一致，避免通用装载器的构建 feature
+/// 启发式把 LTP 镜像误选成决赛环境。
 fn envp_for_command(image : BringupImage, program : &str) -> &'static [&'static str] {
     match image {
         BringupImage::Final => &["PATH=/glibc:/bin:/usr/bin:/sbin:/usr/sbin"],
@@ -93,7 +93,7 @@ fn envp_for_command(image : BringupImage, program : &str) -> &'static [&'static 
     }
 }
 
-/// Monotonic clock in nanoseconds (zero if unavailable).
+/// 单调时钟的纳秒值；时钟不可用时返回零。
 fn monotonic_ns() -> u128 {
     platform::timer::now_duration().map(|duration| duration.as_nanos())
                                    .unwrap_or(0)
@@ -108,7 +108,7 @@ fn log_elapsed(log_tag : &str, cmd : &BringupCommand, start_ns : u128, end_ns : 
            cmd.program, cmd.argv);
 }
 
-/// Enqueue the kernel runner; image detection happens after the root filesystem is available.
+/// 入队内核运行器；镜像检测必须在根文件系统可用后进行。
 pub fn run_stage_busybox() {
     error!("[bringup][stage-busybox] BEGIN");
     crate::user_operator::start();
@@ -130,7 +130,6 @@ pub(crate) extern "C" fn run_auto_queue(_arg : usize) -> ! {
            commands.len());
 
     if image == BringupImage::Preliminary {
-        crate::user_bringup_root_layout::prune_ltp_excluded_testcases();
         crate::user_bringup_root_layout::refresh_ltp_accounts();
     }
 

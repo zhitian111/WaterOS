@@ -5,14 +5,17 @@
 /// 说明：这里不强制完全等同 Linux 的全部 `MAP_*` 数值，只提供语义子集与可扩展的位集合。
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MapFlags(pub u32);
+pub struct MapFlags(
+    /// 内部语义位集合；syscall 层负责把 Linux `MAP_*` 数值转换为这些位并拒绝未知组合。
+    pub u32,
+);
 
 impl MapFlags {
-    /// 匿名映射（无文件后备）
+    /// 匿名映射（无文件后备）；初始内容由实现清零或按缺页策略提供。
     pub const ANONYMOUS: Self = Self(1 << 0);
-    /// 私有映射（fork/写时复制语义由后续实现）
+    /// 私有映射；写入不应传播回文件，fork/写时复制的具体机制由实现决定。
     pub const PRIVATE: Self = Self(1 << 1);
-    /// 共享映射（当前阶段可先按 PRIVATE 语义拒绝或延后实现）
+    /// 共享映射；当前阶段可明确拒绝或延后实现，不得悄悄按 PRIVATE 成功处理。
     pub const SHARED: Self = Self(1 << 2);
     /// 固定地址映射（若目标已映射则失败；语义子集，与 Linux `MAP_FIXED` 对齐程度见 syscall 层）。
     pub const FIXED: Self = Self(1 << 4);
@@ -23,7 +26,7 @@ impl MapFlags {
     #[inline]
     pub const fn empty() -> Self { Self(0) }
 
-    /// 原始位模式（与 syscall/ABI 层约定一致时使用）。
+    /// 原始位模式；仅供 ABI 适配和调试使用，调用者不能据此绕过未知位校验。
     #[inline]
     pub const fn bits(self) -> u32 { self.0 }
 

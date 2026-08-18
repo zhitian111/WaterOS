@@ -33,6 +33,7 @@ pub(crate) static VIRTIO_INPUT_PCI: Mutex<Vec<VirtioInputPciProbeInfo>> = Mutex:
 
 /// 枚举 PCIe ECAM 并注册 virtio-blk/net（以及可选的 gpu/input）与平台字符设备。
 pub(crate) fn register_devices() -> DriverResult<()> {
+    // 每次 bring-up 先清空本 profile 的探测快照，避免失败重试把旧设备重复计数。
     let mut blk = VIRTIO_BLK_PCI.lock();
     blk.clear();
     drop(blk);

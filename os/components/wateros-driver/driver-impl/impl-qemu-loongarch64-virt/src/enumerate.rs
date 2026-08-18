@@ -37,6 +37,7 @@ const LS7A_RTC_CTRL_TOY_ENABLE: u32 = 1 << 11;
 const LS7A_RTC_CTRL_ENABLE_OUTPUT: u32 = 1 << 8;
 
 fn mmio_read32(base: usize, byte_offset: usize) -> u32 {
+    // 寄存器地址由 DTB 区间校验过；使用 volatile 保留硬件读取语义。
     let ptr = base.wrapping_add(byte_offset) as *const u32;
     unsafe { core::ptr::read_volatile(ptr) }
 }
@@ -69,6 +70,7 @@ pub fn ls7a_rtc_realtime_ns() -> DriverResult<u64> {
         mmio_write32(rtc.base, LS7A_RTC_CTRL_OFFSET, enabled_control);
     }
 
+    // 年份可能在两次读取间跨年；最多重试三次，避免硬件异常时无限循环。
     for _ in 0..3 {
         let year_before = mmio_read32(rtc.base, LS7A_TOY_READ1_OFFSET);
         let calendar = mmio_read32(rtc.base, LS7A_TOY_READ0_OFFSET);
@@ -91,6 +93,7 @@ pub fn ls7a_rtc_realtime_ns() -> DriverResult<u64> {
             || fields.tm_hour > 23
             || fields.tm_mday > 31
         {
+            // 保留寄存器中的非法 BCD/范围值为 I/O 错误，不生成错误时间戳。
             return Err(DriverError::IoError);
         }
         let ns = platform::wall_clock::rtc_time_to_ns(&fields)

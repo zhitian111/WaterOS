@@ -143,9 +143,8 @@ pub(crate) fn sys_clone3(args : SyscallArgs) -> UserRet {
         }
         Some(clone_args.pidfd)
     } else {
-        // Linux only interprets this field when CLONE_PIDFD is set.  In
-        // particular, glibc's pthread clone3 path reuses the parent TID
-        // address in `pidfd` while leaving CLONE_PIDFD clear.
+        // Linux 仅在设置 CLONE_PIDFD 时解释此字段；特别是 glibc pthread clone3
+        // 路径会在清除 CLONE_PIDFD 时复用 `pidfd` 中的父 TID 地址。
         None
     };
     if clone_args.set_tid != 0 || clone_args.set_tid_size != 0 {

@@ -1,4 +1,4 @@
-//! `eventfd2(2)` counter descriptors.
+//! `eventfd2(2)` 计数器描述符。
 
 extern crate alloc;
 
@@ -26,14 +26,20 @@ const MAX_COUNTER : u64 = u64::MAX - 1;
 
 #[derive(Clone, Copy)]
 struct EventReadReservation {
+    /// 与 socket/pipe 租约类似的单调预留 ID。
     id : u64,
+    /// 本次读取将消费的计数值。
     value : u64,
 }
 
 struct EventFdInner {
+    /// 当前计数器值；最大可表示值为 `u64::MAX - 1`。
     counter : u64,
+    /// 是否以非阻塞模式创建。
     nonblocking : bool,
+    /// 下一个读取预留 ID。
     next_read_id : u64,
+    /// 同时只允许一个读取者预留计数。
     read_reservation : Option<EventReadReservation>,
 }
 

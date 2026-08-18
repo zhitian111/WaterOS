@@ -56,12 +56,15 @@ pub enum QueueTarget {
 }
 
 pub struct CPUState {
+    /// 逻辑 CPU 编号。
     pub cpu_id : CpuId,
+    /// 启动任务切换所需的架构上下文。
     pub boot_task_cx : ActiveArchTaskContext,
     /// `run_first_task` 前 CPU 仍在启动栈上；此时 current cache 预置为 idle，
     /// 但尚不能据此校验运行中的 `sp`。
     pub boot_context_active : bool,
     pub idle_task_id : Option<TaskId>,
+    /// 是否已完成 CPU-local 与调度器上线发布。
     pub online : bool,
     /// 有新任务进入本 CPU 队列，需在安全点重新判断是否抢占。
     pub need_resched : bool,
@@ -205,11 +208,10 @@ impl CPUState {
                                          .max(candidate);
         }
     }
-    /// Move a yielding fair task behind an already-ready fair peer.
+    /// 将主动让出的公平任务放到已有就绪公平任务之后。
     ///
-    /// A yield does not consume a timer tick. Without this adjustment, a task
-    /// whose vruntime is below the ready minimum can enqueue and immediately
-    /// select itself forever.
+    /// yield 不消耗 timer tick；若不做此调整，vruntime 低于就绪最小值的任务
+    /// 重新入队后可能立即再次选中自身，形成无穷循环。
     pub fn prepare_yield(&mut self) {
         let ready_vruntime = match self.current_policy() {
             SchedPolicy::Other | SchedPolicy::Batch => self.min_ready_fair_vruntime(),

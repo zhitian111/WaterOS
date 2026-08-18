@@ -14,6 +14,7 @@ pub struct TrackedMutex<T> {
     current_cpu : fn() -> usize,
 }
 impl<T> TrackedMutex<T> {
+    /// 创建带锁类别和 CPU 查询回调的诊断锁。
     pub const fn new(value : T, kind : DebugLockKind, current_cpu : fn() -> usize) -> Self {
         Self { inner : spin::Mutex::new(value), kind, current_cpu }
     }
@@ -30,6 +31,7 @@ impl<T> TrackedMutex<T> {
         let guard = if let Some(guard) = self.inner.try_lock() {
             guard
         } else {
+            // 先记录等待再阻塞获取，主机才能区分真正竞争与已持有锁。
             lock_wait(cpu, 0, NO_TASK, self.kind, object);
             self.inner.lock()
         };
@@ -57,6 +59,7 @@ impl<T> TrackedMutex<T> {
                                                                 object }) })
     }
 
+    /// 返回稳定到本次启动的锁类别和对象地址，供诊断状态匹配释放事件。
     pub fn debug_identity(&self) -> (DebugLockKind, usize) {
         (self.kind, self as *const _ as *const () as usize)
     }
@@ -90,7 +93,10 @@ impl<T : ?Sized> DerefMut for TrackedMutexGuard<'_, T> {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DebugLockRef {
+    /// [`DebugLockKind`] 的稳定数值。
     pub kind : u16,
+    /// 为 ABI 扩展保留，必须保持为零。
     pub _reserved : [u16; 3],
+    /// 锁对象地址；仅用于诊断，不得被当作可解引用指针。
     pub object : u64,
 }

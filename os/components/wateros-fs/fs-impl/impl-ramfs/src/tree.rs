@@ -1,8 +1,7 @@
-//! Physical-page-backed ramfs implementation.
+//! 基于物理页的 ramfs 实现。
 //!
-//! This crate owns the in-memory directory tree and file data. VFS policies such
-//! as tmpfs mount points, root mode, and `size=` limits are selected by callers
-//! when constructing an instance.
+//! 本 crate 负责内存目录树和文件数据；tmpfs 挂载点、根目录权限及 `size=` 限制由
+//! 调用方构造实例时选择。
 
 extern crate alloc;
 
@@ -24,7 +23,9 @@ const RAMFS_PAGE_SIZE : usize = 4096;
 
 #[derive(Default)]
 struct SparseFile {
+    /// 逻辑文件长度，包含未分配的 sparse hole。
     len : u64,
+    /// 非零页到物理页的映射；缺失页按零读取。
     pages : BTreeMap<u64, OwnedPhysPage>,
 }
 
@@ -76,6 +77,7 @@ impl SparseFile {
     }
 
     fn write_at(&mut self, offset : u64, data : &[u8]) -> FsResult<usize> {
+        // 先计算并分配所有新页，确保后续写入阶段不会因半途 OOM 留下部分状态。
         if data.is_empty() {
             return Ok(0);
         }
@@ -174,6 +176,7 @@ impl SparseFile {
     }
 
     fn read_at(&self, offset : u64, buf : &mut [u8]) -> FsResult<usize> {
+        // EOF、空缓冲区和 sparse hole 都返回零填充的短读，不访问不存在的物理页。
         if offset >= self.len || buf.is_empty() {
             return Ok(0);
         }
@@ -399,13 +402,13 @@ pub struct RamFs {
 }
 
 impl RamFs {
-    /// Create an unlimited physical-page-backed ramfs with a `0755` root directory.
+    /// 创建不限制容量、由物理页支持且根目录权限为 `0755` 的 ramfs。
     pub fn new() -> Self { Self::with_options(None, 0o755) }
 
-    /// Create a physical-page-backed ramfs with an accounted data-byte limit.
+    /// 创建由物理页支持并按数据字节计费、带容量上限的 ramfs。
     pub fn with_limit(limit_bytes : usize) -> Self { Self::with_options(Some(limit_bytes), 0o755) }
 
-    /// Create a physical-page-backed ramfs with explicit limit and root mode.
+    /// 创建显式指定容量上限和根目录模式、由物理页支持的 ramfs。
     pub fn with_options(limit_bytes : Option<usize>, root_mode : u16) -> Self {
         Self { root : Node::dir(1, root_mode),
                open_nodes : BTreeMap::new(),
@@ -414,7 +417,7 @@ impl RamFs {
                limit_bytes }
     }
 
-    /// Bytes currently charged to file contents, symlink targets, and xattr values.
+    /// 当前计入文件内容、符号链接目标和扩展属性值的字节数。
     pub fn used_bytes(&self) -> usize {
         let mut seen = BTreeSet::new();
         let mut used = self.root
@@ -428,7 +431,7 @@ impl RamFs {
         used
     }
 
-    /// Number of physical payload pages owned by linked or still-open files.
+    /// 由仍被链接或仍打开的文件拥有的物理载荷页数量。
     pub fn resident_pages(&self) -> usize {
         let mut seen = BTreeSet::new();
         let mut pages = self.root
@@ -443,7 +446,7 @@ impl RamFs {
         pages
     }
 
-    /// Configured maximum charged bytes, if any.
+    /// 配置的最大计费字节数；未限制时为 `None`。
     pub fn limit_bytes(&self) -> Option<usize> { self.limit_bytes }
 
     fn alloc_inode(&mut self) -> u64 {

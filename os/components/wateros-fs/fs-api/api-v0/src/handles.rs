@@ -1,3 +1,5 @@
+//! 将具体文件系统实现包装成统一的本地/共享句柄；包装层不改变底层错误和生命周期。
+
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::ops::{Deref, DerefMut};
 use driver_block_api_v0::SharedBlockDevice;
@@ -159,7 +161,7 @@ impl ReadWriteFs for LocalRwFs {
     fn read_symlink(&self, path: &str) -> FsResult<Vec<u8>> { self.deref().read_symlink(path) }
 }
 
-// 与 LocalFs 相同：单核 bring-up 下由 Mutex 序列化；跨线程 Send 由调用方保证不数据竞争。
+// 单核 bring-up 下由 Mutex 序列化；跨线程 Send 由调用方保证不绕过 Mutex 产生数据竞争。
 unsafe impl Send for LocalRwFs {}
 
 /// 线程间共享的读写文件系统句柄（`Arc<Mutex<...>>`）。

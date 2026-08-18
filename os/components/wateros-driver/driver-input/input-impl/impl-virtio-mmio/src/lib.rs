@@ -59,12 +59,15 @@ unsafe impl Hal for VirtioInputMmioHal {
 }
 
 pub struct VirtioInputMmioDevice {
+    /// 已完成握手的 VirtIO 输入传输与队列状态。
     inner : VirtIOInput<VirtioInputMmioHal, MmioTransport<'static>>,
+    /// 初始化时读取的稳定设备元数据。
     info : InputDeviceInfo,
 }
 
 impl VirtioInputMmioDevice {
     pub fn from_mmio(mmio : MmioRegion) -> DriverResult<Self> {
+        // 空基址或 transport 握手失败均拒绝初始化，避免读取非法 MMIO。
         let header = NonNull::new(mmio.base as *mut VirtIOHeader).ok_or(DriverError::InvalidParam)?;
         let transport = unsafe { MmioTransport::new(header, mmio.size) }
             .map_err(|_| DriverError::Unsupported)?;

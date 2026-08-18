@@ -16,7 +16,9 @@ const UTS_VALUE_MAX: usize = UTS_LEN - 1;
 
 #[derive(Clone, Copy)]
 struct UtsIdentity {
+    /// 主机名定长缓冲（NUL 终止）。
     nodename: [u8; UTS_LEN],
+    /// NIS 域名定长缓冲（NUL 终止）。
     domainname: [u8; UTS_LEN],
 }
 
@@ -42,7 +44,9 @@ struct UserUtsName {
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct UserSysInfo {
+    /// 系统启动以来的秒数。
     uptime: isize,
+    /// 1、5、15 分钟负载定点值。
     loads: [usize; 3],
     totalram: usize,
     freeram: usize,

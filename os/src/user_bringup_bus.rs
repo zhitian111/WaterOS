@@ -96,10 +96,8 @@ pub fn run() {
     #[cfg(feature = "pre")]
     {
         crate::user_bringup_root_layout::ensure_busybox_path_links();
-        // The skip list contains thousands of entries. Unlinking both libc
-        // trees here serializes boot behind thousands of ext4 transactions;
-        // exec-time fast-exit handling already prevents excluded workers from
-        // blocking the LTP runner.
+        // 跳过清单包含数千项；逐路径删除两套 libc 树会让启动串行等待大量 ext4 事务，
+        // exec 阶段的快速退出逻辑已经能避免被排除 worker 阻塞 LTP 运行器。
     }
 
     // crate::user_bringup_mm::run_stage_02();

@@ -6,9 +6,13 @@ use api_v0::{Color, Point, Rect, TextMetrics, TextStyle};
 use crate::{font, surface::BYTES_PER_PIXEL, ShadowSurface};
 
 pub struct Canvas<'a> {
+    /// 目标 shadow surface 的 BGRA8888 字节切片。
     pixels : &'a mut [u8],
+    /// 每行占用的字节数，可能大于可见宽度乘像素大小。
     stride : usize,
+    /// surface 的完整坐标范围。
     bounds : Rect,
+    /// 当前绘制裁剪区，始终是 `bounds` 的子集。
     clip : Rect,
 }
 
@@ -37,7 +41,8 @@ impl<'a> Canvas<'a> {
 
     pub fn clear(&mut self, color : Color) { self.fill_rect(self.bounds, color); }
 
-    pub fn put_pixel(&mut self, point : Point, color : Color) {
+   pub fn put_pixel(&mut self, point : Point, color : Color) {
+        // 先做坐标裁剪，再转为 usize，避免负坐标转换成超大偏移。
         if !self.clip.contains(point) {
             return;
         }
@@ -81,7 +86,8 @@ impl<'a> Canvas<'a> {
         }
     }
 
-    pub fn stroke_rect(&mut self, rect : Rect, thickness : u32, color : Color) {
+   pub fn stroke_rect(&mut self, rect : Rect, thickness : u32, color : Color) {
+        // 厚度限制为尺寸的一半，避免上下/左右边框完全重叠。
         let thickness = thickness.min(rect.size.width / 2).min(rect.size.height / 2);
         if thickness == 0 {
             return;
@@ -203,6 +209,7 @@ impl<'a> Canvas<'a> {
                      source_stride : usize,
                      source_rect : Rect,
                      destination : Point) {
+        // 负源坐标不允许参与 usize 运算；源区域需由调用者先裁到合法缓冲区。
         if source_rect.origin.x < 0 || source_rect.origin.y < 0 {
             return;
         }

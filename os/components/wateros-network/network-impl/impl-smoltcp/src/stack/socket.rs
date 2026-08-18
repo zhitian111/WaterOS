@@ -462,8 +462,8 @@ pub fn socket_bind(handle : SocketHandle,
 
 /// 发起 TCP/UDP connect。TCP 非阻塞返回后需 poll 驱动握手完成；UDP 只记录默认 peer。
 pub fn socket_connect(handle : SocketHandle, ip : [u8; 4], port : u16) -> Result<(), NetworkError> {
-    // Linux treats INADDR_ANY as the local host when it is used as a
-    // connect destination. smoltcp rejects the unspecified address.
+    // Linux 将 connect 目标 INADDR_ANY 视为本机回环地址；smoltcp 会拒绝未指定地址，
+    // 因此这里先规范化为 127.0.0.1。
     let ip = normalize_connect_ip(ip);
     with_stack_mut(NetworkError::StackUnavailable,
                    |stack| stack.connect(handle, ip, port))

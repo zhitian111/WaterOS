@@ -777,7 +777,7 @@ impl MmapOps for Sv39AddressSpace {
         if lazy_overlap && lazy_vma.is_none() {
             return Err(MmError::Unsupported);
         }
-        // Copying a shared mapping would break its physical-page identity.
+        // 复制共享映射会破坏其物理页身份，因此该路径必须保留共享页关系或明确拒绝。
         if self.shared_anon_vma_overlaps(old_start, old_end) {
             return Err(MmError::Unsupported);
         }

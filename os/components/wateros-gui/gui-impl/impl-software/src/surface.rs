@@ -4,12 +4,16 @@ use alloc::{vec, vec::Vec};
 use api_v0::{GuiError, GuiResult, Rect, Size};
 
 pub const BYTES_PER_PIXEL : usize = 4;
+/// 单帧最多保留的独立脏区域数；超过后合并为包围矩形。
 pub const MAX_DIRTY_REGIONS : usize = 16;
 
 /// CPU 内存中的 BGRA8888 双缓冲绘制目标。
 pub struct ShadowSurface {
+    /// 可见像素尺寸。
     size : Size,
+    /// 每行字节跨度，等于 `width * BYTES_PER_PIXEL`。
     stride : usize,
+    /// 连续 BGRA8888 像素数据；长度为 `stride * height`。
     pixels : Vec<u8>,
 }
 
@@ -40,8 +44,11 @@ impl ShadowSurface {
 
 /// 最多保留若干独立区域；超过容量时退化为一个包围矩形，保证永不丢失更新。
 pub struct DirtyRegions {
+    /// 可标记区域的屏幕边界，新增矩形会先与其求交。
     surface : Rect,
+    /// 脏矩形槽位；前 `len` 个元素有效。
     regions : [Rect; MAX_DIRTY_REGIONS],
+    /// 当前有效区域数量，始终不超过 `MAX_DIRTY_REGIONS`。
     len : usize,
 }
 
@@ -62,6 +69,7 @@ impl DirtyRegions {
     }
 
     pub fn add(&mut self, rect : Rect) {
+        // 空交集直接忽略；这使窗口移出屏幕时不会产生负坐标像素访问。
         let Some(mut clipped) = rect.intersection(self.surface) else {
             return;
         };

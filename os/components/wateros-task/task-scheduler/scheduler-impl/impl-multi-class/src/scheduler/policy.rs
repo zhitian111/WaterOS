@@ -1,4 +1,4 @@
-// 调度策略修改与抢占比较。
+//! 调度策略修改与抢占比较。
 use super::*;
 impl MultiClassScheduler {
     pub fn apply_sched_policy_change(&mut self,

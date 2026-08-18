@@ -103,6 +103,7 @@ impl Ns16550Port {
 
 impl SerialPort for Ns16550Port {
     fn write_byte(&mut self, byte: u8) -> SerialResult<()> {
+        // 设置上限避免硬件永不置位 THRE 时无限自旋；超时转为可传播错误。
         for _ in 0..SPIN_TX_MAX {
             let lsr = unsafe { self.layout.read_reg(self.base, REG_LSR) };
             if lsr & LSR_THRE != 0 {

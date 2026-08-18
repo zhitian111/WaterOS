@@ -89,20 +89,31 @@ fn map_vfs_to_root_vol(e : VfsError) -> RootVolumeReadError {
     }
 }
 
+/// LoongArch64 对应的 ELF machine ID。
 const EM_LOONGARCH : u16 = 258;
+/// 使用固定虚拟地址的 ELF 可执行文件。
 const ET_EXEC : u16 = 2;
+/// 位置无关的 ELF 可执行文件或共享对象。
 const ET_DYN : u16 = 3;
+/// 包含动态解释器路径的程序头类型。
 const PT_INTERP : u32 = 3;
 /// 为 PIE 主程序保留非零装载基址，避免低地址全局对象与空指针保护冲突。
 const USER_PIE_BASE : usize = 0x0040_0000;
+/// 用户栈虚拟地址上界（不含），栈从高地址向低地址增长。
 const LOONGARCH64_USER_STACK_TOP : usize = 0x0000_007F_FFFF_A000;
+/// 动态解释器的首选装载基址。
 const LOONGARCH64_INTERP_BASE : usize = 0x0000_0000_7000_0000;
+/// 用户栈 VMA 预留大小，单位为字节。
 const USER_STACK_SIZE : usize = 2 * 1024 * 1024;
+/// 启动时预映射的栈页数；其余栈页按需处理。
 const USER_STACK_PREMAP_PAGES : usize = 16;
+/// 匿名 mmap 首选起点。
 const PREFERRED_MMAP_BASE : usize = 0x1000_0000;
+/// 堆末端与 mmap 区之间的保护间隔，单位为字节。
 const USER_HEAP_MMAP_GAP : usize = 64 * 1024 * 1024;
 /// 性能实验开关：关闭时完整 BSS 页只登记 lazy VMA，不消费预清零池。
 const ELF_BSS_PREFAULT_FROM_ZEROED_POOL : bool = true;
+/// bring-up 镜像中 musl libc 的固定路径。
 const MUSL_LIBC_PATH : &str = "/musl/lib/libc.so";
 const LOONGARCH_INSN_SYSCALL : u32 = 0x002B_0000;
 const LOONGARCH_INSN_RET : u32 = 0x4C00_0020;
@@ -118,8 +129,11 @@ fn executable_load_bias(e_type : u16) -> Result<usize, LoadElfError> {
 }
 
 struct MuslSchedStubPatch {
+    /// 需要修改的文件字节偏移。
     offset : usize,
+    /// stub 应写入的 syscall 编号。
     syscall_nr : u32,
+    /// 日志中显示的函数名。
     name : &'static str,
 }
 
@@ -138,9 +152,13 @@ const MUSL_SCHED_STUB_PATCHES : &[MuslSchedStubPatch] =
                            name : "sched_getparam" }];
 
 struct ElfHeaderInfo {
+    /// 已加入装载偏移的程序入口虚拟地址。
     entry : usize,
+    /// 单个程序头的字节数。
     phentsize : usize,
+    /// 程序头数量。
     phnum : usize,
+    /// 已通过边界检查的程序头表内容。
     phdrs : Vec<u8>,
 }
 
@@ -234,6 +252,7 @@ fn read_path_range(path : &str, offset : u64, buf : &mut [u8]) -> Result<usize, 
 }
 
 fn read_path_exact(path : &str, offset : u64, buf : &mut [u8]) -> Result<(), LoadElfError> {
+    // 文件系统允许短读，因此循环直到目标缓冲填满；返回 0 视为 EOF/损坏，避免无界重试。
     let mut filled = 0usize;
     while filled < buf.len() {
         let n = read_path_range(path,

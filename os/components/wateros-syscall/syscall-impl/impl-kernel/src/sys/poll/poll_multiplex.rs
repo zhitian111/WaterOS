@@ -13,7 +13,9 @@ use crate::user_copy::copy_from_user_struct;
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct Pselect6Sigmask {
+    /// 用户态信号屏蔽字地址。
     sigmask : usize,
+    /// 信号集合结构大小，必须符合 ABI 版本。
     sigsetsize : usize,
 }
 

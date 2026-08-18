@@ -243,8 +243,7 @@ pub mod paging {
     #[inline]
     pub fn flush_address_space_translations() { ArchPagingImpl::flush_address_space_translations() }
 
-    /// Flush translations on the current CPU. Architectures may conservatively
-    /// widen a range when their ISA does not expose an equivalent operation.
+    /// 刷新当前 CPU 的地址翻译；若 ISA 没有等价指令，架构实现可保守扩大范围。
     #[inline]
     pub fn flush_tlb_local(range : TlbFlushRange) { ArchPagingImpl::flush_tlb_local(range) }
 

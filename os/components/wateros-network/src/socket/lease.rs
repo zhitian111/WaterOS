@@ -33,12 +33,16 @@ impl SocketRef {
 
 /// 供 read、recvfrom 和 recvmsg 共享的已预留接收数据。
 pub struct SocketReceiveLease {
+    /// 保持底层 socket 存活，防止租约期间被最后一个 fd 关闭。
     _socket : SocketRef,
+    /// 尚未提交的协议栈接收预留；`None` 表示已完成或已取消。
     reservation : Option<stack::SocketRecvReservation>,
+    /// 已从协议栈复制出的数据，长度不超过调用者请求。
     data : Vec<u8>,
 }
 
 impl SocketReceiveLease {
+    /// 返回本次租约可读的字节；不会再次访问用户地址空间。
     pub fn bytes(&self) -> &[u8] { self.data.as_slice() }
 
     pub fn source(&self) -> ([u8; 4], u16) {
@@ -62,6 +66,7 @@ impl SocketReceiveLease {
             .unwrap_or(0)
     }
 
+    /// 提交复制进度；`complete=false` 用于部分复制并保留剩余数据。
     pub fn finish(mut self,
                   copied : usize,
                   complete : bool)

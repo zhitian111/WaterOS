@@ -23,8 +23,7 @@ pub fn platform_console_write_a_buffer(bytes : &[u8]) {
     let _ = platform::console::console_write_a_buffer(bytes);
 }
 
-/// Write exact terminal bytes while retaining the platform's cross-CPU output
-/// serialization.
+/// 在保留平台跨 CPU 输出串行化的同时写入精确终端字节。
 #[inline]
 pub fn platform_console_write_raw_buffer(bytes: &[u8]) {
     let _ = platform::console::console_write_raw_buffer(bytes);

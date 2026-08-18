@@ -8,8 +8,11 @@ use crate::TaskRegistry;
 
 #[derive(Clone, Copy)]
 struct TimeoutTask {
+    /// 等待任务。
     task_id : TaskId,
+    /// 等待目标，用于唤醒时校验原因。
     wait_target : TaskWaitTarget,
+    /// 绝对唤醒 tick。
     wake_tick : TaskTick,
 }
 

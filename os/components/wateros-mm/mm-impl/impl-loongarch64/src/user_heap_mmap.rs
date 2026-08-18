@@ -29,6 +29,7 @@ use crate::pagetable::{DeviceVma, LazyFileVma, LoongArch64AddressSpace, VmaBacki
 fn fence_user_ptes() { platform::arch::paging::flush_address_space_translations(); }
 
 impl HeapBrk for LoongArch64AddressSpace {
+    /// 返回 LoongArch 用户堆的半开边界；`current_end` 可非页对齐，实际 PTE 按页管理。
     fn brk_region(&self) -> BrkRegion {
         BrkRegion { start : self.user_brk_start,
                     current_end : self.user_brk_current_end,
@@ -39,6 +40,7 @@ impl HeapBrk for LoongArch64AddressSpace {
                                                               allocator : &mut A,
                                                               new_end : VirtAddr)
                                                               -> MmResult<VirtAddr> {
+        // `brk(0)` 是查询，不改变页表或当前 break。
         if new_end.0 == 0 {
             return Ok(self.user_brk_current_end);
         }
@@ -50,7 +52,7 @@ impl HeapBrk for LoongArch64AddressSpace {
             return Err(MmError::InvalidAddress);
         }
         if new_end.0 > r.current_end.0 {
-            // 堆向上增长：为新增虚拟页分配并映射零页
+            // 堆向上增长：为新增虚拟页分配并映射零页；先检查栈和 lazy VMA，避免建立重叠映射。
             let end_vpn_excl = VirtAddr(new_end.0).ceil_page()
                                                   .0;
             let mut vpn_i = VirtAddr(r.current_end.0).floor_page()
@@ -72,7 +74,7 @@ impl HeapBrk for LoongArch64AddressSpace {
                 vpn_i += 1;
             }
         } else if new_end.0 < r.current_end.0 {
-            // 堆收缩：解除新边界之外的已映射页
+            // 堆收缩：解除新边界之外的已映射页；保留新 break 所在的部分页。
             let new_end_vpn_excl = VirtAddr(new_end.0).ceil_page()
                                                       .0;
             let cur_end_vpn_excl = VirtAddr(r.current_end.0).ceil_page()
@@ -95,6 +97,7 @@ impl HeapBrk for LoongArch64AddressSpace {
 }
 
 impl LoongArch64AddressSpace {
+    /// 校验并建立设备页映射；设备帧由租约管理，不得交给普通帧分配器回收。
     fn mmap_device_inner<A>(&mut self,
                             allocator : &mut A,
                             req : MmapRequest,

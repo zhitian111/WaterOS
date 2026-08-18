@@ -1,4 +1,4 @@
-//! `setsockopt(2)` / `getsockopt(2)` — 极简存根。
+//! `setsockopt(2)` / `getsockopt(2)` 的参数校验与网络层错误映射。
 //! 本模块代码由AI完成
 
 use api_v0::ErrNo;

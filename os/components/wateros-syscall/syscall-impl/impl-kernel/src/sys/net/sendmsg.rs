@@ -19,14 +19,18 @@ use crate::user_copy::{
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct IoVec {
+    /// 用户缓冲区地址。
     iov_base : usize,
+    /// 缓冲区长度，单位为字节。
     iov_len : usize,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct MsgHdr {
+    /// socket 地址缓冲区地址。
     msg_name : usize,
+    /// 地址缓冲区长度。
     msg_namelen : u32,
     _pad0 : u32,
     msg_iov : usize,
@@ -41,16 +45,22 @@ struct MsgHdr {
 #[derive(Copy, Clone)]
 // 本结构代码由AI完成
 struct SockAddrIn {
+    /// 地址族。
     sin_family : u16,
+    /// 网络字节序端口。
     sin_port : u16,
+    /// IPv4 地址。
     sin_addr : [u8; 4],
+    /// ABI 填充。
     sin_zero : [u8; 8],
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 struct UserTimespec {
+    /// 秒数。
     sec : isize,
+    /// 纳秒部分。
     nsec : isize,
 }
 

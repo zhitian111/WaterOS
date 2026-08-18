@@ -1,4 +1,4 @@
-//! Process-scoped POSIX timer syscalls.
+//! 进程级 POSIX 定时器系统调用；到期后通过信号通知所属进程。
 
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
@@ -15,14 +15,18 @@ const SIGEV_SIGNAL : i32 = 0;
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct UserTimespec {
+    /// 秒数，可为负值时由参数校验拒绝。
     sec : isize,
+    /// 纳秒部分，必须位于 `[0, 1_000_000_000)`。
     nsec : isize,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct UserItimerSpec {
+    /// 周期性重载间隔；为零表示单次或禁用。
     interval : UserTimespec,
+    /// 首次到期时间或剩余时间。
     value : UserTimespec,
 }
 

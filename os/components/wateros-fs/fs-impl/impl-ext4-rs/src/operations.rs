@@ -1,8 +1,11 @@
+//! ext4-rs 的只读与读写文件系统操作实现。
+
 use super::*;
 
 impl ReadOnlyFs for Ext4RsFs {
 // 本方法代码由AI完成
     fn mount(&mut self, device : SharedBlockDevice) -> FsResult<()> {
+        // 先构造块设备适配器再发布 Ext4 对象，失败时保持未挂载状态。
         let dev : Arc<dyn Ext4RsBlockDevice> = Arc::new(BlockDevAdapter { device });
         self.fs = Some(Ext4::open(dev));
         Ok(())
@@ -529,4 +532,3 @@ impl FsImpl for Ext4RsImpl {
         Ok(Arc::new(Mutex::new(LocalRwFs::new(Box::new(fs)))))
     }
 }
-

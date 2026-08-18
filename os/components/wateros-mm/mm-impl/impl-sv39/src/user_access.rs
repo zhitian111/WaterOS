@@ -18,10 +18,12 @@ use crate::user_aspace;
 
 /// 绑定到指定用户地址空间句柄的拷贝实现。
 pub struct Sv39UserMemoryOps {
+    /// `LoadedElf::user_aspace_ptr` 对应的不透明地址空间句柄。
     handle : usize,
 }
 
 impl Sv39UserMemoryOps {
+    /// 创建绑定指定 Sv39 地址空间的访问器；零句柄会在实际操作时返回非法地址。
     pub const fn new(handle : usize) -> Self { Self { handle } }
 }
 

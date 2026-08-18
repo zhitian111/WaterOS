@@ -40,6 +40,7 @@ impl PerTaskMountNsRegistry {
     fn release_owner(&mut self, task_id: task::TaskId) -> Option<task::TaskId> {
         let owner = self.owners.remove(&task_id)?;
         if let Some(count) = self.ref_counts.get_mut(&owner) {
+            // 重复退出清理不允许使共享 namespace 引用计数下溢。
             *count = count.saturating_sub(1);
             if *count == 0 {
                 self.ref_counts.remove(&owner);
@@ -130,7 +131,7 @@ impl PerTaskMountNsRegistry {
             return;
         }
 
-        // The owner cannot leave its own slot while the remaining tasks still point at it.
+        // 当仍有任务指向所有者槽位时，所有者不能离开自己的槽位。
         // Re-home those tasks under one of their members, then retain the old slot for task_id.
         let new_owner = self.owners
                             .iter()

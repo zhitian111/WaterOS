@@ -1,15 +1,17 @@
 use super::*;
 
 pub struct AnotherExt4Fs {
+    /// 已加载的 ext4 后端；未挂载时为 `None`。
     pub(crate) fs : Option<Ext4>,
+    /// 当前挂载使用的块设备句柄。
     pub(crate) device : Option<SharedBlockDevice>,
+    /// 后端 I/O 错误标志，供后续操作快速拒绝。
     pub(crate) io_error_state : Option<Arc<AtomicBool>>,
     pub(crate) lookup_cache : Mutex<PositiveDentryCache>,
     pub(crate) negative_cache : Mutex<Option<Box<NegativeDentryCache>>>,
     pub(crate) open_nodes : BTreeMap<u32, usize>,
     pub(crate) orphan_nodes : BTreeMap<u32, String>,
-    /// Hidden links whose final removal failed after the user-visible unlink
-    /// had committed.  They are retried by `sync` and the final close.
+    /// 用户可见 unlink 已提交但最终移除失败的隐藏链接；由 `sync` 和最终 close 重试。
     pub(crate) pending_reclaims : BTreeMap<u32, String>,
     pub(crate) orphan_dir : Option<u32>,
 }
@@ -201,8 +203,7 @@ impl AnotherExt4Fs {
         Ok(())
     }
 
-    /// Remove a hidden link after a successful user-visible unlink.  A failure
-    /// is deliberately deferred: namespace semantics are already committed.
+    /// 用户可见 unlink 成功后移除隐藏链接。失败会刻意延后，因为命名空间语义已经提交。
     pub(crate) fn reclaim_orphan(&mut self, inode : u32) {
         let Some(name) = self.orphan_nodes
                              .get(&inode)

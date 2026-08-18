@@ -33,6 +33,7 @@ static UART_INIT_DONE: AtomicBool = AtomicBool::new(false);
 
 /// 将全局 UART 初始化为 QEMU LoongArch64 `virt` 默认 UART；幂等。
 pub fn init_default_virt_uart() {
+    // AcqRel 保证并发调用只初始化一次；后续调用直接返回且不会重复写 MMIO。
     if UART_INIT_DONE.swap(true, Ordering::AcqRel) {
         return;
     }

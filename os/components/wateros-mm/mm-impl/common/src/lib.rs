@@ -33,6 +33,7 @@ use vfs_api::VfsFileContentIdentity;
 pub struct ZeroAnonLoader;
 
 #[cfg(feature = "self_test")]
+/// 运行共享 MM 辅助逻辑的最小自检；调用方必须先准备帧分配器和文件身份环境。
 pub fn self_test() {
     log::info!("[mm/common] self_test begin");
     let mut page = [0xA5; 16];
@@ -44,12 +45,14 @@ pub fn self_test() {
 }
 
 impl DemandPageLoader for ZeroAnonLoader {
+    /// 复制一个无状态匿名 loader，供 fork 后父子地址空间各自持有。
     fn duplicate_box(&self) -> MmResult<Box<dyn DemandPageLoader>> { Ok(Box::new(ZeroAnonLoader)) }
 
     fn mapping_kind(&self) -> api_v0::mmap::DemandMappingKind {
         api_v0::mmap::DemandMappingKind::Anonymous
     }
 
+    /// 匿名页无需从文件读取；目标页应在调用前已经清零。
     fn load_page(&mut self, _file_offset : usize, _dst : &mut [u8]) -> MmResult<()> { Ok(()) }
 }
 
@@ -81,13 +84,18 @@ pub fn fill_elf_load_page<F>(vbase : usize,
     read_file(file_pos, &mut dst[dst_off..dst_off + len])
 }
 
-/// execve lazy map 登记 VMA 时的段参数（供各 arch `kernel_elf` 构造 loader）。
+/// execve 登记惰性映射 VMA 时的段参数（供各架构 `kernel_elf` 构造 loader）。
 #[derive(Clone, Debug)]
 pub struct ElfSegmentLoadParams {
+    /// ELF 段在进程地址空间中的虚拟基址。
     pub vbase : usize,
+    /// 段在文件中的起始偏移。
     pub p_offset : usize,
+    /// 段中由文件提供的有效字节数；超过此范围属于零填充。
     pub filesz : usize,
+    /// 对应 VMA 的虚拟起点。
     pub vma_start : usize,
+    /// VMA 起点对应的文件偏移，用于把缺页地址映射回文件位置。
     pub vma_file_origin : usize,
 }
 

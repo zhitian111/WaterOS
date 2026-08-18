@@ -9,10 +9,10 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-/// shebang 探测窗口上限（与 Linux `BINPRM_BUF_SIZE` 量级一致）。
+/// shebang 探测窗口上限（与 Linux `BINPRM_BUF_SIZE` 量级一致）；超出窗口的首行内容不参与格式判定。
 pub const SHEBANG_PROBE_MAX : usize = 256;
 
-/// 解释器链递归深度上限（防环）。
+/// 解释器链递归深度上限（防环）；达到上限必须返回错误而不能继续消耗内核栈或文件句柄。
 pub const MAX_INTERPRETER_RECURSION : usize = 4;
 
 /// 非 ELF 脚本解析失败原因。
@@ -29,13 +29,13 @@ pub enum ExecResolveError {
 /// 解析成功的 shebang 内容。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedShebang {
-    /// 解释器路径（shebang 行第一个 token）。
+    /// 解释器路径（shebang 行第一个 token），未做 PATH 搜索且不含首行 `#!` 前缀。
     pub interpreter : String,
-    /// shebang 行其余 token（如 `sh`、`-x`）。
+    /// shebang 行其余 token（如 `sh`、`-x`）；仅按空白分隔，不能表达带空格的单个参数。
     pub args : Vec<String>,
 }
 
-/// ELF64 小端头前缀是否与 `from_elf_bytes` 一致。
+/// 判断字节前缀是否为当前支持的 ELF64 小端格式；它只检查魔数、类别和字节序，不能证明文件可装载。
 #[inline]
 pub fn is_elf_prefix(data : &[u8]) -> bool {
     data.len() >= 6 && &data[0..4] == b"\x7FELF" && data[4] == 2 && data[5] == 1
@@ -60,6 +60,7 @@ fn shebang_line_end(data : &[u8]) -> usize {
 }
 
 /// 跳过脚本开头 BOM 与空白（部分测试脚本在 shebang 或正文前有换行）。
+/// 返回值仍借用输入，空输入或全空白输入会返回空切片。
 pub fn skip_leading_script_whitespace(data : &[u8]) -> &[u8] {
     let mut i = 0;
     while i < data.len() {
@@ -76,6 +77,7 @@ pub fn skip_leading_script_whitespace(data : &[u8]) -> &[u8] {
 }
 
 /// 探测窗口内是否为无 NUL 的可打印文本（非 ELF 时的脚本判定基础）。
+/// 这是启发式判定，不代表文件一定可执行；真正的解释器解析和装载仍可能失败。
 pub fn is_text_file(data : &[u8]) -> bool {
     if data.is_empty() {
         return false;
@@ -141,6 +143,7 @@ pub fn busybox_path_for_script(script_path : &str) -> Option<&'static str> {
 }
 
 /// 将镜像约定的 `#!/busybox` 映射到脚本所属 libc 目录。
+/// 非测试盘约定路径保持原样，避免该兼容规则意外重写普通用户提供的解释器。
 pub fn remap_interpreter_path(script_path : &str, interpreter : &str) -> String {
     if interpreter.starts_with("/glibc/") || interpreter.starts_with("/musl/") {
         return String::from(interpreter);
@@ -181,6 +184,8 @@ fn is_busybox_interpreter(interpreter : &str) -> bool {
 ///
 /// - 普通 ELF：遵循 Linux binfmt_script（`argv[0]` = 解释器路径）。
 /// - busybox：与 bring-up 约定一致（`argv[0]` = `sh` 等 applet 名）。
+///
+/// `user_argv` 的第一个元素是原脚本路径时会被替换；若为空也可工作，生成的列表仍含脚本路径。
 pub fn build_interpreted_argv(script_path : &str,
                               interpreter : &str,
                               shebang_args : &[String],

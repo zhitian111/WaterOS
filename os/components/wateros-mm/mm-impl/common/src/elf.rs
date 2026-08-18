@@ -1,3 +1,7 @@
+//! ELF 文件解析辅助与稳定读取策略。
+//!
+//! 所有解析器都以 `Option`/布尔值报告短输入、越界和溢出；真正的装载器负责把失败转换为用户可见错误。
+
 use super::*;
 
 impl ElfSegmentLoadParams {
@@ -24,7 +28,7 @@ impl ElfSegmentLoadParams {
 /// `PT_LOAD` 程序头类型（可装载段）。
 pub const PT_LOAD : u32 = 1;
 
-/// Little-endian `u16` read; returns `None` on out-of-bounds input.
+/// 从小端字节序读取 `u16`；范围越界或切片不足时返回 `None`，不会 panic。
 #[inline]
 pub fn rd_u16(s : &[u8], o : usize) -> Option<u16> {
     s.get(o..o + 2)?
@@ -33,7 +37,7 @@ pub fn rd_u16(s : &[u8], o : usize) -> Option<u16> {
      .map(u16::from_le_bytes)
 }
 
-/// Little-endian `u32` read; returns `None` on out-of-bounds input.
+/// 从小端字节序读取 `u32`；范围越界或切片不足时返回 `None`，不会 panic。
 #[inline]
 pub fn rd_u32(s : &[u8], o : usize) -> Option<u32> {
     s.get(o..o + 4)?
@@ -42,7 +46,7 @@ pub fn rd_u32(s : &[u8], o : usize) -> Option<u32> {
      .map(u32::from_le_bytes)
 }
 
-/// Little-endian `u64` read; returns `None` on out-of-bounds input.
+/// 从小端字节序读取 `u64`；范围越界或切片不足时返回 `None`，不会 panic。
 #[inline]
 pub fn rd_u64(s : &[u8], o : usize) -> Option<u64> {
     s.get(o..o + 8)?
@@ -51,18 +55,17 @@ pub fn rd_u64(s : &[u8], o : usize) -> Option<u64> {
      .map(u64::from_le_bytes)
 }
 
-/// Checks only the ELF64 little-endian prefix accepted by `mm-api`.
+/// 仅检查 mm-api 接受的 ELF64 小端前缀；通过不代表程序头、入口或段范围有效。
 #[inline]
 pub fn elf64_le_prefix_ok(data : &[u8]) -> bool { executable::is_elf_prefix(data) }
 
-/// Text/script inputs should not trigger ELF read retries.
+/// 判断输入是否为文本/脚本；这类输入不应触发 ELF 重读，否则会制造无意义的 I/O 和日志。
 #[inline]
 pub fn skip_elf_prefix_retry(data : &[u8]) -> bool { executable::is_text_file(data) }
 
-/// Checks that `e_entry` is inside a loadable segment.
+/// 检查 `e_entry` 是否位于某个可装载段内。
 ///
-/// This catches images whose ELF prefix looks fine but whose program headers or
-/// entry point were read inconsistently from the backing filesystem.
+/// 该检查可以发现 ELF 前缀正确、但程序头或入口因文件系统读取不一致而损坏的镜像。
 pub fn elf_entry_plausible(data : &[u8]) -> bool {
     if data.len() < 0x40 {
         return false;
@@ -118,17 +121,17 @@ pub fn elf_entry_plausible(data : &[u8]) -> bool {
     false
 }
 
-/// Returns whether an ELF read is acceptable for loading.
+/// 判断一次 ELF 读取结果是否达到装载最低要求。
 #[inline]
 pub fn elf_read_acceptable(data : &[u8]) -> bool {
     elf64_le_prefix_ok(data) && elf_entry_plausible(data)
 }
 
-/// Stabilizes reads of ELF bytes from a root filesystem.
+/// 稳定从根文件系统读取的 ELF 字节。
 ///
-/// If two reads disagree, a third read is used as a tiebreaker; otherwise the
-/// first acceptable image is selected. Non-ELF text files are returned as-is so
-/// script/shebang probing does not produce noisy retries.
+/// 两次读取不一致时进行第三次读取作为仲裁；否则选择满足可装载检查的版本。非 ELF 文本原样
+/// 返回，避免脚本/shebang 探测产生无意义的重试。三次都不满足时仍返回最后一次结果，让上层给出
+/// 精确的 ELF 解析错误而不是在此处伪造成功。
 pub fn finalize_elf_read(path : &str,
                          first : Vec<u8>,
                          read_again : impl Fn() -> Result<Vec<u8>, LoadElfError>)
@@ -175,7 +178,7 @@ pub fn finalize_elf_read(path : &str,
     Ok(second)
 }
 
-/// Finds the file offset backing an entry PC inside a `PT_LOAD` segment.
+/// 查找某个入口 PC 在 `PT_LOAD` 段中对应的文件偏移；任一 ELF 表越界、加法溢出或不在段内时返回 `None`。
 pub fn entry_file_offset(data : &[u8], entry_pc : usize) -> Option<usize> {
     let e_phoff = rd_u64(data, 0x20)? as usize;
     let e_phentsize = rd_u16(data, 0x36)? as usize;
@@ -201,4 +204,3 @@ pub fn entry_file_offset(data : &[u8], entry_pc : usize) -> Option<usize> {
     }
     None
 }
-

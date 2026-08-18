@@ -199,9 +199,9 @@ pub const SET_TID_ADDRESS : usize = 96;
 pub const SET_ROBUST_LIST : usize = 99;
 pub const GET_ROBUST_LIST : usize = 100;
 pub const RSEQ : usize = 293;
-/// RISC-V architecture-specific hardware probing syscall.
+/// RISC-V 架构专用硬件探测系统调用。
 pub const RISCV_HWPROBE : usize = 258;
-/// RISC-V architecture-specific instruction-cache synchronization syscall.
+/// RISC-V 架构专用指令缓存同步系统调用。
 pub const RISCV_FLUSH_ICACHE : usize = 259;
 
 // 其它常用调用

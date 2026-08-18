@@ -5,10 +5,15 @@ use core::ptr::{read_volatile, write_volatile};
 
 /// QEMU `virt` UART0 的物理基址；映射策略由内核地址空间建立阶段保证。
 const UART_BASE: usize = config::mm::QEMU_VIRT_MMIO_PHYS_START;
+/// UART 发送保持寄存器偏移。
 const UART_THR: usize = UART_BASE;
+/// UART 线路状态寄存器偏移。
 const UART_LSR: usize = UART_BASE + 5;
+/// 发送保持寄存器可写标志。
 const UART_LSR_THRE: u8 = 1 << 5;
+/// 发送移位寄存器为空标志。
 const UART_LSR_TEMT: u8 = 1 << 6;
+/// early console 单次发送的最大自旋次数。
 const SPIN_TX_MAX: usize = 1_000_000;
 
 /// 等待发送保持寄存器可写后写入一个字节，不负责 CRLF 转换。
@@ -45,8 +50,7 @@ pub fn console_write_a_buffer(bytes: &[u8]) -> PlatformConsoleResult<()> {
     Ok(())
 }
 
-/// Write wire bytes without newline conversion. The TTY line discipline uses
-/// this after applying `OPOST/ONLCR` itself.
+/// 写入不做换行转换的线缆字节；TTY line discipline 已自行应用 `OPOST/ONLCR`。
 pub fn console_write_raw_buffer(bytes: &[u8]) -> PlatformConsoleResult<()> {
     for &byte in bytes {
         write_raw(byte)?;

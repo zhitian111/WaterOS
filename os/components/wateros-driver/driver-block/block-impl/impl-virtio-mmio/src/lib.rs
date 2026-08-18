@@ -21,7 +21,7 @@ const _ : () = assert!(PAGE_SIZE == mm_api::addr::PAGE_SIZE);
 const IOZONE_PROBE_MIN_WRITE_BYTES : usize = 4096;
 
 /// 将统一 DMA pool HAL 接到 `virtio-drivers`。
-/* Shared HAL is provided by driver-impl-common. */
+/* 共享 HAL 由 driver-impl-common 提供；旧的本地实现仅作为历史参考保留。 */
 /*
     /// 该实现由公共 HAL 提供；此类型保留用于兼容现有驱动类型参数。
     fn dma_alloc(pages : usize, _direction : BufferDirection) -> (PhysAddr, NonNull<u8>) {
@@ -112,6 +112,7 @@ impl VirtioBlkDevice {
     ///
     /// **须在** `init_frame_allocator`（或等价全局帧池初始化）**之后**调用。
     pub fn from_mmio(mmio : MmioRegion) -> DriverResult<Self> {
+        // 先拒绝空基址，再建立带长度检查的 MMIO transport，避免把非法 DTB 地址交给驱动。
         let header = NonNull::new(mmio.base as *mut VirtIOHeader).ok_or(DriverError::InvalidDtb)?;
         let transport =
             unsafe { MmioTransport::new(header, mmio.size) }.map_err(|_| DriverError::Unsupported)?;
@@ -131,6 +132,7 @@ impl BlockDevice for VirtioBlkDevice {
 
     /// 以 LBA 为单位读入 `buf`；长度须为块大小的整数倍，否则由 VirtIO 层返回错误。
     fn read_blocks(&mut self, start_block : Lba, buf : &mut [u8]) -> DriverResult<()> {
+        // 先做容量、整块长度和 LBA 溢出检查，再转换为 virtio-drivers 使用的 usize。
         self.check_request_range(start_block, buf.len())?;
         let start = usize::try_from(start_block.0).map_err(|_| DriverError::InvalidParam)?;
         self.inner

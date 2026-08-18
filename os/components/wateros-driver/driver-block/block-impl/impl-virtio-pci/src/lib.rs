@@ -33,6 +33,7 @@ pub struct VirtioPciProbeInfo {
 }
 
 /// PCI MMIO BAR 单调递增分配器（裸机 bring-up 无固件分配 BAR 时使用）。
+/// 分配区间采用半开 `[start, end)`，越界、零大小和对齐加法溢出均返回 `None`。
 #[derive(Debug, Clone, Copy)]
 pub struct VirtioPciBarAllocator {
     next : u64,
@@ -97,7 +98,7 @@ unsafe impl Hal for VirtioPciHal {
                 }
             }
         }
-        // StackFrameAllocator returns descending contiguous PPNs for fresh multi-page bursts.
+        // StackFrameAllocator 对新的多页突发分配返回递减的连续 PPN。
         for i in 1..pages {
             if ppns[i - 1].0 != ppns[i].0 + 1 {
                 for q in ppns {
@@ -153,13 +154,13 @@ unsafe impl Hal for VirtioPciHal {
     unsafe fn unshare(_paddr : PhysAddr, _buffer : NonNull<[u8]>, _direction : BufferDirection) {}
 }
 
-/// VirtIO block device backed by PCI transport.
+/// 由 PCI 传输承载的 VirtIO 块设备。
 pub struct VirtioPciBlkDevice {
     inner : VirtIOBlk<VirtioPciHal, PciTransport>,
 }
 
 impl VirtioPciBlkDevice {
-    /// Initialize a block device from an already discovered PCI device function.
+    /// 从已发现的 PCI function 配置并初始化块设备；BAR 无法分配或握手失败时返回错误。
     pub fn from_pci_root<C : ConfigurationAccess>(root : &mut PciRoot<C>,
                                                   device_function : DeviceFunction,
                                                   bar_allocator : &mut VirtioPciBarAllocator)
@@ -179,13 +180,12 @@ impl VirtioPciBlkDevice {
         Ok(Self { inner })
     }
 
-    /// Scan PCI bus 0 in a memory-mapped PCI CAM/ECAM window and return the first VirtIO block
-    /// device.
+    /// 扫描内存映射 PCI CAM/ECAM 窗口中的 bus 0，返回首个 VirtIO 块设备。
     ///
     /// # Safety
     ///
     /// `config_base` must be directly accessible by the kernel and cover the requested PCI
-    /// configuration window.
+    /// 配置窗口。
     pub unsafe fn probe_first_from_config(config_base : usize,
                                           cam : Cam,
                                           bar_allocator : &mut VirtioPciBarAllocator)
@@ -207,7 +207,7 @@ impl VirtioPciBlkDevice {
         Ok(None)
     }
 
-    /// Scan PCI bus 0 in an ECAM window and return the first VirtIO block device.
+    /// 扫描 ECAM 窗口中的 bus 0，返回首个 VirtIO 块设备。
     ///
     /// # Safety
     ///
@@ -218,8 +218,7 @@ impl VirtioPciBlkDevice {
         unsafe { Self::probe_first_from_config(ecam_base, Cam::Ecam, bar_allocator) }
     }
 
-    /// Scan PCI bus 0 in a legacy memory-mapped CAM window and return the first VirtIO block
-    /// device.
+    /// 扫描传统内存映射 CAM 窗口中的 bus 0，返回首个 VirtIO 块设备。
     ///
     /// # Safety
     ///
@@ -236,6 +235,7 @@ fn assign_memory_bars<C : ConfigurationAccess>(root : &mut PciRoot<C>,
                                                device_function : DeviceFunction,
                                                allocator : &mut VirtioPciBarAllocator)
                                                -> DriverResult<()> {
+    // 逐个 BAR 分配不重叠的 MMIO 区间；占用两个配置项的 64 位 BAR 会跳过下一项。
     let bars = root.bars(device_function)
                    .map_err(|_| DriverError::Unsupported)?;
     let mut bar_index = 0usize;

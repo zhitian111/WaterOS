@@ -17,14 +17,23 @@ use spin::Mutex;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RtcTime {
+    /// 秒，范围通常为 0..=59。
     pub tm_sec: i32,
+    /// 分钟，范围 0..=59。
     pub tm_min: i32,
+    /// 小时，范围 0..=23。
     pub tm_hour: i32,
+    /// 月内日期，从 1 开始。
     pub tm_mday: i32,
+    /// 月份，从 0 表示一月。
     pub tm_mon: i32,
+    /// 自 1900 年起的年份偏移。
     pub tm_year: i32,
+    /// 星期日为 0 的星期编号。
     pub tm_wday: i32,
+    /// 年内日，从 0 开始。
     pub tm_yday: i32,
+    /// 夏令时标志，-1 表示未知。
     pub tm_isdst: i32,
 }
 

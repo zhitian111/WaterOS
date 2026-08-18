@@ -39,7 +39,10 @@ pub const ROBUST_LIST_HEAD_SIZE : usize = core::mem::size_of::<RobustListHead>()
 /// 之后由 syscall 层完成 `FUTEX_OWNER_DIED` 清理与唤醒。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RobustListRegistration {
+    /// 用户地址空间中的 robust 链表头指针；必须按用户地址验证后才能解引用。
     pub head : usize,
+    /// 头结构字节长度；当前 ABI 要求为 `ROBUST_LIST_HEAD_SIZE`。
     pub len : usize,
+    /// 登记时所属地址空间身份，防止退出清理访问已切换地址空间。
     pub user_aspace : usize,
 }

@@ -7,6 +7,7 @@
 use api_v0::error::{MmError, MmResult};
 use spin::Mutex;
 
+/// 内核地址空间专用 ASID；用户空间永不使用该值。
 pub(crate) const KERNEL_ASID : u16 = 0;
 const MAX_ASID_BITS : usize = 16;
 const MAX_ASID_COUNT : usize = 1 << MAX_ASID_BITS;
@@ -19,7 +20,9 @@ pub(crate) const fn from_token(token : usize) -> u16 {
 }
 
 struct AsidAllocator {
+    /// ASID 占用位图；第 n 位表示对应编号是否已分配。
     allocated : [u64; MAX_ASID_COUNT / u64::BITS as usize],
+    /// 当前硬件实际支持的 ASID 数量上界（不含）。
     limit : usize,
 }
 
@@ -29,11 +32,13 @@ impl AsidAllocator {
                limit : MAX_ASID_COUNT }
     }
 
+    /// 根据硬件探测到的 ASIDLEN 限制可分配范围；0 表示硬件没有可区分的 ASID。
     fn initialize(&mut self, implemented_bits : usize) {
         let bits = implemented_bits.min(MAX_ASID_BITS);
         self.limit = if bits == 0 { 1 } else { 1usize << bits };
     }
 
+    /// 分配一个用户 ASID；ASIDLEN=0 时返回 0 并由 trap 路径执行全量 fence。
     fn allocate(&mut self) -> Option<u16> {
         // ASIDLEN=0 时，trap 路径用全量 fence 保证地址空间切换正确。
         if self.limit == 1 {

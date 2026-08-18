@@ -65,14 +65,23 @@ pub(crate) struct FutexRegistry {
     waiting_tasks : BTreeMap<TaskId, WaitingTask>,
     /// DATA: task 到用户 robust 链表登记的侧表；不保存或解引用用户内存。
     robust : BTreeMap<TaskId, RobustListRegistration>,
+    /// 已开始 futex 等待的累计次数，仅用于调试快照。
     wait_attempts : u64,
+    /// 已从 futex 等待返回的累计次数，包含超时和中断。
     wait_returns : u64,
+    /// wake/wake_all/wake_bitset 调用次数。
     wake_calls : u64,
+    /// 成功选中的等待任务累计数。
     woken_tasks : u64,
+    /// requeue/cmp_requeue 调用次数。
     requeue_calls : u64,
+    /// 最近一次等待的键和底层等待队列 ID。
     last_wait : Option<(FutexKey, usize)>,
+    /// 最近一次等待结束的键和原因。
     last_wait_result : Option<(FutexKey, FutexWaitOutcome)>,
+    /// 最近一次唤醒的键、请求数与实际选择数。
     last_wake : Option<(FutexKey, u32, usize)>,
+    /// 最近一次迁移的源/目标键、请求数量与实际变更数。
     last_requeue : Option<(FutexKey, FutexKey, u32, u32, usize)>,
 }
 

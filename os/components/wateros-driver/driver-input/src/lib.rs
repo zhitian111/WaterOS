@@ -29,6 +29,7 @@ pub fn supported_devices() -> &'static [SupportedDeviceEntry] { &SUPPORTED }
 pub fn input_subsystem_claims_device(compatibles : &[alloc::string::String],
                                      device_type : DeviceType)
                                      -> bool {
+    // 仅凭设备类型和完整兼容字符串声明归属，不把探测成功等同于初始化成功。
     device_type == DeviceType::Input &&
     compatibles.iter().any(|compatible| compatible == "virtio,mmio")
 }

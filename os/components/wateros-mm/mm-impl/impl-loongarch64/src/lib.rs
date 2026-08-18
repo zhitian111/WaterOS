@@ -142,6 +142,7 @@ pub fn test_with_range(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
 
 /// LoongArch64 内核态用户拷贝自检；只操作临时地址空间，函数结束时释放页表和帧。
 #[cfg(feature = "self_test")]
+/// 运行 LoongArch 用户访问路径自检；会使用已初始化的帧池，不应在运行期随意调用。
 pub fn self_test() {
     log::info!("[mm-impl::loongarch64] self_test begin");
     user_access::test_copy_to_user_progress();
@@ -168,6 +169,9 @@ pub mod kernel_mm_impl {
     /// 返回 `(子地址空间裸指针, 子地址空间 token)`；`parent_aspace_ptr == 0`
     /// 时返回 [`api_v0::error::MmError::InvalidAddress`]。
     // 本方法代码由AI完成
+    ///
+    /// 父地址空间的用户叶页会共享并标记为 COW；内核映射保持共享。返回子地址空间裸句柄后，
+    /// 调用方负责在任务退出时调用 `drop_user_aspace`。
     pub fn fork_user_aspace(parent_aspace_ptr : usize) -> api_v0::error::MmResult<(usize, usize)> {
         use api_v0::address_space::AddressSpaceOps;
         use api_v0::error::MmError;
@@ -185,6 +189,7 @@ pub mod kernel_mm_impl {
     }
 
     // 本方法代码由AI完成
+    /// 处理用户写故障并在必要时执行 COW；返回值表示是否已修复或已确认并发 CPU 已修复该页。
     pub fn handle_cow_fault(parent_aspace_ptr : usize,
                             fault_addr : usize)
                             -> api_v0::error::MmResult<bool> {
@@ -213,5 +218,6 @@ pub mod kernel_mm_impl {
     ///
     /// `aspace_ptr` 来自 `LoadedElf::user_aspace_ptr`，调用后指针失效。
     // 本方法代码由AI完成
+    /// 销毁用户地址空间：递归释放所有用户页帧和页表帧。
     pub fn drop_user_aspace(aspace_ptr : usize) { crate::user_aspace::destroy(aspace_ptr); }
 }

@@ -9,14 +9,22 @@ use vfs::api::VfsNodeType;
 #[derive(Clone, Copy)]
 // 本结构代码由AI完成
 pub struct LinuxStat {
+    /// 设备编号。
     pub st_dev: u64,
+    /// inode 编号。
     pub st_ino: u64,
+    /// 文件类型与权限位。
     pub st_mode: u32,
+    /// 硬链接数。
     pub st_nlink: u32,
+    /// 所有者 UID。
     pub st_uid: u32,
+    /// 所有者 GID。
     pub st_gid: u32,
+    /// 特殊设备编号。
     pub st_rdev: u64,
     pub __pad1: u64,
+    /// 文件长度，单位为字节。
     pub st_size: i64,
     pub st_blksize: i32,
     pub __pad2: i32,
@@ -37,7 +45,9 @@ const _: () = assert!(core::mem::size_of::<LinuxStat>() == 128);
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct LinuxStatxTimestamp {
+    /// Unix epoch 秒数。
     pub tv_sec: i64,
+    /// 纳秒部分，范围应为 0..1_000_000_000。
     pub tv_nsec: u32,
     pub __reserved: i32,
 }
@@ -47,7 +57,9 @@ pub struct LinuxStatxTimestamp {
 #[derive(Clone, Copy, Default)]
 // 本结构代码由AI完成
 pub struct LinuxStatx {
+    /// 返回字段有效性掩码。
     pub stx_mask: u32,
+    /// 文件系统块大小。
     pub stx_blksize: u32,
     pub stx_attributes: u64,
     pub stx_nlink: u32,

@@ -38,9 +38,8 @@ pub fn test() {
     assert_eq!(pipe.read(&mut buf), Ok(2));
     assert_eq!(&buf, &[1, 2]);
 
-    // F_SETPIPE_SZ-style growth changes only the logical limit.  A small
-    // payload in a 1 MiB pipe must continue to work without eagerly allocating
-    // the whole configured capacity.
+    // 类似 F_SETPIPE_SZ 的扩容只改变逻辑上限；1 MiB pipe 中的小 payload 仍必须可用，
+    // 而不能为尚未写入的容量提前分配全部内存。
     let lazy_capacity = Pipe::with_capacity(8).expect("lazy-capacity pipe");
     assert_eq!(lazy_capacity.set_capacity(1 << 20), Ok(1 << 20));
     assert_eq!(lazy_capacity.capacity(), 1 << 20);
@@ -125,8 +124,8 @@ pub fn test() {
     assert_eq!(closed_write.write(b"x"),
                Err(api_v0::PipeError::Closed));
 
-    // A filesystem FIFO has no hidden sentinel endpoints: nonblocking writer
-    // open requires a reader, and closing the final writer exposes EOF.
+    // 文件系统 FIFO 没有隐藏的保活端点：非阻塞写端打开必须已有读者，最后一个写端关闭后
+    // 读端才能观察到 EOF。
     let fifo = NamedPipe::new();
     assert_eq!(fifo.open_write(true).err(),
                Some(api_v0::PipeError::BrokenPipe));

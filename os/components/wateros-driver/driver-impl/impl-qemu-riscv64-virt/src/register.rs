@@ -36,6 +36,7 @@ pub(crate) static VIRTIO_GPU_MMIO: Mutex<Vec<MmioRegion>> = Mutex::new(Vec::new(
 
 /// 在已扫描的 `DEVICE_INFOS` 上尝试实例化 virtio-blk 与 virtio-net；失败或未声明的路径记入列表供 devfs 标注。
 pub(crate) fn probe_virtio_devices() -> Vec<String> {
+    // 使用扫描快照而非持锁遍历全局表，避免初始化设备时递归获取探测锁。
     let infos_snapshot: Vec<DeviceInfo> = enumerate::DEVICE_INFOS.lock().clone();
     VIRTIO_BLK_MMIO.lock().clear();
     VIRTIO_NET_MMIO.lock().clear();

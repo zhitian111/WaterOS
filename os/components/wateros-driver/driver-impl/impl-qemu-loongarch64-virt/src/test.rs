@@ -9,6 +9,7 @@ use crate::INIT_AFTER_BOOT_DONE;
 
 /// 对已注册的首个 virtio-blk 执行块 0 读取自检。
 pub fn virtio_blk_probe_test() -> DriverResult<()> {
+    // 没有块设备时返回 NotFound，由上层决定是否允许无根盘继续启动。
     let Some(dev) = first_block_device() else {
         return Err(DriverError::NotFound);
     };

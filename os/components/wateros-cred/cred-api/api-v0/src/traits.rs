@@ -13,7 +13,8 @@ pub enum Capability {
 
 /// per-task 凭证生命周期后端。
 pub trait CredentialBackend {
-    /// 读取指定任务的凭证；无条目时由 impl 决定（impl-root：panic）。
+    /// 读取指定任务的凭证；无条目时由 impl 决定（impl-root：panic）。调用者应只
+    /// 查询仍处于生命周期内的任务，已 reap 的任务应先使用可失败查询。
     fn current(&self, tid : TaskId) -> ProcessCredentials;
 
     /// 新用户任务 spawn 后初始化。

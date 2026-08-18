@@ -12,12 +12,15 @@ use fs_api_v0::{FsResult, SharedFs};
 /// 根卷管理：设置/查询当前根 [`SharedFs`]，以及从块设备路径挂载。
 pub trait RootFsManager {
     /// 设置当前根文件系统句柄（通常由 `mount_root_from_block_path` 内部调用）。
+    /// 实现应使新句柄对后续查询原子可见，并在替换时使依赖旧卷的缓存失效。
     fn set_root_fs(&mut self, fs: SharedFs);
     /// 返回当前根卷句柄；未挂载时为 `None`。
     fn root_fs(&self) -> Option<SharedFs>;
     /// 清除根卷句柄与关联的根设备路径（若实现维护该路径）。
+    /// 调用前须确保没有仍依赖该卷的 I/O；清除后所有读取者都必须按未挂载处理。
     fn clear_root_fs(&mut self);
     /// 从 devfs 解析 `path` 对应块设备并以当前活动 [`fs_api_v0::FsImpl`] 执行 RO 挂载。
+    /// 路径不是块设备、尚未注入实现或卷格式不匹配时返回对应 `FsError`。
     fn mount_root_from_block_path(&mut self, path: &str) -> FsResult<()>;
     /// 最近一次成功挂载根卷所使用的块设备路径。
     fn current_root_device_path(&self) -> Option<String>;

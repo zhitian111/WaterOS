@@ -156,8 +156,7 @@ struct UserSignalStack {
     size : usize,
 }
 
-/// Linux keeps room for a 1024-bit signal mask even though the kernel ABI used by
-/// `rt_sigprocmask` currently exposes one 64-bit word.
+/// Linux 为 1024 位信号掩码预留空间，尽管当前 `rt_sigprocmask` 内核 ABI 只暴露一个 64 位字。
 const USER_SIGMASK_PADDING : usize = 120;
 
 #[cfg(target_arch = "riscv64")]
@@ -165,13 +164,12 @@ const USER_SIGMASK_PADDING : usize = 120;
 #[derive(Clone, Copy)]
 struct LinuxMachineContext {
     pc : usize,
-    /// Linux omits x0 and stores x1..x31 in order.
+    /// Linux 不保存 x0，并按顺序保存 x1..x31。
     gprs : [usize; 31],
     fpregs : [u64; 32],
     fcsr : u32,
-    /// Tail of Linux's 0x210-byte FP union.  The D-extension `fcsr` remains
-    /// immediately after its 32 registers; the larger Q member only reserves
-    /// the remaining storage and must be zero on signal return.
+    /// Linux 0x210 字节 FP union 的尾部。D 扩展的 `fcsr` 紧跟 32 个寄存器；
+    /// 更大的 Q 成员只占用剩余存储，信号返回时必须为零。
     fp_union_tail : [u8; 0x10c],
 }
 
@@ -503,11 +501,10 @@ pub(crate) fn raise_current_thread(signal : usize) -> Result<(), ErrNo> {
     send_thread(snapshot.task_id, signal)
 }
 
-/// Queue a synchronous kernel fault with Linux-compatible `siginfo_t` fields.
+/// 将同步内核故障按 Linux 兼容的 `siginfo_t` 字段排入队列。
 ///
-/// Positive `si_code` plus `si_addr` are required by runtimes such as HotSpot;
-/// reporting a CPU exception as `SI_USER` makes their chained fault handler
-/// misclassify it as an asynchronously sent signal.
+/// HotSpot 等运行时要求正值 `si_code` 与 `si_addr`；若将 CPU 异常报告为 `SI_USER`，
+/// 它们的链式故障处理器会误判为异步发送的信号。
 pub(crate) fn raise_current_fault_signal(signal : usize,
                                          code : i32,
                                          fault_addr : usize)
@@ -1261,11 +1258,10 @@ pub(crate) fn send_signal_to_process(process : ProcessId, sig : usize) -> Result
     Ok(())
 }
 
-/// Deliver a terminal-generated signal to every process in a foreground group.
+/// 向前台进程组中的每个进程投递终端产生的信号。
 ///
-/// This is a kernel-originated path: unlike `kill(2)` it deliberately bypasses
-/// caller credential checks, while reusing the normal pending-signal,
-/// stop/continue and scheduler wakeup machinery.
+/// 这是内核发起的路径：与 `kill(2)` 不同，它有意绕过调用者凭证检查，
+/// 但复用正常的 pending 信号、停止/继续和调度器唤醒机制。
 pub(crate) fn send_kernel_signal_to_process_group(pgid : ProcessId, sig : usize) -> usize {
     if sig == 0 || sig > NSIG {
         return 0;

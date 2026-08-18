@@ -109,6 +109,7 @@ impl VirtioNetDevice {
     ///
     /// **须在** `init_frame_allocator`（或等价全局帧池初始化）**之后**调用。
     pub fn from_mmio(mmio: MmioRegion) -> DriverResult<Self> {
+        // 先拒绝空基址并检查 transport 握手；失败时不暴露半初始化网络队列。
         let header = NonNull::new(mmio.base as *mut VirtIOHeader).ok_or(DriverError::InvalidDtb)?;
         let transport =
             unsafe { MmioTransport::new(header, mmio.size) }.map_err(|_| DriverError::Unsupported)?;
@@ -141,6 +142,7 @@ impl NetworkDevice for VirtioNetDevice {
             Ok(rx_buf) => {
                 let packet = rx_buf.packet();
                 if packet.len() > buf.len() {
+                    // 缓冲区不足时先回收 DMA 接收缓冲，再返回 InvalidParam，避免队列泄漏。
                     if let Err(e) = self.inner.recycle_rx_buffer(rx_buf) {
                         logging::warn!("[virtio-net] recycle_rx_buffer failed: {:?}", e);
                     }

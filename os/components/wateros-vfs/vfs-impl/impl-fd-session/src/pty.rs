@@ -62,7 +62,9 @@ fn slave_metadata(path: &str, number: u32) -> VfsMetadata {
 }
 
 struct PtyVfsPreparedRead {
+    /// PTY 端点的共享句柄。
     endpoint: PtyEndpointHandle,
+    /// 本次最多读取字节数。
     max_len: usize,
 }
 
@@ -91,6 +93,7 @@ impl VfsPreparedRead for PtyVfsPreparedRead {
                 self.endpoint.wait_readable_for_ticks(self.max_len, ticks.max(1))
             };
             match result {
+                // 被信号打断直接传播 EINTR 语义，超时则按 termios 最小字节数决定 EOF。
                 waitqueue::TaskWaitResult::Interrupted => return Err(VfsError::Interrupted),
                 waitqueue::TaskWaitResult::TimedOut => {
                     if minimum == 0 && buffered == 0 {

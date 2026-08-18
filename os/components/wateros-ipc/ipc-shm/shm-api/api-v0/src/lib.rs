@@ -49,7 +49,9 @@ pub enum ShmError {
 /// `pages` 是实现持有的物理页；调用方只能把它们映射进地址空间，不能自行释放。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShmSegmentInfo {
+    /// 内核分配的段标识；删除并重建后不能假定其不变。
     pub shmid: ShmId,
+    /// SysV 键；`IPC_PRIVATE` 不进入全局键索引。
     pub key: usize,
     /// 页对齐后的映射长度。
     pub size: usize,
@@ -63,12 +65,19 @@ pub struct ShmSegmentInfo {
     pub creator_gid : u32,
     /// 已完成或正在提交的附加数量。
     pub nattch : usize,
+    /// 是否已执行 `IPC_RMID`；已附加任务仍可继续使用直到最后一次 detach。
     pub marked_removed : bool,
+    /// 创建此段的进程号。
     pub creator_pid : i32,
+    /// 最近 attach/detach/控制操作的进程号。
     pub last_pid : i32,
+    /// 最近成功 attach 的时间；单位和时钟来源由 syscall 层定义。
     pub attach_time : i64,
+    /// 最近 detach 的时间；单位和时钟来源由 syscall 层定义。
     pub detach_time : i64,
+    /// 最近 IPC_SET/创建修改的时间。
     pub change_time : i64,
+    /// registry 所有的物理页列表；调用方仅可映射，不得释放。
     pub pages: Vec<PhysPageNum>,
 }
 
@@ -87,9 +96,13 @@ pub struct ShmRegistryStats {
 /// `readonly` 决定页表权限；页的所有权仍属于 SHM registry，直到 `IPC_RMID` 且附加计数为零。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShmAttachInfo {
+    /// 所属段 ID。
     pub shmid: ShmId,
+    /// 目标地址空间内的映射起始虚拟地址。
     pub base: usize,
+    /// 页对齐映射长度（字节）。
     pub size: usize,
+    /// 是否禁止用户写入此映射。
     pub readonly: bool,
     pub pages: Vec<PhysPageNum>,
 }

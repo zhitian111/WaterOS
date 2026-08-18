@@ -24,7 +24,9 @@ static TLB_SHOOTDOWN_LOCK: debug::TrackedMutex<()> =
 use crate::pagetable::LoongArch64AddressSpace;
 
 pub(crate) struct UserAddressSpaceCell {
+    /// 用户地址空间页表及其所有 VMA/帧状态。
     pub(crate) inner: MultiprocessorSafeCell<LoongArch64AddressSpace>,
+    /// 地址空间是否已经进入销毁流程；置位后拒绝新的访问。
     dropped: AtomicBool,
     /// 所有可能缓存该 ASID TLB 项的 CPU。ASID 有效期间只增不减。
     tlb_cpus: AtomicU64,
@@ -80,12 +82,9 @@ pub fn mark_active(handle: usize, cpu: wateros_base::cpu::CpuId) {
     let cpu_bit = 1u64 << cpu.raw();
     let previous = cell.tlb_cpus.fetch_or(cpu_bit, Ordering::AcqRel);
     if previous & cpu_bit == 0 {
-        // LoongArch switches PGDL and ASID without implicitly invalidating old
-        // translations.  Flush before this address space first runs on a CPU,
-        // so an ASID reused after process teardown cannot observe a stale user
-        // mapping on a CPU that did not execute the teardown path locally.
-        // This mirrors the RISC-V first-use guard; LoongArch currently only
-        // provides a conservative full local invalidation primitive.
+        // LoongArch 切换 PGDL 和 ASID 不会隐式失效旧转换。地址空间首次在某 CPU 上运行前先做
+        // 全量本地失效，防止进程退出后复用 ASID 时，该 CPU 因未执行销毁路径而观察到旧用户映射。
+        // 这是与 RISC-V 首次使用保护相同的保守策略；当前 LoongArch 仅提供全量本地失效原语。
         platform::arch::paging::flush_tlb_local(platform::arch::paging::TlbFlushRange::All);
     }
 }
@@ -101,9 +100,9 @@ pub fn snapshot_user_mappings(
     with_user_aspace_mut(handle, |aspace| Ok(aspace.user_mapping_snapshot()))
 }
 
-/// syscall trap 期间全局中断处于关闭状态，不能直接无限自旋等待 shootdown
-/// 串行锁。等待锁时主动处理本 CPU 已发布的 TLB 请求，避免持锁 CPU 等待
-/// 当前 CPU 确认、当前 CPU 又等待该锁的环形死锁。
+/// syscall trap 期间全局中断处于关闭状态，不能直接无限自旋等待 shootdown 串行锁。
+/// 等待锁时主动处理本 CPU 已发布的 TLB 请求，避免持锁 CPU 等待当前 CPU 确认、当前 CPU 又等待
+/// 该锁的环形死锁。
 fn lock_tlb_shootdown() -> debug::TrackedMutexGuard<'static, ()> {
     let mut reported_wait = false;
     loop {
@@ -122,9 +121,8 @@ fn lock_tlb_shootdown() -> debug::TrackedMutexGuard<'static, ()> {
 }
 
 fn request_tlb_shootdown_targets(mut targets : wateros_base::cpu::CpuMask) -> bool {
-    // Serialize sequence allocation, pending publication, IPI delivery and
-    // acknowledgements.  A per-CPU pending slot cannot represent two
-    // concurrent transactions safely without this critical section.
+    // 串行化序号分配、pending 发布、IPI 投递和确认。每 CPU 只有一个 pending 槽，若不进入此临界区，
+    // 两个并发事务可能互相覆盖序号，导致某个 CPU 永远未确认。
     let _request_guard = lock_tlb_shootdown();
     let current = platform::arch::cpu::current_cpu_id();
     targets = wateros_base::cpu::CpuMask::from_bits(targets.bits() &
@@ -217,9 +215,8 @@ pub fn with_user_aspace_mut_and_flush<R>(handle : usize,
     result
 }
 
-/// Run `f` and invalidate the address space only when it reports a PTE change.
-/// Errors retain the old conservative flush because `f` may have changed an
-/// earlier PTE before discovering an invalid page later in the range.
+/// 执行 `f`，仅在它报告 PTE 发生变化时失效地址空间。
+/// 若返回错误仍采用保守刷新，因为 `f` 可能已修改前面的 PTE，之后才在范围中发现非法页。
 pub fn with_user_aspace_mut_and_flush_if_changed<R>(
     handle : usize,
     f : impl FnOnce(&mut LoongArch64AddressSpace) -> MmResult<(R, bool)>)
@@ -241,10 +238,8 @@ pub fn with_user_aspace_mut_and_flush_if_changed<R>(
     }
 }
 
-/// Run `f`, always invalidate the faulting page locally, and notify other CPUs
-/// only when `f` reports that a PTE changed.  The unconditional local flush
-/// handles the race where another CPU already made a shared COW PTE writable
-/// while this CPU entered with a stale read-only TLB entry.
+/// 执行 `f`，始终在本地失效故障页；仅在 `f` 报告 PTE 变化时通知其它 CPU。
+/// 无条件本地刷新用于处理并发 COW：另一 CPU 已把共享 PTE 改为可写，而本 CPU 仍带着旧的只读 TLB 项进入。
 pub fn with_user_aspace_mut_and_page_flush<R>(handle : usize,
                                               page : usize,
                                               f : impl FnOnce(&mut LoongArch64AddressSpace)

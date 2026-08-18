@@ -23,7 +23,9 @@ static TLB_SHOOTDOWN_LOCK: debug::TrackedMutex<()> =
 use crate::pagetable::Sv39AddressSpace;
 
 pub(crate) struct UserAddressSpaceCell {
+    /// 用户页表及其 VMA/帧状态，所有修改通过该锁串行化。
     pub(crate) inner: MultiprocessorSafeCell<Sv39AddressSpace>,
+    /// 是否已经进入销毁流程；置位后拒绝新的页表访问。
     dropped: AtomicBool,
     /// 所有可能缓存该 ASID TLB 项的 hart；ASID 有效期间只增不减。
     tlb_cpus: AtomicU64,
@@ -99,13 +101,10 @@ pub fn snapshot_user_mappings(
     with_user_aspace_mut(handle, |aspace| Ok(aspace.user_mapping_snapshot()))
 }
 
-/// syscall trap 期间全局中断处于关闭状态，不能直接无限自旋等待 shootdown
-/// 串行锁。否则两个共享地址空间的 CPU 可形成：
-///
-/// A 持锁等待 B 的 TLB IPI 确认，B 关中断等待 A 释放锁。
-///
-/// 等锁期间主动消费本 CPU 已发布的请求，使 A 能完成并释放锁。稍后到达的
-/// SSIP 仍会经过正常 trap 路径清除；由于 completed 已推进，不会重复 flush。
+/// syscall trap 期间全局中断处于关闭状态，不能直接无限自旋等待 shootdown 串行锁。
+/// 否则两个共享地址空间的 CPU 可形成 A 持锁等待 B 的 TLB IPI 确认、B 关中断等待 A 释放锁的死锁。
+/// 等锁期间主动消费本 CPU 已发布的请求，使 A 能完成并释放锁。稍后到达的 SSIP 仍会经过正常
+/// trap 路径清除；由于 completed 已推进，不会重复刷新。
 fn lock_tlb_shootdown() -> debug::TrackedMutexGuard<'static, ()> {
     let mut reported_wait = false;
     loop {
@@ -124,9 +123,8 @@ fn lock_tlb_shootdown() -> debug::TrackedMutexGuard<'static, ()> {
 }
 
 fn request_tlb_shootdown_targets(mut targets : wateros_base::cpu::CpuMask) -> bool {
-    // Serialize sequence allocation, pending publication, IPI delivery and
-    // acknowledgements.  A per-CPU pending slot cannot represent two
-    // concurrent transactions safely without this critical section.
+    // 串行化序列分配、pending 发布、IPI 投递和确认；没有该临界区时，
+    // per-CPU pending 槽无法安全表示两个并发事务。
     let _request_guard = lock_tlb_shootdown();
     let current = platform::arch::cpu::current_cpu_id();
     targets = wateros_base::cpu::CpuMask::from_bits(targets.bits() &
@@ -231,9 +229,8 @@ pub fn with_user_aspace_mut_and_flush<R>(
     result
 }
 
-/// Run `f` and invalidate the address space only when it reports a PTE change.
-/// Errors retain the old conservative flush because `f` may have changed an
-/// earlier PTE before discovering an invalid page later in the range.
+/// 执行 `f`，仅在它报告 PTE 发生变化时失效地址空间。
+/// 错误仍保留保守刷新，因为 `f` 可能先修改了前面的 PTE，之后才发现后续页非法。
 pub fn with_user_aspace_mut_and_flush_if_changed<R>(
     handle: usize,
     f: impl FnOnce(&mut Sv39AddressSpace) -> MmResult<(R, bool)>,
@@ -253,14 +250,9 @@ pub fn with_user_aspace_mut_and_flush_if_changed<R>(
     }
 }
 
-/// Run `f`, always invalidate the faulting page locally, and notify other CPUs
-/// only when `f` reports that a PTE changed.
-///
-/// The unconditional local invalidation is required for a shared address
-/// space: another CPU may already have resolved the COW PTE and completed the
-/// remote shootdown while this CPU was entering the same store fault.  In that
-/// case the page table is writable, but this hart can still hold the stale
-/// read-only translation which caused the trap.
+/// 执行 `f`，始终在本地失效故障页；仅在 `f` 报告 PTE 变化时通知其它 CPU。
+/// 共享地址空间必须无条件本地失效：另一 CPU 可能已解决 COW PTE 并完成远端 shootdown，
+/// 而本 CPU 正在进入同一写故障；此时页表已可写，但本 hart 仍可能持有导致 trap 的旧只读转换。
 pub fn with_user_aspace_mut_and_page_flush<R>(
     handle: usize,
     page: usize,

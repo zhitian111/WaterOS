@@ -3,6 +3,7 @@
 #![no_std]
 
 #[cfg(feature = "self_test")]
+/// 运行当前帧分配器实现的自检；需要先初始化真实帧池，不能在正常运行期随意调用。
 pub fn self_test() {
     log::info!("[mm/frame-allocator] self_test begin");
     impl_stack::self_test();
@@ -19,6 +20,7 @@ use mm_api::addr::{PhysPageNum, PAGE_SIZE};
 /// 组装契约和“恰好回收一次”的责任封装在 frame allocator 层；使用方不能取得可复制
 /// 的所有权句柄，也不能让借出的 slice 越过 `self` 生命周期。
 pub struct OwnedPhysPage {
+    /// 此对象独占持有的一份物理帧引用；析构时通过活动分配器归还。
     frame : PhysPageNum,
 }
 
@@ -39,12 +41,18 @@ impl OwnedPhysPage {
     pub const fn frame_id(&self) -> PhysPageNum { self.frame }
 
     /// 借用整页只读字节。
+    ///
+    /// # 安全前提
+    ///
+    /// 当前内核页表必须恒等映射该 RAM 帧且不存在并发的可变别名。该保证由本 crate 的平台组装契约
+    /// 提供；设备页、已解除映射页或非直映射平台不能使用此接口。
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         unsafe { core::slice::from_raw_parts((self.frame.0 * PAGE_SIZE) as *const u8, PAGE_SIZE) }
     }
 
-    /// 独占借用整页可写字节。
+    /// 独占借用整页可写字节；与 [`Self::as_bytes`] 相同依赖恒等映射，且 `&mut self` 防止安全 Rust
+    /// 层同时取得第二个可写借用，调用方仍须排除硬件/DMA 并发访问。
     #[inline]
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         unsafe { core::slice::from_raw_parts_mut((self.frame.0 * PAGE_SIZE) as *mut u8, PAGE_SIZE) }
@@ -53,6 +61,7 @@ impl OwnedPhysPage {
 
 impl Drop for OwnedPhysPage {
     fn drop(&mut self) {
+        // 析构不能 panic：退出或错误清理期间若再次 panic 会掩盖原始故障；记录错误供诊断。
         #[cfg(feature = "impl-stack")]
         if let Err(error) = frame_dealloc_result(self.frame) {
             log::error!("[frame-allocator] owned page drop failed ppn={:#x}: {:?}",
@@ -62,7 +71,7 @@ impl Drop for OwnedPhysPage {
     }
 }
 
-/// 全局帧池只读统计。
+/// 全局帧池只读统计；结果是瞬时快照，不能根据它保证后续分配一定成功。
 pub fn frame_mem_stats() -> FrameMemStats {
     #[cfg(feature = "impl-stack")]
     return impl_stack::frame_mem_stats();

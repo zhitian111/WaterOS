@@ -1,4 +1,4 @@
-// 任务创建、fork、clone 与 exec 的调度器内部实现。
+//! 任务创建、fork、clone 与 exec 的调度器内部实现。
 use super::*;
 impl MultiClassScheduler {
     pub fn spawn_kernel_task(&mut self,

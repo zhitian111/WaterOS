@@ -431,8 +431,7 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 }
                 task::schedule_reschedule();
             } else if pending & platform::smp::IpiKind::Reschedule.bits() != 0 {
-                // IPI is not a timer event: never advance timeout accounting or
-                // consume a timeslice here.
+                // IPI 不是 timer 事件：不能在此推进超时记账，也不能消耗时间片。
                 task::schedule_reschedule();
             }
         }

@@ -1,4 +1,4 @@
-// 等待队列操作与唤醒后的 CPU 归属。
+//! 等待队列操作与唤醒后的 CPU 归属。
 use super::*;
 use crate::WaitQueueRequeueResult;
 impl MultiClassScheduler {

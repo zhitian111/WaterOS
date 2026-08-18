@@ -1,18 +1,20 @@
 use super::*;
 
 pub struct AutoTable<'a, T, const ROWS: usize, const COLS: usize> {
+    /// 借用的固定行列数据，不复制单元格内容。
     records : &'a [[T; COLS]; ROWS],
+    /// 边框样式。
     style : Style,
 }
 
 impl<'a, T, const ROWS: usize, const COLS: usize> AutoTable<'a, T, ROWS, COLS> {
-    /// Create an automatically sized table.
+    /// 创建按单元格内容自动计算列宽的表格。
     pub const fn new(records : &'a [[T; COLS]; ROWS]) -> Self {
         Self { records,
                style : Style::ascii() }
     }
 
-    /// Select a border style.
+    /// 选择边框样式。
     pub const fn style(mut self, style : Style) -> Self {
         self.style = style;
         self
@@ -20,7 +22,7 @@ impl<'a, T, const ROWS: usize, const COLS: usize> AutoTable<'a, T, ROWS, COLS> {
 }
 
 impl<T : AsRef<str>, const ROWS: usize, const COLS: usize> AutoTable<'_, T, ROWS, COLS> {
-    /// Format the table into a [`Write`] destination.
+    /// 将表格格式化写入 [`Write`] 目标；包含换行的单元格会返回错误。
     pub fn fmt<W : Write>(&self, output : &mut W) -> Result<(), Error> {
         if ROWS == 0 || COLS == 0 {
             return Ok(());
@@ -112,4 +114,3 @@ fn write_auto_border<W : Write, const COLS: usize>(output : &mut W,
     }
     Ok(())
 }
-

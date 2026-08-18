@@ -8,9 +8,13 @@ use core::ptr::{read_volatile, write_volatile};
 
 /// QEMU LoongArch64 `virt` UART16550 默认 MMIO 物理基址。
 const UART_BASE: usize = 0x1FE0_01E0;
+/// UART 发送保持寄存器偏移。
 const UART_THR: usize = UART_BASE;
+/// UART 线路状态寄存器偏移。
 const UART_LSR: usize = UART_BASE + 5;
+/// 发送保持寄存器可写标志。
 const UART_LSR_THRE: u8 = 1 << 5;
+/// 发送移位寄存器为空标志。
 const UART_LSR_TEMT: u8 = 1 << 6;
 
 #[inline]
@@ -53,8 +57,7 @@ pub fn console_write_a_buffer(bytes: &[u8]) -> PlatformConsoleResult<()> {
     Ok(())
 }
 
-/// Write wire bytes without newline conversion. The TTY line discipline uses
-/// this after applying `OPOST/ONLCR` itself.
+/// 写入不做换行转换的线缆字节；TTY line discipline 已自行应用 `OPOST/ONLCR`。
 pub fn console_write_raw_buffer(bytes: &[u8]) -> PlatformConsoleResult<()> {
     for &byte in bytes {
         uart_write_byte_raw(byte);

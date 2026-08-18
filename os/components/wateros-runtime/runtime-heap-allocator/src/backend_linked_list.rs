@@ -13,6 +13,7 @@ use crate::HeapMemStats;
 use crate::HEAP_SPACE;
 
 pub(crate) struct InterruptSafeLockedHeap {
+    /// linked-list allocator 的元数据锁；中断屏蔽由外层 guard 负责。
     inner : LockedHeap,
 }
 

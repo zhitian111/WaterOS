@@ -351,7 +351,7 @@ impl PagedFileHandle {
         }
     }
 
-    /// Persist this file's data and the filesystem metadata beneath it.
+    /// 持久化该文件的数据及其所属文件系统元数据。
     fn sync_dirty(&mut self) -> VfsResult<()> {
         self.writeback_dirty()?;
         if !self.writable || self.is_detached() {

@@ -3,7 +3,9 @@
 /// 屏幕或窗口坐标。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Point {
+    /// 水平像素坐标；允许为负以表示窗口或裁剪区外的位置。
     pub x : i32,
+    /// 垂直像素坐标；允许为负以表示窗口或裁剪区外的位置。
     pub y : i32,
 }
 
@@ -14,7 +16,9 @@ impl Point {
 /// 二维大小。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Size {
+    /// 宽度（像素）；零表示空尺寸。
     pub width : u32,
+    /// 高度（像素）；零表示空尺寸。
     pub height : u32,
 }
 
@@ -61,7 +65,8 @@ impl Rect {
 
     pub const fn is_empty(self) -> bool { self.size.is_empty() }
 
-    pub fn right(self) -> i32 {
+   pub fn right(self) -> i32 {
+        // 使用 i64 并钳制，防止极大尺寸与有符号原点相加时回绕。
         i64::from(self.origin.x).saturating_add(i64::from(self.size.width)).clamp(i64::from(i32::MIN),
                                                                                   i64::from(i32::MAX)) as i32
     }

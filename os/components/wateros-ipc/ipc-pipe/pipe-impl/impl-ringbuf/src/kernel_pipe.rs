@@ -37,9 +37,8 @@ struct ReadReservation {
 
 /// `DATA:` 同一 pipe 的全部可变状态，必须只在 `Pipe::state` 锁内访问。
 struct PipeState {
-    /// Bytes currently buffered.  Keep storage proportional to payload, not
-    /// to the configured pipe capacity: Linux's `F_SETPIPE_SZ` changes a
-    /// limit and must not eagerly pin (up to) 1 MiB of kernel heap per pipe.
+    /// 当前缓冲的字节数。存储量按载荷而非配置容量增长：Linux 的 `F_SETPIPE_SZ`
+    /// 只改变上限，不能让每条 pipe 预先固定最多 1 MiB 内核堆。
     buf: VecDeque<u8>,
     capacity: usize,
     segments: VecDeque<PipeSegment>,

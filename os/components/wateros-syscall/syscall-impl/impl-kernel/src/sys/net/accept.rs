@@ -19,9 +19,13 @@ const FD_CLOEXEC : usize = 1;
 #[derive(Copy, Clone)]
 // 本结构代码由AI完成
 struct SockAddrIn {
+    /// 地址族，IPv4 为 2。
     sin_family : u16,
+    /// 网络字节序端口。
     sin_port : u16,
+    /// IPv4 地址四字节表示。
     sin_addr : [u8; 4],
+    /// 结构体填充，保持 Linux ABI 大小。
     sin_zero : [u8; 8],
 }
 

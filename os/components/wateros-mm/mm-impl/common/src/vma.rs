@@ -3,6 +3,8 @@
 //! 注意：本模块属于 `mm-impl-common`，不是稳定 API；仅用于消除 Sv39 /
 //! LoongArch64 中的重复定义。后续 Task 02 会继续把维护操作收口到注册表。
 
+//! 双架构共享的 VMA 数据结构、后备对象和有序查找集合。
+
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -17,7 +19,9 @@ use api_v0::perm::PagePerm;
 /// `Anonymous` 对应零页/COW；`File` 暂保留 loader，但 VMA 本身不再直接持有
 /// `Box<dyn DemandPageLoader>`，后续 Task 06 再把 File 转为统一 page cache backing。
 pub enum VmaBacking {
+    /// 匿名页：缺页时由调用方提供清零页，不读取文件。
     Anonymous,
+    /// 文件页：通过 loader 读取、共享或写回文件后备。
     File { loader : Box<dyn DemandPageLoader> },
 }
 
@@ -59,11 +63,17 @@ impl VmaBacking {
 }
 
 pub struct LazyFileVma {
+    /// VMA 起始虚拟地址（含）。
     pub start : VirtAddr,
+    /// VMA 结束虚拟地址（不含）。
     pub end : VirtAddr,
+    /// 缺页建立的叶 PTE 权限。
     pub perm : PagePerm,
+    /// VMA 起点对应的文件字节偏移。
     pub file_offset : usize,
+    /// 文件有效长度；超出部分由 BSS/零填充语义处理。
     pub file_size : usize,
+    /// 内容读取与共享页策略。
     pub backing : VmaBacking,
 }
 
@@ -89,7 +99,9 @@ impl LazyFileVma {
 
 #[derive(Clone, Copy)]
 pub struct SharedAnonVma {
+    /// 共享匿名区间起点（含）。
     pub start : VirtAddr,
+    /// 共享匿名区间终点（不含）。
     pub end : VirtAddr,
 }
 
@@ -104,9 +116,13 @@ impl SharedAnonVma {
 }
 
 pub struct SharedFileVma {
+    /// 共享文件区间起点（含）。
     pub start : VirtAddr,
+    /// 共享文件区间终点（不含）。
     pub end : VirtAddr,
+    /// 区间起点对应的文件偏移。
     pub file_offset : usize,
+    /// 文件后备对象及其引用生命周期。
     pub backing : VmaBacking,
 }
 
@@ -130,10 +146,15 @@ impl SharedFileVma {
 
 #[derive(Clone)]
 pub struct DeviceVma {
+    /// 设备用户映射起点（含）。
     pub start : VirtAddr,
+    /// 设备用户映射终点（不含）。
     pub end : VirtAddr,
+    /// 首个设备物理页号；解除映射时不得归还普通帧池。
     pub phys_start : PhysPageNum,
+    /// 用户页权限。
     pub perm : PagePerm,
+    /// 保持驱动 DMA 缓冲有效的租约。
     pub lease : Arc<dyn DeviceMappingLease>,
 }
 
@@ -152,6 +173,7 @@ impl DeviceVma {
 /// 所有修改方法都会在结束时重新建立有序性；查找先走二分，必要时线性回退，
 /// 避免调用方因为列表短暂失序而漏页。
 pub struct LazyVmaSet {
+    /// 按 `start` 升序保存且语义上不允许重叠的 VMA 列表。
     inner : Vec<LazyFileVma>,
 }
 
@@ -205,6 +227,7 @@ impl LazyVmaSet {
 
     pub fn sort(&mut self) { self.rebuild_order(); }
 
+    /// 查找包含给定页起始地址的 VMA；二分失败后线性回退以容忍暂时未排序状态。
     pub fn lookup(&self, page : VirtAddr) -> Option<usize> {
         let mut low = 0usize;
         let mut high = self.inner.len();

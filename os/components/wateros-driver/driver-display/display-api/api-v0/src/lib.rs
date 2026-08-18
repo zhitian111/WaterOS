@@ -46,9 +46,13 @@ pub struct FramebufferInfo {
 /// framebuffer 中需要提交的矩形区域。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FramebufferRegion {
+    /// 矩形左上角 x 坐标（像素）。
     pub x : u32,
+    /// 矩形左上角 y 坐标（像素）。
     pub y : u32,
+    /// 矩形宽度；零宽区域不产生传输。
     pub width : u32,
+    /// 矩形高度；零高区域不产生传输。
     pub height : u32,
 }
 

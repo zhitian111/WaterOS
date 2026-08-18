@@ -1,4 +1,4 @@
-//! Block-device adaptation and backend error handling for another-ext4.
+//! another-ext4 的块设备适配和后端错误映射。
 
 extern crate alloc;
 
@@ -32,7 +32,7 @@ pub(crate) fn map_type(file_type : FileType) -> FsNodeType {
     }
 }
 
-/// Adapts WaterOS's block device to another_ext4's fixed-size blocks.
+/// 将 WaterOS 块设备适配为 another_ext4 的固定大小块；非整块和溢出请求返回错误。
 pub(crate) struct BlockAdapter {
     pub(crate) device : SharedBlockDevice,
     pub(crate) io_error : Arc<AtomicBool>,

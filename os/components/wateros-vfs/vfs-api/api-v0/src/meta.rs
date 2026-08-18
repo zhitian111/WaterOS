@@ -14,8 +14,11 @@ pub enum VfsNodeType {
 /// 路径查询返回的轻量元数据。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VfsMetadata {
+    /// 节点类型。
     pub node_type: VfsNodeType,
+    /// 文件长度（字节）。
     pub size: u64,
+    /// Linux mode 位。
     pub mode: u16,
     /// Linux `st_dev` 的 major/minor 组成部分。
     pub device_major: u32,
@@ -37,5 +40,6 @@ pub struct VfsMetadata {
 pub struct VfsDirEntry {
     /// 目录项 basename（不含 `/`）。
     pub name: String,
+    /// 目录项对应节点类型。
     pub node_type: VfsNodeType,
 }

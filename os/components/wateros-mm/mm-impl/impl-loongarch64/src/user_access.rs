@@ -15,10 +15,12 @@ use crate::user_aspace;
 
 /// 绑定到指定用户地址空间句柄的拷贝实现。
 pub struct LoongArch64UserMemoryOps {
+    /// `LoadedElf::user_aspace_ptr` 对应的内核不透明句柄。
     handle : usize,
 }
 
 impl LoongArch64UserMemoryOps {
+    /// 创建绑定指定用户地址空间的访问器；句柄为 0 时后续操作返回非法地址错误。
     pub const fn new(handle : usize) -> Self { Self { handle } }
 }
 
@@ -73,11 +75,17 @@ pub fn debug_probe_user_virt(handle : usize, va : VirtAddr) -> MmResult<UserVirt
 
 #[derive(Clone, Copy, Debug)]
 pub struct UserVirtProbe {
+    /// 当前地址是否已有驻留 PTE 的物理地址。
     pub pa : Option<PhysAddr>,
+    /// 驻留叶 PTE 权限。
     pub perm : Option<PagePerm>,
+    /// 若尚未驻留，匹配到的 lazy VMA 权限。
     pub lazy_perm : Option<PagePerm>,
+    /// 地址是否位于当前 brk 已增长区间。
     pub in_brk : bool,
+    /// 地址是否位于用户栈保留区。
     pub in_stack : bool,
+    /// 当前地址空间安装 token，用于诊断页表切换问题。
     pub aspace_satp : usize,
 }
 

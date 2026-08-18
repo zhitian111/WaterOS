@@ -9,9 +9,11 @@
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+/// 已发布的内核地址空间 token；0 表示 MM 尚未完成初始化，不能用于切换页表。
 static KERNEL_SATP : AtomicUsize = AtomicUsize::new(0);
 
 /// 写入内核地址空间 token（由 MM `init` 末尾调用）。
+/// 发布顺序由 MM 初始化和页表切换路径共同保证；本缓存本身不替代必要的 TLB 同步。
 #[inline]
 pub fn set(token : usize) { KERNEL_SATP.store(token, Ordering::Release); }
 

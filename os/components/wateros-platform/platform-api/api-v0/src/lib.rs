@@ -11,7 +11,7 @@
 pub mod boot;
 pub mod console;
 pub mod reset;
-/// CPU bring-up and online-state contract for SMP-capable platforms.
+/// 支持 SMP 的平台所需的 CPU bring-up 与 online 状态契约。
 pub mod smp;
 pub mod time;
 pub mod timer;

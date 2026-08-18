@@ -11,8 +11,11 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 /// 以 `TaskId` 为 key 的 per-task 凭证侧表。
 pub struct PerTaskCredRegistry {
+    /// 每个凭证所有者对应的快照；线程共享时只保留一份。
     creds: BTreeMap<TaskId, ProcessCredentials>,
+    /// 任务到凭证所有者的映射；clone 线程可指向同一 owner。
     owners: BTreeMap<TaskId, TaskId>,
+    /// owner 的引用数，归零时同步删除 `creds` 条目。
     ref_counts: BTreeMap<TaskId, usize>,
 }
 
@@ -26,6 +29,7 @@ impl PerTaskCredRegistry {
     }
 
     fn ensure_owner(&mut self, tid: TaskId) -> TaskId {
+        // 首次出现的 tid 成为自己的 owner；`or_insert` 保证重复调用不重置共享关系。
         self.owners.entry(tid).or_insert(tid);
         self.ref_counts.entry(tid).or_insert(1);
         self.effective_owner(tid)
@@ -41,6 +45,7 @@ impl PerTaskCredRegistry {
     fn release_owner(&mut self, tid: TaskId) -> Option<TaskId> {
         let owner = self.owners.remove(&tid)?;
         if let Some(count) = self.ref_counts.get_mut(&owner) {
+            // 使用饱和减法防止损坏的重复 reap 造成 usize 下溢；零计数随后移除。
             *count = count.saturating_sub(1);
             if *count == 0 {
                 self.ref_counts.remove(&owner);
@@ -137,6 +142,7 @@ impl CredentialBackend for PerTaskCredRegistry {
     }
 
     fn drop_task_cred(&mut self, tid: TaskId) {
+        // 缺少 owner 说明任务已被回收；幂等返回可处理重复清理路径。
         let Some(owner) = self.release_owner(tid) else {
             return;
         };
@@ -205,6 +211,7 @@ impl AccessCheck for PerTaskCredRegistry {
 static mut CRED_REGISTRY: MaybeUninit<MultiprocessorSafeCell<PerTaskCredRegistry>> = MaybeUninit::uninit();
 static CRED_REGISTRY_READY: AtomicUsize = AtomicUsize::new(0);
 
+/// 返回全局凭证表；访问者必须持有返回的自旋锁，且初始化应发生在并发访问前。
 pub(super) fn registry() -> &'static MultiprocessorSafeCell<PerTaskCredRegistry> {
     if CRED_REGISTRY_READY.load(Ordering::Acquire) == 0 {
         unsafe {

@@ -12,7 +12,10 @@ use crate::perm::PagePerm;
 /// 地址空间标识（ASID 等）；具体分配与复用规则由架构 MM 实现负责。
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct AddressSpaceId(pub u32);
+pub struct AddressSpaceId(
+    /// 由架构实现分配的数值；是否可复用、何时刷新 TLB 均由该实现保证。
+    pub u32,
+);
 
 /// 地址空间（地址映射）操作契约。
 ///
@@ -21,9 +24,14 @@ pub struct AddressSpaceId(pub u32);
 /// - `satp_value()` 用于在 arch-impl 中安装页表并刷新 TLB。
 pub trait AddressSpaceOps {
     /// 安装页表所需的地址空间 token（历史命名为 `satp`）。
+    ///
+    /// 调用本方法只读取编码，不会切换当前 CPU 的地址空间；切换必须经 arch 层完成并处理 TLB。
     fn satp_value(&self) -> usize;
 
     /// 将 `vpn -> ppn` 映射到页表，并应用页权限 `perm`。
+    ///
+    /// `vpn` 已映射、`ppn` 不合法或权限无法由硬件表达时返回错误。成功后帧所有权仍在调用者，
+    /// 不得在映射存活期间提前归还给分配器。
     fn map_page_to_ppn(
         &mut self,
         vpn: VirtPageNum,
@@ -36,10 +44,10 @@ pub trait AddressSpaceOps {
     /// 返回解除前的 `ppn`（若 vpn 未映射则返回 `Ok(None)`）。
     fn unmap_page_to_ppn(&mut self, vpn: VirtPageNum) -> MmResult<Option<PhysPageNum>>;
 
-    /// 更新 `vpn` 的权限（不改变映射）。
+    /// 更新 `vpn` 的权限（不改变映射）；未映射页应返回错误，调用者负责随后需要的 TLB 刷新。
     fn protect_page(&mut self, vpn: VirtPageNum, perm: PagePerm) -> MmResult<()>;
 
-    /// 翻译用户虚拟地址到物理地址。
+    /// 翻译虚拟地址到物理地址；`Ok(None)` 表示未映射，权限检查语义由具体实现约定。
     fn translate_addr(&self, va: VirtAddr) -> MmResult<Option<PhysAddr>>;
 
     /// 若 `vpn` 已映射为叶子页，返回当前语义层权限；否则 `Ok(None)`。
@@ -73,6 +81,8 @@ pub trait AddressSpaceOps {
         A: PhysicalFrameAllocator<FrameId = PhysPageNum>,
     {
         let ppn = allocator.alloc_frame()?;
+        // 注意：既有 trait 将映射失败后的帧处置交给具体实现/调用路径，默认封装不擅自回收，
+        // 以免实现已安装部分映射时发生重复释放。
         self.map_page_to_ppn(vpn, ppn, perm)
     }
 
@@ -108,6 +118,7 @@ pub trait AddressSpaceOps {
         if start.0 >= end.0 {
             return Ok(());
         }
+        // 半开区间允许端点不对齐；空区间不分配，避免 `mmap(len=0)` 类调用意外触碰页表。
         let mut vpn = start.floor_page();
         let vpn_end = end.ceil_page();
         while vpn.0 < vpn_end.0 {

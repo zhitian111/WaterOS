@@ -1,26 +1,27 @@
+//! 双架构共享的惰性 VMA 缺页处理。
+//!
+//! 本路径只负责判断 VMA、权限和填充策略；成功建立 PTE 后由架构调用方执行适配的 TLB 刷新。
+
 use super::*;
 
 use api_v0::address_space::AddressSpaceOps;
 use api_v0::frame_allocator::PhysicalFrameAllocator;
 use api_v0::mmap::PageFaultAccess;
 
-/// Internal accessor shared by the architecture address-space types.
+/// 架构地址空间类型共享的内部访问器。
 ///
-/// It keeps the common lazy-file fault path generic without exposing the
-/// concrete `LazyVmaSet` field through `api-v0`.
+/// 它让通用惰性文件缺页路径保持泛型，同时不把具体 `LazyVmaSet` 字段暴露到 `api-v0`。
 pub trait LazyVmaAccess {
+    /// 只读取得当前地址空间的惰性 VMA 集合。
     fn lazy_vma_set(&self) -> &LazyVmaSet;
     fn lazy_vma_set_mut(&mut self) -> &mut LazyVmaSet;
 }
 
-/// Common lazy-file/anonymous fault entry point.
+/// 通用惰性文件/匿名映射缺页入口。
 ///
-/// The VMA registry decides whether the fault belongs to a lazy mapping and
-/// supplies the permissions/file offset. `VmaBacking` then owns all content
-/// policy: anonymous pages remain zeroed, read-only file pages may return a
-/// page-cache frame, and private/writable pages are populated into a freshly
-/// allocated frame. The caller is responsible for TLB invalidation after
-/// `Ok(true)`, because the exact flush range is architecture-specific.
+/// VMA 注册表判断故障是否属于惰性映射并提供权限、文件偏移；`VmaBacking` 决定内容策略：匿名页
+/// 保持清零，只读文件页可复用页缓存帧，私有/可写页填充到新分配帧。返回 `Ok(true)` 后由调用方
+/// 负责 TLB 刷新，因为精确刷新范围取决于架构。
 pub fn handle_lazy_file_fault<S, A>(aspace : &mut S,
                                     allocator : &mut A,
                                     fault_addr : VirtAddr,
@@ -51,8 +52,7 @@ pub fn handle_lazy_file_fault<S, A>(aspace : &mut S,
         return Ok(false);
     }
 
-    // A peer may have installed the same page after this CPU took the fault.
-    // The caller still needs to flush its stale TLB entry.
+    // 另一个 CPU 可能在本 CPU 捕获缺页后已经安装了同页；仍需由调用方刷新本 CPU 的旧 TLB 项。
     if aspace.translate_addr(page)?
              .is_some()
     {
@@ -102,3 +102,4 @@ pub fn handle_lazy_file_fault<S, A>(aspace : &mut S,
 
     Ok(true)
 }
+    /// 取得可修改的惰性 VMA 集合；加载文件页时可能需要更新 loader 的内部状态。

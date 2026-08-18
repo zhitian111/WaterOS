@@ -12,6 +12,7 @@ pub(crate) static DEVICE_INFOS: Mutex<Vec<DeviceInfo>> = Mutex::new(Vec::new());
 
 // `word_offset` 为 u32 字偏移，与 VirtIO-MMIO 寄存器布局一致；访问须落在已映射的物理窗口内。
 fn mmio_read32(base: usize, word_offset: usize) -> u32 {
+    // 仅对 DTB 已声明窗口做 volatile 读取；偏移单位是 32 位寄存器字。
     let ptr = (base as *const u32).wrapping_add(word_offset);
     unsafe { core::ptr::read_volatile(ptr) }
 }
@@ -40,6 +41,7 @@ pub(crate) fn sys_dev_path_for_dtb_node(node_name: &str) -> String {
 
 /// 遍历 DTB 全部节点，重建全局设备信息表（先清空）；返回表中条目数。
 pub fn scan_device_info() -> DriverResult<usize> {
+    // 每次扫描先清空快照，失败重试不会保留上一轮已下线的设备。
     let fdt = dtb::read_fdt(platform::dtb_pa())?;
     let mut devices = DEVICE_INFOS.lock();
     devices.clear();

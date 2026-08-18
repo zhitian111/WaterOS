@@ -160,12 +160,13 @@ pub fn resolve_symlink_in_root_absolute(
                                              .filter(|part| !part.is_empty())
                                              .map(String::from)
                                              .collect();
-    // Keep an index into the component queue. Removing from the front makes
-    // every symlink hop copy the remaining path and turns deep paths O(d^2).
+    // 保留组件队列索引；从队首删除会让每次符号链接跳转都复制剩余路径，
+    // 使深路径退化为 O(d²)。
     let mut pending_index = 0usize;
     let mut resolved = String::from(root);
     let mut followed = 0usize;
     while pending_index < pending.len() {
+        // 使用索引而不是反复 remove(0)，避免深层符号链接路径退化为 O(n²)。
         let component = pending[pending_index].clone();
         pending_index += 1;
         let candidate = if resolved == "/" {

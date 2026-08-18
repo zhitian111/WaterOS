@@ -70,14 +70,19 @@ pub(super) struct TcpListenerGroup {
 }
 
 pub(super) struct LoopbackUdpPacket {
+    /// UDP 有效载荷；零长度报文也占用一个队列条目。
     pub(super) data : Vec<u8>,
+    /// 发送方 IPv4 地址，供 `recvfrom` 返回来源端点。
     pub(super) source_ip : [u8; 4],
+    /// 发送方 UDP 端口。
     pub(super) source_port : u16,
 }
 
 #[derive(Default)]
 pub(super) struct LoopbackUdpQueue {
+    /// 按到达顺序保存本机回环数据报。
     packets : VecDeque<LoopbackUdpPacket>,
+    /// 所有排队载荷的总字节数，用于限制内核内存占用。
     queued_bytes : usize,
 }
 
@@ -136,11 +141,14 @@ pub(super) struct NetworkStack {
     pub(super) tcp_close_pending : BTreeSet<SocketHandle>,
     /// 已投递到本机 UDP socket、等待用户态接收的有限队列。
     pub(super) udp_loopback : BTreeMap<SocketHandle, LoopbackUdpQueue>,
+    /// 配置给接口的本机 IPv4 地址；用于校验 bind 和生成默认路由。
     pub(super) local_ip : [u8; 4],
     /// 最近一次交给 smoltcp 的单调毫秒时间，防止无时钟轮询使时间倒退。
     pub(super) last_poll_millis : i64,
     /// 临时端口分配器。
+    /// 下一个临时端口；溢出后回到 49152，冲突由 bind 操作继续检查。
     pub(super) ephemeral_port : u16,
+    /// listener 槽池的单调 ID，仅在协议栈锁内分配。
     pub(super) next_listener_group : u64,
 }
 

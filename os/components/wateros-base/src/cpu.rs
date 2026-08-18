@@ -3,7 +3,7 @@
 use config::task::MAX_CPUS;
 use core::cell::UnsafeCell;
 
-// BASE_INVARIANT: CpuMask 的公开位图格式固定为 u64，静态 CPU 容量不能溢出它。
+// 基础不变量：CpuMask 的公开位图格式固定为 u64，静态 CPU 容量不能溢出它。
 const _ : () = assert!(MAX_CPUS <= u64::BITS as usize);
 
 /// 逻辑 CPU 标识。
@@ -64,6 +64,7 @@ impl CpuMask {
     /// `CpuMask` 只能表达 64 个 CPU；若第 8 个字节之后仍有置位 bit，返回
     /// `None`，而不是静默丢弃调用者的 affinity 请求。
     pub fn try_from_le_bytes(bytes : &[u8]) -> Option<Self> {
+        // 高于 64 位的非零内容不能静默截断，否则会错误接受用户的 affinity 请求。
         if bytes.get(core::mem::size_of::<u64>()..)
                 .is_some_and(|tail| {
                     tail.iter()
@@ -76,6 +77,7 @@ impl CpuMask {
         for (i, byte) in bytes.iter()
                               .enumerate()
         {
+            // 这里最多处理 8 个字节，避免对 u64 做超过 63 位的移位。
             if i >= core::mem::size_of::<u64>() {
                 break;
             }
@@ -87,6 +89,7 @@ impl CpuMask {
     /// 将掩码以 Linux cpu_set_t 使用的小端字节序写入调用者缓冲区。
     /// 超出本掩码宽度的字节必须是 0，避免向 userspace 泄漏旧缓冲区内容。
     pub fn write_le_bytes(self, out : &mut [u8]) {
+        // 先清零整个用户缓冲区，防止短掩码输出泄漏旧内核数据。
         out.fill(0);
         let bytes = self.bits()
                         .to_le_bytes();
@@ -139,7 +142,7 @@ pub struct CpuLocal<T, const N: usize> {
     slots : [UnsafeCell<T>; N],
 }
 
-// BASE_INVARIANT: `get` 可能把不同槽位的 `&T` 交给多个 CPU，因此共享
+// 基础不变量：`get` 可能把不同槽位的 `&T` 交给多个 CPU，因此共享
 // CpuLocal 只在 T 本身允许并发共享时才安全；可变访问另外由
 // `get_local_mut` 的调用约束保证不会与这些引用重叠。
 unsafe impl<T : Sync, const N: usize> Sync for CpuLocal<T, N> {}

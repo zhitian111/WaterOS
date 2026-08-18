@@ -38,8 +38,8 @@ struct LoongArch64PteFlags(usize);
 impl LoongArch64PteFlags {
     const V : Self = Self(1 << 0); // Valid
     const D : Self = Self(1 << 1); // Dirty
-                                   // bits [2:3] = PLV (privilege level)
-                                   // bits [4:5] = MAT (memory access type)
+                                   // 位 [2:3] 表示 PLV（特权级）。
+                                   // 位 [4:5] 表示 MAT（内存访问类型）。
     const P : Self = Self(1 << 7); // Present (physical page exists)
     const W : Self = Self(1 << 8); // Writable
     const COW : Self = Self(1 << 9);
@@ -109,13 +109,13 @@ impl LoongArch64PteFlags {
     /// `perm.user()` 决定。LoongArch 的写权限由硬件 D 位执行，W 位只供软件遍历。
     #[inline]
     fn from_perm(perm : PagePerm) -> Self {
-        let mut f = Self::V; // always valid
-        f.0 |= Self::P.0; // page is present
+        let mut f = Self::V; // 页表项始终有效。
+        f.0 |= Self::P.0; // 物理页已存在。
         f.0 |= Self::MAT_CACHED;
         if perm.user() {
-            f.0 |= Self::PLV_USER; // PLV = 3
+            f.0 |= Self::PLV_USER; // PLV = 3。
         }
-        // else PLV stays 0 (kernel-only)
+        // 否则保持 PLV=0，仅内核可访问。
         if perm.writable() {
             f.0 |= Self::W.0 | Self::D.0;
         }
@@ -155,6 +155,7 @@ struct LoongArch64Pte(usize);
 impl LoongArch64Pte {
     #[allow(dead_code)]
     #[inline]
+    /// 创建无效/空 PTE；仅用于新分配并清零的页表。
     const fn zero() -> Self { Self(0) }
 
     #[inline]
@@ -206,7 +207,9 @@ unsafe fn table_mut(ppn : PhysPageNum) -> &'static mut [LoongArch64Pte; LOONGARC
 }
 
 struct UserLeafPage {
+    /// 用户叶页起始虚拟地址。
     addr : usize,
+    /// 复制/建立 COW 时需要恢复的语义权限。
     perm : PagePerm,
 }
 
@@ -254,6 +257,7 @@ fn alloc_table_frame_zeroed() -> MmResult<PhysPageNum> {
 
 /// LoongArch64 根页表与 walk 状态；所有映射均为 **4 KiB 叶子**。
 pub struct LoongArch64AddressSpace {
+    /// 根页表物理页号；始终由地址空间独占，销毁时递归释放。
     root : PhysPageNum,
     /// 硬件 TLB 地址空间标识；0 仅供内核地址空间使用。
     asid : u16,
@@ -271,16 +275,19 @@ pub struct LoongArch64AddressSpace {
     pub(crate) mmap_base : VirtAddr,
     /// 用户栈保留区，可由合法读/写缺页按需补页。
     pub(crate) user_stack_bottom : VirtAddr,
+    /// 用户栈保留区上界（不含），栈从该地址向低地址增长。
     pub(crate) user_stack_top : VirtAddr,
+    /// 尚未驻留的文件后备 VMA，缺页时由通用 fault 路径查询。
     pub(crate) lazy_file_vmas : LazyVmaSet,
+    /// 共享匿名 VMA 元数据；对应物理页引用由叶 PTE/帧分配器维护。
     pub(crate) shared_anon_vmas : Vec<SharedAnonVma>,
+    /// 共享文件 VMA 元数据；销毁或同步时需要调用后备 loader。
     pub(crate) shared_file_vmas : Vec<SharedFileVma>,
     /// 不属于通用帧分配器的外部设备映射。
     pub(crate) device_vmas : Vec<DeviceVma>,
 }
 
-// The address space is accessed through MultiprocessorSafeCell.  The lock
-// serializes the non-Send lazy-loader state as well as page-table mutation.
+// 地址空间通过 MultiprocessorSafeCell 访问；该锁同时串行化非 Send 的惰性加载器状态和页表修改。
 unsafe impl Send for LoongArch64AddressSpace {}
 unsafe impl Sync for LoongArch64AddressSpace {}
 
@@ -794,11 +801,10 @@ impl LoongArch64AddressSpace {
         Ok(())
     }
 
-    /// Allocate the directory levels needed by the hardware refill walker.
+    /// 分配硬件 refill walker 所需的各级目录。
     ///
-    /// Linux points every empty directory slot at shared invalid lower-level
-    /// tables. WaterOS uses zero-filled directories instead, so lazy VMAs must
-    /// materialize their directory path while keeping the leaf PTE invalid.
+    /// Linux 会让空目录项指向共享的无效下级表；WaterOS 使用清零目录，因此惰性 VMA 必须先物化
+    /// 目录路径，同时保持叶 PTE 无效，直到真正发生缺页。
     fn ensure_lazy_refill_paths(&mut self, start : VirtAddr, end : VirtAddr) -> MmResult<()> {
         const LEAF_TABLE_SPAN : usize = PAGE_SIZE * LOONGARCH64_ENTRIES;
 
@@ -897,6 +903,7 @@ impl LoongArch64AddressSpace {
     /// - 内核恒等映射页（PLV != 3）：共享原始 PPN，不复制数据帧。
     /// - 含用户映射的中间页表帧：为子地址空间复制页表结构。
     // 本方法代码由AI完成
+    /// 处理一页 COW 写故障并在本方法内刷新本地地址空间转换。
     pub fn fork_cow(&mut self) -> MmResult<LoongArch64AddressSpace> {
         log::trace!("[mm-fork] LoongArch64AddressSpace::fork begin root_ppn={}",
                     self.root.0);
@@ -957,6 +964,7 @@ impl LoongArch64AddressSpace {
     }
 
     // 本方法代码由AI完成
+    /// 处理一页 COW：唯一引用时仅恢复可写位，多引用时复制物理页并替换叶 PTE。
     fn handle_cow_page(&mut self, vpn : VirtPageNum) -> MmResult<bool> {
         let Some((pte, level)) = self.walk_find(vpn)? else {
             return Ok(false);
@@ -987,6 +995,7 @@ impl LoongArch64AddressSpace {
     }
 
     // 本方法代码由AI完成
+    /// 处理用户写故障并在本方法内刷新当前地址空间的本地转换。
     pub fn handle_cow_fault(&mut self, fault_addr : VirtAddr) -> MmResult<bool> {
         let changed = self.handle_cow_page(fault_addr.floor_page())?;
         if changed {
@@ -995,20 +1004,17 @@ impl LoongArch64AddressSpace {
         Ok(changed)
     }
 
-    /// Same as [`Self::handle_cow_fault`], but the caller owns TLB invalidation.
+    /// 与 [`Self::handle_cow_fault`] 相同，但 TLB 失效由调用方负责。
     pub(crate) fn handle_cow_fault_no_flush(&mut self, fault_addr : VirtAddr) -> MmResult<bool> {
         let vpn = fault_addr.floor_page();
         if self.handle_cow_page(vpn)? {
             return Ok(true);
         }
 
-        // Another CPU may have resolved the same COW page after this CPU took
-        // a PME on a stale D=0 TLB entry but before it acquired the address-space
-        // lock.  In that case the current PTE is already a writable, dirty user
-        // leaf.  Report the fault as handled so the outer wrapper invalidates
-        // this CPU's stale translation (and conservatively shoots down peers)
-        // before retrying the store.  A genuinely read-only or unmapped page
-        // still returns false and is delivered as SIGSEGV by the trap layer.
+        // 另一 CPU 可能在本 CPU 因旧的 D=0 TLB 项收到 PME 后、但在本 CPU 获取地址空间锁前，
+        // 已解决同一 COW 页。此时当前 PTE 已是可写且脏的用户叶项；报告为已处理，让外层失效
+        // 本 CPU 的旧转换（并保守通知其它 CPU）后重试写入。真正只读或未映射的页仍返回 false，
+        // 由 trap 层转换为 SIGSEGV。
         let Some((pte, level)) = self.walk_find(vpn)? else {
             return Ok(false);
         };
@@ -1017,6 +1023,7 @@ impl LoongArch64AddressSpace {
     }
 
     // 本方法代码由AI完成
+    /// 处理惰性 VMA 缺页；成功后由外层负责必要的 TLB 失效。
     pub fn handle_lazy_page_fault<A>(&mut self,
                                      allocator : &mut A,
                                      fault_addr : VirtAddr,
@@ -1035,6 +1042,7 @@ impl LoongArch64AddressSpace {
     }
 
     // 本方法代码由AI完成
+    /// 确保指定虚拟页可供写入；必要时处理 COW，返回是否改变了页表。
     pub fn ensure_private_for_write(&mut self, vpn : VirtPageNum) -> MmResult<bool> {
         if self.handle_cow_page(vpn)? {
             return Ok(true);
@@ -1091,8 +1099,7 @@ impl LoongArch64AddressSpace {
             log::warn!("[mm] shared file writeback during address-space destroy failed: {error:?}");
         }
         self.destroy_page_tables();
-        // Keep only the UserAddressSpaceCell tombstone needed by stale raw
-        // handles; mappings and their demand-page loaders are dead now.
+        // 仅保留旧裸句柄需要的 UserAddressSpaceCell tombstone；映射及其惰性加载器此时都已销毁。
         drop(self.lazy_file_vmas
                  .take());
         drop(core::mem::take(&mut self.shared_anon_vmas));

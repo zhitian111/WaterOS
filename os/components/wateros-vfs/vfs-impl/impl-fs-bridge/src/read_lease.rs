@@ -1,4 +1,4 @@
-//! Shared prepared-read reservation and staged lease support.
+//! 共享 prepared-read 预留与暂存租约支持。
 
 extern crate alloc;
 
@@ -48,6 +48,7 @@ impl ReservationGuard {
 impl Drop for ReservationGuard {
     fn drop(&mut self) {
         if let Some(reservation) = self.reservation.take() {
+            // 未显式提交的租约必须取消，恢复顺序读偏移并解除 Busy 状态。
             let _ = self.description.cancel_read(reservation);
         }
     }

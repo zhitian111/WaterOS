@@ -202,10 +202,8 @@ pub mod kernel_mm_impl {
                                                                 fault_addr,
                                                                 |aspace| {
                                                                     let changed = aspace.handle_cow_fault_no_flush(VirtAddr(fault_addr))?;
-                                                                    // If a sibling CPU already resolved this COW page, the PTE is
-                                                                    // writable but this hart may have trapped on a stale read-only
-                                                                    // TLB entry.  Treat it as handled; the wrapper always performs
-                                                                    // the required local page invalidation.
+                                                                    // 如果同级 CPU 已解决此 COW 页，PTE 虽已可写，但当前 hart 可能仍因旧只读 TLB 项
+                                                                    // 触发 trap。将其视为已处理；外层包装器会始终执行所需的本地页失效。
                                                                     let stale_writable = !changed &&
                     aspace.leaf_page_perm(VirtAddr(fault_addr).floor_page())?
                           .is_some_and(|perm| perm.user() && perm.writable());

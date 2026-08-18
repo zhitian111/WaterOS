@@ -15,7 +15,7 @@ use core::arch::global_asm;
 // 平台 shim 只解释 OpenSBI 参数；栈与普通启动流程由 arch boot 汇编负责。
 global_asm!(include_str!("asm/_start.S"));
 
-/// OpenSBI boot arguments and their typed view.
+/// OpenSBI 启动参数及其类型化视图。
 pub mod boot;
 pub mod console;
 /// 平台持有的引导 DTB 指针。
@@ -24,14 +24,15 @@ pub mod dtb;
 pub mod memory;
 /// OpenSBI system reset 后端。
 pub mod reset;
-/// SBI HSM based secondary-hart control for QEMU RISC-V.
+/// 基于 SBI HSM 的 QEMU RISC-V 辅助 hart 控制。
 pub mod smp;
-/// QEMU RISC-V timebase-frequency fallback.
+/// QEMU RISC-V timebase-frequency 回退值。
 pub mod time;
 /// OpenSBI timer 后端（经 SBI 设置下次中断时刻）。
 pub mod timer;
 
 #[cfg(feature = "self_test")]
+/// 执行板级常量和物理内存探测的最小自检。
 pub fn self_test() {
     log::info!("[platform/impl-qemu-riscv64] self_test begin");
     assert!(config::mm::QEMU_VIRT_MMIO_PHYS_START > 0);

@@ -1,3 +1,7 @@
+//! `ProcFsView` 的节点可见性、元数据、读取与目录枚举实现。
+//!
+//! 每个入口都重新解析路径并读取当前内核快照，因此 procfs 内容不是持久存储；进程在两次调用间退出时应按 `NotFound` 处理。
+
 use super::*;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -23,8 +27,9 @@ fn random_uuid() -> Vec<u8> {
     let mut bytes = [0u8; 16];
     bytes[..8].copy_from_slice(&high.to_be_bytes());
     bytes[8..].copy_from_slice(&low.to_be_bytes());
-    bytes[6] = (bytes[6] & 0x0f) | 0x40; // RFC 4122 version 4
-    bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
+    // 设置 RFC 4122 第 4 版和 RFC 4122 变体位，使用户态 UUID 解析器接受该格式。
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
     format!("{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-\
              {:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}\n",
             bytes[0], bytes[1], bytes[2], bytes[3],
@@ -35,6 +40,7 @@ fn random_uuid() -> Vec<u8> {
 
 /// 内核 procfs 只读视图（零大小；无实例状态）。
 // 本结构代码由AI完成
+/// 全局单例不缓存任务或目录结果，避免进程退出后泄漏陈旧的用户态可见信息。
 pub struct KernelProcFs;
 
 /// 返回全局 procfs 视图句柄。
@@ -42,6 +48,7 @@ pub fn view() -> &'static KernelProcFs { &KernelProcFs }
 
 impl ProcFsView for KernelProcFs {
     // 本方法代码由AI完成
+    /// 仅报告当前存在、且其 PID/TID/FD 仍可见的节点；解析失败属于普通的“不存在”。
     fn exists(&self, rel_path : &str) -> FsResult<bool> {
         let Some(node) = parse_node(rel_path) else {
             return Ok(false);
@@ -165,6 +172,7 @@ impl ProcFsView for KernelProcFs {
     }
 
     // 本方法代码由AI完成
+    /// 返回当前快照元数据；动态文件大小通过读取内容计算，故可能与随后的读取得到不同快照。
     fn metadata(&self, rel_path : &str) -> FsResult<FsMetadata> {
         let node = parse_node(rel_path).ok_or(FsError::NotFound)?;
         match node {
@@ -335,6 +343,7 @@ impl ProcFsView for KernelProcFs {
     }
 
     // 本方法代码由AI完成
+    /// 生成普通文件的当前内容；对目录和符号链接返回 `NotAFile`。
     fn read(&self, rel_path : &str) -> FsResult<Vec<u8>> {
         let node = parse_node(rel_path).ok_or(FsError::NotFound)?;
         match node {
@@ -538,6 +547,7 @@ impl ProcFsView for KernelProcFs {
     }
 
     // 本方法代码由AI完成
+    /// 枚举当前目录快照；进程目录和 fd 目录会过滤已退出任务或已关闭描述符。
     fn read_dir(&self, rel_path : &str) -> FsResult<Vec<FsDirEntry>> {
         let node = parse_node(rel_path).ok_or(FsError::NotFound)?;
         match node {

@@ -16,6 +16,7 @@ pub const ACTION_BUTTON : WidgetId = WidgetId(103);
 pub const COMMAND_INPUT : WidgetId = WidgetId(104);
 pub const SYSTEM_LABEL : WidgetId = WidgetId(201);
 
+/// 创建默认演示桌面；窗口尺寸按当前显示器缩放，小屏幕不创建辅助窗口。
 pub fn install_default_desktop() -> GuiResult<()> {
     let size = runtime_snapshot()?.size;
     let margin = (size.width / 24).clamp(16, 48);
@@ -79,6 +80,7 @@ pub fn install_default_desktop() -> GuiResult<()> {
 
 /// 更新默认桌面的动画信息。调用方可以按任意频率传入单调递增帧号。
 pub fn update_default_desktop(frame : u64) -> GuiResult<()> {
+    // 使用取模保持进度在 0..=100，避免演示动画的无界帧号溢出控件值。
     let progress = (frame % 101) as u32;
     let _ = set_progress(MAIN_WINDOW, PROGRESS, progress);
     if frame % 25 == 0 {

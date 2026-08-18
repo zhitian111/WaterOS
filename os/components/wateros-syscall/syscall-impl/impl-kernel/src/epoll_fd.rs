@@ -18,9 +18,13 @@ static NEXT_EPOLL_INODE : AtomicU64 = AtomicU64::new(1);
 #[derive(Debug, Clone)]
 // 本结构代码由AI完成
 pub(crate) struct EpollInterest {
+    /// epoll 关注的事件位图。
     pub events : u32,
+    /// 返回给用户的 opaque 数据。
     pub data : u64,
+    /// 边沿触发模式下上次已观察到就绪状态。
     pub edge_ready : bool,
+    /// EPOLLONESHOT 是否仍可触发。
     pub oneshot_armed : bool,
 }
 
@@ -28,8 +32,11 @@ pub(crate) struct EpollInterest {
 #[derive(Debug)]
 // 本结构代码由AI完成
 pub(crate) struct EpollInstance {
+    /// 按目标 fd 保存 interest；同一 fd 在实例内只有一项。
     pub interests : BTreeMap<usize, EpollInterest>,
+    /// 供 VFS 元数据使用的稳定 inode。
     inode : u64,
+    /// dup/fork 共享句柄引用数，归零时清空 interest。
     handle_refs : AtomicUsize,
 }
 
@@ -49,7 +56,9 @@ impl EpollInstance {
 
 /// epoll 匿名 fd 句柄。
 pub(crate) struct EpollHandle {
+    /// 共享的 epoll 状态。
     inner : Arc<Mutex<EpollInstance>>,
+    /// 当前 VFS 句柄是否已关闭，保证 close 幂等。
     closed : bool,
 }
 

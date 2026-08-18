@@ -26,14 +26,19 @@ const ETHERTYPE_ARP : u16 = 0x0806;
 /// RX/TX 缓冲区用堆上 `Vec` 持有：`kernel_main` 运行在仅 64KiB 的 boot 栈上，
 /// 若在此用 `[u8; 64KiB]` 栈数组会在 `network::stack::init` 栈溢出并踩坏相邻 BSS。
 pub struct SmoltcpAdapter {
+    /// 已注册的物理设备；为 `None` 时仅处理本机回环帧。
     inner : Option<SharedNetworkDevice>,
-    // 适配层的接收工作缓冲区。
+    /// 适配层的接收工作缓冲区，容量受 `RX_BUF` 限制。
     rx_buf : Vec<u8>,
-    // 适配层的发送工作缓冲区。
+    /// 适配层的发送工作缓冲区，容量受 `TX_BUF` 限制。
     tx_buf : Vec<u8>,
+    /// 当前 RX token 指向的有效帧长度，避免把缓冲区尾部旧数据交给协议栈。
     rx_len : usize,
+    /// 用于识别应在本机回灌而不是发往物理网卡的 IPv4 目的地址。
     local_ipv4 : [u8; 4],
+    /// 发送到本机地址的帧；达到上限后丢弃新帧，防止回环自激耗尽内存。
     loopback_queue : VecDeque<Vec<u8>>,
+    /// 从设备批量取出的帧，限制单次轮询的设备锁持有时间。
     rx_staging : VecDeque<Vec<u8>>,
 }
 
@@ -42,9 +47,13 @@ pub struct SmoltcpRxToken<'a>(&'a [u8]);
 
 /// smoltcp 要求的发送 token：持有发送缓冲区和对设备的引用。
 pub struct SmoltcpTxToken<'a> {
+    /// smoltcp 填充的单帧发送缓冲区。
     buf : &'a mut [u8],
+    /// 物理设备引用；回环模式下为 `None`。
     dev : Option<&'a SharedNetworkDevice>,
+    /// 用于判断发送帧是否应本地回灌。
     local_ipv4 : [u8; 4],
+    /// 回环帧的目标队列，生命周期与适配器一致。
     loopback_queue : &'a mut VecDeque<Vec<u8>>,
 }
 

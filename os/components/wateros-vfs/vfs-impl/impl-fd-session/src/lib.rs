@@ -42,6 +42,7 @@ pub extern "C" fn user_graphics_input_worker(_arg : usize) -> ! {
 }
 
 pub fn special_device_exists(path : &str) -> bool {
+    // 先查询 PTY，再按 feature 查询图形设备，保持特殊节点命名空间统一。
     if pty::pty_special_device_exists(path) {
         return true;
     }

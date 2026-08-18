@@ -36,9 +36,8 @@ pub fn mount_root_rw_from_block_path(path: &str) -> fs_api_v0::FsResult<()> {
         .lock()
         .ok_or(fs_api_v0::FsError::Unsupported)?;
     logging::info!("[fs::rootfs] mount root RW from {}", path);
-    // The VFS mutation path uses the RW handle, while ELF loading and other
-    // kernel readers use the RO handle.  A RW-only mount leaves the latter
-    // unset and makes every user ELF load fail as `RootVolume(Unsupported)`.
+    // VFS 修改路径使用 RW 句柄，而 ELF 装载等内核读取路径使用 RO 句柄；只发布 RW 会使
+    // 后者以 `RootVolume(Unsupported)` 失败，因此两次挂载都成功后才更新全局槽。
     let root_ro = imp.mount_ro(device.clone())?;
     let root = imp.mount_rw(device)?;
     *ROOT_FS.lock() = Some(root_ro);

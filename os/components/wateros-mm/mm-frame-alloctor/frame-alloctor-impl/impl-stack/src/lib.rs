@@ -39,11 +39,13 @@ macro_rules! pool_stats {
 }
 
 struct FrameAllocatorInterruptGuard {
+    /// 进入分配器临界区前的本 CPU 中断状态；析构时恢复，支持嵌套调用。
     state : ArchInterruptState,
 }
 
 impl FrameAllocatorInterruptGuard {
     fn new() -> Self {
+        // 屏蔽本 CPU 中断，防止中断日志/缺页路径重入同一自旋锁而死锁。
         let state = read_global_interrupt_state()
             .expect("read global interrupt state for frame allocator guard");
         disable_global_interrupt().expect("disable global interrupt for frame allocator guard");
@@ -59,6 +61,7 @@ impl Drop for FrameAllocatorInterruptGuard {
 }
 
 fn with_frame_allocator<R>(f : impl FnOnce(&mut StackFrameAllocator) -> R) -> R {
+    // 回调必须短小且不可再次进入分配器、调度或用户拷贝；锁外完成清零和 I/O。
     let _irq = FrameAllocatorInterruptGuard::new();
     let cell = get_frame_allocator_cell();
     let cpu = arch::cpu::current_cpu_id().raw();
@@ -109,17 +112,22 @@ fn try_with_frame_allocator<R>(f : impl FnOnce(&mut StackFrameAllocator) -> R) -
 /// next_novel)`（惰性下推）， 以及显式回收栈 `recycled`。不在 `init` 时把整段
 /// PPN 推入 `Vec`，避免大内存下撑爆内核 heap。
 pub struct StackFrameAllocator {
+    /// 已归还且可优先复用的帧；只保存仍属于池且引用计数为零的 PPN。
     recycled : Vec<PhysPageNum>,
+    /// 每个可分配 PPN 的占用位，索引相对 `start_ppn`；用于拒绝重复归还。
     allocated : Vec<bool>,
     /// 每帧共享引用计数。`u32` 已远高于实际单页映射数量，同时避免大内存机器
     /// 为每个尚未使用的物理页消耗一个 64 位字。
     ref_counts : Vec<u32>,
+    /// 可分配主区间的起始页号（含）。
     start_ppn : usize,
+    /// 可分配主区间的结束页号（不含）。
     end_ppn : usize,
     /// 永不分配的内存内保留区间（如引导 DTB），已裁剪到帧池范围。
     reserved_start_ppn : usize,
     reserved_end_ppn : usize,
     /// 仍可从连续区分配的第一页号上界（不包含）；初始为 `end_ppn`。
+    /// 尚未首次分配的连续段上界；分配向低 PPN 方向推进，达到起点后才真正耗尽。
     next_novel : usize,
 }
 
@@ -145,6 +153,10 @@ impl StackFrameAllocator {
     /// 初始化完整 RAM 帧区间，同时排除一个位于其中的半开保留区间。
     ///
     /// 保留区不从 novel/recycled 路径返回，也不能被引用计数或回收接口接受。
+    /// 初始化完整 RAM 帧区间，同时排除一个位于其中的半开保留区间。
+    ///
+    /// 传入反向或溢出区间会得到空/受限池；调用者必须在启动前确认区间来自可安全使用的 RAM，
+    /// 本函数不会检查它是否覆盖 DTB、设备或内核镜像。
     pub fn init_with_reserved(&mut self,
                               start_ppn : PhysPageNum,
                               end_ppn : PhysPageNum,
@@ -194,6 +206,8 @@ impl StackFrameAllocator {
     }
 
     /// 只读内存池统计：总帧 = 区间大小；空闲 = 回收栈 + 未分配连续段。
+    /// 只读内存池统计：总帧 = 区间大小；空闲 = 回收栈 + 未分配连续段。
+    /// 统计期间不修改池，但在全局包装器之外调用时由调用者负责同步。
     pub fn mem_stats(&self) -> FrameMemStats {
         let reserved_frames = self.reserved_end_ppn.saturating_sub(self.reserved_start_ppn);
         let total_frames = self.end_ppn
@@ -209,6 +223,7 @@ impl StackFrameAllocator {
     }
 
     /// 在一次 allocator 临界区内取得至多 `out.len()` 个 raw frame。
+    /// 在一次 allocator 临界区内取得至多 `out.len()` 个帧；中途非 OOM 错误会回收本批已取帧。
     fn alloc_batch(&mut self, out : &mut [PhysPageNum]) -> FrameAllocResult<usize> {
         let mut count = 0usize;
         while count < out.len() {
@@ -237,6 +252,7 @@ impl StackFrameAllocator {
 impl PhysicalFrameAllocator for StackFrameAllocator {
     type FrameId = PhysPageNum;
 
+    /// 优先弹出回收栈，否则从尚未首次分配的连续段向低地址取帧；保留区永不返回。
     fn alloc_frame(&mut self) -> FrameAllocResult<Self::FrameId> {
         while let Some(p) = self.recycled.pop() {
             let Some(idx) = self.index(p) else {
@@ -274,6 +290,8 @@ impl PhysicalFrameAllocator for StackFrameAllocator {
         Err(FrameAllocError::OutOfMemory)
     }
 
+    /// 释放一份帧引用；仍有其他映射时只递减计数，最后一份才进入回收栈。
+    /// `frame < next_novel` 的帧已经属于回收/新分配路径，重复释放会返回 `InvalidFrame`。
     fn dealloc_frame(&mut self, frame : Self::FrameId) -> FrameAllocResult<()> {
         let Some(idx) = self.index(frame) else {
             log::warn!("[frame-allocator] invalid dealloc ppn={:#x} range=[{:#x},{:#x})",
@@ -304,6 +322,7 @@ impl PhysicalFrameAllocator for StackFrameAllocator {
 }
 
 impl StackFrameAllocator {
+    /// 为已分配帧增加一份映射/缓存引用；计数饱和时保持最大值以避免回绕后提前释放。
     pub fn inc_ref(&mut self, frame : PhysPageNum) -> FrameAllocResult<usize> {
         let Some(idx) = self.index(frame) else {
             log::warn!("[frame-allocator] invalid inc_ref ppn={:#x} range=[{:#x},{:#x})",
@@ -324,6 +343,7 @@ impl StackFrameAllocator {
         Ok(self.ref_counts[idx] as usize)
     }
 
+    /// 查询已分配帧的当前引用数；保留帧、未分配帧和已归还帧均返回 `InvalidFrame`。
     pub fn ref_count(&self, frame : PhysPageNum) -> FrameAllocResult<usize> {
         let Some(idx) = self.index(frame) else {
             return Err(FrameAllocError::InvalidFrame);
@@ -337,28 +357,47 @@ impl StackFrameAllocator {
 
 // ===== 全局单例（BSP 初始化，运行期多核加锁）=====
 
+/// BSP 在开放 AP 前放置的全局分配器。`MaybeUninit` 避免早期启动为大 Vec 状态构造无效值。
 static mut FRAME_ALLOCATOR : MaybeUninit<MultiprocessorSafeCell<StackFrameAllocator>> =
     MaybeUninit::uninit();
+/// 通过 Release 发布上面的已构造对象；任何使用者先 Acquire 检查该位。
 static FRAME_ALLOCATOR_READY : AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ZeroedFramePoolStats {
+    /// 普通按需分配直接命中预清零池的次数。
     pub demand_hits : u64,
+    /// 普通按需分配未命中而必须批量分配并清零的次数。
     pub demand_misses : u64,
+    /// ELF 等预缺页路径在保留低水位后成功取得零页的次数。
     pub prefault_hits : u64,
+    /// 预缺页路径因池为空或低水位保护而放弃的次数；这不是内存耗尽。
     pub prefault_misses : u64,
+    /// 同步前台批量补充零页池的批次数。
     pub sync_refill_batches : u64,
+    /// 同步前台补充并清零的页数。
     pub sync_refill_pages : u64,
+    /// idle 维护任务批量补充的批次数。
     pub idle_refill_batches : u64,
+    /// idle 维护任务补充并清零的页数。
     pub idle_refill_pages : u64,
+    /// 因分配器锁忙而放弃 idle 补充的次数；这是让出 CPU 的正常路径。
     pub idle_lock_busy : u64,
+    /// 池从低水位重新进入补充状态的次数。
     pub low_watermark_activations : u64,
+    /// 原始帧耗尽时从零页池回收的次数。
     pub raw_oom_drains : u64,
+    /// 原始帧耗尽时从零页池回收的页数。
     pub raw_oom_drain_pages : u64,
+    /// 统计周期内池曾达到的最大已发布页数。
     pub peak_len : usize,
+    /// 快照时池内已发布且可取用的页数。
     pub current_len : usize,
+    /// 已向生产者预留但尚未发布的槽位数。
     pub in_flight : usize,
+    /// 池的固定容量。
     pub capacity : usize,
+    /// 触发补充的低水位阈值。
     pub low_watermark : usize,
 }
 
@@ -400,10 +439,15 @@ enum ZeroedRefillKind {
 /// 池中和正在清零的 frame 都保持 allocator 的 `allocated=true, ref_count=1`。
 /// `in_flight` 是生产者的发布槽预留，防止多个 idle CPU 同时越过容量。
 struct ZeroedFramePool {
+    /// 预清零页的固定数组；只有 `[0, len)` 是已发布、可取出的页。
     frames : [PhysPageNum; ZEROED_POOL_CAPACITY],
+    /// 已发布页数量。
     len : usize,
+    /// 正在由生产者取得并清零的保留槽位，防止并发生产者超过容量。
     in_flight : usize,
+    /// 是否允许 idle 维护继续补充；达到高水位后关闭，跌至低水位再打开。
     refill_active : bool,
+    /// 命中、补充和水位诊断统计。
     stats : ZeroedFramePoolStats,
 }
 
@@ -560,6 +604,7 @@ fn with_zeroed_frame_pool<R>(f : impl FnOnce(&mut ZeroedFramePool) -> R) -> R {
 
 #[inline]
 fn zero_frame(frame : PhysPageNum) {
+    // 调用者保证 frame 已由分配器标记为 allocated 且具有内核 RAM 直映射；否则写入会破坏设备或页表。
     unsafe {
         core::ptr::write_bytes((frame.0 * PAGE_SIZE) as *mut u8, 0, PAGE_SIZE);
     }
@@ -574,11 +619,13 @@ fn get_frame_allocator_cell() -> &'static MultiprocessorSafeCell<StackFrameAlloc
 }
 
 /// 初始化全局帧分配器（临时 stack 实现）。
+/// 必须在 BSP 开放 AP 前完成；重复调用会重置池并使旧帧标记失效，只适用于启动或自测。
 pub fn init_frame_allocator(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
     init_frame_allocator_with_reserved(start_ppn, end_ppn, start_ppn, start_ppn);
 }
 
 /// 初始化完整物理帧区间，并排除一个半开保留区间。
+/// 保留区常用于 DTB 或启动数据，边界会被裁剪到主区间内。
 pub fn init_frame_allocator_with_reserved(start_ppn : PhysPageNum,
                                           end_ppn : PhysPageNum,
                                           reserved_start_ppn : PhysPageNum,
@@ -602,16 +649,17 @@ pub fn init_frame_allocator_with_reserved(start_ppn : PhysPageNum,
 }
 
 /// 获取全局帧分配器单例容器（供特殊场景直接拿 `exclusive_access()`）。
+/// 调用前必须完成初始化；返回容器的锁内闭包不得调用会再次获取该锁的函数。
 pub fn frame_allocator_cell() -> &'static MultiprocessorSafeCell<StackFrameAllocator> {
     get_frame_allocator_cell()
 }
 
-/// 分配一个物理帧（返回帧标识）。
+/// 分配一个物理帧（返回帧标识）；失败时以 `None` 折叠具体错误，仅适合不区分 OOM/配置错误的旧调用点。
 pub fn frame_alloc() -> Option<PhysPageNum> {
     frame_alloc_result().ok()
 }
 
-/// 回收一个物理帧。
+/// 回收一个物理帧；错误只记录日志而不向旧 API 返回，新的调用点应优先使用 `frame_dealloc_result`。
 pub fn frame_dealloc(frame : PhysPageNum) {
     if let Err(err) = with_frame_allocator(|allocator| allocator.dealloc_frame(frame)) {
         log::warn!("[frame-allocator] ignored dealloc ppn={:#x}: {:?}",
@@ -668,6 +716,7 @@ pub fn frame_alloc_zeroed_result() -> FrameAllocResult<PhysPageNum> {
         }
     };
 
+    // 清零放在 allocator 锁外，避免长时间阻塞普通页表映射；此时这些帧由 in-flight 预留保护。
     for frame in frames[..count].iter().copied() {
         zero_frame(frame);
     }
@@ -689,6 +738,7 @@ pub fn try_alloc_zeroed_frame_for_prefault() -> Option<PhysPageNum> {
 
 /// Idle task 在每次 WFI 前执行一轮有界维护。allocator 锁忙时立即放弃本轮；
 /// 成功取得的 raw frame 在所有锁外清零，再用一次短临界区发布 PPN。
+/// idle task 在每次 WFI 前执行一轮有界维护；锁忙、池已满或 raw 分配失败都立即返回。
 pub fn idle_zeroed_frame_pool_maintenance() {
     if !FRAME_ALLOCATOR_READY.load(Ordering::Acquire) {
         return;
@@ -725,14 +775,17 @@ pub fn idle_zeroed_frame_pool_maintenance() {
     });
 }
 
+/// 清零页池诊断统计，不释放池内页；适合测试阶段在采样窗口开始时调用。
 pub fn reset_zeroed_frame_pool_stats() {
     with_zeroed_frame_pool(ZeroedFramePool::reset_stats);
 }
 
+/// 获取零页池统计快照；`in_flight` 表示生产者尚未发布的保留槽位。
 pub fn zeroed_frame_pool_stats() -> ZeroedFramePoolStats {
     with_zeroed_frame_pool(|pool| pool.stats())
 }
 
+/// 以稳定字段名输出零页池统计，`label` 由调用方标识采样阶段。
 pub fn log_zeroed_frame_pool_stats(label : &str) {
     let stats = zeroed_frame_pool_stats();
     log::error!("[frame-zeroed-pool] label={} demand_hit={} demand_miss={} prefault_hit={} \
@@ -866,7 +919,7 @@ pub fn test_with_range(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
                     MAX_FULL_HOLD);
     }
 
-    // Leave the global allocator in the same pristine state expected by bring-up callers.
+    // 让全局分配器保持 bring-up 调用方所要求的干净初始状态。
     init_frame_allocator(start_ppn, end_ppn);
 
     log::trace!("[frame-alloctor::impl-stack] test end");

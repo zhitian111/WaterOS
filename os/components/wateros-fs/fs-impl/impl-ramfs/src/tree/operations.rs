@@ -1,3 +1,5 @@
+//! ramfs 的节点打开、读写、链接和目录操作。
+
 use super::*;
 
 impl ReadWriteFs for RamFs {
@@ -92,7 +94,8 @@ impl ReadWriteFs for RamFs {
                         node : api_v0::FsNodeId,
                         offset : u64,
                         data : &[u8])
-                        -> FsResult<usize> {
+                       -> FsResult<usize> {
+        // 先检查节点类型和新增驻留页容量，再修改 inode，避免容量不足时部分写入。
         if data.is_empty() {
             return Ok(0);
         }

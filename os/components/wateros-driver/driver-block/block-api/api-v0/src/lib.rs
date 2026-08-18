@@ -41,11 +41,10 @@ pub trait BlockDevice: Send {
     /// 设备总块数；未知时返回 `None`（默认）。
     fn total_blocks(&self) -> Option<u64> { None }
 
-    /// Validate a whole-block request before it reaches a device or cache.
+    /// 在请求进入设备或缓存前校验整块请求。
     ///
-    /// This rejects zero-sized logical blocks, partial buffers, LBA arithmetic
-    /// overflow, and requests beyond a reported device capacity.  Devices with
-    /// an unknown capacity still get the alignment and overflow checks.
+    /// 拒绝零大小逻辑块、非整块缓冲区、LBA 算术溢出以及超过设备报告容量的请求。
+    /// 容量未知的设备仍会执行对齐和溢出检查。
     fn check_request_range(&self, start_block : Lba, byte_len : usize) -> DriverResult<()> {
         let block_size = self.block_size();
         if block_size == 0 || byte_len % block_size != 0 {
@@ -69,7 +68,7 @@ pub trait BlockDevice: Send {
     /// 从 `start_block` 起写入连续块；不支持写时须返回 [`DriverError::Unsupported`]。
     fn write_blocks(&mut self, start_block : Lba, buf : &[u8]) -> DriverResult<()>;
 
-    /// Commit all previously accepted writes to stable storage.
+    /// 将此前接受的写入提交到稳定存储；不支持持久化的设备必须返回错误。
     fn flush(&mut self) -> DriverResult<()>;
 
     /// 任意字节对齐读取：通过整段块缓冲实现，调用方须保证 `dst` 非空且偏移合法。

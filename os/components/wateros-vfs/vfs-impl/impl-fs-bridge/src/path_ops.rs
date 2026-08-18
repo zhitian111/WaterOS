@@ -1,6 +1,9 @@
+//! 挂载、卸载与挂载点路径操作。
+
 use super::*;
 
 pub fn mount_ext4_block_at(mount_point : &str, block_dev : &str, readonly : bool) -> VfsResult<()> {
+    // 挂载读写模式决定底层会话类型；失败保持挂载表不变。
     if readonly {
         let aux = fs::mount_aux_ro_from_block_path(block_dev).map_err(map_fs_err)?;
         mount_table::mount_aux_at_ro(mount_point, aux, block_dev)
@@ -478,9 +481,8 @@ pub fn rename_path(old_path : &str, new_path : &str) -> VfsResult<()> {
         return Err(VfsError::Unsupported);
     }
 
-    // The page cache is path-keyed. Flush before the directory entry moves so
-    // a later eviction never tries to write a dirty page through the stale
-    // source path and poison an unrelated cache miss.
+    // 页缓存以路径为键。目录项移动前先刷新，避免后续驱逐通过过期源路径写入脏页，
+    // 从而污染无关的缓存未命中。
     let cache = impl_page_cache::global_cache(fs::rootfs::active_impl::mount_generation());
     let mut io = paged_handle::FsPageIo::path();
     cache.flush(&mut io,

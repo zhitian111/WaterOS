@@ -152,8 +152,8 @@ pub(crate) fn sys_getcwd(args: SyscallArgs) -> UserRet {
     }
 
     match copy_to_user(buf_ptr, &kernel_buf[..written]) {
-        // The getcwd syscall ABI returns the byte count including the trailing NUL.
-        // The libc wrapper converts that result into the caller's buffer pointer.
+        // getcwd syscall ABI 返回值包含末尾 NUL 的字节数；libc 包装器会将该结果
+        // 转换为调用方缓冲区中的指针语义。
         Ok(n) if n == written => UserRet::from_success(written),
         Ok(_) => UserRet::from_error(ErrNo::EFAULT),
         Err(e) => UserRet::from_error(e),

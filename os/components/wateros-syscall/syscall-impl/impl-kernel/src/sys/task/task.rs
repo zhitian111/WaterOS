@@ -143,20 +143,16 @@ pub(crate) fn exit_group_with_wait_code(exit_code : isize) -> isize {
             super::wait::reap_exited_member_threads_runtime_resources(snapshot.pid);
             super::super::acct::record_current_process_exit(exit_code);
             process_task = Some(snapshot);
-            // Publish Exiting before any remote reschedule. Otherwise a sibling
-            // can consume the IPI, still observe Running, and continue forever.
+            // 在任何远端重调度前发布 Exiting；否则同组线程可能消费 IPI 后仍观察到 Running，持续运行。
             let notifications = task::begin_current_process_exit(exit_code);
             crate::sys::ipc::signal::deliver_parent_death_notifications(notifications);
             if let Some(task_ids) = task::task_ids_for_process(snapshot.pid) {
                 for sibling in task_ids {
                     if sibling != task_id {
-                        // A blocked syscall may own stack-local pipe/socket leases.
-                        // Marking it Exited remotely would skip Rust destructors and
-                        // can keep a pipe writer alive after the process is already a
-                        // zombie. Interrupt the wait instead; after its syscall stack
-                        // unwinds, the trap-return ProcessState::Exiting check routes
-                        // that thread through exit_current_with_wait_code and performs
-                        // clear_child_tid, robust-list, fd and signal cleanup locally.
+                        // 阻塞 syscall 可能持有栈上的 pipe/socket 租约；远程标记 Exited 会跳过 Rust 析构，
+                        // 进程已成为 zombie 后仍可能保持 pipe writer 存活。应改为中断等待；syscall 栈展开后，
+                        // trap 返回处的 ProcessState::Exiting 检查会让线程进入 exit_current_with_wait_code，
+                        // 在本地完成 clear_child_tid、robust-list、fd 和信号清理。
                         if !task::interrupt_task(sibling) {
                             task::request_task_reschedule(sibling);
                         }

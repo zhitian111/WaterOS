@@ -16,11 +16,11 @@ pub enum TaskWaitResult {
 /// 可被任务等待的目标对象。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskWaitTarget {
-    /// 在这个队列里等某个条件
+    /// 在这个队列里等待某个条件。
     WaitQueue(WaitQueueId),
     /// 等待某个任务进入退出状态。
     TaskExit(TaskId),
-    /// 等待某个父任务的任意子任务进入退出状态。TaskId存父任务
+    /// 等待某个父任务的任意子任务进入退出状态；`TaskId` 保存父任务 ID。
     ChildExit(TaskId),
     /// 由内核显式置为阻塞，无特定等待对象。
     Manual,

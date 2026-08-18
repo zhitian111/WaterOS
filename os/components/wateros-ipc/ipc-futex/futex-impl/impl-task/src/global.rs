@@ -79,9 +79,8 @@ pub fn wait_while(task_id : TaskId,
         let (wait_queue, wake_sequence) = registry.acquire_queue(key);
         let waiter_sequence = registry.register_waiting_task(task_id, key, bitset);
         registry.record_wait_attempt(key, wait_queue.id());
-        // The registry lock linearizes waiter publication with wakers obtaining
-        // this queue. Loading after unlock would let a concurrent wake become
-        // the waiter's baseline and then be lost before scheduler enqueue.
+        // registry 锁将 waiter 发布与唤醒者获取队列线性化。若解锁后才读取序列，
+        // 并发 wake 可能成为 waiter 的基线，随后在 scheduler 入队前被错误遗漏。
         let observed_wake = wake_sequence.load(Ordering::Acquire);
         let observed_waiter_wake = waiter_sequence.load(Ordering::Acquire);
         (wait_queue, wake_sequence, observed_wake, waiter_sequence, observed_waiter_wake)

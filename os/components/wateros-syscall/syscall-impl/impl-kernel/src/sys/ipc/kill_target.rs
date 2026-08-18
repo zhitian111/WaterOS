@@ -1,16 +1,24 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum KillTargetSelector {
+    /// 指定单个进程。
     Process(usize),
+    /// 调用者当前进程组。
     CurrentProcessGroup,
+    /// 广播到调用者有权限的全部进程。
     Broadcast,
+    /// 指定进程组。
     ProcessGroup(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SignalIdentity {
+    /// 真实 UID。
     pub(crate) real_uid : u32,
+    /// 有效 UID。
     pub(crate) effective_uid : u32,
+    /// 保存 UID。
     pub(crate) saved_uid : u32,
+    /// 会话 ID，用于 SIGCONT 权限例外。
     pub(crate) session_id : usize,
 }
 

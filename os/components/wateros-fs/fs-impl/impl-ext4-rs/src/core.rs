@@ -1,5 +1,4 @@
 //! 本模块代码由AI完成
-
 //! 基于 `ext4_rs` crate 的 ext4 实现。
 //!
 //! 对外 [`api_v0::FsImpl`] 面与旧 `impl-ext4`（ext4plus）对齐，供 `wateros-fs` 通过 feature 切换。

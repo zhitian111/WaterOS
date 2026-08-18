@@ -30,12 +30,19 @@ struct WindowDrag {
 
 /// 实现层持有的桌面状态。窗口 Vec 的顺序就是从底到顶的 z 序。
 pub struct Desktop {
+    /// 从底到顶排列的窗口；最后一个可视窗口通常是最上层。
     windows : Vec<Window>,
+    /// 最近一次指针位置，单位为屏幕像素。
     pointer : Point,
+    /// 当前键盘焦点控件；窗口被删除时必须清除。
     focused : Option<(WindowId, WidgetId)>,
+    /// 鼠标按下后捕获的控件，保证拖动/释放跨出控件边界仍归原控件处理。
     captured : Option<(WindowId, WidgetId)>,
+    /// 当前窗口拖动状态及按下点相对窗口原点的偏移。
     drag : Option<WindowDrag>,
+    /// 文本输入插入符是否可见。
     caret_visible : bool,
+    /// 上次切换插入符可见性的逻辑帧相位。
     last_caret_phase : u64,
 }
 
@@ -53,6 +60,7 @@ impl Desktop {
     pub fn windows(&self) -> &[Window] { &self.windows }
 
     pub fn add_window(&mut self, mut window : Window) {
+        // 新窗口置顶并取消旧窗口 active，保证 z 序和标题栏状态一致。
         for existing in &mut self.windows {
             existing.active = false;
         }
@@ -89,6 +97,7 @@ impl Desktop {
                         -> Result<Option<Rect>, ()> {
         let (window_bounds, control) = self.find_widget_mut(window, widget).ok_or(())?;
         let WidgetKind::ProgressBar(progress) = &mut control.kind else { return Err(()) };
+        // 外部值可能超过最大值；钳制后再比较，避免进度条绘制比例溢出。
         let value = value.min(progress.maximum);
         if progress.value == value {
             return Ok(None);
@@ -99,6 +108,7 @@ impl Desktop {
 
     /// 处理一个输入事件，返回是否改变了画面。
     pub fn handle_input(&mut self, input : InputEvent, output : &mut VecDeque<GuiEvent>) -> bool {
+        // 释放键只用于状态机清理，不重复触发按下语义；Tick 仅按固定帧相位闪烁插入符。
         match input {
             InputEvent::Pointer(event) => self.handle_pointer(event, output),
             InputEvent::Key(event) if event.pressed => self.handle_key(event.code, output),

@@ -1,3 +1,5 @@
+//! LBA 哈希索引和二次命中历史表；只保存元数据，不保存数据块正文。
+
 use super::*;
 
 #[derive(Clone, Copy)]
@@ -17,11 +19,9 @@ const RECENT_INDEX_WAYS : usize = 4;
 #[cfg(feature = "diagnostics")]
 const DIAGNOSTIC_REPORT_BLOCKS : u64 = 1 << 20;
 
-/// Approximate recent-miss/refault history used for two-hit read admission.
+/// 用于二次命中读准入的近似 miss/refault 历史。
 ///
-/// The table deliberately stores no data and tolerates replacement: a false
-/// negative only delays admission until another read, while false positives
-/// are impossible because the complete LBA is compared.
+/// 表只保存元数据且允许替换：误报阴性只会延迟一次准入；完整 LBA 比较保证不会误报阳性。
 pub(crate) struct RecentIndex {
     buckets : Vec<[Option<Lba>; RECENT_INDEX_WAYS]>,
     next : Vec<u8>,
@@ -29,9 +29,7 @@ pub(crate) struct RecentIndex {
 
 impl RecentIndex {
     pub(crate) fn new(capacity : usize) -> Self {
-        // Keep at most 50% occupancy when the history contains twice as many
-        // entries as data slots. This avoids recreating the old full-table
-        // conflict problem in the admission index.
+        // 历史项数量按数据槽两倍配置，使占用率不超过约 50%，避免冲突挤满准入索引。
         let bucket_count = capacity.div_ceil(RECENT_INDEX_WAYS / 2)
                                    .max(1);
         Self { buckets : vec![[None; RECENT_INDEX_WAYS]; bucket_count],
@@ -88,9 +86,8 @@ struct BlockCacheDiagnostics {
 
 impl LbaIndex {
     pub(crate) fn new(capacity : usize) -> Self {
-        // Keep index occupancy at or below 50% when all data slots are live.
-        // The old 100%-full table turned ordinary hash imbalance into millions
-        // of conflict evictions even though the data cache itself had room.
+        // 即使所有数据槽都占用，索引负载也保持在约 50% 以下，避免哈希不均导致
+        // 数据缓存仍有空间却频繁发生冲突淘汰。
         let bucket_count = capacity
                                .div_ceil(LBA_INDEX_WAYS / 2)
                                .max(1);

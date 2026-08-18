@@ -6,8 +6,11 @@ use spin::Mutex;
 
 use crate::{GuiRuntime, GuiRuntimeSnapshot, Theme};
 
+/// 全局 GUI 运行时；锁保护初始化、窗口树、事件队列与 shadow surface 的整体一致性。
+/// 持锁期间不可阻塞、调度或重入本模块的公开函数。
 static RUNTIME : Mutex<Option<GuiRuntime>> = Mutex::new(None);
 
+/// 在默认显示设备（索引 0）上初始化 GUI；已初始化或无显示设备时返回错误。
 pub fn initialize() -> GuiResult<()> {
     initialize_on(0)
 }

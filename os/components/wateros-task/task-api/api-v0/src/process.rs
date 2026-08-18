@@ -40,8 +40,11 @@ impl ThreadId {
 /// `PR_SET_KEEPCAPS` 在 setuid 后仍可重设 permitted 子集，如 setpriv）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ProcessCaps {
+    /// 当前可生效 capability 位图。
     pub effective : u32,
+    /// 允许提升到 effective 的 capability 位图。
     pub permitted : u32,
+    /// 可继承 capability 位图。
     pub inheritable : u32,
     /// 能力天花板（bounding set）：capset / exec 赋予的能力都不能超出。
     /// WaterOS 只支持低 32 位 capability（cap 0..31）。

@@ -1,9 +1,13 @@
+//! 单文件页缓存条目、脏页写回和读写路径的实现。
+
 use super::*;
 
 /// 单文件逻辑大小与脏页索引（页号）。
 // 本结构代码由AI完成
 pub(crate) struct FileEntryInner {
+    /// 文件的逻辑长度（字节）；可大于当前已落盘长度，直到脏页写回完成。
     pub(crate) logical_size : u64,
+    /// 脏页号到修改版本号的映射，用于确认写回未与新写入竞争。
     pub(crate) dirty_pages : BTreeMap<u64, u64>,
     /// 上次 read 结束页号；用于顺序读检测后再预取（F-14）。
     pub(crate) last_read_end_page : Option<u64>,
@@ -12,8 +16,11 @@ pub(crate) struct FileEntryInner {
 /// 全局文件页缓存。
 // 本结构代码由AI完成
 pub struct GlobalFilePageCache {
+    /// 当前缓存对应的挂载代次；Release 写入与 Acquire 读取保证切换后的元数据可见。
     mount_gen : AtomicU64,
+    /// 帧池、索引和 LRU；持锁时不得执行下层 I/O。
     pub(crate) state : Mutex<GlobalCacheState>,
+    /// 每文件元数据表；其锁必须先于单文件 RwLock 和 `state` 获取。
     pub(crate) files : Mutex<BTreeMap<FileCacheKey, Arc<RwLock<FileEntryInner>>>>,
     /// 仍被 [`PagedFileHandle`] 持有的路径数；归零时在 `close` 后回收该路径缓存条目。
     pub(crate) open_refs : Mutex<BTreeMap<FileCacheKey, usize>>,
@@ -106,6 +113,7 @@ impl GlobalFilePageCache {
             let Some(count) = refs.get_mut(key) else {
                 return;
             };
+            // 关闭路径可因失败回滚或重复清理重入；饱和减法避免计数下溢成极大值并永久泄漏条目。
             *count = count.saturating_sub(1);
             if *count == 0 {
                 refs.remove(key);
@@ -290,6 +298,10 @@ impl GlobalFilePageCache {
     }
 
 // 本方法代码由AI完成
+    /// 将一个文件页装入帧池；若同页被并发装入，保留已有页而丢弃本次读取结果。
+    ///
+    /// 读盘和脏页回写均在释放 `state` 锁后进行。没有可用槽时仅短暂自旋等待锁外写回重新入队，
+    /// 因此调用路径不得在禁止抢占的长临界区中调用本函数。
     fn install_page<Io, E>(&self,
                            io : &mut Io,
                            key : &FileCacheKey,
@@ -423,6 +435,7 @@ impl GlobalFilePageCache {
     }
 
 // 本方法代码由AI完成
+    /// 为超出 EOF 的写入准备全零页，避免为尚不存在的磁盘页执行无意义读取。
     fn install_zero_page<Io, E>(&self,
                                 io : &mut Io,
                                 key : &FileCacheKey,
@@ -586,8 +599,7 @@ impl GlobalFilePageCache {
                 let Some(&idx) = cache.index
                                       .get(&(key.clone(), page_idx))
                 else {
-                    // Eviction or path invalidation may race between
-                    // install_page dropping the cache lock and this lookup.
+                    // `install_page` 释放锁读盘后，淘汰或路径失效可抢先移除该页；重新安装后再复制。
                     continue;
                 };
                 buf[done..done + chunk].copy_from_slice(&cache.page_data(idx)
@@ -671,8 +683,7 @@ impl GlobalFilePageCache {
                                       InstallSource::Demand,
                                       map_err)?;
                 }
-                // Publish frame data and file metadata together so eviction
-                // cannot discard an extending write using the old EOF.
+                // 在同一临界区发布页内容与文件长度，淘汰路径便不会按旧 EOF 丢弃刚扩展的写入。
                 let mut guard = entry.write();
                 let mut cache = self.state.lock();
                 let Some(&idx) = cache.index
@@ -700,6 +711,7 @@ impl GlobalFilePageCache {
     }
 
 // 本方法代码由AI完成
+    /// 返回缓存记录的逻辑文件长度；不存在条目时使用调用者提供的下层长度。
     pub fn logical_size(&self, path : &str, fallback : u64) -> u64 {
         self.logical_size_key(&self.file_key(path), fallback)
     }
@@ -709,6 +721,7 @@ impl GlobalFilePageCache {
     }
 
 // 本方法代码由AI完成
+    /// 设置逻辑长度；截断还应调用 [`Self::truncate`] 清除 EOF 后缓存页。
     pub fn set_logical_size(&self, path : &str, size : u64) {
         let entry = self.get_file_entry(path, size);
         entry.write()
@@ -716,6 +729,7 @@ impl GlobalFilePageCache {
     }
 
 // 本方法代码由AI完成
+    /// 返回指定文件尚待写回的页数，用于诊断和关闭前的同步判断。
     pub fn dirty_page_count(&self, path : &str) -> usize {
         let key = self.file_key(path);
         let files = self.files.lock();

@@ -1,3 +1,5 @@
+//! 文件权限、所有者与时间属性系统调用。
+
 use crate::alloc::string::ToString;
 use crate::sys::path_at::{resolve_path_at, resolve_symlinks, AT_FDCWD};
 use crate::sys::stat_times::{self, StatTime};
@@ -30,10 +32,9 @@ pub(crate) fn sys_fchmodat(args : SyscallArgs) -> UserRet {
     let dirfd = args.arg(0) as isize;
     let path_ptr = args.arg(1);
     let mut mode = (args.arg(2) as u32) & 0o7777;
-    // Linux `fchmodat(2)` (syscall 53) has exactly three arguments.  Do not
-    // inspect a3 here: callers are not required to initialize it, and treating
-    // its residual value as flags turns ordinary `chmod()` into EINVAL.
-    // Flag-bearing semantics belong to the distinct fchmodat2 syscall.
+    // Linux `fchmodat(2)`（调用号 53）只有三个参数。调用方不必初始化 a3，
+    // 不能把残留值误当 flags，否则普通 chmod 会错误返回 EINVAL；带 flags 的
+    // 语义属于独立的 fchmodat2 系统调用。
 
     let path = match copy_user_path_cstr(path_ptr,
                                          crate::user_copy::USER_PATH_MAX)

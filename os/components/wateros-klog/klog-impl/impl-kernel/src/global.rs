@@ -16,11 +16,13 @@ static KLOG : debug::TrackedMutex<Option<KlogRingbufInner>> =
 
 /// 保存并在析构时恢复中断状态；不会无条件开启原本关闭的中断。
 struct KlogInterruptGuard {
+    /// 进入临界区前本 CPU 的中断使能状态，析构时按原样恢复。
     state : ArchInterruptState,
 }
 
 impl KlogInterruptGuard {
     fn new() -> Self {
+        // 必须先读取再关闭，才能避免嵌套使用 klog 时错误地重新开启调用者原本关闭的中断。
         let state = read_global_interrupt_state()
             .expect("read global interrupt state for klog guard");
         disable_global_interrupt().expect("disable global interrupt for klog guard");
@@ -36,6 +38,7 @@ impl Drop for KlogInterruptGuard {
 }
 
 fn ensure_inner(slot : &mut Option<KlogRingbufInner>) -> &mut KlogRingbufInner {
+    // 允许极早启动的首条日志惰性创建环，避免要求所有调用者先显式 init。
     if slot.is_none() {
         *slot = Some(KlogRingbufInner::default());
     }
@@ -68,6 +71,7 @@ pub fn init() { KlogRingbuf::init(); }
 /// 这是全局服务的标准写入入口。调用者应先完成可能阻塞的工作；取得 ring 锁后不得再执行
 /// 外部回调、调度或用户内存访问。
 pub fn record(level : u8, facility : u8, text : &[u8]) -> AppendResult {
+    // 时间与任务身份在锁外采样，缩短禁中断区间；少量时间偏差比死锁和中断延迟更可接受。
     let mut meta = KlogRecordMeta::new(ts_nsec_now(),
                                        0,
                                        facility,
@@ -89,6 +93,7 @@ pub fn stats() -> KlogStats { KlogRingbuf::with(|ring| ring.stats()) }
 pub(crate) fn ts_nsec_now() -> u64 {
     platform::timer::now_duration()
         .map(|duration| {
+            // 使用饱和运算：运行时间极大时仍保留可排序的最大时间戳，不因整数回绕倒退。
             duration.as_secs()
                 .saturating_mul(1_000_000_000)
                 .saturating_add(duration.subsec_nanos() as u64)

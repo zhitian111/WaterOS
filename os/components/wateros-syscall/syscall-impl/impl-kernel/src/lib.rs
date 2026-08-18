@@ -6,10 +6,15 @@ extern crate alloc;
 
 use api_v0::SyscallArgs;
 
+/// 总线错误信号编号，供 trap 与用户 ABI 共用。
 pub const SIGBUS : usize = ipc::signal::SIGBUS;
+/// 非法指令信号编号。
 pub const SIGILL : usize = ipc::signal::SIGILL;
+/// 不可捕获的强制终止信号编号。
 pub const SIGKILL : usize = ipc::signal::SIGKILL;
+/// 无效内存访问信号编号。
 pub const SIGSEGV : usize = ipc::signal::SIGSEGV;
+/// 调试陷阱信号编号。
 pub const SIGTRAP : usize = ipc::signal::SIGTRAP;
 
 mod epoll_fd;
@@ -93,7 +98,7 @@ pub fn raise_current_fault_signal(signal : usize, code : i32, fault_addr : usize
     sys::raise_current_fault_signal(signal, code, fault_addr).is_ok()
 }
 
-/// Send a signal produced by the controlling terminal to its foreground group.
+/// 将控制终端产生的信号发送给其前台进程组。
 pub fn send_kernel_signal_to_process_group(pgid : usize, signal : usize) -> usize {
     sys::send_kernel_signal_to_process_group(task::ProcessId::from_raw(pgid), signal)
 }
@@ -112,10 +117,10 @@ pub fn terminate_current_process_by_signal(signal : usize) -> ! {
     unreachable!("exit_group_with_wait_code must not return")
 }
 
-/// Finish one thread of a process whose exit-group state is already published.
+/// 完成一个已发布 exit-group 状态的进程线程。
 ///
-/// Unlike the task-only exit path, this runs the syscall-owned per-thread
-/// resource cleanup before removing the current scheduler entity.
+/// 与仅任务退出路径不同，本函数先清理 syscall 所有的线程资源，
+/// 再从当前调度器实体中移除该线程。
 pub fn terminate_current_thread(exit_code : isize) -> ! {
     sys::task::exit_current_with_wait_code(exit_code);
     unreachable!("exit_current_with_wait_code must not return")

@@ -72,6 +72,9 @@ pub enum SysVIpcTable {
 pub type SysVIpcTableLookup = fn(SysVIpcTable) -> Vec<u8>;
 
 /// procfs 只读路径操作；`rel_path` 为相对 `/proc` 的路径（可带或不带前导 `/`）。
+///
+/// 实现不得把调用者提供的路径当作宿主文件系统路径使用。每个方法应先规范化并识别节点；
+/// 不存在的节点使用 [`FsError::NotFound`]，不支持的操作使用相应的节点类型错误。
 pub trait ProcFsView {
     /// 路径是否对应已知 proc 节点（含目录与文件）。
     fn exists(&self, rel_path: &str) -> FsResult<bool>;
@@ -80,6 +83,8 @@ pub trait ProcFsView {
     /// 读取普通文件内容；目录路径返回 [`FsError::NotAFile`]。
     fn read(&self, rel_path: &str) -> FsResult<Vec<u8>>;
     /// 读取普通文件指定区段；默认实现基于 [`Self::read`]，实现方可覆盖以避免整文件分配。
+    ///
+    /// 偏移位于 EOF 之后时返回零字节；返回值可以小于缓冲区长度，调用者必须按短读处理。
     fn read_range(&self, rel_path: &str, offset: u64, buf: &mut [u8]) -> FsResult<usize> {
         let data = self.read(rel_path)?;
         let start = offset as usize;

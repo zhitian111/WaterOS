@@ -11,24 +11,33 @@ pub use driver_api::{DriverError, DriverResult};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// 输入设备的主要用途，用于选择默认事件解释策略。
 pub enum InputDeviceKind {
+    /// 键盘等离散按键设备。
     Keyboard,
+    /// 鼠标/触控板等指针设备。
     Pointer,
+    /// 未识别用途，调用方不得假设轴语义。
     Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// 绝对轴的闭区间硬件取值范围。
 pub struct AbsoluteAxis {
+    /// 轴最小值（包含）。
     pub minimum : i32,
+    /// 轴最大值（包含），应不小于 `minimum`。
     pub maximum : i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// 初始化时固定的输入设备元数据。
 pub struct InputDeviceInfo {
+    /// 固定设备名称。
     pub name : String,
+    /// 设备用途类别。
     pub kind : InputDeviceKind,
+    /// 可选绝对 X 轴范围。
     pub absolute_x : Option<AbsoluteAxis>,
+    /// 可选绝对 Y 轴范围。
     pub absolute_y : Option<AbsoluteAxis>,
 }
 
@@ -36,8 +45,11 @@ pub struct InputDeviceInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Linux evdev/virtio-input 兼容事件三元组。
 pub struct RawInputEvent {
+    /// evdev 事件类型。
     pub event_type : u16,
+    /// 事件代码。
     pub code : u16,
+    /// 事件值；按类型解释，可为负数。
     pub value : i32,
 }
 

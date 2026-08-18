@@ -22,7 +22,9 @@ pub enum PointerEventKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// 指针当前位置与本次动作。
 pub struct PointerEvent {
+    /// 指针所在的屏幕像素坐标，而非相对控件坐标。
     pub position : Point,
+    /// 本次移动、按键或滚轮动作。
     pub kind : PointerEventKind,
 }
 
@@ -67,9 +69,13 @@ impl KeyModifiers {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// 单次逻辑键按下、释放或自动重复。
 pub struct KeyEvent {
+    /// 与平台扫描码无关的逻辑键。
     pub code : KeyCode,
+    /// 事件发生时的修饰键快照。
     pub modifiers : KeyModifiers,
+    /// `true` 表示按下，`false` 表示释放。
     pub pressed : bool,
+    /// 按住按键产生的重复事件；释放事件不应设为 `true`。
     pub repeat : bool,
 }
 
@@ -101,7 +107,10 @@ pub enum GuiEventKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// 由窗口/控件 ID 定位来源的业务语义事件。
 pub struct GuiEvent {
+    /// 产生事件的顶层窗口。
     pub window : WindowId,
+    /// 来源控件；窗口级事件（如关闭请求）为 `None`。
     pub widget : Option<WidgetId>,
+    /// 已抽象掉硬件细节的业务动作。
     pub kind : GuiEventKind,
 }

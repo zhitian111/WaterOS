@@ -13,21 +13,33 @@ const OUTPUT_QUEUE_CAPACITY : usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GuiRuntimeSnapshot {
+    /// 当前 framebuffer 尺寸（像素）。
     pub size : Size,
+    /// 场景中的窗口数量。
     pub windows : usize,
+    /// 尚未处理的输入事件数。
     pub pending_input : usize,
+    /// 尚未交付给业务层的语义事件数。
     pub pending_output : usize,
+    /// 已完成软件绘制的帧数。
     pub frames_rendered : u64,
+    /// 已成功提交到显示设备的帧数。
     pub frames_presented : u64,
+    /// 因输入队列满而丢弃的事件累计数。
     pub dropped_input : u64,
+    /// 是否存在待绘制的脏区域。
     pub dirty : bool,
 }
 
 /// 单显示器 GUI 实例。锁顺序固定为 GUI runtime → display device。
 pub struct GuiRuntime {
+    /// 显示设备句柄；只能在 GUI 锁之后获取其内部锁。
     display : SharedDisplayDevice,
+    /// CPU 绘制的 shadow framebuffer。
     surface : ShadowSurface,
+    /// 窗口、控件与焦点状态机。
     desktop : Desktop,
+    /// 当前主题；更换主题会使整屏变脏。
     theme : Theme,
     dirty : DirtyRegions,
     input : VecDeque<InputEvent>,
@@ -40,6 +52,7 @@ pub struct GuiRuntime {
 
 impl GuiRuntime {
     pub fn new(display : SharedDisplayDevice) -> GuiResult<Self> {
+        // 软件 renderer 只支持 BGRA8888；尺寸、stride 或格式不符时拒绝创建，避免后续越界复制。
         let info = display.lock().info();
         if info.width == 0 || info.height == 0 || info.stride < info.width as usize * 4 ||
            info.format != PixelFormat::Bgra8888
@@ -123,6 +136,7 @@ impl GuiRuntime {
     }
 
     pub fn push_input(&mut self, event : InputEvent) -> GuiResult<()> {
+        // 有界队列优先保证 GUI 锁可及时释放；丢弃计数让诊断能发现输入风暴。
         if self.input.len() >= INPUT_QUEUE_CAPACITY {
             self.dropped_input = self.dropped_input.saturating_add(1);
             return Err(GuiError::QueueFull);
@@ -144,6 +158,7 @@ impl GuiRuntime {
         count
     }
 
+    /// 消费当前输入队列；每个输入先交给桌面状态机，再裁剪输出队列到固定容量。
     pub fn process_pending_input(&mut self) -> usize {
         let mut processed = 0;
         while let Some(input) = self.input.pop_front() {
@@ -161,6 +176,7 @@ impl GuiRuntime {
     }
 
     pub fn render(&mut self) -> GuiResult<bool> {
+        // 先取出脏区再绘制；提交失败时重新加入，确保设备瞬时错误不会丢帧。
         if self.dirty.is_empty() {
             return Ok(false);
         }

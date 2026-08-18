@@ -20,7 +20,7 @@ pub fn request_task_reschedule(task_id : TaskId) { scheduler::request_task_resch
 pub fn set_cpu_online(cpu_id : CpuId) { scheduler::set_cpu_online(cpu_id) }
 /// 指定唯一推进 sleep/wait timeout 的 BSP CPU。
 pub fn set_timekeeper_cpu(cpu_id : CpuId) { scheduler::set_timekeeper_cpu(cpu_id) }
-/// Snapshot of CPUs that have completed task-scheduler bring-up.
+/// 返回已完成任务调度器引导的 CPU 掩码。
 pub fn online_cpu_mask() -> CpuMask { scheduler::online_cpu_mask() }
 
 /// 所有 online CPU 累计的 idle scheduler tick。

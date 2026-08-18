@@ -1,6 +1,8 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GetGroupsPlan {
+    /// 仅查询组数量，不写用户缓冲区。
     Query(usize),
+    /// 复制指定数量的组 ID。
     Copy(usize),
 }
 
@@ -50,3 +52,4 @@ mod tests {
         assert!(!valid_setgroups_size(usize::MAX, 32));
     }
 }
+// supplementary group 查询参数的校验与执行计划。

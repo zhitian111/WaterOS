@@ -13,7 +13,9 @@ const CSR_PGDL: usize = 0x19;
 /// ASID 寄存器编号。
 const CSR_ASID: usize = 0x18;
 const ASID_MASK: usize = 0x3ff;
+/// 地址空间 token 中 ASID 的高位偏移。
 const TOKEN_ASID_SHIFT: usize = 48;
+/// 地址空间 token 中保存 PGDL 的低位掩码。
 const TOKEN_PGDL_MASK: usize = (1usize << TOKEN_ASID_SHIFT) - 1;
 /// CRMD.PG（bit 4）：分页使能。
 const CRMD_PG: usize = 1 << 4;

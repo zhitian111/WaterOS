@@ -1,11 +1,13 @@
-//!fifo queue
+//! 固定优先级 FIFO 就绪队列。
 
 use core::array::from_fn;
 
 use alloc::collections::vec_deque::VecDeque;
 use task_api::{Priority, TaskId, BUCKET_COUNT};
 pub struct FifoQueue {
+    /// 每个优先级桶中的 FIFO 任务队列。
     queues : [VecDeque<TaskId>; BUCKET_COUNT],
+    /// 当前所有桶中的任务数量。
     task_count : usize,
 }
 impl FifoQueue {

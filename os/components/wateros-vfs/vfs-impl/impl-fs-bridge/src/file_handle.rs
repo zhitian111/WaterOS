@@ -36,7 +36,9 @@ fn open_accmode(flags : VfsOpenFlags) -> u32 {
 #[derive(Clone)]
 // 本结构代码由AI完成
 pub struct BufferedFileHandle {
+    /// 绝对路径，用于回写和诊断。
     path : String,
+    /// 小文件的共享内容缓冲；由 Mutex 保护。
     data : Arc<Mutex<Vec<u8>>>,
     description : Arc<VfsOpenDescriptionState>,
     meta : VfsMetadata,
@@ -352,8 +354,7 @@ impl VfsIoHandle for BufferedFileHandle {
     fn set_open_status_flags(&mut self, flags : u32) -> VfsResult<()> {
         const O_APPEND : u32 = 0o2000;
         const O_NONBLOCK : u32 = 0o4000;
-        // asm-generic O_SYNC includes the O_DSYNC bit, so this mask preserves
-        // either open-time synchronous-write mode.
+        // asm-generic 的 O_SYNC 包含 O_DSYNC 位，因此该掩码保留 open 时启用的同步写模式。
         const O_SYNC : u32 = 0o4_010_000;
         self.description
             .set_status_flags(flags & (O_APPEND | O_NONBLOCK | O_SYNC));

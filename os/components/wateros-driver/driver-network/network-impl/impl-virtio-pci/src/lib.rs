@@ -157,6 +157,7 @@ unsafe impl Hal for VirtioPciNetHal {
 }
 
 pub struct VirtioPciNetDevice {
+    /// 已完成 PCI 握手的 VirtIO 网络传输与队列状态。
     inner: VirtIONet<VirtioPciNetHal, PciTransport, 32>,
 }
 
@@ -182,7 +183,7 @@ impl VirtioPciNetDevice {
     /// # Safety
     ///
     /// `config_base` must be directly accessible by the kernel and cover the requested PCI
-    /// configuration window.
+    /// 配置窗口。
     pub unsafe fn probe_first_from_config(
         config_base: usize,
         cam: Cam,
@@ -223,6 +224,7 @@ fn assign_memory_bars<C: ConfigurationAccess>(
     device_function: DeviceFunction,
     allocator: &mut VirtioNetPciBarAllocator,
 ) -> DriverResult<()> {
+    // 64 位 BAR 占用两个配置槽；分配失败时不启用该设备，避免访问重叠 MMIO。
     let bars = root
         .bars(device_function)
         .map_err(|_| DriverError::Unsupported)?;
@@ -314,6 +316,7 @@ impl NetworkDevice for VirtioPciNetDevice {
             Ok(rx_buf) => {
                 let packet = rx_buf.packet();
                 if packet.len() > buf.len() {
+                    // 先将过大的帧交还接收队列，再报告调用者缓冲区不足。
                     if let Err(e) = self.inner.recycle_rx_buffer(rx_buf) {
                         logging::warn!("[virtio-pci-net] recycle_rx_buffer failed: {:?}", e);
                     }

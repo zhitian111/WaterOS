@@ -498,10 +498,8 @@ fn wait_for_child_exit(parent_pid : task::ProcessId,
             return UserRet::from_success(0);
         }
         if waitpid_wait_for_child(parent_pid, target) == task::TaskWaitResult::Interrupted {
-            // SIGCHLD may become pending just before the child-exit wait queue
-            // wakes us. Prefer the now-observable child result over EINTR;
-            // otherwise callers that do not retry EINTR leave one zombie and
-            // kernel stack behind per fork.
+            // SIGCHLD 可能在子进程退出等待队列唤醒前刚刚 pending。优先返回此时已可观察的子进程结果，
+            // 否则不重试 EINTR 的调用方会让每次 fork 留下一个 zombie 和一份内核栈。
             if find_exited_child_for_wait(parent_pid, target).is_some() {
                 continue;
             }

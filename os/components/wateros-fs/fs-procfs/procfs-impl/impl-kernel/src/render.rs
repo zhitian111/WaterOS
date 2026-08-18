@@ -1,11 +1,16 @@
+//! 将内核快照渲染为 Linux 兼容的 procfs 文本或二进制文件。
+//!
+//! 所有函数先取得各子系统的短暂快照，再格式化为独立缓冲区；不得在持有 task、内存或网络锁时调用可能再入的 VFS 路径。
+
 use super::*;
 
 // 进程仍存在于 task 子系统时才对外可见。
 // 本方法代码由AI完成
+/// 返回当前 PID 是否仍可从 procfs 观察到；进程退出后统一呈现为不存在。
 pub(crate) fn process_visible(pid : ProcessId) -> bool { task::process_snapshot(pid).is_some() }
 
-// 进程 comm：优先 argv[0] 基名，其次 exe 基名，最后回退 `"process"`。
 // 本方法代码由AI完成
+/// 生成进程展示名：优先线程 comm、其次 argv/exe 基名，最后回退为 `process`。
 pub(crate) fn comm_for(pid : ProcessId) -> String {
     let leader = task::leader_task_for_process(pid).unwrap_or(0);
     if let Some(comm) = thread_comm_str(leader) {
@@ -51,6 +56,7 @@ pub(crate) fn format_pid_timer_slack(pid : ProcessId) -> FsResult<Vec<u8>> {
 }
 
 // 本方法代码由AI完成
+/// 生成 CPU 架构和在线 CPU 列表；仅报告编译目标已知的静态信息。
 pub(crate) fn format_cpuinfo() -> Vec<u8> {
     let online = task::online_cpu_mask();
     let mut output = String::new();
@@ -254,15 +260,15 @@ pub(crate) fn format_interrupts() -> Vec<u8> {
 }
 
 // 本方法代码由AI完成
+/// 生成 cgroup v1 控制器表；未实现控制器时只保留表头，避免虚报可用能力。
 pub(crate) fn format_cgroups() -> Vec<u8> {
-    // WaterOS 尚未实现 cgroup controller 或 cgroupfs。Linux 在没有任何
-    // v1 controller 的环境中仍保留表头；发布 header-only 比声称 memory、
-    // cpu 等 controller 已启用更准确，也能让探测工具正常解析“无控制器”。
+    // WaterOS 尚未实现 cgroup 控制器或 cgroupfs。Linux 在没有任何 v1 控制器时仍保留表头；
+    // 只发布表头比虚报 memory、cpu 等控制器已启用更准确，也便于探测工具识别“无控制器”。
     b"#subsys_name\thierarchy\tnum_cgroups\tenabled\n".to_vec()
 }
 
-// 取路径最后一段作为 comm 展示名。
 // 本方法代码由AI完成
+/// 取路径最后一段作为 comm 展示名；空尾段保留为空，不擅自补充路径内容。
 pub(crate) fn basename(path : &str) -> String {
     path.rsplit('/')
         .next()
@@ -270,8 +276,8 @@ pub(crate) fn basename(path : &str) -> String {
         .to_string()
 }
 
-// Linux `/proc/pid/stat` 单字符状态码（简化版）。
 // 本方法代码由AI完成
+/// 将 WaterOS 进程/线程状态映射为 Linux `/proc/<pid>/stat` 的单字符状态码。
 pub(crate) fn state_char(process : ProcessState, leader_state : Option<TaskState>) -> char {
     match process {
         ProcessState::Exited(_) | ProcessState::Exiting(_) => 'Z',
@@ -285,6 +291,7 @@ pub(crate) fn state_char(process : ProcessState, leader_state : Option<TaskState
 }
 
 // 本方法代码由AI完成
+/// 生成进程 leader 的 stat；进程不存在时返回 [`FsError::NotFound`]。
 pub(crate) fn format_stat(pid : ProcessId) -> FsResult<Vec<u8>> {
     let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
     format_task_stat(pid, process.leader_task_id)
@@ -298,7 +305,7 @@ pub(crate) fn format_task_stat(pid : ProcessId, task_id : TaskId) -> FsResult<Ve
                                                            .ok_or(FsError::NotFound)?;
     let tid = process_task.tid.raw();
     let target_snapshot = task::task_snapshot(task_id);
-    // Linux utime/stime are in USER_HZ jiffies; tick_count tracks scheduler ticks (~100/s).
+    // Linux 的 utime/stime 单位为 USER_HZ jiffy；这里的调度 tick 约为 100 Hz。
     let jiffies = target_snapshot.map(|snap| snap.stats.tick_count as u64)
                                  .unwrap_or(0)
                                  .max(1);
@@ -362,6 +369,7 @@ pub(crate) fn format_task_stat(pid : ProcessId, task_id : TaskId) -> FsResult<Ve
 }
 
 // 本方法代码由AI完成
+/// 生成进程 leader 的 status；凭证或进程快照不可取得时返回 `NotFound`。
 pub(crate) fn format_status(pid : ProcessId) -> FsResult<Vec<u8>> {
     let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
     format_task_status(pid, process.leader_task_id)
@@ -461,14 +469,21 @@ pub(crate) fn format_task_status(pid : ProcessId, task_id : TaskId) -> FsResult<
     Ok(line.into_bytes())
 }
 
-// status/smaps 用的内存估算（非精确 RSS，仅供 LTP 读通）。
 #[derive(Clone, Copy)]
 // 本结构代码由AI完成
+/// status/smaps 用的内存估算（KiB）；不是精确 RSS，只保证与可取得的映射快照一致。
+///
+/// 各字段均已按 KiB 向上取整，避免用户态把字节数误当作 Linux procfs 单位。
 pub(crate) struct ProcMemoryKb {
+    /// 虚拟映射总长度，单位 KiB。
     size_kb : usize,
+    /// 可推导的常驻页估计值，单位 KiB。
     rss_kb : usize,
+    /// 匿名或私有写入页估计值，单位 KiB。
     private_dirty_kb : usize,
+    /// ELF/用户镜像映射长度，单位 KiB。
     image_kb : usize,
+    /// 用户栈保留长度，单位 KiB。
     stack_kb : usize,
 }
 
@@ -622,6 +637,7 @@ fn mapping_path(mapping : &mm_api_v0::user_mapping::UserMappingSnapshot,
 }
 
 // 本方法代码由AI完成
+/// 生成 NUL 分隔 argv；未保存 argv 时退化为 exe 路径，进程不存在返回 `NotFound`。
 pub(crate) fn format_cmdline(pid : ProcessId) -> FsResult<Vec<u8>> {
     let process = task::process_snapshot(pid).ok_or(FsError::NotFound)?;
     let leader = process.leader_task_id;
@@ -795,6 +811,7 @@ pub(crate) fn format_fdinfo(pid : ProcessId, fd : usize) -> FsResult<Vec<u8>> {
 }
 
 // 本方法代码由AI完成
+/// 生成物理帧统计的最小内存视图；数值单位为 KiB，不把未实现的缓存统计伪造为真实值。
 pub(crate) fn format_meminfo() -> Vec<u8> {
     let stats = mm_frame_alloctor::frame_mem_stats();
     format!("MemTotal:\t{}\tkB\nMemFree:\t{}\tkB\nMemAvailable:\t{}\tkB\nBuffers:\t0\tkB\nCached:\t0\tkB\n",
@@ -804,6 +821,7 @@ pub(crate) fn format_meminfo() -> Vec<u8> {
 }
 
 // 本方法代码由AI完成
+/// 由已注册的挂载快照生成 `/proc/mounts`；未注册时返回空文件。
 pub(crate) fn format_mounts() -> Vec<u8> {
     let mut out = Vec::new();
     for line in mount_lines() {

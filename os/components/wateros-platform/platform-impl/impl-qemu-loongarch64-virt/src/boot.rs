@@ -15,8 +15,11 @@ pub const fn device_tree_phys_addr() -> usize { DEVICE_TREE_PHYS_ADDR }
 /// BOOT_CONTRACT: 该 profile 当前不把这三项绑定为固定 ABI 语义；使用者应在真正
 /// 需要某项前先由 machine/firmware 文档确认，避免照搬 RISC-V 的 hart/DTB 约定。
 pub struct QEMULoongArch64VirtBootArgs {
+    /// 启动入口的第一个原始参数，当前只原样透传。
     arg0 : usize,
+    /// 启动入口的第二个原始参数，当前只原样透传。
     arg1 : usize,
+    /// 启动入口的第三个原始参数，当前只原样透传。
     arg2 : usize,
 }
 

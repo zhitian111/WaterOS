@@ -52,9 +52,8 @@ pub fn alloc_error_handler(layout : core::alloc::Layout) -> ! {
 /// 网络协议栈轮询任务：周期性驱动 smoltcp 收发包。
 extern "C" fn network_poller_task(_arg : usize) -> ! {
     loop {
-        // NETWORK_STACK is a cross-CPU spin lock. Keep this kernel task from
-        // being switched out while it owns the lock: syscall callers enter
-        // with interrupts disabled and otherwise cannot yield while spinning.
+        // NETWORK_STACK 是跨 CPU 自旋锁。持锁期间禁止该内核任务被切出；syscall 调用者
+        // 关中断进入该路径，若被切出就无法在自旋时让出 CPU。
         let interrupt_state =
             platform::arch::interrupt::read_global_interrupt_state().expect("read interrupt \
                                                                              state for network \
@@ -225,7 +224,7 @@ mod qemu_riscv64_opensbi {
                 init_when_boot};
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use runtime::logging::*;
-    /// Firmware-selected boot hart. `usize::MAX` means no hart entered yet.
+    /// 固件选择的 boot hart；`usize::MAX` 表示尚无 hart 进入。
     static BSP_HART : AtomicUsize = AtomicUsize::new(usize::MAX);
     /// BSP 完成初始化后置 true，AP 自旋等待此标志。
     static AP_BOOT_READY : AtomicBool = AtomicBool::new(false);
@@ -251,7 +250,7 @@ mod qemu_riscv64_opensbi {
                     info!("[smp] hart_start accepted cpu={} status={:?}",
                           raw, status);
                 }
-                // A smaller QEMU `-smp` simply has no hart at this index.
+                // 较小的 QEMU `-smp` 配置在此索引没有对应 hart。
                 Err(platform::smp::PlatformSmpError::InvalidCpu) => break,
                 Err(error) => panic!("[smp] cannot start cpu={}: {:?}; use an OpenSBI firmware \
                                       with HSM",
@@ -261,9 +260,8 @@ mod qemu_riscv64_opensbi {
         requested
     }
 
-    /// Do not enter userspace with a partially initialized SMP configuration.
-    /// A finite spin wait is deliberate: the timer and scheduler are not yet
-    /// running on the BSP, so a timeout cannot rely on kernel timekeeping.
+    /// 不要在 SMP 配置尚未完成时进入用户态。有界自旋是有意设计：BSP 尚未启动
+    /// timer 和 scheduler，超时不能依赖内核计时。
     fn wait_for_secondary_online(requested : base::cpu::CpuMask) {
         const ONLINE_WAIT_SPINS : usize = 100_000_000;
         for _ in 0..ONLINE_WAIT_SPINS {
@@ -318,8 +316,7 @@ mod qemu_riscv64_opensbi {
         let cpu_id = task::CpuId::from_raw(cpu_raw);
         platform::arch::cpu::init_current_cpu(cpu_id).expect("init current CPU");
         mask_boot_interrupts();
-        // OpenSBI supplies the boot hart.  Secondary harts can arrive either
-        // directly from firmware or through the SBI HSM entry below.
+        // OpenSBI 提供 boot hart；次级 hart 可能直接由固件进入，也可能通过下方 SBI HSM 入口进入。
         if BSP_HART.compare_exchange(usize::MAX,
                                      cpu_raw,
                                      Ordering::AcqRel,

@@ -1,6 +1,5 @@
 #![no_std]
 //! 本模块代码由AI完成
-
 //! 用户态/测试向的简化 devfs 视图：枚举块设备为 Linux 风格 `/dev/vda*` 与兼容 `/dev/vblk{n}`。
 //!
 //! 与 `devfs-impl/impl-kernel` 的差异：无 DTB 占位、无动态 `register_block_device`；路径解析规则见 `parse_block_index`（模块内私有）。
@@ -48,6 +47,7 @@ pub fn self_test() {
 // Linux 风格磁盘名：索引 0 → `/dev/vda`。
 // 本方法代码由AI完成
 fn linux_vd_disk_path(index: usize) -> String {
+    // 索引超过 25 时饱和到 z，避免设备命名的字节加法溢出。
     let letter = (b'a' + (index as u8).min(25)) as char;
     format!("/dev/vd{}", letter)
 }

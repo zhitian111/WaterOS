@@ -591,7 +591,7 @@ pub struct PipeWriteHandle {
     inode : u64,
 }
 
-/// One open file description for a filesystem FIFO.
+/// 一个文件系统 FIFO 的打开文件描述。
 pub struct NamedPipeHandle {
     named : Arc<NamedPipe>,
     registry_key : (u64, u64),

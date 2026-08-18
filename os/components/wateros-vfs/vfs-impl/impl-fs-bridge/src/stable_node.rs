@@ -1,3 +1,5 @@
+//! 稳定后端节点租约，保证打开文件在 rename/unlink 后仍指向原 inode。
+
 use super::*;
 
 pub(crate) struct StableNodeLease {
@@ -26,6 +28,7 @@ impl StableNodeLease {
     }
 
     pub(crate) fn write_range(&self, offset : u64, data : &[u8]) -> VfsResult<usize> {
+        // 后端允许短写时循环推进；零字节写入视为 I/O 故障，避免无限循环。
         let mut done = 0usize;
         while done < data.len() {
             let written = self.fs.lock()
@@ -109,9 +112,8 @@ pub(crate) fn open_stable_node(mount_gen : u64, path : &str) -> VfsResult<Option
     };
     let node = match fs.lock().open_node(rel.as_str()) {
         Ok(node) => node,
-        // Stable node handles only regular files. A backend may report
-        // `NotAFile` for directories and symlinks; that is not a path error
-        // for callers such as unlink, which must still reach the backend.
+        // 稳定节点句柄只覆盖普通文件。后端可能对目录和符号链接返回 `NotAFile`；
+        // 这不是路径错误，因为 unlink 等调用方仍必须访问后端。
         Err(FsError::Unsupported | FsError::NotAFile) => return Ok(None),
         Err(error) => return Err(map_fs_err(error)),
     };

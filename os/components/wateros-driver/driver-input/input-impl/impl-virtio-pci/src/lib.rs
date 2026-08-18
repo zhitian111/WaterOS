@@ -21,10 +21,15 @@ use virtio_drivers::{BufferDirection, Hal, PhysAddr, PAGE_SIZE};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VirtioInputPciProbeInfo {
+    /// PCI bus 号。
     pub bus : u8,
+    /// PCI device 号。
     pub device : u8,
+    /// PCI function 号。
     pub function : u8,
+    /// vendor ID。
     pub vendor_id : u16,
+    /// device ID。
     pub device_id : u16,
 }
 
@@ -37,6 +42,7 @@ impl VirtioInputPciBarAllocator {
     pub const fn new(next : u64, end : u64) -> Self { Self { next, end } }
 
     fn allocate(&mut self, size : u64) -> Option<u64> {
+        // 零大小、对齐回绕和区间越界均不分配，避免 BAR 重叠。
         if size == 0 { return None }
         let align = size.checked_next_power_of_two()?.max(16);
         let start = self.next.checked_add(align - 1)? & !(align - 1);
@@ -155,6 +161,7 @@ fn assign_memory_bars<C : ConfigurationAccess>(root : &mut PciRoot<C>,
                                                 df : DeviceFunction,
                                                 allocator : &mut VirtioInputPciBarAllocator)
                                                 -> DriverResult<()> {
+    // 64 位 BAR 占用两个配置槽；遍历时同步跳过第二个槽位。
     let bars = root.bars(df).map_err(|_| DriverError::Unsupported)?;
     let mut index = 0;
     while index < bars.len() {

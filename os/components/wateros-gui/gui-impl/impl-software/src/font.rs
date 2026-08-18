@@ -6,11 +6,15 @@ use api_v0::{Point, Rect, TextAlign, TextMetrics, TextStyle, TextWrap, VerticalA
 use crate::Canvas;
 
 pub const GLYPH_WIDTH : u32 = 5;
+/// 字形位图高度（像素），不含行间距。
 pub const GLYPH_HEIGHT : u32 = 7;
+/// 相邻字形的水平步进（像素），含一列间隔。
 pub const GLYPH_ADVANCE : u32 = 6;
+/// 相邻文本行的垂直步进（像素），含一行间隔。
 pub const LINE_ADVANCE : u32 = 8;
 
 pub fn measure_text(text : &str, bounds : Rect, style : TextStyle) -> TextMetrics {
+    // scale 至少为 1，避免零缩放导致除零或返回看似可见但无法绘制的文本。
     let scale = u32::from(style.scale.max(1));
     let lines = layout_lines(text, bounds.size.width, scale, style.wrap);
     let width = lines.iter()
@@ -93,6 +97,7 @@ fn draw_glyph(canvas : &mut Canvas<'_>,
 }
 
 fn layout_lines(text : &str, width : u32, scale : u32, wrap : TextWrap) -> Vec<String> {
+    // 极窄区域仍保留每行一个字符的容量，保证换行结果和绘制过程终止。
     let capacity = (width / (GLYPH_ADVANCE * scale)).max(1) as usize;
     let mut output = Vec::new();
     for explicit in text.split('\n') {

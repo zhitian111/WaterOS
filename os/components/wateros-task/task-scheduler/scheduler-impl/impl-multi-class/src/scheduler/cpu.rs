@@ -1,4 +1,4 @@
-// 每 CPU 调度器状态、在线状态、只读查询与负载均衡（空闲偷取）。
+//! 每 CPU 调度器状态、在线状态、只读查询与负载均衡（空闲偷取）。
 use super::*;
 impl MultiClassScheduler {
     pub fn set_timekeeper_cpu(&mut self, cpu_id : CpuId) {

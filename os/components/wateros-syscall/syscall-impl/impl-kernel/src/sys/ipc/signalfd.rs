@@ -30,10 +30,15 @@ const SIGNALFD_SIGINFO_SIZE : usize = 128;
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct SignalFdSigInfo {
+    /// 信号编号。
     signo : u32,
+    /// 兼容字段 errno。
     errno : i32,
+    /// 发送原因码。
     code : i32,
+    /// 发送方进程 ID。
     pid : u32,
+    /// 发送方 UID。
     uid : u32,
     fd : i32,
     tid : u32,

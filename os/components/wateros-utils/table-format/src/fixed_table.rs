@@ -1,24 +1,26 @@
 use super::*;
 
 pub struct FixedTable<'a> {
+    /// 固定宽度列定义。
     columns : &'a [Column],
+    /// 边框样式。
     style : Style,
 }
 
 impl<'a> FixedTable<'a> {
-    /// Create a table from fixed-width columns.
+    /// 根据固定宽度列定义创建表格。
     pub const fn new(columns : &'a [Column]) -> Self {
         Self { columns,
                style : Style::ascii() }
     }
 
-    /// Select a border style.
+    /// 选择边框样式。
     pub const fn style(mut self, style : Style) -> Self {
         self.style = style;
         self
     }
 
-    /// Start streaming a table into `output`.
+    /// 开始将表格流式写入 `output`，并校验列定义。
     pub fn begin<'w, W : Write>(self,
                                 output : &'w mut W)
                                 -> Result<FixedTableWriter<'a, 'w, W>, Error> {
@@ -38,21 +40,24 @@ impl<'a> FixedTable<'a> {
     }
 }
 
-/// Active fixed-width table stream.
+/// 活跃的固定宽度表格流。
 ///
 /// FORMAT_STATE: `begin` produces an active writer; `row` and `separator`
-/// append to it; consuming `finish` writes the bottom border. The writer
-/// borrows its destination, so an unfinished table cannot be written to from
-/// another owner at the same time.
+/// 逐行追加内容；消费 `finish` 会写入底部边框。写入器借用目标缓冲区，
+/// 因此表格未完成时，其他所有者不能同时写入该缓冲区。
 pub struct FixedTableWriter<'a, 'w, W> {
+    /// 输出目标的可变借用。
     output : &'w mut W,
+    /// 表格定义与样式。
     table : FixedTable<'a>,
+    /// 是否已经写出至少一行边框或数据。
     has_line : bool,
+    /// 是否已调用 `finish`；完成后不能继续写入。
     finished : bool,
 }
 
 impl<W : Write> FixedTableWriter<'_, '_, W> {
-    /// Write one row. Separators are explicit through [`Self::separator`].
+    /// 写入一行；分隔线通过 [`Self::separator`] 显式控制。
     pub fn row(&mut self, cells : &[Cell<'_>]) -> Result<(), Error> {
         self.ensure_active()?;
         if cells.len() !=
@@ -113,7 +118,7 @@ impl<W : Write> FixedTableWriter<'_, '_, W> {
         Ok(())
     }
 
-    /// Write a horizontal separator.
+    /// 写入水平分隔线。
     pub fn separator(&mut self) -> Result<(), Error> {
         self.ensure_active()?;
         if self.table
@@ -128,7 +133,7 @@ impl<W : Write> FixedTableWriter<'_, '_, W> {
         Ok(())
     }
 
-    /// Finish the frame by writing its bottom border.
+    /// 写入底部边框并完成表格。
     pub fn finish(mut self) -> Result<(), Error> {
         self.ensure_active()?;
         if !self.table

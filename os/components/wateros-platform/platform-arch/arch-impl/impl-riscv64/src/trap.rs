@@ -22,12 +22,17 @@ unsafe extern "C" {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TrapContext {
+    /// x0–x31 通用寄存器；x0 在硬件语义上恒为零。
     pub(crate) x : [usize; 32],
+    /// 进入 trap 时保存的 `sstatus`。
     pub(crate) sstatus : usize,
+    /// 用户态返回程序计数器 `sepc`。
     pub(crate) sepc : usize,
+    /// 原始 trap 原因 `scause`。
     pub(crate) scause : usize,
+    /// 异常相关地址 `stval`，页故障时为故障虚拟地址。
     pub(crate) stval : usize,
-    /// satp
+    /// 返回用户态时需要激活的地址空间 `satp` token。
     pub(crate) return_address_space_token : usize,
     /// 用户态 `f0`–`f31`。trap 入口在调用 Rust 前保存，返回前恢复，避免
     /// 抢占式任务切换让不同用户线程串用硬件浮点寄存器。

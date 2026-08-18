@@ -43,7 +43,7 @@ impl<T> OnceStorage<T> {
 
     fn get(&self) -> Option<&T> {
         if self.is_initialized() {
-            // Acquire above observes the value write published by init's Release store.
+            // Acquire 读取与初始化者的 Release 配对，确保下面的引用看到完整的 T。
             Some(unsafe { (&*self.value.get()).assume_init_ref() })
         } else {
             None
@@ -59,6 +59,7 @@ impl<T> OnceStorage<T> {
         {
             Ok(_) => {}
             Err(INITIALIZING) => {
+                // 初始化中的槽位不能被读取或覆盖；等待发布完成后统一返回错误。
                 while self.state
                           .load(Ordering::Acquire) ==
                       INITIALIZING
@@ -70,6 +71,7 @@ impl<T> OnceStorage<T> {
             Err(_) => return Err(OnceInitError::AlreadyInitialized),
         }
 
+        // 只有成功抢到 INITIALIZING 状态的 CPU 能写入槽位，因此不会并发覆盖 T。
         unsafe { (*self.value.get()).write(value) };
         self.state
             .store(INITIALIZED, Ordering::Release);

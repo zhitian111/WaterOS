@@ -6,8 +6,11 @@ use api_v0::reset::{
 
 /// QEMU `virt` ACPI GED 寄存器基址及其 shutdown/reset 偏移。
 const VIRT_GED_REG_ADDR: usize = 0x100E_001C;
+/// GED sleep-control 寄存器偏移。
 const ACPI_GED_REG_SLEEP_CTL: usize = 0x00;
+/// GED reset 寄存器偏移。
 const ACPI_GED_REG_RESET: usize = 0x02;
+/// QEMU GED 规定的复位触发值。
 const ACPI_GED_RESET_VALUE: u8 = 0x42;
 const ACPI_GED_SLP_TYP_S5: u8 = 0x05;
 const ACPI_GED_SLP_EN: u8 = 0x20;

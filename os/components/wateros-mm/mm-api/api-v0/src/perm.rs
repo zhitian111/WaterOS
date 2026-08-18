@@ -3,16 +3,19 @@
 /// 页权限（语义层，不包含页表 PTE 具体 bit 编码）。
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PagePerm(pub u8);
+pub struct PagePerm(
+    /// 语义位集合；MM 实现必须拒绝或安全处理未知位，不能直接当作硬件 PTE 编码。
+    pub u8,
+);
 
 impl PagePerm {
     /// 可读
     pub const R: Self = Self(1 << 0);
-    /// 可写
+    /// 可写；架构实现通常同时要求可读，非法 R/W/X 组合由实现拒绝或规范化。
     pub const W: Self = Self(1 << 1);
     /// 可执行
     pub const X: Self = Self(1 << 2);
-    /// 用户态可访问
+    /// 用户态可访问；缺少此位的页即使在当前页表中存在，也不得供 U 态 load/store/fetch。
     pub const U: Self = Self(1 << 3);
 
     /// 空权限（非法映射的常见前置；实现可拒绝或按需扩展）。
@@ -62,4 +65,3 @@ pub fn test() {
     assert!(p.user());
     log::trace!("[mm-api::perm] test end");
 }
-

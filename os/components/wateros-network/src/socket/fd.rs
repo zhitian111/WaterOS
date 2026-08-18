@@ -55,7 +55,9 @@ fn socket_meta(inode : u64) -> VfsMetadata {
 }
 
 struct SocketPreparedRead {
+    /// 被读取的共享 socket。
     socket : SocketRef,
+    /// 用户请求的最大读取长度。
     max_len : usize,
 }
 
@@ -97,6 +99,7 @@ impl VfsReadLease for EmptySocketReadLease {
 }
 
 struct SocketVfsReadLease {
+    /// 两阶段接收租约；drop 时会撤销未提交预留。
     lease : Option<SocketReceiveLease>,
 }
 
@@ -123,6 +126,7 @@ impl VfsReadLease for SocketVfsReadLease {
 
 /// TCP socket 的 VFS fd 句柄；覆盖创建、绑定、监听、连接等状态。
 struct TcpSocketHandle {
+    /// TCP socket 共享对象。
     socket : SocketRef,
 }
 

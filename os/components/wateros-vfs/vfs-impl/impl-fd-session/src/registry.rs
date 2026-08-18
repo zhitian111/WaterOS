@@ -53,14 +53,13 @@ impl Drop for OpenFileDescription {
     fn drop(&mut self) { let _ = self.close_once(); }
 }
 
-/// A stable fd-slot handle shared only by transient I/O leases.
+/// 仅由临时 I/O 租约共享的稳定 fd 槽句柄。
 #[derive(Clone)]
 pub struct SharedIoHandle {
     inner : Arc<Mutex<OpenFileDescription>>,
     snapshot : Arc<Mutex<Option<OpenFileDescription>>>,
-    /// PTY identity is immutable for an open file description.  Cache it at
-    /// installation time so close-on-exec never has to wait for an active I/O
-    /// lease merely to discover which terminal may need hangup delivery.
+    /// PTY 身份对一个打开文件描述不可变。安装时缓存该身份，使 close-on-exec
+    /// 无需等待活动 I/O 租约即可判断需要向哪个终端发送挂断通知。
     terminal_id : Option<tty::TerminalId>,
     resource_kind : VfsResourceKind,
 }
@@ -79,7 +78,7 @@ impl SharedIoHandle {
                resource_kind }
     }
 
-    /// Return the immutable PTY identity without acquiring the I/O lease.
+    /// 返回不可变 PTY 身份，不获取 I/O 租约。
     pub fn terminal_id(&self) -> Option<tty::TerminalId> { self.terminal_id }
 
     pub fn resource_kind(&self) -> VfsResourceKind { self.resource_kind }
@@ -92,15 +91,14 @@ impl SharedIoHandle {
                .as_mut())
     }
 
-    /// Capture a prepared read while holding the fd-slot lock only briefly.
+    /// 只短暂持有 fd 槽锁，捕获一次 prepared read。
     pub fn prepare_read(&self, max_len : usize) -> VfsResult<Box<dyn VfsPreparedRead>> {
         let mut inner = self.inner.lock();
         inner.handle
              .prepare_read(max_len)
     }
 
-    /// Create an independent fd-slot handle. If the live handle is blocked in
-    /// I/O, duplicate the snapshot captured immediately before that I/O.
+    /// 创建独立 fd 槽句柄；实时句柄阻塞时使用 I/O 前保存的快照。
     pub fn duplicate(&self) -> VfsResult<Self> {
         let duplicate = if let Some(inner) = self.inner
                                                  .try_lock()
@@ -117,8 +115,7 @@ impl SharedIoHandle {
         Ok(Self::new(duplicate))
     }
 
-    /// Close immediately when this is the final reference. If an I/O lease is
-    /// still active, `OpenFileDescription::drop` closes after that lease ends.
+    /// 最后一个引用立即关闭；若 I/O 租约仍存在，则由其析构延迟关闭。
     pub fn close(self) -> VfsResult<()> {
         if Arc::strong_count(&self.inner) == 1 {
             self.inner
@@ -167,10 +164,8 @@ pub struct FdSlotSnapshot {
     pub terminal_id : Option<tty::TerminalId>,
 }
 
-/// Immutable fd-table image shared by ordinary fork children until either
-/// side mutates its descriptor table.  Individual open-file descriptions are
-/// shared as required by fork(2), while `Arc::make_mut` below preserves
-/// independent descriptor-table mutation semantics.
+/// 普通 fork 子进程共享的不可变 fd 表镜像，直到任一方修改描述符表。
+/// 各打开文件描述按 fork(2) 语义共享，而下方 `Arc::make_mut` 保证描述符表修改时彼此独立。
 pub struct ForkFdTableSnapshot {
     table : Arc<Vec<Option<FdSlot>>>,
 }
@@ -408,9 +403,8 @@ impl PerTaskFdRegistry {
     fn take_table_handles(&mut self, owner : task::TaskId) -> Vec<SharedIoHandle> {
         let mut handles = Vec::new();
         if let Some(table) = self.tables.remove(&owner) {
-            // A fork child that never touched its fd table can release the
-            // shared table with one Arc decrement.  Only the final owner must
-            // walk and close every open-file description.
+            // 从未修改 fd 表的 fork 子进程只需减少一次 Arc 引用即可释放共享表；
+            // 只有最后一个所有者需要遍历并关闭所有打开文件描述。
             if let Ok(mut table) = Arc::try_unwrap(table) {
                 for slot in table.iter_mut() {
                     if let Some(slot) = slot.take() {
@@ -681,7 +675,7 @@ impl PerTaskFdRegistry {
         }
     }
 
-    /// Snapshot all open descriptions so callers can flush outside the registry lock.
+    /// 快照所有打开描述，使调用方能在 registry 锁外执行刷新。
     pub fn all_open_handles(&self) -> Vec<SharedIoHandle> {
         self.tables
             .values()
@@ -704,7 +698,7 @@ impl PerTaskFdRegistry {
         1
     }
 
-    /// Clone the open-file-description referenced by `fd`.
+    /// 克隆 `fd` 引用的打开文件描述。
     pub fn io_handle_for_task(&mut self,
                               task_id : task::TaskId,
                               fd : usize)
@@ -727,8 +721,7 @@ impl PerTaskFdRegistry {
             .ok_or(VfsError::BadFd)
     }
 
-    /// Snapshot handle, descriptor flags and immutable resource classification
-    /// in one registry lookup.
+    /// 在一次 registry 查找中快照句柄、描述符标志和不可变资源分类。
     pub fn fd_slot_for_task(&mut self,
                             task_id : task::TaskId,
                             fd : usize)
@@ -751,7 +744,7 @@ impl PerTaskFdRegistry {
             .ok_or(VfsError::BadFd)
     }
 
-    /// Duplicate the handle into a new independently locked fd slot.
+    /// 将句柄复制到新的、独立加锁的 fd 槽位。
     pub fn duplicate_handle_for_task(&mut self,
                                      task_id : task::TaskId,
                                      fd : usize)
@@ -965,10 +958,9 @@ impl PerTaskFdRegistry {
     // 本方法代码由AI完成
     pub fn init_child_fd_table(&mut self, child : task::TaskId) { let _ = self.table_mut(child); }
 
-    /// Snapshot a parent's fd slots and flags without calling concrete handles.
+    /// 快照父任务的 fd 槽位和标志，不调用具体句柄。
     ///
-    /// The caller duplicates the returned handles after releasing the registry
-    /// lock, then installs the independent child table in a second short section.
+    /// 调用方在释放 registry 锁后复制返回句柄，再在第二个短临界区安装独立的子表。
     pub fn fd_table_copy_snapshot(&mut self,
                                   parent : task::TaskId)
                                   -> Vec<Option<FdSlotSnapshot>> {
@@ -982,9 +974,7 @@ impl PerTaskFdRegistry {
             .unwrap_or_default()
     }
 
-    /// O(1) fork snapshot.  Descriptor-table storage and open-file
-    /// descriptions stay shared until a descriptor operation mutates either
-    /// process's table.
+    /// O(1) fork 快照。描述符表存储和打开文件描述保持共享，直到描述符操作修改任一进程的表。
     pub fn fd_table_fork_snapshot(&mut self, parent : task::TaskId) -> ForkFdTableSnapshot {
         self.ensure_task(parent);
         let parent_owner = self.effective_owner(parent);
@@ -1006,7 +996,7 @@ impl PerTaskFdRegistry {
         self.rebuild_table_indexes(child);
     }
 
-    /// Install an fd-table snapshot for a fork child.
+    /// 为 fork 子进程安装 fd 表快照。
     pub fn install_fd_table_copy(&mut self,
                                  child : task::TaskId,
                                  parent_table : Vec<Option<FdSlotSnapshot>>) {

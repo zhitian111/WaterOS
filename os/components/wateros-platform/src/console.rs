@@ -94,8 +94,7 @@ pub use api_v0::console::{PlatformConsoleError, PlatformConsoleResult};
         })
     }
 
-    /// Write exact terminal wire bytes under the same cross-CPU lock used by
-    /// kernel logging. No CR/LF conversion is performed by the board backend.
+    /// 在内核日志使用的同一跨 CPU 锁下写入精确终端线缆字节；板级后端不做 CR/LF 转换。
     pub fn console_write_raw_buffer(bytes: &[u8]) -> PlatformConsoleResult<()> {
         with_console_write_lock(|reentrant| {
             if !reentrant {

@@ -32,24 +32,36 @@ impl PtyRegistry {
 static REGISTRY: Mutex<PtyRegistry> = Mutex::new(PtyRegistry::new());
 
 struct PtyState {
+    /// slave 是否仍处于锁定状态。
     locked: bool,
+    /// 当前行规程配置。
     termios: TtyTermios,
+    /// 窗口尺寸。
     winsize: TtyWinSize,
+    /// 前台进程组。
     foreground_pgid: usize,
+    /// 控制终端所属会话。
     controlling_sid: usize,
     /// master 写入、经过 slave 行规程后可由 slave 读取的数据。
     slave_readable: VecDeque<u8>,
     slave_editing: Vec<u8>,
+    /// slave 端待交付的 EOF。
     slave_eof_pending: bool,
     /// slave 输出和行规程回显，供 master（nxterm）读取。
     master_readable: VecDeque<u8>,
     master_read_id: Option<u64>,
     slave_read_id: Option<u64>,
+    /// 下一个读预约序号。
     next_read_id: u64,
+    /// master 打开文件描述数量。
     master_open_descriptions: usize,
+    /// slave 打开文件描述数量。
     slave_open_descriptions: usize,
+    /// slave 已挂断，master 读取应观察到 EOF/HUP。
     master_hung_up: bool,
+    /// master 已挂断，slave 读取应观察到 EOF/HUP。
     slave_hung_up: bool,
+    /// 行规程产生、待 syscall 层投递的控制信号事件。
     events: VecDeque<TtyControlEvent>,
 }
 

@@ -1,4 +1,4 @@
-//! 用户任务
+//! 用户任务启动规格与地址空间句柄。
 
 /// 用户态程序入口 PC。
 pub type UserTaskEntryPc = usize;
@@ -18,7 +18,9 @@ impl AddressSpaceHandle {
 /// 用户任务关联的一段用户映像元信息。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UserImageInfo {
+    /// 用户映像在虚拟地址空间中的起始地址。
     image_base : usize,
+    /// 映像占用的字节数。
     image_size : usize,
 }
 

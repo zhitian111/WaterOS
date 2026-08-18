@@ -1,9 +1,14 @@
+//! 写穿 LRU 缓存的槽位、链表和淘汰流程。
+
 use super::*;
 
 
 pub(crate) struct Slot {
+    /// 当前槽保存的 LBA；`None` 表示空闲槽。
     lba : Option<Lba>,
+    /// LRU 链表中的前驱槽下标。
     prev : Option<usize>,
+    /// LRU 链表中的后继槽下标。
     next : Option<usize>,
 }
 
@@ -21,8 +26,7 @@ pub struct CachingBlockDevice {
     /// 已占用槽组成的双向链表；头部最久未使用，尾部最近使用。
     pub(crate) lru_head : Option<usize>,
     pub(crate) lru_tail : Option<usize>,
-    /// LBAs seen recently but not currently resident. A second read admits
-    /// the block; evicted residents are also remembered for fast refault.
+    /// 最近见过但当前不驻留的 LBA；第二次读取才准入，淘汰项也会记录以便快速回填。
     pub(crate) recent : RecentIndex,
     #[cfg(feature = "diagnostics")]
     pub(crate) diagnostics : BlockCacheDiagnostics,
@@ -31,6 +35,7 @@ pub struct CachingBlockDevice {
 impl CachingBlockDevice {
     /// 用给定配置包装 `inner`；从 `inner` 读取 [`BlockDevice::block_size`] 并预分配槽位缓冲。
     pub fn new(inner : Box<dyn BlockDevice + Send>, config : BlockCacheConfig) -> Self {
+        // 块大小为零时缓存无法切片，退化为零容量而不是构造会越界的槽位。
         let block_size = inner.block_size();
         let capacity = if block_size == 0 {
             0
@@ -127,6 +132,7 @@ impl CachingBlockDevice {
         match self.evict_lru_slot() {
             Ok(idx) => idx,
             Err(e) => {
+                // 元数据不变量损坏时清空索引和链表；若仍无槽位才说明容量配置不可恢复。
                 log::warn!("[block-cache] alloc_slot evict failed: {e:?}; resetting cache");
                 self.reset_cache_invariant();
                 self.free
@@ -175,8 +181,7 @@ impl CachingBlockDevice {
             .miss_blocks += 1;
     }
 
-    /// Install a read-missed block only after the LBA has been observed in
-    /// the recent history. First-touch streaming data bypasses the data cache.
+    /// 只有当 LBA 最近在访问历史中出现过，才安装读未命中块；首次触碰的流式数据绕过数据缓存。
     pub(crate) fn admit_read_miss(&mut self, lba : Lba, block : &[u8]) {
         if self.recent
                .take(lba)

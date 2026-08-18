@@ -7,7 +7,7 @@ use frame_alloctor_api_v0::FrameAllocError;
 pub enum MmError {
     /// 物理帧或内部资源耗尽。
     OutOfMemory,
-    /// 地址/范围非法或未对齐到实现要求。
+    /// 地址/范围非法、发生算术溢出，或未满足实现要求的页对齐。
     InvalidAddress,
     /// 目标虚拟页已存在映射。
     AlreadyMapped,
@@ -15,10 +15,10 @@ pub enum MmError {
     NotMapped,
     /// 权限不足或未映射导致的访问语义失败（由 `UserMemoryOps` 等返回）。
     AccessViolation,
-    /// 当前实现不支持该操作（如非 4K 大页路径）。
+    /// 当前实现不支持该操作（如非 4 KiB 页路径）；调用者不得把它转换成伪成功。
     Unsupported,
 
-    /// 来自物理帧分配器的错误（会在语义上尽量映射到上层常见错误）。
+    /// 来自物理帧分配器的错误；`From` 转换目前归并为常见 MM 语义错误，此变体为扩展实现保留。
     FrameAlloc(FrameAllocError),
 }
 
@@ -36,4 +36,3 @@ impl From<FrameAllocError> for MmError {
         }
     }
 }
-

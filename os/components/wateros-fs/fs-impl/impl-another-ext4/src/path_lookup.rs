@@ -1,4 +1,4 @@
-//! Path validation, inode lookup and metadata conversion.
+//! 路径校验、inode 查找与元数据转换。
 
 extern crate alloc;
 
@@ -7,6 +7,7 @@ use api_v0::{FsError, FsMetadata, FsResult};
 use super::block_io::{map_error, map_type};
 
 pub(crate) fn lookup(fs: &Ext4, path: &str) -> FsResult<u32> {
+    // 根路径和空路径统一指向根 inode；其它路径拒绝相对路径及点分量，避免越界解析。
     if path == "/" || path.is_empty() {
         return Ok(EXT4_ROOT_INO);
     }
@@ -33,6 +34,7 @@ fn metadata_from_attr(attr: another_ext4::FileAttr) -> FsMetadata {
 }
 
 pub(crate) fn write_with_ordered_size(fs: &Ext4, inode: u32, offset: u64, data: &[u8]) -> FsResult<usize> {
+    // 先检查 offset+len 溢出并扩展文件，再写入并 flush，保证元数据先于数据提交。
     let data_len = u64::try_from(data.len()).map_err(|_| FsError::NoSpace)?;
     let end = offset.checked_add(data_len).ok_or(FsError::NoSpace)?;
     let offset = usize::try_from(offset).map_err(|_| FsError::NoSpace)?;

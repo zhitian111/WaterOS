@@ -15,7 +15,9 @@ pub struct WidgetId(pub u64);
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// 纯色容器，可选一像素边框。
 pub struct Panel {
+    /// 容器填充色。
     pub background : Color,
+    /// 可选的一像素边框色；`None` 表示不绘制边框。
     pub border : Option<Color>,
 }
 
@@ -29,7 +31,9 @@ pub struct Label {
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// 可聚焦、可点击按钮；`pressed` 由场景状态机维护。
 pub struct Button {
+    /// 按钮显示文本。
     pub text : String,
+    /// 指针按下但尚未释放时的视觉状态，由运行时维护。
     pub pressed : bool,
 }
 
@@ -44,10 +48,15 @@ pub struct ProgressBar {
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// 单行 UTF-8 编辑状态；当前内嵌字体只渲染可打印 ASCII。
 pub struct TextInput {
+    /// 当前 UTF-8 文本。
     pub text : String,
+    /// 文本为空时的提示文本。
     pub placeholder : String,
+    /// 插入点的字节下标；状态机必须维持其位于 UTF-8 字符边界。
     pub cursor : usize,
+    /// 可输入的 Unicode 标量值最大数，而不是字节数。
     pub maximum_chars : usize,
+    /// 是否以掩码而非明文绘制。
     pub password : bool,
 }
 
@@ -91,7 +100,8 @@ impl Widget {
                   WidgetKind::Button(Button { text : text.into(), pressed : false }))
     }
 
-    pub fn progress(id : WidgetId, bounds : Rect, value : u32, maximum : u32) -> Self {
+   pub fn progress(id : WidgetId, bounds : Rect, value : u32, maximum : u32) -> Self {
+        // 最大值钳制为一，避免后续绘制百分比时除零。
         Self::new(id,
                   bounds,
                   WidgetKind::ProgressBar(ProgressBar { value,

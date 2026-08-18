@@ -30,15 +30,19 @@ pub struct FdRegistryStats {
     pub open_fd_count : usize,
 }
 
-/// A stable open-file-description lease plus immutable fd-slot attributes.
+/// 稳定的打开文件描述租约及不可变 fd 槽属性。
 ///
-/// Acquiring this object performs the only global fd-registry lookup needed by
-/// a syscall. Operations on the handle use the per-description lock afterwards.
+/// 获取租约时完成一次全局 fd 表查找；后续操作只使用描述本身的锁，避免在阻塞 I/O
+/// 期间长期持有任务 fd 表锁。
 #[derive(Clone)]
 pub struct FdIoLease {
+    /// 共享打开文件描述，负责实际 I/O 和偏移。
     handle : impl_fd_session::SharedIoHandle,
+    /// fd 槽位状态标志。
     flags : u8,
+    /// 资源类别，用于区分普通文件、管道、socket 等。
     resource_kind : VfsResourceKind,
+    /// 关联终端 ID；非终端为 `None`。
     terminal_id : Option<tty::TerminalId>,
 }
 
@@ -68,7 +72,7 @@ impl FdIoLease {
     }
 }
 
-/// Acquire all fd-slot state required by an I/O syscall in one registry lookup.
+/// 在一次 registry 查找中取得 I/O syscall 所需的全部 fd 槽状态。
 pub fn current_io_lease(fd : usize) -> VfsResult<FdIoLease> {
     let task_id = current_task_id()?;
     let slot = with_fd_registry(|registry| registry.fd_slot_for_task(task_id, fd))?;
@@ -212,7 +216,7 @@ pub fn with_current_io_detached<R>(fd : usize,
     handle.with_io(f)
 }
 
-/// Capture a prepared sequential read without retaining the fd-slot lock.
+/// 捕获预备顺序读，不持有 fd 槽锁。
 pub fn prepare_current_read(fd : usize,
                             max_len : usize)
                             -> VfsResult<Box<dyn api_v0::VfsPreparedRead>> {
@@ -614,7 +618,7 @@ pub fn self_test() {
         reg.drop_task_fd_table(unshare_second_sibling);
 
         // An in-flight stdio operation must keep the old table alive while the
-        // task exits. Reusing the task id must receive a fresh stdio table.
+        // 任务退出；重新使用任务 ID 时必须获得全新的 stdio 表。
         let lease_task : task::TaskId = 30;
         let old_handle = reg.io_handle_for_task(lease_task, api_v0::VFS_STDIN_FD)
                             .expect("stdio lease");

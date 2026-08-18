@@ -7,8 +7,11 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 struct PositiveDentry {
+    /// 后端 inode 编号。
     inode : u32,
+    /// 在 slots 中的固定位置。
     slot : usize,
+    /// second-chance 标记；命中后先清标记再给一次保留机会。
     referenced : bool,
 }
 
@@ -38,6 +41,7 @@ impl PositiveDentryCache {
     pub(crate) fn contains(&self, path : &str) -> bool { self.entries.contains_key(path) }
 
     pub(crate) fn insert(&mut self, path : &str, inode : u32, capacity : usize) -> usize {
+        // 容量为零时只跳过缓存，不影响真实路径查找；避免构造零长度槽位后取模。
         if let Some(entry) = self.entries.get_mut(path) {
             entry.inode = inode;
             entry.referenced = true;

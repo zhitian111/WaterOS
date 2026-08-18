@@ -26,13 +26,18 @@ const BTN_RIGHT : u16 = 0x111;
 const BTN_MIDDLE : u16 = 0x112;
 
 struct DeviceState {
+    /// 设备句柄；仅在弹出单个原始事件时短暂加锁。
     device : SharedInputDevice,
     #[allow(dead_code)]
     kind : InputDeviceKind,
+    /// 绝对轴校准范围；缺失时把原始值当作相对坐标并裁剪。
     absolute_x : Option<AbsoluteAxis>,
     absolute_y : Option<AbsoluteAxis>,
+    /// 当前合并后的屏幕指针坐标。
     pointer : Point,
+    /// 自上次 `SYN_REPORT` 是否收到坐标变化。
     pointer_changed : bool,
+    /// 当前键盘修饰键位图。
     modifiers : KeyModifiers,
 }
 
@@ -49,6 +54,7 @@ impl DeviceState {
     }
 
     fn consume(&mut self, raw : RawInputEvent, size : Size, output : &mut Vec<InputEvent>) {
+        // 坐标事件先累积，收到 SYN_REPORT 才发布一次移动，避免中间半帧暴露给窗口状态机。
         match raw.event_type {
             EV_SYN if raw.code == SYN_REPORT => {
                 if self.pointer_changed {
@@ -129,6 +135,7 @@ impl InputBridge {
 
     /// 至多消费 `budget` 个原始事件，防止输入轮询饿死合成和调度。
     pub fn poll(&mut self, size : Size, budget : usize) -> Vec<InputEvent> {
+        // budget 为零时仍发现设备但不读取事件；上层可在下一帧继续消费。
         self.discover_devices();
         let mut output = Vec::new();
         let mut remaining = budget;
@@ -168,6 +175,7 @@ impl Default for InputBridge {
 }
 
 fn scale_axis(value : i32, axis : Option<AbsoluteAxis>, extent : u32) -> i32 {
+    // 退化轴范围或零/一像素屏幕没有可分配区间，统一映射到 0。
     let Some(axis) = axis else { return clamp_coordinate(value, extent) };
     if extent <= 1 || axis.maximum <= axis.minimum {
         return 0;

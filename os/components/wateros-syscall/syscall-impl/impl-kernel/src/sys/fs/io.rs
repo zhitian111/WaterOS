@@ -385,9 +385,8 @@ pub(crate) fn sys_write(args : SyscallArgs) -> UserRet {
     ret
 }
 
-/// `MAX_RW_COUNT` is the ABI limit while `SYSCALL_IO_MAX` only bounds kernel
-/// staging. Requests larger than staging capacity must make progress via a
-/// legal short write instead of failing with `EINVAL`.
+/// `MAX_RW_COUNT` 是 ABI 上限，而 `SYSCALL_IO_MAX` 只限制内核暂存区。
+/// 大于暂存容量的请求必须通过合法短写取得进展，而不是返回 `EINVAL`。
 fn write_transfer_len(requested : usize) -> usize {
     requested.min(MAX_IO)
              .min(SYSCALL_IO_MAX)

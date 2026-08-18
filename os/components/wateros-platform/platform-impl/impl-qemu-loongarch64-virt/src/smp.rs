@@ -36,9 +36,13 @@ static CONFIGURED_CPU_MASK : AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CpuTopologyError {
+    /// 未提供 DTB 指针。
     MissingDtb,
+    /// DTB 解析失败。
     InvalidDtb,
+    /// DTB 缺少 `/cpus` 节点。
     MissingCpuNode,
+    /// 没有可用 CPU 节点。
     NoUsableCpu,
 }
 

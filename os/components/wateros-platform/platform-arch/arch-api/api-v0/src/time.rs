@@ -5,7 +5,9 @@ use core::result::Result;
 /// 架构层时间错误：只描述“原语不可用/不支持”的最小语义。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArchTimeError {
+    /// 当前架构没有该时间原语。
     Unsupported,
+    /// 原语存在但硬件/固件尚未准备好。
     Unavailable,
 }
 

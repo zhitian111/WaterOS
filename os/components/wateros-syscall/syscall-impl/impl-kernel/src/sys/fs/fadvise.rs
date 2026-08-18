@@ -1,4 +1,4 @@
-//! `fadvise64(2)` compatibility for file access-pattern hints.
+//! `fadvise64(2)` 文件访问模式提示的兼容实现。
 
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;

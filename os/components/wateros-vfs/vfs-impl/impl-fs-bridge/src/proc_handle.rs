@@ -114,14 +114,11 @@ fn open_pseudo(view_kind : PseudoViewKind,
     if flags.contains(VfsOpenFlags::DIRECTORY) {
         return Err(VfsError::NotAFile);
     }
-    // Linux exposes `/proc/<pid>/ns/*` as magic symlinks for pathname
-    // inspection, while opening one returns an nsfs file descriptor rather
-    // than opening the textual link target.  WaterOS does not yet implement
-    // `setns(2)`, but tools such as util-linux `lsns` still need a stable fd
-    // which can be opened and inspected with `fstat(2)`.  Represent that fd as
-    // an empty read-only regular file and preserve the namespace inode.  Path
-    // metadata/readlink remain symlink-shaped because this conversion is local
-    // to the opened handle.
+    // Linux 将 `/proc/<pid>/ns/*` 暴露为路径检查用的魔术符号链接，打开后返回 nsfs
+    // 文件描述符，而不是打开文本链接目标。WaterOS 尚未实现 `setns(2)`，但 util-linux
+    // `lsns` 等工具仍需要可用 `fstat(2)` 检查的稳定 fd；因此将其表示为空的只读普通
+    // 文件并保留 namespace inode。路径元数据/readlink 仍保持符号链接形态，
+    // 因为转换只作用于已打开的句柄。
     if matches!(view_kind, PseudoViewKind::Proc) &&
        meta.node_type == VfsNodeType::Symlink &&
        is_proc_namespace_path(rel.as_str())

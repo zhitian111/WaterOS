@@ -19,6 +19,7 @@ pub trait SingleRootReadView {
     fn read(&self, path: &str) -> VfsResult<Vec<u8>>;
 
     fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        // 默认实现先读取全文再截取，仅适合小文件；后端应覆盖以避免大文件分配。
         if buf.is_empty() {
             return Ok(0);
         }

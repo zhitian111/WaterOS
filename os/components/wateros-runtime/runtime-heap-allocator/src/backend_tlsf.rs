@@ -20,15 +20,17 @@ use crate::HEAP_SPACE;
 type KernelTlsf = Tlsf<'static, u32, u32, 23, 32>;
 
 pub(crate) struct InterruptSafeTlsfHeap {
+    /// TLSF 元数据锁；禁止在锁内触发再次分配。
     inner : Mutex<KernelTlsf>,
+    /// 初始化后固定的实际池长度。
     pool_len : AtomicUsize,
+    /// 按 layout 大小累计的近似已用字节数。
     used_estimate : AtomicUsize,
 }
 
-/// Rejects pointers outside the backing pool, ranges crossing its end, and
-/// pointers that violate the supplied layout alignment.  This deliberately
-/// cannot prove that `ptr` is an allocation start and is not a double-free
-/// detector; those require allocator metadata instrumentation.
+/// 拒绝落在堆池外、跨越池尾或不满足给定布局对齐要求的指针。
+/// 该检查不能证明指针是分配起点，也不是 double-free 检测器；后者需要额外的
+/// allocator 元数据诊断。
 fn dealloc_pointer_in_heap(ptr : *mut u8, layout : Layout) -> bool {
     let heap_start = addr_of_mut!(HEAP_SPACE) as usize;
     let heap_end = heap_start.checked_add(KERNEL_HEAP_SIZE)

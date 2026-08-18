@@ -111,6 +111,8 @@ pub fn ns_to_rtc_time(ns: u128) -> RtcTimeFields {
 
 /// 将 Linux `struct rtc_time` 字段合成 UTC 纳秒时间戳。
 pub fn rtc_time_to_ns(fields: &RtcTimeFields) -> Result<u128, ()> {
+    // 这里只拒绝负值、非法月份和 Unix epoch 之前的年份；日期上限由现有
+    // `days_since_epoch` 算法按月份累加，调用方应传入真实日历日期。
     if fields.tm_sec < 0
         || fields.tm_min < 0
         || fields.tm_hour < 0

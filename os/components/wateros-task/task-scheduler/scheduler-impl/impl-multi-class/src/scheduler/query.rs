@@ -1,4 +1,4 @@
-// 只读查询：当前任务/指定任务快照、状态、tick 等。
+//! 只读查询：当前任务/指定任务快照、状态、tick 等。
 use super::*;
 impl MultiClassScheduler {
     pub fn current_task_id(&self, cpu_id : CpuId) -> Option<TaskId> {
@@ -9,9 +9,8 @@ impl MultiClassScheduler {
         let cpu = &self.cpu_states[cpu_id.raw()];
         let mut snapshot = self.registry
                                .task_snapshot(cpu.current_task_id()?);
-        // Running-task accounting is cached per CPU and written back to the
-        // TCB only when the task leaves the CPU. Observers such as getrusage
-        // must include the live delta even when the task has not switched.
+        // 运行中任务的统计按 CPU 缓存，只有离开 CPU 时才写回 TCB；getrusage 等
+        // 观察者必须把任务尚未切换时的实时增量也纳入快照。
         let live_ticks = usize::try_from(cpu.current_runtime_ticks).unwrap_or(usize::MAX);
         snapshot.stats
                 .tick_count = snapshot.stats

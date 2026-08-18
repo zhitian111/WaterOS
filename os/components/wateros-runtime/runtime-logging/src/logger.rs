@@ -66,7 +66,7 @@ impl log::Log for WaterOSLogger {
     }
     #[inline]
     #[allow(unused)]
-    // 控制台为逐条写出，无独立 flush 通道；保留空实现以满足 trait。
+    // 控制台按记录逐条写出，没有独立 flush 通道；保留空实现以满足 trait。
     fn flush(&self) {}
 }
 

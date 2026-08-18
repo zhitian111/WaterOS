@@ -31,7 +31,9 @@ const SPLICE_FLAGS : usize = SPLICE_F_MOVE | SPLICE_F_NONBLOCK | SPLICE_F_MORE |
 
 #[derive(Clone, Copy)]
 struct FileCursor {
+    /// 用户态显式偏移指针；为 0 时使用打开文件描述的当前偏移。
     user_ptr : usize,
+    /// 当前文件偏移，单位为字节。
     position : u64,
 }
 

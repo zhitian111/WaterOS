@@ -1,3 +1,7 @@
+//! 通用只读 ELF/mmap 页缓存：以文件内容身份和版本为键，共享不可变物理页。
+//!
+//! 缓存锁只保护索引与引用计数；实际文件读取和页清零在锁外执行，避免 I/O 阻塞其它缺页路径。
+
 use super::*;
 
 const ELF_READONLY_PAGE_CACHE_CAPACITY : usize = 16_384;
@@ -6,25 +10,39 @@ const ELF_CACHE_DIAGNOSTIC_REPORT_LOOKUPS : u64 = 1 << 14;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct ElfReadonlyPageKey {
+    /// 挂载实例代数；卸载后重新挂载即使 inode 数值复用也不会命中旧页。
     mount_generation : u64,
+    /// 挂载对象标识。
     mount_id : u64,
+    /// 文件节点标识。
     node_id : u64,
+    /// 文件内容版本；写入或截断后必须变化。
     content_version : u64,
+    /// ELF 段虚拟基址。
     vbase : usize,
+    /// 段在文件中的起始偏移。
     p_offset : usize,
+    /// 段文件部分长度，避免不同段参数错误共享同一页。
     filesz : usize,
+    /// 当前 VMA 起点。
     vma_start : usize,
+    /// 请求页对应的文件偏移。
     file_offset : usize,
 }
 
 struct ElfReadonlyPageEntry {
+    /// 缓存页物理页号；缓存本身持有一份引用。
     ppn : PhysPageNum,
+    /// 逻辑访问时钟，用于容量达到上限时淘汰最久未使用项。
     last_used : u64,
+    /// 保持文件身份对象存活，避免缓存项引用已销毁的版本状态。
     _identity : VfsFileContentIdentity,
 }
 
 struct ElfReadonlyPageCache {
+    /// 由完整内容身份和段参数索引的只读页。
     entries : BTreeMap<ElfReadonlyPageKey, ElfReadonlyPageEntry>,
+    /// 访问时钟；回绕只影响淘汰顺序，不影响内容正确性。
     tick : u64,
     #[cfg(feature = "cache-layer-diagnostics")]
     hits : u64,
@@ -101,10 +119,9 @@ fn readonly_page_key(identity : &VfsFileContentIdentity,
                          file_offset }
 }
 
-/// Load or reuse one immutable ELF page. The returned frame owns one reference
-/// for the caller's future mapping; the cache retains a separate reference.
-/// The loader runs without the cache lock, so concurrent misses may perform
-/// duplicate I/O but publish only one frame.
+/// 加载或复用一个不可变 ELF 页。返回帧由调用方映射持有一份引用，缓存另持一份引用。
+/// 加载回调在缓存锁外运行，因此并发缺页可能发生重复 I/O；重新取得锁后只发布一个缓存项，
+/// 其余重复帧会按引用计数释放。
 pub fn load_or_get_readonly_elf_page<F>(identity : &VfsFileContentIdentity,
                                         params : &ElfSegmentLoadParams,
                                         file_offset : usize,
@@ -211,8 +228,7 @@ pub fn load_or_get_readonly_elf_page<F>(identity : &VfsFileContentIdentity,
     }
 }
 
-/// Directed cache/refcount self-test; callers must initialize the global frame
-/// allocator first.
+/// 定向检查缓存与引用计数；调用者必须先初始化全局帧分配器。
 pub fn test_readonly_elf_page_cache() {
     let identity = VfsFileContentIdentity::new(usize::MAX as u64,
                                                u64::MAX - 1,
@@ -259,22 +275,33 @@ const MMAP_CACHE_DIAGNOSTIC_REPORT_LOOKUPS : u64 = 1 << 14;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct MmapReadonlyPageKey {
+    /// 挂载代数，阻止卸载后复用 inode 命中旧页。
     mount_generation : u64,
+    /// 挂载对象标识。
     mount_id : u64,
+    /// 文件节点标识。
     node_id : u64,
+    /// 文件内容版本。
     content_version : u64,
+    /// 页对齐的文件偏移。
     file_offset : usize,
+    /// 映射观察到的文件大小；尾页零填充语义随大小变化。
     mapping_file_size : usize,
 }
 
 struct MmapReadonlyPageEntry {
+    /// 缓存页物理页号。
     ppn : PhysPageNum,
+    /// 逻辑访问时钟；仅用于诊断和命中更新。
     last_used : u64,
+    /// 延长内容版本身份的生命周期。
     _identity : VfsFileContentIdentity,
 }
 
 struct MmapReadonlyPageCache {
+    /// 文件映射只读页缓存索引。
     entries : BTreeMap<MmapReadonlyPageKey, MmapReadonlyPageEntry>,
+    /// 访问逻辑时钟。
     tick : u64,
     #[cfg(feature = "cache-layer-diagnostics")]
     hits : u64,
@@ -348,9 +375,8 @@ fn mmap_readonly_page_key(identity : &VfsFileContentIdentity,
                           mapping_file_size }
 }
 
-/// Load or reuse one immutable page from a private file mapping. The cache and
-/// the returned mapping each own one frame reference. File I/O runs outside the
-/// cache lock; a content-version change retries under a fresh key.
+/// 加载或复用私有文件映射中的不可变页。缓存和返回映射各持有一份帧引用。
+/// 文件 I/O 在缓存锁外运行；内容版本变化时使用新键重试，避免把旧内容安装到新映射。
 pub fn load_or_get_readonly_mmap_page<F>(identity : &VfsFileContentIdentity,
                                          file_offset : usize,
                                          mapping_file_size : usize,
@@ -420,10 +446,8 @@ pub fn load_or_get_readonly_mmap_page<F>(identity : &VfsFileContentIdentity,
                 }
             } else {
                 if cache.entries.len() >= MMAP_READONLY_PAGE_CACHE_CAPACITY {
-                    // Keep the established hot set and return the freshly loaded
-                    // frame only to this mapping. Generic file mmap streams can
-                    // contain millions of one-shot pages; an O(n) LRU victim scan
-                    // on every miss is worse than bypassing admission.
+                    // 保留已建立的热点集合，只把新页交给当前映射。普通文件映射可能包含数百万个
+                    // 只访问一次的页；每次缺页都 O(n) 扫描 LRU 淘汰项会比暂不接纳新页更昂贵。
                     #[cfg(feature = "cache-layer-diagnostics")]
                     {
                         cache.full_bypasses += 1;
@@ -455,7 +479,7 @@ pub fn load_or_get_readonly_mmap_page<F>(identity : &VfsFileContentIdentity,
     }
 }
 
-/// Directed generic mmap cache/refcount self-test; callers initialize frames.
+/// 定向检查通用 mmap 缓存与引用计数；调用者必须先初始化帧分配器。
 pub fn test_readonly_mmap_page_cache() {
     let identity = VfsFileContentIdentity::new(usize::MAX as u64 - 1,
                                                u64::MAX - 2,
@@ -512,5 +536,3 @@ pub fn test_readonly_mmap_page_cache() {
     assert_eq!(loads, 4, "content change must reload a private mmap page");
     frame_dealloc_result(changed).expect("release changed mmap mapping ref");
 }
-
-

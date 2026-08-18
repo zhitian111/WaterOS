@@ -25,6 +25,7 @@ pub trait RootRwSession {
 
     /// 从 `offset` 起写入 `data`；返回实际写入字节数。
     fn write_range(&mut self, path: &str, offset: u64, data: &[u8]) -> VfsResult<usize> {
+        // 默认明确返回 Unsupported，不把未实现写入伪装成成功或部分成功。
         let _ = (path, offset, data);
         Err(VfsError::Unsupported)
     }

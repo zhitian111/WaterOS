@@ -20,6 +20,7 @@ pub use active_impl::*;
 pub use api_v0::*;
 
 #[cfg(feature = "self_test")]
+/// 运行 klog 的最小自检；它会重置消息环，不能在需要保留诊断记录的运行期调用。
 pub fn self_test() {
     log::info!("[klog] self_test begin");
     active_impl::self_test();
@@ -27,6 +28,9 @@ pub fn self_test() {
 }
 
 #[macro_export]
+/// 以调试级别格式化并追加一条内核日志。
+///
+/// 宏不会直接输出控制台；格式化结果可能因固定栈缓冲上限被截断。
 macro_rules! klog_trace {
     ($($arg:tt)*) => {{
         let _ = $crate::record_fmt($crate::api::LOG_DEBUG, core::format_args!($($arg)*));
@@ -34,6 +38,7 @@ macro_rules! klog_trace {
 }
 
 #[macro_export]
+/// 以调试级别格式化并追加一条内核日志。
 macro_rules! klog_debug {
     ($($arg:tt)*) => {{
         let _ = $crate::record_fmt($crate::api::LOG_DEBUG, core::format_args!($($arg)*));
@@ -41,6 +46,7 @@ macro_rules! klog_debug {
 }
 
 #[macro_export]
+/// 以信息级别格式化并追加一条内核日志。
 macro_rules! klog_info {
     ($($arg:tt)*) => {{
         let _ = $crate::record_fmt($crate::api::LOG_INFO, core::format_args!($($arg)*));
@@ -48,6 +54,7 @@ macro_rules! klog_info {
 }
 
 #[macro_export]
+/// 以警告级别格式化并追加一条内核日志。
 macro_rules! klog_warn {
     ($($arg:tt)*) => {{
         let _ = $crate::record_fmt($crate::api::LOG_WARNING, core::format_args!($($arg)*));
@@ -55,6 +62,7 @@ macro_rules! klog_warn {
 }
 
 #[macro_export]
+/// 以错误级别格式化并追加一条内核日志。
 macro_rules! klog_error {
     ($($arg:tt)*) => {{
         let _ = $crate::record_fmt($crate::api::LOG_ERR, core::format_args!($($arg)*));

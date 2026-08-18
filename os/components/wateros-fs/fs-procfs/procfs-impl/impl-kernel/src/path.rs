@@ -1,3 +1,7 @@
+//! procfs 路径规范化、节点枚举和稳定 inode 编码。
+//!
+//! 此处只解析相对 `/proc` 的逻辑路径，绝不访问底层文件系统；未知、越界或无效 PID 均由调用者呈现为不存在。
+
 use super::*;
 
 /// WaterOS 首期只有一组全局 namespace；这些类型用于向 procfs 发布稳定身份，
@@ -177,8 +181,11 @@ pub(crate) enum ProcNode {
     PidTaskSched(ProcessId, TaskId),
 }
 
-// 为 proc 节点分配稳定 inode 号（pid 子树按 pid 编码）。
 // 本方法代码由AI完成
+/// 为 proc 节点分配稳定 inode 号（pid 子树按 pid 编码）。
+///
+/// 编号只承诺本次启动内稳定，供 `stat`、目录遍历和 namespace 工具关联同一节点，
+/// 不得被解释为持久磁盘 inode。
 pub(crate) fn proc_inode(node : ProcNode) -> u64 {
     match node {
         ProcNode::Root => 1,
@@ -307,6 +314,7 @@ pub(crate) fn proc_inode(node : ProcNode) -> u64 {
 
 /// 与 VFS `normalize_absolute_path` 一致：折叠 `//`、`.`，解析 `..`。
 // 本方法代码由AI完成
+/// 根以上的 `..` 被钳制在 `/`，使伪文件系统路径不能借此逃逸到其他挂载点。
 pub(crate) fn normalize_rel(path : &str) -> String {
     use alloc::borrow::Cow;
 
@@ -344,8 +352,9 @@ pub(crate) fn normalize_rel(path : &str) -> String {
     out
 }
 
-// 解析 pid 目录名：`self` 映射当前进程，否则按十进制 pid。
 // 本方法代码由AI完成
+/// 解析 PID 目录名：`self` 映射当前进程，否则仅接受十进制 `usize` PID。
+/// 已退出或从未存在的 PID 可能仍被解析，但随后可见性检查会拒绝该节点。
 pub(crate) fn parse_pid(name : &str) -> Option<ProcessId> {
     if name == "self" {
         Some(task::current_process_task_snapshot()?.pid)
@@ -363,8 +372,9 @@ pub(crate) fn parse_thread_task(pid : ProcessId, name : &str) -> Option<TaskId> 
                                     .then_some(task_id)
 }
 
-// 将相对 `/proc` 的路径映射为内部节点；未知路径返回 None。
 // 本方法代码由AI完成
+/// 将相对 `/proc` 的路径映射为内部节点；未知路径、格式错误的 PID/TID 返回 `None`。
+/// 先规范化再按完整分段匹配，避免 `.`, 重复斜杠和前缀歧义改变节点含义。
 pub(crate) fn parse_node(path : &str) -> Option<ProcNode> {
     let p = normalize_rel(path);
     if p == "/" {

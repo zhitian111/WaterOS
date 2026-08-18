@@ -1,10 +1,8 @@
-//! Platform SMP lifecycle types. CPU ids are logical ids selected by the
-//! platform; the QEMU RISC-V profile currently uses the hart id directly.
+//! SMP 生命周期类型。CPU ID 是平台选择的逻辑编号；当前 QEMU RISC-V profile
+//! 直接使用 hart ID。
 //!
-//! PLATFORM_BOUNDARY: [`PlatformSmp`] only abstracts operations that leave the
-//! current CPU (firmware HSM, IPI transport, remote fence). Clearing a local
-//! interrupt pending bit is an arch interrupt operation and deliberately is
-//! not part of this trait.
+//! 平台边界：[`PlatformSmp`] 只抽象离开当前 CPU 的操作（固件 HSM、IPI 传输和远端
+//! fence）。清除本地中断 pending 位属于架构中断操作，刻意不放入此 trait。
 
 use base::cpu::{CpuId, CpuMask};
 
@@ -14,8 +12,7 @@ pub enum PlatformSmpError {
     Unsupported,
     /// CPU id 不在 machine 配置或 WaterOS 编译容量内。
     InvalidCpu,
-    /// The hart has already been started by firmware.  Callers should still
-    /// wait for the OS-level online acknowledgement before using it.
+    /// 固件已经启动该 hart；调用方仍须等待 OS online 确认后才能使用。
     AlreadyAvailable,
     /// 固件/控制器返回的原始错误码，保留数值便于与 SBI/手册对照。
     Firmware(usize),
@@ -38,8 +35,7 @@ pub enum HartStatus {
     Unknown(usize),
 }
 
-/// Software-level reason carried alongside the hardware IPI notification.
-/// SBI and platform IPI registers only deliver the interrupt signal itself.
+/// 随硬件 IPI 通知携带的软件层原因。SBI 和平台 IPI 寄存器只传递中断信号本身。
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IpiKind {
@@ -68,14 +64,9 @@ pub trait PlatformSmp {
     fn configured_cpu_mask() -> CpuMask;
     /// 向目标 CPU 发送 IPI 的运输层；不负责目标 CPU 的本地 pending 位清除。
     fn send_ipi(mask: CpuMask) -> PlatformSmpResult<()>;
-    /// Synchronously invalidate all address translations on the selected CPUs.
-    ///
-    /// Firmware-backed platforms may complete this without requiring the
-    /// target CPUs to take a supervisor software interrupt.
+    /// 同步失效所选 CPU 上的全部地址翻译；固件支持的平台无需目标 CPU 接收软件中断。
     fn flush_tlb_remote(mask: CpuMask) -> PlatformSmpResult<()>;
-    /// Synchronously execute an instruction-cache fence on the selected CPUs.
-    ///
-    /// RISC-V uses this for the process-wide form of `riscv_flush_icache(2)`.
+    /// 同步在所选 CPU 上执行指令缓存 fence；RISC-V 用它实现进程范围的 icache 刷新。
     fn flush_icache_remote(mask: CpuMask) -> PlatformSmpResult<()>;
     /// 初始化本 CPU 的 IPI 接收硬件。调用时机在 CPU-local/trap 基础设施就绪之后。
     fn init_ipi() -> PlatformSmpResult<()>;

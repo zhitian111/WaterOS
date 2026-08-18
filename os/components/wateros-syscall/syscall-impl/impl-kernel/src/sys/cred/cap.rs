@@ -16,15 +16,20 @@ const LINUX_CAPABILITY_VERSION_3 : u32 = 0x2008_0522;
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct CapUserHeader {
+    /// libcap 使用的 capability ABI 版本号。
     version : u32,
+    /// 目标进程 ID；0 表示当前进程。
     pid : i32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct CapUserData {
+    /// 当前可生效的 capability 位图（低 32 位）。
     effective : u32,
+    /// 允许进程提升到 effective 的 capability 位图。
     permitted : u32,
+    /// 可由子进程继承的 capability 位图。
     inheritable : u32,
 }
 

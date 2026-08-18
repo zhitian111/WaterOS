@@ -22,6 +22,7 @@ pub use api_v0::kernel_bringup::{
     };
     pub use api_v0::executable::ExecResolveError;
 
+    /// 处理当前 CPU 的 TLB shootdown IPI；返回是否消费了一个新的待处理序号。
     pub fn handle_tlb_shootdown_ipi() -> bool {
         #[cfg(feature = "impl-sv39")]
         { return impl_sv39::kernel_mm_impl::handle_tlb_shootdown_ipi(); }
@@ -33,6 +34,7 @@ pub use api_v0::kernel_bringup::{
 
     /// 在已装载 ELF 的用户栈上写入 argc/argv/envp/auxv，并返回初始栈与 auxv 快照。
     #[cfg(any(feature = "impl-sv39", feature = "impl-loongarch64"))]
+    /// 在已装载 ELF 的用户栈写入 argc/argv/envp/auxv；用户句柄无效或拷贝失败时返回错误。
     pub fn prepare_elf_user_stack(
         elf: &LoadedElf,
         argv: &[&str],
@@ -49,6 +51,7 @@ pub use api_v0::kernel_bringup::{
         map_identity_range_user,
     };
 
+    /// 处理用户写故障并执行 COW；零句柄或地址空间已销毁时返回错误。
     pub fn handle_cow_fault(aspace_ptr: usize,
                             fault_addr: usize)
                             -> api_v0::error::MmResult<bool> {
@@ -67,6 +70,8 @@ pub use api_v0::kernel_bringup::{
         }
     }
 
+    /// 将架构 MM 的缺页结果映射为 trap 层使用的 Linux 信号分类。
+    /// `Handled` 可重试原指令，其余结果不得伪造成功。
     pub fn handle_user_page_fault(
         aspace_ptr: usize,
         fault_addr: usize,
@@ -131,6 +136,7 @@ pub use api_v0::kernel_bringup::{
         }
     }
 
+    /// 丢弃区间内驻留匿名页并刷新相关 TLB；区间溢出或句柄无效时返回错误。
     pub fn madvise_discard_pages(aspace_ptr: usize,
                                  addr: usize,
                                  len: usize)
@@ -158,6 +164,7 @@ pub use api_v0::kernel_bringup::{
         }
     }
 
+    /// 判断区间是否被 VMA 完整覆盖；该查询不保证页已驻留。
     pub fn madvise_range_mapped(aspace_ptr: usize,
                                 addr: usize,
                                 len: usize)
@@ -187,6 +194,7 @@ pub use api_v0::kernel_bringup::{
     ///
     /// WaterOS 当前没有 swap 或匿名页回收，因此 `mlock` 的“禁止换出”天然成立；
     /// 真正还需要完成的是 Linux 要求的当前区间驻留语义。
+    /// 校验并预取用户区间的每一页；长度为零或区间溢出按非法地址处理，不会无界分配。
     pub fn prefault_user_range(aspace_ptr : usize,
                                addr : usize,
                                len : usize,
@@ -253,6 +261,7 @@ pub use api_v0::kernel_bringup::{
     }
 
     /// 返回区间内各页的驻留位（Linux `mincore` 低位语义）。
+    /// 填充每页驻留位；输出切片长度必须恰好等于页数，避免静默截断结果。
     pub fn mincore_user_range(aspace_ptr : usize,
                               addr : usize,
                               len : usize,
@@ -305,6 +314,7 @@ pub use api_v0::kernel_bringup::{
     }
 
     /// 预取当前地址空间中的全部 lazy 用户 VMA，供 `mlockall(MCL_CURRENT)`。
+    /// 预取当前地址空间所有需要驻留的用户区间；任一后备错误都会终止并返回。
     pub fn prefault_all_current_user_ranges(aspace_ptr : usize)
                                              -> api_v0::error::MmResult<()> {
         let mut alloc = crate::frame_alloctor::GlobalPhysFrameAllocator;
@@ -327,6 +337,7 @@ pub use api_v0::kernel_bringup::{
         }
     }
 
+    /// 将共享/文件后备区间同步或处理为可丢弃状态；不改变私有匿名页的所有权语义。
     pub fn madvise_range_shared_or_file(aspace_ptr: usize,
                                         addr: usize,
                                         len: usize)

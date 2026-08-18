@@ -1,4 +1,4 @@
-//! task相关
+//! task 标识、状态与运行统计类型。
 
 
 use crate::TaskTrapSnapshot;
@@ -17,7 +17,7 @@ pub type WaitQueueId = usize;
 pub enum TaskKind {
     /// 只在内核态运行的任务。
     Kernel,
-    /// 拥有用户栈与用户返回现场的用户态任务
+    /// 拥有用户栈与用户返回现场的用户态任务。
     User,
 }
 

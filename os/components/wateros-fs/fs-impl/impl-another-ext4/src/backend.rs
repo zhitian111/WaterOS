@@ -1,3 +1,5 @@
+//! another-ext4 后端注册、探测与 WaterOS 句柄包装。
+
 use super::*;
 
 #[path = "operations.rs"]

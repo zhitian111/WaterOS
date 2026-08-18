@@ -2,6 +2,7 @@
 //! WaterOS 进程凭证聚合 crate：导出版本化 `api` 与 impl-root 门面。
 //!
 //! 生命周期 hook 由 syscall 路径与 bring-up call site 显式调用；`task` crate 不依赖本组件。
+//! 所有导出函数都受 `impl-root` feature 控制；未选择后端时不会伪造凭证结果。
 
 /// 版本化 cred 契约（v0）。
 pub mod api {
@@ -134,6 +135,7 @@ pub fn self_test() {
 #[cfg(feature = "impl-root")]
 /// 设置当前任务 supplementary 组列表。
 pub fn set_supplementary_groups(groups: &[Gid]) {
+    // 具体后端负责检查固定数组容量；syscall 入口应先把过长用户输入转换为 EINVAL。
     let tid = current_tid_for_mutation("set_supplementary_groups");
     active_impl::set_supplementary_groups(tid, groups);
 }

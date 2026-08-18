@@ -23,7 +23,7 @@ const O_NOCTTY : u32 = 0o400;
 // asm-generic (and therefore RISC-V/LoongArch): O_LARGEFILE is 0100000,
 // while O_NOFOLLOW is 0400000.  musl includes O_LARGEFILE in ordinary
 // 64-bit opens, so conflating the two makes every shared-library symlink
-// fail with ELOOP.
+// 若符号链接层数超过上限，必须返回 ELOOP。
 const O_NOFOLLOW : u32 = 0o400_000;
 const O_EXCL : u32 = 0o200;
 const O_CREAT : u32 = 0o100;

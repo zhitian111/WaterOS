@@ -12,8 +12,11 @@ unsafe extern "C" {
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct LoongArch64ArchTaskContext {
+    /// 汇编切换恢复的返回地址寄存器。
     pub ra: usize,
+    /// 汇编切换恢复的内核栈顶指针。
     pub sp: usize,
+    /// `$r22`–`$r31` 的被调用者保存寄存器；`s[0]` 另作 bootstrap 参数槽。
     pub s: [usize; 10],
 }
 

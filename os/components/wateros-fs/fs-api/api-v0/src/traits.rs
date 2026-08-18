@@ -20,6 +20,7 @@ pub trait ReadOnlyFs {
 
     /// 从 `offset` 起读取最多 `buf.len()` 字节到 `buf`；返回实际读取长度（EOF 为短读或 `0`）。
     fn read_range(&self, path: &str, offset: u64, buf: &mut [u8]) -> FsResult<usize> {
+        // 默认实现不猜测后端语义；未覆盖时显式报告 Unsupported，避免伪造 EOF。
         let _ = (path, offset, buf);
         Err(FsError::Unsupported)
     }
@@ -28,6 +29,7 @@ pub trait ReadOnlyFs {
     ///
     /// 默认回退为整文件 [`read`] 后截断；实现方应覆盖为 [`read_range`] 以避免大文件全量分配。
     fn read_prefix(&self, path: &str, len: usize) -> FsResult<Vec<u8>> {
+        // len 为零时结果仍必须为空，不能因为默认整文件回退而读取越界数据。
         let mut data = self.read(path)?;
         if data.len() > len {
             data.truncate(len);
@@ -38,6 +40,7 @@ pub trait ReadOnlyFs {
     /// 读取整个文件并校验为 UTF-8 字符串。
     fn read_to_string(&self, path: &str) -> FsResult<String> {
         let data = self.read(path)?;
+        // 非 UTF-8 内容转换失败并丢弃临时 Vec，不能把原始字节误当作字符串返回。
         String::from_utf8(data).map_err(|_| FsError::NotUtf8)
     }
 
