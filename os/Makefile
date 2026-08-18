@@ -50,8 +50,8 @@ ARCH ?= rv
 PROFILE ?= pre
 CONFIG_KEY := $(ARCH)-$(PROFILE)
 
-# 各架构、各构建阶段使用的默认根文件系统镜像。镜像选择集中在 Make，
-# QEMU 启动器只接收最终路径，不再根据 profile 猜测或静默回退。
+# 各架构、各镜像 profile 使用的默认根文件系统镜像。PROFILE 只选择镜像和
+# 产物名；pre/final 编译同一内核，用户测试由 guest 内的 cagent 探针选择。
 RV_PRE_IMAGE ?= ./sdcard-rv.img
 # 当前工作区 pre/final 共用该基础镜像；比赛镜像可在命令行单独覆盖。
 RV_FINAL_IMAGE ?= ./sdcard-rv-pub.img
@@ -97,31 +97,23 @@ cargo_build = $(operator_env) $(cargo_env) cargo build
 
 kernel_rv_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
                   --no-default-features \
-                  --features qemu-riscv64-opensbi,pre,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
-kernel_rv_pre_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
-                      --no-default-features \
-                      --features qemu-riscv64-opensbi,pre,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
-kernel_rv_final_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
-                        --no-default-features \
-                        --features qemu-riscv64-opensbi,final_online,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
+                  --features qemu-riscv64-opensbi,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
+kernel_rv_pre_flag := $(kernel_rv_flag)
+kernel_rv_final_flag := $(kernel_rv_flag)
 kernel_rv_final_log_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
                             --no-default-features \
-                            --features qemu-riscv64-opensbi,final_online,stall-debug,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
+                            --features qemu-riscv64-opensbi,stall-debug,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
 kernel_rv_final_debug_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
                               --no-default-features \
-                              --features qemu-riscv64-opensbi,final_online,dashboard-debug,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
+                              --features qemu-riscv64-opensbi,dashboard-debug,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
 
 kernel_rv_build_artifact_path := ./target/riscv64gc-unknown-none-elf/$(if $(filter 1,$(GDB_BUILD)),gdb,release)
 
 kernel_la_flag := $(CARGO_PROFILE_ARG) --target loongarch64-unknown-none \
                   --no-default-features \
-                  --features qemu-loongarch64-virt,pre,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
-kernel_la_pre_flag := $(CARGO_PROFILE_ARG) --target loongarch64-unknown-none \
-                      --no-default-features \
-                      --features qemu-loongarch64-virt,pre,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
-kernel_la_final_flag := $(CARGO_PROFILE_ARG) --target loongarch64-unknown-none \
-                        --no-default-features \
-                        --features qemu-loongarch64-virt,final_online,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
+                  --features qemu-loongarch64-virt,$(HEAP_ALLOCATOR_FEATURE)$(EXTRA_FEATURE_SUFFIX)$(OPERATOR_FEATURE_SUFFIX)$(GDB_FEATURE_SUFFIX)
+kernel_la_pre_flag := $(kernel_la_flag)
+kernel_la_final_flag := $(kernel_la_flag)
 
 kernel_la_build_artifact_path := ./target/loongarch64-unknown-none/$(if $(filter 1,$(GDB_BUILD)),gdb,release)
 GDB_PORT ?= $(PORT)
@@ -208,7 +200,7 @@ show-config:
 
 validate-config:
 	@case "$(ARCH)" in rv|la) ;; *) $(call ERROR_CMD,无效架构 value=$(ARCH) allowed=rv$(COMMA)la,2); exit 2 ;; esac
-	@case "$(PROFILE)" in pre|final) ;; *) $(call ERROR_CMD,无效构建阶段 value=$(PROFILE) allowed=pre$(COMMA)final,2); exit 2 ;; esac
+	@case "$(PROFILE)" in pre|final) ;; *) $(call ERROR_CMD,无效镜像配置 value=$(PROFILE) allowed=pre$(COMMA)final,2); exit 2 ;; esac
 	@case "$(MODE)" in auto|shell|run) ;; *) $(call ERROR_CMD,无效运行模式 value=$(MODE) allowed=auto$(COMMA)shell$(COMMA)run,2); exit 2 ;; esac
 	@case "$(SMP)" in 1|2|3|4|5|6|7|8) ;; *) $(call ERROR_CMD,无效 CPU 数量 value=$(SMP) range=1..8,2); exit 2 ;; esac
 	@case "$(SNAPSHOT)" in 0|1) ;; *) $(call ERROR_CMD,无效快照开关 value=$(SNAPSHOT) allowed=0$(COMMA)1,2); exit 2 ;; esac
@@ -340,17 +332,17 @@ la_elf_info: kernel-la
 	@readelf -s ./kernel-la
 
 kernel-rv-pre: version
-	$(call INFO, "构建 riscv64 初赛内核...")
+	$(call INFO, "构建 riscv64 统一内核（pre 命名兼容产物）...")
 	@$(cargo_build) $(kernel_rv_pre_flag)
 	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-pre$(GDB_SUFFIX)
 
 kernel-rv-final: version
-	$(call INFO, "构建 riscv64 决赛在线内核...")
+	$(call INFO, "构建 riscv64 统一内核（final 命名兼容产物）...")
 	@$(cargo_build) $(kernel_rv_final_flag)
 	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-final$(GDB_SUFFIX)
 
 kernel-rv-final-log: version
-	$(call INFO, "构建带停滞诊断的 riscv64 决赛在线内核...")
+	$(call INFO, "构建带停滞诊断的 riscv64 统一内核...")
 	@$(cargo_build) $(kernel_rv_final_log_flag)
 	@cp $(kernel_rv_build_artifact_path)/wateros ./kernel-rv-final-log$(GDB_SUFFIX)
 
@@ -386,12 +378,12 @@ rv_qemu_run_snapshot: kernel-rv
 .PHONY: rv_qemu_run_snapshot
 
 kernel-la-pre: version
-	$(call INFO, "构建 loongarch64 初赛内核...")
+	$(call INFO, "构建 loongarch64 统一内核（pre 命名兼容产物）...")
 	@$(cargo_build) $(kernel_la_pre_flag)
 	@cp $(kernel_la_build_artifact_path)/wateros ./kernel-la-pre$(GDB_SUFFIX)
 
 kernel-la-final: version
-	$(call INFO, "构建 loongarch64 决赛在线内核...")
+	$(call INFO, "构建 loongarch64 统一内核（final 命名兼容产物）...")
 	@$(cargo_build) $(kernel_la_final_flag)
 	@cp $(kernel_la_build_artifact_path)/wateros ./kernel-la-final$(GDB_SUFFIX)
 
@@ -519,12 +511,12 @@ all: all_start_info
 	$(call INFO, "构建 riscv64 决赛交付内核 kernel-rv...")
 	@cargo build --release --target riscv64gc-unknown-none-elf \
 		--no-default-features \
-		--features qemu-riscv64-opensbi,final_online,heap-tlsf
+		--features qemu-riscv64-opensbi,heap-tlsf
 	@cp ./target/riscv64gc-unknown-none-elf/release/wateros ./kernel-rv
 	$(call INFO, "构建 loongarch64 决赛交付内核 kernel-la...")
 	@cargo build --release --target loongarch64-unknown-none \
 		--no-default-features \
-		--features qemu-loongarch64-virt,final_online,heap-tlsf
+		--features qemu-loongarch64-virt,heap-tlsf
 	@cp ./target/loongarch64-unknown-none/release/wateros ./kernel-la
 	@cmp -s ./target/riscv64gc-unknown-none-elf/release/wateros ./kernel-rv
 	@cmp -s ./target/loongarch64-unknown-none/release/wateros ./kernel-la

@@ -2,10 +2,6 @@
 #![no_main]
 #![feature(alloc_error_handler)]
 
-#[cfg(all(feature = "pre", feature = "final_online"))]
-compile_error!("features `pre` and `final_online` are mutually exclusive");
-#[cfg(not(any(feature = "pre", feature = "final_online")))]
-compile_error!("select one competition stage feature: `pre` or `final_online`");
 #[cfg(all(feature = "user-graphics", feature = "gui"))]
 compile_error!("features `user-graphics` and `gui`/`display-demo` are mutually exclusive");
 

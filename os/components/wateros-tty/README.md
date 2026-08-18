@@ -28,7 +28,7 @@ Linux syscall 号、用户指针或用户态 `termios` 布局；这些分别由 
 | 稳定契约 | `tty-api/api-v0/src/lib.rs` | `TtyTermios`、`TtyWinSize`、`TerminalId`、控制事件、模式位和错误类型。 |
 | 控制台行规程 | `tty-impl/impl-console/src/lib.rs` | `TTY`、`INPUT_WAIT`、canonical/raw 输入、预约式读取和输出转换。 |
 | PTY | `tty-impl/impl-console/src/pty.rs` | `PtyRegistry`、`SharedTerminal`、master/slave 端点和有界队列。 |
-| 启动选择 | `os/src/user_operator.rs` | `pre`/`final_online`/operator feature 映射到 `ConsoleTtyMode`。 |
+| 启动选择 | `os/src/user_operator.rs` | 根镜像探针与 operator feature 映射到 `ConsoleTtyMode`。 |
 
 ## 核心状态与数据结构
 
@@ -121,8 +121,8 @@ slave 各自只有一个活动读预约，写入受 64 KiB 队列和空间等待
 ## 初始化、配置与可观测性
 
 `TTY` 静态初始化为 `Closed`、`TtyTermios::DEFAULT`、25x80 窗口和空缓冲；`INPUT_WAIT` 与
-PTY 等待队列按需创建。`os/src/user_operator.rs::build_plan` 在编译期 feature 下选择：
-`pre` 默认 `Fixture`（预置 `password\n`），`final_online` 默认 `Closed`，
+PTY 等待队列按需创建。`os/src/user_operator.rs::build_plan` 根据根镜像探针选择：不存在
+`/glibc/cagent_testcode.sh` 时默认 `Fixture`（预置 `password\n`），存在时默认 `Closed`；
 `operator-shell`/`operator-run` 选择 `Interactive`。operator feature 互斥，启动时
 `operator_main` 调用 TTY 配置后再启动用户 workload。
 

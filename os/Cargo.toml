@@ -48,13 +48,9 @@
     strip = "none"
 
 [features]
-    # Cargo builds that use the default feature set select the current
-    # RISC-V final candidate, TLSF, and no diagnostic hot-path features.
-    default = [ "final_online", "heap-tlsf", "qemu-riscv64-opensbi" ]
-    # 比赛阶段决定根镜像中的用户态 bring-up 队列。
-    final_online = [  ]
-    final_online_smp_test = [ "final_online" ]
-    pre = [  ]
+    # Cargo builds that use the default feature set select RISC-V, TLSF, and
+    # no diagnostic hot-path features. The root image selects the workload at runtime.
+    default = [ "heap-tlsf", "qemu-riscv64-opensbi" ]
     # 跳过 LTP 排除清单与 prune 实现；用于选择提交 87aa867c 的行为。
     disable-ltp-prune = [  ]
     # 开发/诊断启动行为由编译期选择，不再通过 QEMU bootargs 传入。

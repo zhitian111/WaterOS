@@ -93,13 +93,6 @@ pub fn run() {
     }
     info!("[bringup][stage-00-bus] END");
 
-    #[cfg(feature = "pre")]
-    {
-        crate::user_bringup_root_layout::ensure_busybox_path_links();
-        // 跳过清单包含数千项；逐路径删除两套 libc 树会让启动串行等待大量 ext4 事务，
-        // exec 阶段的快速退出逻辑已经能避免被排除 worker 阻塞 LTP 运行器。
-    }
-
     // crate::user_bringup_mm::run_stage_02();
     // crate::user_bringup_posix_fs::run_stage_posix_fs_meta();
     //crate::user_bringup_basic::run_stage_basic();

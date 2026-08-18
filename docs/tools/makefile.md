@@ -2,7 +2,7 @@
 
 [项目首页](../../README.md) · [工具总览](./README.md) · [脚本指南](./scripts/README.md)
 
-`os/Makefile` 是 WaterOS 面向开发者的统一操作入口。它负责把架构、赛事阶段、运行模式、
+`os/Makefile` 是 WaterOS 面向开发者的统一操作入口。它负责把架构、镜像配置、运行模式、
 镜像和诊断选项转换为一致的 Cargo features 与 QEMU 参数。正常情况下，不需要手工拼接
 `cargo build --features ...`，也不需要直接复制完整 QEMU 命令。
 
@@ -25,8 +25,8 @@ make run ARCH=rv PROFILE=pre
 一次标准调用可以分成四步：
 
 1. `validate-config` 检查 `ARCH`、`PROFILE`、`MODE`、`SMP`、磁盘和调试参数；
-2. 根据 `ARCH` 与 `PROFILE` 选择 Cargo target、平台 feature、比赛阶段 feature 和唯一的
-   编译期日志上限；
+2. 根据 `ARCH` 选择 Cargo target、平台 feature 和唯一的编译期日志上限，根据 `PROFILE`
+   选择默认镜像和产物名；
 3. 组合堆分配器、operator 模式、额外能力和 GDB feature；
 4. 构建命名明确的内核产物，并在需要时交给统一 QEMU 或调试入口。
 
@@ -39,7 +39,7 @@ Makefile 只暴露少量稳定参数，内部再转换为脚本环境变量和 C
 
 | 输入 | 主要下游 |
 |:--|:--|
-| `ARCH`、`PROFILE` | Cargo target、平台 feature、阶段 feature、产物名和默认镜像 |
+| `ARCH`、`PROFILE` | `ARCH` 选择 Cargo target/平台 feature；`PROFILE` 只选择产物名和默认镜像 |
 | `MODE`、`SCRIPT`、`GUEST_SHELL` | `operator-*` feature 与构建期环境变量 |
 | `SMP`、`SDCARD`、`SNAPSHOT`、`WRITE_DISK` | `scripts/run/qemu_run.py` 的 `WOS_*` 环境变量 |
 | `EXTRA_FEATURES`、`HEAP_ALLOCATOR_FEATURE` | 顶层 Cargo feature 列表 |
@@ -81,9 +81,13 @@ kernel-la-pre       kernel-la-final
 
 ## 镜像与写入策略
 
-Makefile 根据架构与阶段选择四个默认镜像变量，也允许用 `SDCARD` 覆盖单次运行。默认
+Makefile 根据架构与镜像配置选择四个默认镜像变量，也允许用 `SDCARD` 覆盖单次运行。默认
 `SNAPSHOT=1`，QEMU 不向基础镜像写回。只有明确设置 `WRITE_DISK=1` 时，`SNAPSHOT` 才
 默认切换为 `0`。
+
+`pre` 与 `final` 展开为相同的 Cargo feature 集，不再生成不同的内核行为。auto 模式挂载
+根文件系统后统一探测 `/glibc/cagent_testcode.sh`：存在时选择决赛队列，否则选择初赛队列；
+探针读取失败会停止用户态启动，不按 `PROFILE` 猜测。
 
 这两个参数表达不同意图：
 
@@ -106,7 +110,7 @@ Makefile 根据架构与阶段选择四个默认镜像变量，也允许用 `SDC
 
 新增用户可见能力时，优先遵循以下边界：
 
-- 新的架构或阶段选择进入统一参数校验，不复制一套独立运行命令；
+- 新的架构或镜像配置进入统一参数校验，不复制一套独立运行命令；
 - QEMU 参数继续由 `scripts/run/qemu_run.py` 统一组装；
 - GDB 与停滞诊断继续由 `scripts/debug/wateros_debug.py` 管理；
 - 专项测试脚本放入 `scripts/testing/`，只有稳定入口才接入 Makefile；

@@ -7,11 +7,11 @@
 | 维度 | 可选值 | 决定什么 | 不决定什么 |
 | --- | --- | --- | --- |
 | `ARCH` | `rv` / `la` | Rust target、平台 feature、QEMU 类型 | 用户态测试队列 |
-| `PROFILE` | `pre` / `final` | `pre` 或 `final_online` feature、默认镜像 | `auto/shell/run` 模式 |
+| `PROFILE` | `pre` / `final` | 默认镜像与产物名 | Cargo feature、`auto/shell/run` 模式 |
 | `MODE` | `auto` / `shell` / `run` | 编译期 `operator-*` feature | QEMU bootargs |
 | 根镜像内容 | 是否存在 `/glibc/cagent_testcode.sh` | auto 模式选择初赛或决赛命令队列 | 内核编译 feature |
 
-`MODE` 由 [`Makefile`](../../Makefile) 转成 `operator-shell` 或 `operator-run` feature。`SCRIPT` 与 `GUEST_SHELL` 通过构建环境进入 `option_env!`，修改后必须重新构建。auto 模式不按 `PROFILE` 猜测试队列，而是在根文件系统挂载后检查镜像标志。复现前先保存：
+`MODE` 由 [`Makefile`](../../Makefile) 转成 `operator-shell` 或 `operator-run` feature。`SCRIPT` 与 `GUEST_SHELL` 通过构建环境进入 `option_env!`，修改后必须重新构建。`pre`/`final` 使用相同的内核 feature；auto 模式不按 `PROFILE` 猜测试队列，而是在根文件系统挂载后检查镜像标志，并用同一探针结果选择 TTY 与 LTP 初始化策略。复现前先保存：
 
 ```sh
 make show-config ARCH=rv PROFILE=final MODE=auto

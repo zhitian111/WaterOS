@@ -1,4 +1,4 @@
-//! 由构建期 feature 选择的用户态监督器，供现场操作员 profile 使用。
+//! 用户态监督器；操作模式由构建配置选择，镜像策略由根文件系统探针选择。
 
 extern crate alloc;
 
@@ -49,15 +49,15 @@ struct BootPlan {
 }
 
 impl BootPlan {
-    fn defaults() -> Self {
+    fn defaults(image : crate::user_bringup_busybox::BringupImage) -> Self {
         Self { mode : OperatorMode::Auto,
                shell : None,
                script : None,
                on_exit : ExitPolicy::Shutdown,
-               #[cfg(feature = "pre")]
-               tty : TtyMode::Fixture,
-               #[cfg(feature = "final_online")]
-               tty : TtyMode::Closed }
+               tty : match image {
+                   crate::user_bringup_busybox::BringupImage::Preliminary => TtyMode::Fixture,
+                   crate::user_bringup_busybox::BringupImage::Final => TtyMode::Closed,
+               } }
     }
 
     fn selected_mode() -> OperatorMode {
@@ -79,9 +79,9 @@ impl BootPlan {
 #[cfg(all(feature = "operator-shell", feature = "operator-run"))]
 compile_error!("features `operator-shell` and `operator-run` are mutually exclusive");
 
-/// 从编译期 feature 与构建环境构造启动方案，不再读取 QEMU bootargs。
-fn build_plan() -> BootPlan {
-    let mut plan = BootPlan::defaults();
+/// 从 operator feature、构建环境和根镜像探针构造启动方案，不读取 QEMU bootargs。
+fn build_plan(image : crate::user_bringup_busybox::BringupImage) -> BootPlan {
+    let mut plan = BootPlan::defaults(image);
     match BootPlan::selected_mode() {
         OperatorMode::Auto => {}
         OperatorMode::Shell => {
@@ -210,12 +210,25 @@ extern "C" fn console_input_main(_arg : usize) -> ! {
 }
 
 extern "C" fn operator_main(_arg : usize) -> ! {
-    let plan = build_plan();
+    let Some(image) = crate::user_bringup_busybox::detect_bringup_image() else {
+        error!("[{LOG_TAG}] cannot select runtime policy without the root-image probe");
+        let _ = platform::reset::shutdown(platform::reset::PlatformResetReason::NoReason);
+        task::exit_current(1);
+    };
+    if image == crate::user_bringup_busybox::BringupImage::Preliminary {
+        crate::user_bringup_root_layout::ensure_busybox_path_links();
+    }
+    let plan = build_plan(image);
     configure_tty(plan.tty);
     info!("[{LOG_TAG}] plan={plan:?}");
 
     match plan.mode {
-        OperatorMode::Auto => crate::user_bringup_busybox::run_auto_queue(0),
+        OperatorMode::Auto => {
+            if image == crate::user_bringup_busybox::BringupImage::Preliminary {
+                crate::user_bringup_root_layout::refresh_ltp_accounts();
+            }
+            crate::user_bringup_busybox::run_auto_queue(image)
+        }
         OperatorMode::Run => {
             let _ = run_shell_once(plan.shell
                                        .as_deref(),

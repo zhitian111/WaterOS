@@ -99,12 +99,12 @@ const FINAL_IMAGE_MARKER : &str = "/glibc/cagent_testcode.sh";
 const LOG_TAG : &str = "busybox-bringup";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum BringupImage {
+pub(crate) enum BringupImage {
     Preliminary,
     Final,
 }
 
-fn detect_bringup_image() -> Option<BringupImage> {
+pub(crate) fn detect_bringup_image() -> Option<BringupImage> {
     match vfs::root::read_view().exists(FINAL_IMAGE_MARKER) {
         Ok(true) => Some(BringupImage::Final),
         Ok(false) => Some(BringupImage::Preliminary),
@@ -164,22 +164,13 @@ pub fn run_stage_busybox() {
     error!("[bringup][stage-busybox] END");
 }
 
-pub(crate) extern "C" fn run_auto_queue(_arg : usize) -> ! {
+pub(crate) fn run_auto_queue(image : BringupImage) -> ! {
     use platform::reset::shutdown;
 
     info!("entered runner");
-    let Some(image) = detect_bringup_image() else {
-        error!("[{LOG_TAG}] no bring-up queue selected; stop runner");
-        let _ = shutdown(platform::reset::PlatformResetReason::NoReason);
-        task::exit_current(1);
-    };
     let commands = commands_for_image(image);
     error!("[{LOG_TAG}] detected {image:?} image; running {} command(s)",
            commands.len());
-
-    if image == BringupImage::Preliminary {
-        crate::user_bringup_root_layout::refresh_ltp_accounts();
-    }
 
     for cmd in commands {
         // PERF_PROBE: restore for a dedicated zeroed-frame-pool measurement build.

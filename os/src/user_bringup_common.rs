@@ -229,13 +229,6 @@ fn drop_reaped_task_runtime_resources(exited : &task::ExitedTask) {
 
 /// 按 ELF 路径前缀选择 glibc/musl 的 `LD_LIBRARY_PATH` 与 `PATH`。
 fn libc_envp_for_path(path : &str) -> Vec<&'static str> {
-    #[cfg(feature = "final_online")]
-    {
-        let _ = path;
-        return vec!["PATH=/glibc:/bin:/usr/bin:/sbin:/usr/sbin"];
-    }
-
-    #[cfg(not(feature = "final_online"))]
     if path.starts_with("/glibc/") {
         // LTP 脚本用 `. test.sh` 相对 PATH 加载库；须先于 /glibc/test.sh（lua 包装），
         // 否则 tst_resm 等会落到 PATH 里的 C 二进制并 fork/wait，attach 段与后台 job 组合会卡死。

@@ -17,7 +17,8 @@
 
 `os/` 是 WaterOS 内核工程根目录，包含顶层 `wateros` crate、内核组件、构建配置、
 平台链接脚本和开发工具。RISC-V64 与 LoongArch64 共用同一套内核机制，通过 Cargo
-features 在编译期选择架构、平台、赛事阶段与组件实现。
+features 在编译期选择架构、平台与组件实现。`pre`/`final` 构建使用相同内核代码，auto
+模式根据根镜像是否存在 `/glibc/cagent_testcode.sh` 选择测试队列。
 
 ## 快速开始
 

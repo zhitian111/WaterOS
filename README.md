@@ -54,7 +54,8 @@
 系统、进程间通信、设备驱动和平台实现拆分为职责明确的 `wateros-*` 组件。组件之间通过
 稳定接口协作，架构差异留在平台、驱动和页表实现中，通用内核机制由两种架构共同使用。
 
-Cargo feature 树负责在编译期选择目标平台、比赛阶段、组件能力和具体实现。这套配置
+Cargo feature 树负责在编译期选择目标平台、组件能力和具体实现。根镜像中的测试类型
+则在启动后通过 `/glibc/cagent_testcode.sh` 探针判定。这套配置
 方式让我们可以在同一份内核源码上组合不同运行环境，同时保持依赖边界清楚、最终产物
 精简。目前，WaterOS 已实现 SMP 任务调度、虚拟内存、VFS 与 ext4、IPC、VirtIO
 设备、网络协议栈及常用 Linux 系统调用等核心能力。
@@ -336,8 +337,9 @@ make shell ARCH=rv PROFILE=pre \
 ## 构建配置
 
 WaterOS 不为不同平台维护多套源代码。Makefile 将命令行参数组合为顶层 Cargo
-features，再由各 `wateros-*` 组件继续选择接口实现。平台、赛事阶段和可选能力因此都在
-编译期确定，最终二进制只包含本次构建需要的实现。
+features，再由各 `wateros-*` 组件继续选择接口实现。平台和可选能力在编译期确定；
+`pre`/`final` 不再产生不同内核代码，只保留为默认镜像与产物名的兼容配置。auto 模式在
+根文件系统挂载后检查 `/glibc/cagent_testcode.sh`：存在时运行决赛队列，否则运行初赛队列。
 
 平台 profile 同时选择唯一的编译期日志上限：RISC-V64 当前为 `Warn`，LoongArch64 当前为
 `Error`。该选择通过 `wateros-runtime` 转发到 `log/max_level_*`，更详细的日志宏及其参数
@@ -356,7 +358,7 @@ make run ARCH=la PROFILE=final SMP=4 SDCARD=/path/to/rootfs.img
 | 参数 | 含义与用法 | 默认值 |
 |:--|:--|:--|
 | `ARCH` | 目标架构。`rv` 选择 RISC-V64、OpenSBI 和 VirtIO MMIO；`la` 选择 LoongArch64 和 VirtIO PCI | `rv` |
-| `PROFILE` | 赛事阶段。`pre` 启用初赛 bring-up，`final` 启用 `final_online` bring-up | `pre` |
+| `PROFILE` | 镜像配置与产物后缀。`pre`/`final` 使用相同内核代码，只选择不同的默认镜像和文件名 | `pre` |
 | `SMP` | QEMU 虚拟 CPU 数量，只接受 `1..8` | `8` |
 | `MODE` | guest 启动行为：`auto` 执行内核编排的测试队列；`shell` 进入交互终端；`run` 执行 `SCRIPT` 指定的脚本 | `auto` |
 | `SCRIPT` | `MODE=run` 时要执行的 guest 脚本，必须是绝对路径；其他模式下不能设置 | 空 |
@@ -404,8 +406,8 @@ make run ARCH=rv PROFILE=pre EXTRA_FEATURES=display-demo
 
 ### 目标
 
-日常目标会先执行参数校验，并根据 `ARCH` 与 `PROFILE` 选择正确的内核、Cargo features
-和 QEMU 配置。
+日常目标会先执行参数校验，并根据 `ARCH` 选择平台 Cargo features、根据 `PROFILE` 选择
+默认镜像和产物名，再组装 QEMU 配置。
 
 | 目标 | 作用 |
 |:--|:--|
