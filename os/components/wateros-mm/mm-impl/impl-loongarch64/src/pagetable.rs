@@ -1028,8 +1028,8 @@ impl LoongArch64AddressSpace {
 
         // 引用计数 > 1：复制整页并切换 PTE 指向新帧
         let new_ppn = frame_alloc_result().map_err(MmError::from)?;
-        let src = old_ppn.0 * PAGE_SIZE;
-        let dst = new_ppn.0 * PAGE_SIZE;
+        let src = phys_to_kernel_va(old_ppn.0 * PAGE_SIZE);
+        let dst = phys_to_kernel_va(new_ppn.0 * PAGE_SIZE);
         unsafe {
             core::ptr::copy_nonoverlapping(src as *const u8,
                                            dst as *mut u8,
@@ -1109,8 +1109,8 @@ impl LoongArch64AddressSpace {
             return Ok(true);
         }
         let new_ppn = frame_alloc_result().map_err(MmError::from)?;
-        let src = old_ppn.0 * PAGE_SIZE;
-        let dst = new_ppn.0 * PAGE_SIZE;
+        let src = phys_to_kernel_va(old_ppn.0 * PAGE_SIZE);
+        let dst = phys_to_kernel_va(new_ppn.0 * PAGE_SIZE);
         unsafe {
             core::ptr::copy_nonoverlapping(src as *const u8,
                                            dst as *mut u8,
