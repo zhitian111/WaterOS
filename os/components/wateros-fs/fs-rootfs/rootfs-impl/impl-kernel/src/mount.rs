@@ -35,13 +35,10 @@ pub fn mount_root_rw_from_block_path(path : &str) -> fs_api_v0::FsResult<()> {
                             .ok_or(fs_api_v0::FsError::Unsupported)?;
     logging::info!("[fs::rootfs] mount root RW from {}",
                    path);
+    // VFS 修改路径使用 RW 句柄，而 ELF 装载等内核读取路径使用 RO 句柄；只发布 RW 会使
+    // 后者以 `RootVolume(Unsupported)` 失败，因此两次挂载都成功后才更新全局槽。
+    let root_ro = imp.mount_ro(device.clone())?;
     let root = imp.mount_rw(device)?;
-    // ELF loading and several kernel readers still consume `SharedFs`, while
-    // VFS mutation uses `SharedRwFs`.  Both views must wrap the same mounted
-    // instance: mounting the block device twice gives each ext4 object an
-    // independent directory/metadata cache, so an RW unlink can remain visible
-    // through the stale RO instance.
-    let root_ro = fs_api_v0::shared_read_only_view(root.clone());
     *ROOT_FS.lock() = Some(root_ro);
     *ROOT_RW_FS.lock() = Some(root);
     *ROOT_DEV_PATH.lock() = Some(path.to_string());

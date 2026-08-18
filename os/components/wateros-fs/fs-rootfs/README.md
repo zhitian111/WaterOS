@@ -28,15 +28,13 @@ fs::init_after_boot
 user_bringup_bus
   -> mount_default_root_rw
   -> devfs::lookup_block_device
+  -> active impl mount_ro(device.clone)
   -> active impl mount_rw(device)
-  -> create SharedFs adapter over the same RW instance
   -> 提交 ROOT_FS + ROOT_RW_FS + ROOT_DEV_PATH
   -> bump_mount_generation
 ```
 
-RO 与 RW handle 都必须建立，但它们必须共享同一个已挂载的实例。`ROOT_FS` 是
-`ROOT_RW_FS` 的只读适配视图：这既满足 ELF loader 的只读接口，也避免同一块设备上两个
-ext4 实例产生目录项与元数据缓存分叉。
+RO 与 RW handle 都必须建立。只安装 RW 会让依赖 `root_fs()` 的 ELF load 返回 Unsupported；只安装 RO 则所有修改失败。
 
 当前 `mount_root_rw_from_block_path` 顺序创建 RO、RW 后逐项写全局槽。修改时要考虑第二次 mount 失败与重复 mount：理想事务是先把所有可失败对象构造在局部变量中，再一次性提交全局状态；不能先清旧根再发现新根挂载失败。
 
