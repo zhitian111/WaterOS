@@ -1,10 +1,10 @@
 # Fdb version 4
-["xdvipdfmx"] 1787064042.42568 "build/main.xdv" "build/main.pdf" "build/main" 1787064043.1183 0
-  "build/main.xdv" 1787064042.29596 409868 a8d264a7bc075c9e175878c6ddeac9b0 "xelatex"
+["xdvipdfmx"] 1787064302.45017 "build/main.xdv" "build/main.pdf" "build/main" 1787064303.06003 0
+  "build/main.xdv" 1787064302.32473 397556 26561ee4d5df42d68f793fb93b23ea80 "xelatex"
   (generated)
   "build/main.pdf"
   (rewritten before read)
-["xelatex"] 1787064040.21615 "main.tex" "build/main.xdv" "main" 1787064043.10079 0
+["xelatex"] 1787064299.95797 "main.tex" "build/main.xdv" "main" 1787064303.05782 0
   "../../assert/cover.jpg" 1786597398.4485 708789 201283693113911da6ed6f59be2305cd ""
   "../wateros-latex/setup/doc-macros.tex" 1787062046.63311 1942 6dfda6ee12781cc7593fc586c402d18e ""
   "../wateros-latex/setup/format.tex" 1782746600.03822 8586 c769eaccc796f695e77faaa88be9cd6e ""
@@ -238,13 +238,13 @@
   "/usr/local/texlive/2026/texmf-dist/web2c/texmf.cnf" 1770478701 43630 e9fa012910491fe5ae08a72c3c2997a7 ""
   "/usr/local/texlive/2026/texmf-var/web2c/xetex/xelatex.fmt" 1775292880 5948567 e04b5e5650b1da1c453432975f5e7b5a ""
   "/usr/local/texlive/2026/texmf.cnf" 1774209515 577 648cd9f92f9c0eac486f4c71c85cfbbe ""
-  "build/main.aux" 1787064042.29413 6846 820a017ca9ae9582c67a262ed14d5ee5 "xelatex"
-  "build/main.out" 1787064042.29525 5385 2007b87e387fd1dda0313167f973c3cc "xelatex"
-  "build/main.toc" 1787064042.29586 2907 8ce4e52d35d2ae1cc301baf4d87d553c "xelatex"
+  "build/main.aux" 1787064302.32305 6719 269c30eafcdf69f6086aee69b6fa39f8 "xelatex"
+  "build/main.out" 1787064302.32416 5217 9f58e5e45b15e0825da6beeaa36d9e3c "xelatex"
+  "build/main.toc" 1787064302.32465 2821 df19b23620cda46a17f26b4483287aad "xelatex"
   "chapters/01-overview.tex" 1787063580.30235 4684 1960b37f3457026c822ba8c878f39599 ""
   "chapters/02-baseline.tex" 1787062909.07283 6002 b55816a78b442738274a23a26c789f91 ""
   "chapters/03-optimization-path.tex" 1787063036.99258 8968 fdbde5580a78a6b4bbaffa8af0cf2432 ""
-  "chapters/04-results.tex" 1787064029.02086 7633 a92c0c9a3bd70101e128514dbdd098b8 ""
+  "chapters/04-results.tex" 1787064288.13483 6792 2474fa88cd02da8fefd09654dbb9bd0d ""
   "chapters/05-ai-and-reproduction.tex" 1787063037.07005 5713 adb34c2aceac8b7f5a60b5b73b3281a1 ""
   "chapters/06-conclusion.tex" 1787062860.37943 2234 4215560a7d0a2eb50d58c460b0b1fc7f ""
   "frontmatter/cover-page.tex" 1787060476.19794 492 3d75864f201bde8553c99dc63f17fb16 ""

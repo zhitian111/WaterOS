@@ -19,7 +19,7 @@
     \toprule
     实验 & 基线耗时 & 候选耗时 & 同组结论 \\
     \midrule
-    \shortstack[l]{mprotect 条件 TLB\\同步} & 829.67 s & \shortstack[c]{中位数\\806.81 s} & 约改善 2.76\%，两轮候选均完整通过。 \\
+    \shortstack[l]{mprotect 条件 TLB\\同步} & 829.67 s & 806.81 s & 约改善 2.76\%，两轮候选均完整通过。 \\
     \addlinespace[2pt]
     ext4 负 dentry & 807.11 s & 787.76 s & 重复不存在路径可被吸收，单组改善约 2.40\%。 \\
     \addlinespace[2pt]
@@ -92,12 +92,6 @@ pc-hot 最有价值的地方不是给出一个排行榜，而是验证因果关�
   timer period 与调度快路径 & 减少调度进入次数和轻量查询 & 未形成稳定端到端收益，且可能改变延迟行为，回退。 \\
   \bottomrule
 \end{longtable}
-
-\section{与 Linux 基线的距离}
-
-一次固定条件对照中，RISC-V Linux BuildStorm 约为 395.90 秒，WaterOS 当时约为 1031.52 秒，约为 Linux 的 2.61 倍。LoongArch 也存在明显差距，但历史记录中的 CPU 数量并不完全一致，不能与 RISC-V 结论直接横向比较。后续多个候选已显著缩短 WaterOS 时间，但这些结果来自不同 main 基线，不能拼接成一条伪造的最终曲线。
-
-当前可以明确的是，重复只读页、前台 fault/清零、VFS 路径与 metadata、TLB shootdown 仍是主要成本；VirtIO 并行度、调度负载均衡以及编译关键进程的单核执行路径仍有空间。下一轮应先在最终提交上重新建立 Linux/WaterOS 双方完整基线，再以同一工具链和相同 CPU 数量报告最终差距。
 
 \section{结果的适用边界}
 

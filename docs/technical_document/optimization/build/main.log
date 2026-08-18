@@ -1,4 +1,4 @@
-This is XeTeX, Version 3.141592653-2.6-0.999998 (TeX Live 2026) (preloaded format=xelatex 2026.4.4)  18 AUG 2026 22:40
+This is XeTeX, Version 3.141592653-2.6-0.999998 (TeX Live 2026) (preloaded format=xelatex 2026.4.4)  18 AUG 2026 22:45
 entering extended mode
  \write18 enabled.
  file:line:error style messages enabled.
@@ -1966,7 +1966,7 @@ t;embolden=4;"
  [14
 
 ]
-runsystem(latexminted cleantemp  --timestamp 20260818224040 FAD58DE7366495DB465
+runsystem(latexminted cleantemp  --timestamp 20260818224500 FAD58DE7366495DB465
 0CFEFAC2FCD61)...executed.
 
  (build/main.aux)
@@ -1975,15 +1975,15 @@ LaTeX2e <2025-11-01>
 L3 programming layer <2022/07/14>
  ***********
 Package rerunfilecheck Info: File `main.out' has not changed.
-(rerunfilecheck)             Checksum: 2007B87E387FD1DDA0313167F973C3CC;5385.
+(rerunfilecheck)             Checksum: 9F58E5E45B15E0825DA6BEEAA36D9E3C;5217.
  ) 
 Here is how much of TeX's memory you used:
- 37469 strings out of 468168
- 822488 string characters out of 5432816
+ 37468 strings out of 468168
+ 822484 string characters out of 5432816
  1343822 words of memory out of 5000000
- 65450 multiletter control sequences out of 15000+600000
+ 65449 multiletter control sequences out of 15000+600000
  648864 words of font info for 196 fonts, out of 8000000 for 9000
  1348 hyphenation exceptions out of 8191
  93i,15n,112p,1220b,540s stack positions out of 10000i,1000n,20000p,200000b,200000s
 
-Output written on build/main.xdv (16 pages, 409868 bytes).
+Output written on build/main.xdv (16 pages, 397556 bytes).

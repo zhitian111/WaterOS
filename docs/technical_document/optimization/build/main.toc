@@ -19,13 +19,12 @@
 \contentsline {section}{\numberline {4.2}pc-hot 如何帮助判断局部优化}{8}{section*.30}%
 \contentsline {section}{\numberline {4.3}零页池的机制数据}{9}{section*.31}%
 \contentsline {section}{\numberline {4.4}没有纳入最终组合的实验}{9}{section*.34}%
-\contentsline {section}{\numberline {4.5}与 Linux 基线的距离}{10}{section*.36}%
-\contentsline {section}{\numberline {4.6}结果的适用边界}{10}{section*.37}%
-\contentsline {chapter}{\numberline {第5章\hspace {.3em}}AI 使用说明与复现实验}{11}{section*.38}%
-\contentsline {section}{\numberline {5.1}AI 在开发过程中的位置}{11}{section*.39}%
-\contentsline {section}{\numberline {5.2}复现环境与证据分级}{11}{section*.40}%
-\contentsline {section}{\numberline {5.3}pc-hot 与 syscall profile 的复现方法}{12}{section*.41}%
-\contentsline {section}{\numberline {5.4}完整 BuildStorm A/B}{12}{section*.42}%
-\contentsline {section}{\numberline {5.5}文档和实现如何对应}{13}{section*.43}%
-\contentsline {chapter}{\numberline {第6章\hspace {.3em}}总结与下一步工作}{14}{section*.44}%
+\contentsline {section}{\numberline {4.5}结果的适用边界}{10}{section*.36}%
+\contentsline {chapter}{\numberline {第5章\hspace {.3em}}AI 使用说明与复现实验}{11}{section*.37}%
+\contentsline {section}{\numberline {5.1}AI 在开发过程中的位置}{11}{section*.38}%
+\contentsline {section}{\numberline {5.2}复现环境与证据分级}{11}{section*.39}%
+\contentsline {section}{\numberline {5.3}pc-hot 与 syscall profile 的复现方法}{12}{section*.40}%
+\contentsline {section}{\numberline {5.4}完整 BuildStorm A/B}{12}{section*.41}%
+\contentsline {section}{\numberline {5.5}文档和实现如何对应}{13}{section*.42}%
+\contentsline {chapter}{\numberline {第6章\hspace {.3em}}总结与下一步工作}{14}{section*.43}%
 \contentsfinish 
