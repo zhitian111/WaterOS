@@ -1,0 +1,18 @@
+% 与 wateros-latex/setup/minted-setup.tex 保持一致，供独立组合入口解析相对路径。
+\usemintedstyle{emacs}
+\setminted{
+  fontsize=\wuhao,
+  breaklines=true,
+  breakanywhere=true,
+  frame=single,
+  framesep=1.2mm,
+  rulecolor=\color{black!25},
+  bgcolor=docCodeBg,
+  tabsize=4,
+  autogobble=true,
+  linenos=false,
+}
+\newminted{rust}{}
+\newminted{bash}{}
+\newminted{toml}{}
+\newminted{text}{style=default}

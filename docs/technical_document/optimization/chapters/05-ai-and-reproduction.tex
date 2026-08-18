@@ -1,0 +1,24 @@
+\chapter{AI 使用说明与复现步骤}
+
+\section{AI 在开发过程中的位置}
+我们使用 AI 作为代码阅读、调用链整理、实验方案讨论和文档整理的辅助工具，而不是把 AI 输出直接当成实现结论。AI 可以根据日志和源码提出可能的热点，但是否修改由我们决定；每个候选都要经过 diff 审查、编译检查、功能回归和完整 A/B。对 AI 建议的“局部更快”，如果完整轮没有收益，我们就记录并回退。
+
+在空页池优化中，AI 主要帮助我们整理 allocator、idle loop、page fault 和 frame ownership 之间的调用关系，并检查池为空、OOM drain、锁顺序和页面生命周期等边界。容量、水位、批量大小以及是否合入，仍由我们根据实际测量和代码审查决定。
+
+\section{复现环境}
+复现时应使用仓库中的对应 \code{main} 提交，并固定以下条件：QEMU 9.2.1、RISC-V \code{virt}、8 vCPU、16 GiB 内存、发布内核、同一份赛题镜像和 \code{-snapshot}。两次 A/B 只允许改变待测提交，不能更换镜像或 QEMU 参数。
+
+\section{复现流程}
+下面的命令示意完整流程，实际 runner 路径以仓库当前任务记录为准：
+
+\begin{enumerate}
+  \item 分别检出优化前和优化后的提交，记录 \code{git rev-parse HEAD}。
+  \item 在 \code{os/} 中执行 \code{make rv\_check}；跨架构改动还执行 \code{make la\_check}。
+  \item 构建对应 final kernel，并记录内核 SHA-256。
+  \item 使用 \code{os/scripts/perf/buildstorm\_runner.py} 启动完整 BuildStorm，指定相同的镜像、\code{--arch rv}、\code{--timeout} 和输出目录；运行参数必须保留 \code{-snapshot}。
+  \item 从日志中提取 \code{BUILDSTORM\_COMPILE mode=multi ok=true elapsed\_s}，重复运行并交错排列 A/B。
+  \item 对比 $T_{\mathrm{before}}$ 和 $T_{\mathrm{after}}$，按式
+    \(S=T_{\mathrm{before}}/T_{\mathrm{after}}\) 计算加速比，并保存完整日志。
+\end{enumerate}
+
+提交和任务记录是复现开发过程的入口：\code{docs/tasks/perf/} 保存各阶段的方案、验收和回退原因，\code{docs/agents/tasks/syscall-chain-opt/} 保存 syscall 链优化的逐项简报。最终文档只抽取进入 \code{main} 的路径，审核者可以沿 commit 和这些记录继续核对源码与原始实验。

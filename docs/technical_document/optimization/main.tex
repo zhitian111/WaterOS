@@ -1,0 +1,28 @@
+% WaterOS 竞赛内核设计与优化实现文档
+\def\usewhat{xelatex}
+\documentclass[12pt,openany,oneside,AutoFakeBold=true]{ctexbook}
+
+% 复用现有技术文档的版式、字体、宏和封面信息。
+\input{../wateros-latex/setup/package}
+\input{../wateros-latex/setup/format}
+\input{../wateros-latex/setup/doc-macros}
+\graphicspath{{figures/}{../wateros-latex/figures/}}
+
+\begin{document}
+\frontmatter
+\input{frontmatter/cover-page}
+\clearpage
+\pdfbookmark[0]{目~~录}{mulu}
+\tableofcontents
+
+\mainmatter
+\ctexset{chapter/pagestyle=fancy}
+\defaultfont
+\sloppy\raggedbottom
+\input{chapters/01-overview}
+\input{chapters/02-baseline}
+\input{chapters/03-optimization-path}
+\input{chapters/04-results}
+\input{chapters/05-ai-and-reproduction}
+\input{chapters/06-conclusion}
+\end{document}
