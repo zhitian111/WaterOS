@@ -3,6 +3,7 @@
 #![no_std]
 extern crate alloc;
 
+pub mod gmac;
 pub mod irq;
 pub mod mmc;
 pub mod plic;
@@ -75,6 +76,14 @@ impl MachineDriver for Machine {
                                                 err),
                     }
                 }
+                match gmac::register_from_dtb(platform_dtb_pa()) {
+                    Ok(index) => log::info!("[driver][visionfive2] GMAC registered as network \
+                                             device #{}",
+                                            index),
+                    Err(error) => log::warn!("[driver][visionfive2] GMAC probe failed: {:?}; \
+                                              network remains unavailable",
+                                             error),
+                }
                 Ok(())
             });
         if result.is_err() {
@@ -103,6 +112,7 @@ impl MachineDriver for Machine {
         syscrg::test();
         uart::test();
         rtc::test();
+        gmac::test();
     }
 }
 

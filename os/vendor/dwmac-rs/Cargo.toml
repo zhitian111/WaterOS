@@ -1,0 +1,14 @@
+[package]
+# Vendored from github.com/elliott10/dwmac-rs (e918894a3f973f81f14fbe518b21f23994e6e9df).
+name = "dwmac-my"
+edition = "2021"
+authors = ["MingYang <my@famer.me>", "Xiao <xiaoluoyuan@163.com>"]
+keywords = ["dwmac", "ethernet", "driver", "riscv"]
+version = "0.2.0"
+license = "MIT"
+repository = "https://github.com/elliott10/dwmac-rs.git"
+description = "DWMAC ethernet driver in Rust on board `StarFive VisionFive 2`"
+
+[dependencies]
+log = "0.4"
+bitflags = "2.11.1"

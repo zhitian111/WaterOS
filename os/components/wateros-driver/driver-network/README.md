@@ -14,6 +14,7 @@
 | 网络设备 API | `network-api/api-v0/` | `NetworkDevice` 与全局注册表，`DEFAULT_MTU` 为 1500。 |
 | VirtIO MMIO 实现 | `network-impl/impl-virtio-mmio/` | RISC-V QEMU `virtio-net-device`。 |
 | VirtIO PCI 实现 | `network-impl/impl-virtio-pci/` | LoongArch QEMU `virtio-net-pci`。 |
+| VisionFive 2 GMAC 实现 | `../driver-impl/impl-jh7110-visionfive2/src/gmac.rs` + `../../../vendor/dwmac-rs/` | JH7110 DWMAC 5.20 + YT8531C，DTB 绑定 `starfive,jh7110-dwmac`。 |
 
 ## 实现说明
 
@@ -27,6 +28,8 @@
 - 各 transport（MMIO/PCI）对应 RISC-V / LoongArch：DTB 声明支持 `virtio,mmio` 与 PCI
   transitional/modern（`pci1af4,1000` / `pci1af4,1041`）。
 - 缺失 virtio-net 时 `init_after_boot` 会输出警告日志，网络可能不可用。
+- VisionFive 2 的 GMAC 使用同一 linker DMA pool；驱动从 DTB 读取 MAC/PHY/syscon，启用 GMAC1
+  时钟与复位后以 polling 方式注册，不依赖 GMAC PLIC 中断。
 
 ## 调用链路
 

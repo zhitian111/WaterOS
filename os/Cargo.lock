@@ -164,6 +164,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "dwmac-my"
+version = "0.2.0"
+dependencies = [
+ "bitflags 2.11.1",
+ "log",
+]
+
+[[package]]
 name = "embedded-hal"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -961,14 +969,17 @@ dependencies = [
 name = "wateros-driver-impl-jh7110-visionfive2"
 version = "0.1.0"
 dependencies = [
+ "dwmac-my",
  "fdt",
  "log",
  "spin 0.10.0",
+ "virtio-drivers",
  "wateros-driver-api-v0",
  "wateros-driver-block-api-v0",
  "wateros-driver-block-impl-dw-mmc",
  "wateros-driver-character",
  "wateros-driver-impl-common",
+ "wateros-driver-network",
  "wateros-platform",
 ]
 
