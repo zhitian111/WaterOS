@@ -26,17 +26,15 @@ use frame_alloctor::{frame_alloc_result, frame_dealloc_result, frame_inc_ref, fr
 use vfs_api::VfsFileContentIdentity;
 
 /// Convert a physical byte address to the address usable by kernel code.
-/// LoongArch runs through the high cached DMW window; raw low physical
-/// pointers are not valid after paging is enabled.
+/// Only the 2K1000 profile runs kernel RAM through the high cached window;
+/// QEMU LoongArch keeps the original low-address identity mapping.
 #[inline]
 pub(crate) fn phys_access_addr(pa : usize) -> usize {
-    #[cfg(target_arch = "loongarch64")]
+    #[cfg(feature = "loongson2k1000la")]
     {
-        let kernel_start : usize;
-        unsafe { core::arch::asm!("la {}, kernel_start", out(reg) kernel_start); }
-        (kernel_start & 0xFFFF_0000_0000_0000usize) | pa
+        0x9000_0000_0000_0000usize | pa
     }
-    #[cfg(not(target_arch = "loongarch64"))]
+    #[cfg(not(feature = "loongson2k1000la"))]
     { pa }
 }
 

@@ -47,11 +47,19 @@ const LOONGARCH64_LOW_MMIO_END : usize = 0x3000_0000;
 const LOONGARCH64_PCI_MMIO_START : usize = 0x4000_0000;
 /// VirtIO PCI MMIO 窗口终点（不含）。
 const LOONGARCH64_PCI_MMIO_END : usize = 0x8000_0000;
+#[cfg(feature = "loongson2k1000la")]
 const LOONGSON2K1000_PCI_ECAM_KERNEL_VA : usize = 0x40_0000_0000;
+#[cfg(feature = "loongson2k1000la")]
 const LOONGSON2K1000_PCI_ECAM_PHYS : usize = 0xFE_0000_0000;
+#[cfg(feature = "loongson2k1000la")]
 const LOONGSON2K1000_PCI_ECAM_SIZE : usize = 0x0100_0000;
 const LOONGARCH64_PHYS_ADDR_MASK : usize = 0x0000_FFFF_FFFF_FFFF;
+#[cfg(feature = "loongson2k1000la")]
 const LOONGARCH64_WINDOW_BASE_MASK : usize = 0xFFFF_0000_0000_0000;
+#[cfg(feature = "loongson2k1000la")]
+const LOONGSON2K1000_LOW_DTB_START : usize = 0x9000_0000_0000_0000;
+#[cfg(feature = "loongson2k1000la")]
+const LOONGSON2K1000_LOW_DTB_END : usize = 0x9000_0000_0100_0000;
 
 #[inline]
 fn phys_page_for_va(va : usize) -> PhysPageNum {
@@ -60,11 +68,19 @@ fn phys_page_for_va(va : usize) -> PhysPageNum {
 
 #[inline]
 fn kernel_va_window_base() -> usize {
-    let kernel_start_addr : usize;
-    unsafe {
-        core::arch::asm!("la {}, kernel_start", out(reg) kernel_start_addr);
+    #[cfg(feature = "loongson2k1000la")]
+    {
+        // 2K1000 DMW1 cached direct-memory window. Keep all kernel physical
+        // page-table accesses on the same explicit alias used by page faults.
+        return 0x9000_0000_0000_0000;
     }
-    kernel_start_addr & LOONGARCH64_WINDOW_BASE_MASK
+    #[cfg(not(feature = "loongson2k1000la"))]
+    { 0 }
+}
+
+#[inline]
+fn kernel_access_addr(pa : usize) -> usize {
+    kernel_va_window_base() | (pa & LOONGARCH64_PHYS_ADDR_MASK)
 }
 
 #[inline]
@@ -163,6 +179,17 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
                      PagePerm::R | PagePerm::W | PagePerm::X,
                      "RAM");
 
+    // Some vendor U-Boot builds relocate the boot DTB below 16 MiB even when
+    // `fdt_high` requests in-place use.  Keep the DMW cached alias mapped after
+    // switching from the static early page table, so later platform/driver FDT
+    // readers continue to see the same address.
+    #[cfg(feature = "loongson2k1000la")]
+    map_ram_identity(&mut aspace,
+                     LOONGSON2K1000_LOW_DTB_START,
+                     LOONGSON2K1000_LOW_DTB_END,
+                     PagePerm::R | PagePerm::W | PagePerm::X,
+                     "2K1000 low DTB window");
+
     // 访问 UART、PLIC/MSI、PCI ECAM 等低地址 MMIO 必须映射；与 `-m` 无关。
     map_mmio_identity(&mut aspace,
                       LOONGARCH64_LOW_MMIO_START,
@@ -178,6 +205,7 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
                       "PCI MMIO");
 
     // 2K1000 的 PCIe ECAM 物理地址超出三级页表低 39 位虚拟空间，映射到固定内核 VA 别名。
+    #[cfg(feature = "loongson2k1000la")]
     for page in 0..(LOONGSON2K1000_PCI_ECAM_SIZE / PAGE_SIZE) {
         let vpn = VirtPageNum(LOONGSON2K1000_PCI_ECAM_KERNEL_VA / PAGE_SIZE + page);
         let ppn = PhysPageNum(LOONGSON2K1000_PCI_ECAM_PHYS / PAGE_SIZE + page);
@@ -220,7 +248,7 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
         probe_ptr.write_volatile(0x1122_3344_5566_7788);
     }
     let probe_pa = PhysAddr(probe_ppn.0 * PAGE_SIZE + probe_va.page_offset());
-    let phys_ptr = probe_pa.0 as *const u64;
+    let phys_ptr = kernel_access_addr(probe_pa.0) as *const u64;
     let observed = unsafe { phys_ptr.read_volatile() };
     assert_eq!(observed, 0x1122_3344_5566_7788);
     runtime::logging::trace!("[kernel-mm] paging probe ok va={:#x} -> pa={:#x}",
