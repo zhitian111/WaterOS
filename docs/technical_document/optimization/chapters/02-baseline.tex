@@ -1,12 +1,55 @@
-\chapter{基线、定位方法和取舍标准}
+\chapter{基线、分析工具和取舍标准}
 
-我们把“能不能跑完”和“跑得快不快”分开记录。前者使用功能测例和完整阶段回归确认，后者使用同一宿主、同一 QEMU、同一镜像和同一输入做交错 A/B。完整 BuildStorm 的计时从 workload 启动后的统一标记开始，到内核报告 \code{BUILDSTORM\_COMPILE mode=multi ok=true elapsed\_s} 为止；短 pc-hot 只用来筛选热点，不作为最终验收结果。
+\section{先固定什么}
 
-正式实验使用 QEMU 9.2.1、RISC-V QEMU virt、8 个 vCPU、16 GiB 内存和带 \code{-snapshot} 的发布镜像。每轮记录提交号、内核和镜像哈希、QEMU 参数、开始和结束时间以及完整日志路径。涉及架构无关代码时，我们至少执行 RISC-V 和 LoongArch 的静态检查；涉及文件系统、MM、task 生命周期的改动，还要执行对应的 final kernel 和功能回归。
+我们把“能不能跑完”和“跑得快不快”分开记录。前者由功能测例、构建门禁和完整阶段标记确认；后者使用同一宿主、同一 QEMU、同一镜像和同一输入做交错 A/B。完整 BuildStorm 的计时从 workload 的统一起点开始，到内核报告 \code{BUILDSTORM\_COMPILE mode=multi ok=true elapsed\_s} 为止。没有结束标记、出现 panic 或只跑完前置阶段的记录，都不能作为性能结果。
 
-我们采用一个很实际的取舍标准：完整 workload 有稳定收益且没有 panic、SIGSEGV、OOM、文件系统错误或测例缺项，才允许合入 \code{main}。低于宿主噪声的变化记为“无可确认收益”。例如，某些路径规范化和时间换算实验确实降低了局部指令数，但完整轮没有改善，所以没有放进最终方案。
+正式实验使用 QEMU 9.2.1、RISC-V \code{virt}、8 个 vCPU、16 GiB 内存、发布配置内核和同一份镜像，并始终带 \code{-snapshot}。每轮至少记录内核提交、内核与镜像哈希、QEMU 参数、宿主 CPU 亲和性、开始与结束时间。涉及架构无关代码时执行 RISC-V 与 LoongArch 静态检查；涉及 MM、文件系统、task 生命周期的改动还要构建 final kernel 并执行相应功能回归。
 
-\section{从现象到根因}
-我们的定位过程大致固定为四步。第一步是在完整日志中确认首个异常或耗时阶段；第二步用计时和低开销计数确认调用次数、锁等待或页表操作是否真的集中；第三步做一个只改变单一因素的 A/B；第四步回到完整轮，检查局部收益是否能传递到端到端结果。这样做有点慢，却能避免把“热点”误当成“根因”。
+宿主调度是不能忽略的变量。一次对照中，同一工作负载落在性能核时约为 1348.86 秒，而落在效率核时约为 1881.13 秒，差距约 28\%。这不是内核优化，因此本地 A/B 必须固定宿主 CPU 集合，并交错运行 \code{A--B--A} 或 \code{B--A--B}。低于宿主漂移范围的变化只记为“无可确认收益”。
 
-在这条过程中，我们逐渐确认了几类重复成本：同一个路径在一次系统调用链中被多次解析，同一个文件的 metadata 被不同层重复读取；ELF 和 mmap 路径在没有实际 PTE 变化时仍进行同步；前台页分配承担了整页清零；而一些轻量查询仍然绕过同一份全局 registry 锁。后续章节按这些根因展开。
+\section{用 pc-hot 看指令花在了哪里}
+
+\code{pc-hot}（部分记录中简称 pchot）是基于 QEMU TCG plugin 的 PC 采样工具。插件对翻译执行的 guest PC 计数，退出时一次写出结果；分析脚本再使用带符号的内核 ELF，将 PC 聚合到 Rust 函数。它不需要在内核热路径加入日志，因此适合比较候选前后的指令分布。
+
+一个典型流程如下：
+
+\begin{enumerate}
+  \item 使用与被测内核匹配、保留符号的 final ELF；
+  \item 构建对应架构的 \code{pc-hot} 插件；
+  \item 在固定 300 秒窗口内运行相同 workload，并让 QEMU 正常退出或由 timeout 结束；
+  \item 用 \code{nm} 和 \code{addr2line} 聚合前若干热点，比较总指令以及各符号占比；
+  \item 若使用 \code{-icount shift=N}，分析时传入同一 shift，查看每个 vCPU 的虚拟时间分布。
+\end{enumerate}
+
+早期 K32 窗口中，\code{memcpy}、\code{memcmp} 和 \code{memset} 分别约占 35.6 亿、30.7 亿和 18.3 亿条指令；随后是 VirtQueue、TLSF 分配、缺页、块缓存读取和缓存淘汰。这个结果没有直接给出“应该优化 memcpy”的结论。它说明大量成本来自上层重复拷贝、键比较、页面清零和块读取，真正需要检查的是这些基础函数为什么被调用了这么多次。
+
+完整 wait-hot 记录进一步采样了约 2810.5 亿条指令，其中 mprotect、memcpy、memset、page fault 和 scheduler 都进入前列。各 vCPU 的 idle 时间明显不均：有的核心仅空闲约 629 秒，有的超过 1200 秒。这表明 BuildStorm 的关键阶段仍受一个或少数繁忙核心限制，也为后续“由 idle CPU 预清零页面”提供了依据。
+
+\begin{table}[htbp]
+  \centering
+  \caption{pc-hot 与 wait-hot 分别回答的问题}
+  \begin{tabularx}{0.94\textwidth}{p{2.7cm}p{4.0cm}X}
+    \toprule
+    工具 & 主要输出 & 适合回答的问题 \\
+    \midrule
+    \code{pc-hot} & PC、函数及每个 vCPU 的指令数 & 哪些内核路径消耗了指令；候选是否只是把成本移到另一个符号。 \\
+    \code{wait-hot} & idle 时间、阻塞系统调用墙钟分布 & 是计算热点、锁等待、I/O 等待，还是核心负载不均造成停顿。 \\
+    \code{syscall-profile} & syscall 次数、参数桶、路径复用、flags 热点 & workload 实际如何使用 Linux ABI，应该优先优化哪一种调用形态。 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{用 syscall profile 解释调用形态}
+
+只看符号仍可能误判。例如 \code{mprotect} 很热，但不知道它是在修改大段驻留页，还是反复修改尚未驻留的 lazy VMA。为此我们增加了 syscall profile 插件。WaterOS full-system 模式在 RISC-V 用户态 \code{ecall} 处读取 \code{a7} 与 \code{a0..a5}，按 vCPU 聚合 syscall、参数数量级、flags 和有界路径字符串；运行期不逐条打印，也不修改 guest 内核。
+
+300 秒 BuildStorm 画像共捕获 340,830 次 syscall。\code{mprotect} 为 100,154 次，占 29.39\%；其中 85,544 次长度位于 4 KiB 桶，98,643 次目标权限为 \code{PROT\_READ|PROT\_WRITE}。同一窗口内，\code{statx}、\code{openat} 和 \code{readlinkat} 的成功路径重复比例分别约为 81.99\%、69.90\% 和 92.14\%。前一组数据指向 lazy VMA 的条件 TLB 同步，后一组数据则证明工具链和 Cargo registry 的路径、metadata 确实被反复访问。
+
+插件数据只用于诊断。\code{ecall} 后端尚不能在 full-system 中可靠取得 syscall return callback，因此 read/write 统计的是请求长度而不是实际返回长度；固定窗口里执行的 guest 工作量也可能不同。它可以决定下一步实验，却不能代替完整 BuildStorm 墙钟成绩。
+
+\section{从热点到提交的判断链}
+
+我们的判断过程固定为五步：先在完整日志中确定阶段和完成状态；再用低开销统计确认调用次数、锁等待、缓存命中或页表变化；随后提出一个能够解释数据的机制假设；实现只改变该假设所需的最小边界；最后回到完整 workload 做交错 A/B。若只降低了某个函数指令数，却没有改善完整耗时，就回退实现并保留记录。
+
+这套标准也限定了优化的风险。查询路径不能持有 registry 锁跨越用户拷贝、阻塞或调度；fd 复用不能越过 close/reuse 与文件偏移的线性化点；页表同步只能在接口明确返回变化摘要后缩小；缓存必须说明对象身份、容量、失效和回收边界。性能收益不能用来抵消 ABI、持久化或并发语义的破坏。

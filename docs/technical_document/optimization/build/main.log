@@ -1,4 +1,4 @@
-This is XeTeX, Version 3.141592653-2.6-0.999998 (TeX Live 2026) (preloaded format=xelatex 2026.4.4)  18 AUG 2026 22:03
+This is XeTeX, Version 3.141592653-2.6-0.999998 (TeX Live 2026) (preloaded format=xelatex 2026.4.4)  18 AUG 2026 22:40
 entering extended mode
  \write18 enabled.
  file:line:error style messages enabled.
@@ -1832,35 +1832,141 @@ File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 ]
 (./chapters/01-overview.tex
 第1章
-) (./chapters/02-baseline.tex [1
+
+Underfull \hbox (badness 1436) in paragraph at lines 29--29
+\TU/FandolSong-Regular(1)/m/n/12 页 \TU/TimesNewRoman(0)/m/n/12 COW \TU/FandolSo
+ng-Regular(1)/m/n/12 刷 新、| \TU/TimesNewRoman(0)/m/n/12 mpro-
+ []
 
 
-]
+Underfull \hbox (badness 10000) in paragraph at lines 29--29
+\TU/TimesNewRoman(0)/m/n/12 tect \TU/FandolSong-Regular(1)/m/n/12 变 化 摘 要、|  只 
+读
+ []
+
+
+Underfull \hbox (badness 5460) in paragraph at lines 29--29
+[]|\TU/TimesNewRoman(0)/m/n/12 block-cache admission\TU/FandolSong-Regular(1)/m
+/n/12 、|
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 29--29
+\TU/TimesNewRoman(0)/m/n/12 page-cache capacity\TU/FandolSong-Regular(1)/m/n/12
+ 、|
+ []
+
+[1
+
+
+]) (./chapters/02-baseline.tex [2]
 第2章
-) (./chapters/03-optimization-path.tex [2
-
-]
-第3章
 [3
 
-]) (./chapters/04-results.tex [4]
+]) (./chapters/03-optimization-path.tex [4]
+第3章
+[5
+
+] [6]) (./chapters/04-results.tex [7]
 第4章
-) (./chapters/05-ai-and-reproduction.tex [5
+[8
 
 ]
+Underfull \hbox (badness 2680) in paragraph at lines 84--84
+[]|\TU/TimesNewRoman(0)/m/n/12 page cache reverse
+ []
+
+
+Underfull \hbox (badness 3058) in paragraph at lines 85--85
+[]|\TU/FandolSong-Regular(1)/m/n/12 页 缓 存 扩 到 \TU/TimesNewRoman(0)/m/n/12 40/48
+
+ []
+
+
+Underfull \hbox (badness 6141) in paragraph at lines 85--85
+[]|\TU/FandolSong-Regular(1)/m/n/12 更 大 容 量 应 提 高 命 中
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 86--87
+[]|\TU/FandolSong-Regular(1)/m/n/12 完 整 轮 由 约 \TU/TimesNewRoman(0)/m/n/12 1282.
+12 s \TU/FandolSong-Regular(1)/m/n/12 变 为
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 87--87
+[]|\TU/FandolSong-Regular(1)/m/n/12 减 少 字 符 串 \TU/TimesNewRoman(0)/m/n/12 key \
+TU/FandolSong-Regular(1)/m/n/12 的
+ []
+
+
+Underfull \hbox (badness 6141) in paragraph at lines 88--88
+[]|\TU/FandolSong-Regular(1)/m/n/12 随 访 问 量 调 整 索 引 规
+ []
+
+
+Underfull \hbox (badness 1009) in paragraph at lines 89--89
+[]|\TU/FandolSong-Regular(1)/m/n/12 加 速 \TU/TimesNewRoman(0)/m/n/12 wait/reap \
+TU/FandolSong-Regular(1)/m/n/12 的 子 进
+ []
+
+
+Underfull \hbox (badness 2443) in paragraph at lines 90--90
+[]|\TU/TimesNewRoman(0)/m/n/12 TLSF \TU/FandolSong-Regular(1)/m/n/12 小 对 象 固 定
+ []
+
+
+Underfull \hbox (badness 6141) in paragraph at lines 91--91
+[]|\TU/FandolSong-Regular(1)/m/n/12 降 低 只 读 页 缓 存 淘 汰
+ []
+
+
+Underfull \hbox (badness 6141) in paragraph at lines 92--92
+[]|\TU/FandolSong-Regular(1)/m/n/12 减 少 调 度 进 入 次 数 和
+ []
+
+
+ignored: Infinite glue shrinkage found in box being split [9]) (./chapters/05-ai-and-rep
+roduction.tex [10]
 第5章
-) (./chapters/06-conclusion.tex [6
+[11
 
 ]
+
+Package fontspec Info: 
+(fontspec)             Script 'CJK' not explicitly supported within font
+(fontspec)             'FandolFang-Regular'. Check the typeset output, and if
+(fontspec)             it is okay then ignore this warning. Otherwise a
+(fontspec)             different font should be chosen.
+
+
+Package fontspec Info: 
+(fontspec)             Font family 'FandolFang-Regular.otf(0)' created for
+(fontspec)             font 'FandolFang-Regular.otf' with options
+(fontspec)             [Script={CJK},AutoFakeBold={4}].
+(fontspec)              
+(fontspec)              This font family consists of the following NFSS
+(fontspec)             series/shapes:
+(fontspec)              
+(fontspec)             - 'normal' (m/n) with NFSS spec.:
+(fontspec)             <->"[FandolFang-Regular.otf]/OT:script=hani;language=dfl
+t;"
+(fontspec)             - 'bold' (b/n) with NFSS spec.:
+(fontspec)             <->"[FandolFang-Regular.otf]/OT:script=hani;language=dfl
+t;embolden=4;"
+
+ [12
+
+]) (./chapters/06-conclusion.tex [13]
 第6章
 )
 \tf@thm=\write7
 \openout7 = `main.thm'.
 
- [7
+ [14
 
 ]
-runsystem(latexminted cleantemp  --timestamp 20260818220325 FAD58DE7366495DB465
+runsystem(latexminted cleantemp  --timestamp 20260818224040 FAD58DE7366495DB465
 0CFEFAC2FCD61)...executed.
 
  (build/main.aux)
@@ -1869,15 +1975,15 @@ LaTeX2e <2025-11-01>
 L3 programming layer <2022/07/14>
  ***********
 Package rerunfilecheck Info: File `main.out' has not changed.
-(rerunfilecheck)             Checksum: 7B1025EB6CFE20058B722E2745260B56;2977.
+(rerunfilecheck)             Checksum: 2007B87E387FD1DDA0313167F973C3CC;5385.
  ) 
 Here is how much of TeX's memory you used:
- 37339 strings out of 468168
- 814646 string characters out of 5432816
- 1338822 words of memory out of 5000000
- 65331 multiletter control sequences out of 15000+600000
- 646040 words of font info for 177 fonts, out of 8000000 for 9000
+ 37469 strings out of 468168
+ 822488 string characters out of 5432816
+ 1343822 words of memory out of 5000000
+ 65450 multiletter control sequences out of 15000+600000
+ 648864 words of font info for 196 fonts, out of 8000000 for 9000
  1348 hyphenation exceptions out of 8191
- 93i,11n,112p,1220b,442s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 93i,15n,112p,1220b,540s stack positions out of 10000i,1000n,20000p,200000b,200000s
 
-Output written on build/main.xdv (9 pages, 205320 bytes).
+Output written on build/main.xdv (16 pages, 409868 bytes).

@@ -1,31 +1,104 @@
-\chapter{最终结果和实验分析}
+\chapter{结果、反例和数据边界}
 
-\section{端到端结果}
-我们最终采用完整 BuildStorm 耗时作为主指标，因为短 pc-hot 只能告诉我们某个符号变热或变冷，不能证明比赛测例真的变快。已确认的空页池 A/B 结果如下：
+\section{各项实验分别说明了什么}
+
+表\ref{tab:representative-perf-results} 汇总的是若干独立实验，而不是一条可以逐项相加的优化曲线。它们的日期、main 基线和已合入优化不同，因此只能在同一行内部比较。本文保留这些数据，是为了说明每项机制是否把局部观察传递到了完整 workload。
+
+\begin{table}[H]
+  \centering
+  \caption{具有完整 BuildStorm 结果的代表性实验}
+  \label{tab:representative-perf-results}
+  \small
+  \setlength{\tabcolsep}{4pt}
+  \renewcommand{\arraystretch}{1.18}
+  \begin{tabularx}{0.98\textwidth}{
+    >{\raggedright\arraybackslash}p{3.5cm}
+    >{\centering\arraybackslash}p{2.0cm}
+    >{\centering\arraybackslash}p{2.2cm}
+    >{\raggedright\arraybackslash}X}
+    \toprule
+    实验 & 基线耗时 & 候选耗时 & 同组结论 \\
+    \midrule
+    \shortstack[l]{mprotect 条件 TLB\\同步} & 829.67 s & \shortstack[c]{中位数\\806.81 s} & 约改善 2.76\%，两轮候选均完整通过。 \\
+    \addlinespace[2pt]
+    ext4 负 dentry & 807.11 s & 787.76 s & 重复不存在路径可被吸收，单组改善约 2.40\%。 \\
+    \addlinespace[2pt]
+    \shortstack[l]{block cache 二次命中\\准入} & 797.21 s & 783.00 s & 一次性块流量不进入有限缓存，约改善 1.78\%。 \\
+    \addlinespace[2pt]
+    \shortstack[l]{只读 exec mmap\\cache} & 783.00 s & 640.95 s & 跨进程物理页复用在该组改善约 18.14\%。 \\
+    \addlinespace[2pt]
+    \shortstack[l]{exec mmap cache\\64--128 MiB} & 640.95 s & 534.26 s & 工作集仍大于 64 MiB，扩容在该组改善 16.65\%。 \\
+    \addlinespace[2pt]
+    \shortstack[l]{前台清零---idle\\预清零} & 530 s & 502 s & 代表性完整轮改善 5.28\%，仍需以更多交错轮更新中位数。 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+这些数字也展示了优化重点的变化。最初减少一次 lookup 或一次 fence，收益通常在几个百分点；当画像证明同一只读页被不同进程大量重复建立后，物理页共享才带来两位数改善；继续优化后，匿名页清零又成为繁忙 CPU 上可见的固定成本。热点会随着前一项优化消失而迁移，不能长期依赖同一份 profile。
+
+\section{pc-hot 如何帮助判断局部优化}
+
+pc-hot 最有价值的地方不是给出一个排行榜，而是验证因果关系。保留关闭文件后的干净缓存页后，\code{purge\_closed\_file} 从约 3.50 亿条指令降到约 3 万，总指令下降约 3.6\%；复用 FileCacheKey 后，key 构造下降约 69\%，TLSF alloc/free 同时下降约 8\%。这些变化说明优化确实减少了对象构造和清理，而不是把成本改名。
+
+但同一工具也会否定看似成功的方案。块缓存内部热点曾从约 6.69 亿条指令降到 5.75 亿，约减少 14\%，完整 Final 却仍接近 1957 秒；page-cache key 规范化虽然减少 \code{memcmp}，总指令反而增加。我们因此同时查看总指令、候选在固定窗口内推进到的 workload 阶段、相关热点和完整墙钟，不能只截取下降最大的符号。
+
+条件 mprotect 实验是较完整的例子。候选 300 秒窗口执行的 guest 指令比对照多 7.41\%，说明相同时间推进了更多工作；\code{request\_tlb\_shootdown\_targets} 的归一化占比下降，且没有出现新的 mprotect 热点。这个诊断方向与完整 A/B 一致，因此可以支持、但不替代墙钟结论。
+
+\section{零页池的机制数据}
 
 \begin{table}[htbp]
   \centering
-  \caption{预清零页面池的代表性 A/B 结果}
-  \begin{tabular}{lrrr}
+  \caption{256 页零页池的独立统计}
+  \begin{tabular}{lr}
     \toprule
-    配置 & 完整编译时间 & 加速比 & 耗时降低 \\
+    指标 & 数值 \\
     \midrule
-    优化前：前台同步清零 & 530\,s & 1.000$\times$ & -- \\
-    优化后：idle 预清零页面池 & 502\,s & 1.056$\times$ & 5.28\% \\
+    demand hit / miss & 2,158,384 / 29,864 \\
+    demand hit rate & 98.6353\% \\
+    idle refill & 1,710,498 页（78.16\%） \\
+    synchronous refill & 477,824 页（21.84\%） \\
+    峰值 / 最终池长度 & 256 / 224（另有 32 页 in-flight） \\
+    低水位激活 & 4,135 次 \\
+    allocator lock busy 的 idle pass & 2,657 次 \\
+    OOM drain & 0 次 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-加速比按
-\[
-  S=\frac{T_{\mathrm{before}}}{T_{\mathrm{after}}}
-\]
-计算。这里的 530\,s 和 502\,s 是相同 workload 条件下的代表性完整轮结果；如果后续补充多轮交错 A/B，我们会以中位数替换单轮值，并保留原始日志路径。
-
-\section{结果应该怎样解读}
-这 28 秒不是由某一个短函数直接贡献的。页面清零被放到 idle CPU 后，前台 fault、页表建立和匿名映射路径少了一段同步工作；同时，批量从 allocator 取得 raw frame 也减少了全局分配器锁的获取次数。空页池优化因此和前面的 exec、mmap、page cache 改动存在路径上的叠加，但我们不把各项百分比简单相加，最终只报告完整组合和可复核的 A/B。
-
-编译时间本身不是本轮所有优化的独立目标。我们主要优化内核运行时，因此构建时间数据只在同一宿主、同一工具链和同一配置下比较；不能把宿主编译缓存、QEMU 启动时间或不同镜像状态混入结论。功能回归、双架构 check 和 snapshot 运行是性能数据的前置条件，任何出现 panic、文件系统错误或测例缺项的候选都不进入最终组合。
+98.6\% 的 demand 命中说明前台通常能直接取得已清零页；78.16\% 的 refill 由 idle CPU 完成，则说明工作确实被迁移，而不是仅靠 demand CPU 批量清零伪装成缓存命中。另一方面，池多次达到上限且仍有 1.36\% miss，表明 256 页不足以稳定吸收编译 fault 突发。正式容量提高到 1024 页后，需要用关闭统计探针的内核重新做多轮 A/B；机制统计本身不能推导出新的墙钟百分比。
 
 \section{没有纳入最终组合的实验}
-我们保留了失败实验的记录，但没有把它们写成成果。例如，process child index、u128 时间换算、路径规范化快速分支和 TLSF 懒统计都出现过局部指标改善；完整轮却没有稳定收益，甚至出现退化，所以最终回退。这个取舍很重要：我们愿意放弃一个局部漂亮的数字，换取完整 workload 上可重复的结果。
+
+失败实验同样构成结果。它们帮助我们区分 workload 的真实结构和对热点名称的想象。
+
+\begin{longtable}{p{3.5cm}p{4.2cm}p{6.1cm}}
+  \caption{代表性回退实验及原因}\label{tab:rejected-perf}\\
+  \toprule
+  实验 & 原本的假设 & 实际结果与处理 \\
+  \midrule
+  \endfirsthead
+  \toprule
+  实验 & 原本的假设 & 实际结果与处理 \\
+  \midrule
+  \endhead
+  page cache reverse index & 避免 purge 时扫描全部 key & 局部扫描减少，但总指令和完整耗时没有净收益，回退。 \\
+  页缓存扩到 40/48 MiB & 更大容量应提高命中率 & 32 MiB 曾有约 5\% 改善，继续扩大出现无收益或挂起，不保留。 \\
+  readahead 8 页改 16 页 & 编译读取具有连续性 & 完整轮由约 1282.12 s 变为 1321.26 s，一次性流量和额外 I/O 抵消收益。 \\
+  8-way 页索引 & 减少字符串 key 的 \code{memcmp} & \code{memcmp} 下降，但 MINIBUILD 正确性失败，立即回退。 \\
+  动态 hash bucket & 随访问量调整索引规模 & 1292.96 s 未优于 1282.12 s 对照，变化处于退化方向。 \\
+  process child index & 加速 wait/reap 的子进程查找 & 新增维护成本使完整轮变慢，说明瓶颈不在单次子节点搜索。 \\
+  TLSF 小对象固定池/懒统计 & 减少 allocator 固定开销 & 局部计数下降但总指令或墙钟没有稳定改善，未进入主线。 \\
+  intrusive LRU 与满池 bypass & 降低只读页缓存淘汰成本 & 复杂度增加，完整 A/B 不支持继续扩大实现。 \\
+  timer period 与调度快路径 & 减少调度进入次数和轻量查询 & 未形成稳定端到端收益，且可能改变延迟行为，回退。 \\
+  \bottomrule
+\end{longtable}
+
+\section{与 Linux 基线的距离}
+
+一次固定条件对照中，RISC-V Linux BuildStorm 约为 395.90 秒，WaterOS 当时约为 1031.52 秒，约为 Linux 的 2.61 倍。LoongArch 也存在明显差距，但历史记录中的 CPU 数量并不完全一致，不能与 RISC-V 结论直接横向比较。后续多个候选已显著缩短 WaterOS 时间，但这些结果来自不同 main 基线，不能拼接成一条伪造的最终曲线。
+
+当前可以明确的是，重复只读页、前台 fault/清零、VFS 路径与 metadata、TLB shootdown 仍是主要成本；VirtIO 并行度、调度负载均衡以及编译关键进程的单核执行路径仍有空间。下一轮应先在最终提交上重新建立 Linux/WaterOS 双方完整基线，再以同一工具链和相同 CPU 数量报告最终差距。
+
+\section{结果的适用边界}
+
+本文中的 profile 多为 120 或 300 秒固定窗口，用于解释机制；墙钟结论来自带完整成功标记的 BuildStorm。单次 530 秒到 502 秒只作为代表性结果，不替代多轮中位数。不同日期的对照不能相加，QEMU TCG 下的指令变化也不等同于真实硬件周期变化。只有在固定镜像、CPU 亲和性和 QEMU 参数下完成的交错 A/B，才适合用于评价同一候选。

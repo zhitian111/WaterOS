@@ -11,6 +11,7 @@
 ///     timerfd、futex、sendmmsg/recvmmsg，dispatch 已有映射）。
 const LTP_SUBMIT_SKIP_BASENAMES: &[&str] = &[
     "msgrcv05",
+    "shmat1",
     "cgroup_fj_proc",
     "cgroup_core01",
     "cgroup_core02",

@@ -118,7 +118,10 @@ case "$LIBC" in
     both) LIBC_PREFIXES=(glibc musl) ;;
 esac
 
-mapfile -t TO_DELETE < <(
+TO_DELETE=()
+while IFS= read -r entry; do
+    [ -n "$entry" ] && TO_DELETE+=("$entry")
+done < <(
     python3 - "$IMG" "$BEFORE" "${LIBC_PREFIXES[@]}" <<'PY'
 import re
 import subprocess

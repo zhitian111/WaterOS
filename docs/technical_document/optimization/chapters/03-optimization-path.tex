@@ -1,34 +1,60 @@
 \chapter{我们保留下来的核心优化路径}
 
-\section{先把重复的路径和文件访问收起来}
-最早一批有效改动集中在 VFS 到文件系统的读路径。我们在采样中看到，BuildStorm 会反复打开、查询和读取相同的稳定文件；原有调用链每次都重新走路径分量、mount 路由和 metadata 查询。单次调用并不慢，但它们位于高频 syscall 链上，累计后占据了明显时间。
+\section{系统调用入口：减少重复导入和查表}
 
-我们的处理方式不是在 syscall 层复制一份缓存，而是让一次 lookup 产生可复用的稳定结果：节点身份、metadata 和 mount identity 随解析结果向下传递，\code{openat}、\code{stat} 家族和后续 read 可以消费同一份结果。正 dentry 使用受控的淘汰策略，负 dentry 和页缓存则按真实访问模式限制容量。对根文件系统的稳定只读操作，我们补上了不依赖全局可变 FS 锁的访问契约，再把普通 read 的 staging buffer 重用起来。
+syscall 本身的分发表不是主要热点，真正的固定成本通常出现在参数进入内核以后。早期实现中，\code{poll/select} 每次重新扫描都会从用户空间复制监视集合；路径字符串按单字节访问用户页；iovec 元数据逐项复制；socket readiness 与 nonblocking 判断也可能对同一个 fd 重复分类。这些操作单次很短，却被等待循环和高频 I/O 放大。
 
-这条链的根因是重复工作，不是简单的“缓存越大越好”。我们做过增大缓存、改 key 形式和路径快速分支的 A/B；其中有些方案减少了 \code{memcmp}，却增加了总指令或带来回归，因此没有合入。最终保留下来的方案共同减少了解析、分配和重复拷贝，并保持了 close、rename、truncate、fsync 等生命周期边界。
+我们先处理不改变 ABI 和线性化点的部分。\code{poll/select} 在入口导入一次不可变监视集合，等待期间只重新查询设备状态；路径字符串改为按小块复制，跨页错误时再退回逐字节处理，以保留 NUL、\code{EFAULT} 和长度边界；readv/writev 等将连续 iovec 元数据整体导入，但 \code{vmsplice} 仍保留逐项读取，因为提前导入会改变后续 fault 时的部分成功语义。socket 在单次扫描中只分类一次，实际可能阻塞的 I/O 仍使用 detached handle，不持有 fd registry 锁进入睡眠。
 
-\section{再处理 exec、ELF 和 TLB 的前台成本}
-当文件读路径收敛后，pc-hot 把我们带到 exec 和地址空间建立路径。原实现中，exec 前缀、ELF 头和 PT\_LOAD 信息会通过不同层重复取得；lazy mmap 即使没有实际修改 PTE，也可能触发不必要的 TLB 同步。
+随后，FD slot 保存稳定的资源分类和 flags 快照，read/pread 家族通过 I/O lease 在一次操作内复用查询结果。这个 lease 只覆盖能够证明安全的临界范围：它不跨越 close/reuse 的 fd 代际，不把文件偏移更新移出原有线性化点，也不为了减少一次 clone 而删除阻塞路径所需的 detached handle。这样取得的收益来自“少做一次相同工作”，而不是削弱并发语义。
 
-我们先让 exec 在稳定文件句柄上复用已经读取的数据，再分别在 RISC-V 和 LoongArch 上处理 lazy ELF 的架构约束。随后，mmap 和 munmap 不再按调用次数盲目 fence，而是汇总真实发生的 PTE 变化，只在需要时同步。COW 缺页也从整段刷新缩小到单页失效。这些改动的共同点是：把“可能需要同步”改成“确实发生变化才同步”，同时保留缺页、权限和跨架构返回路径的正确性。
+\section{VFS 与文件系统：让解析结果真正可复用}
 
-\section{减少任务、同步和地址空间查询的固定成本}
-BuildStorm 会创建和退出大量短生命周期任务。我们在这里遇到过几个看起来合理但最终无效的方向：减少 snapshot 构造并没有绕开 scheduler registry 的全局锁，增加 per-parent child index 反而让完整轮变慢。最终保留的改动集中在真正的固定成本上，包括当前地址空间按 CPU 缓存、单页 COW 刷新，以及在确认不会破坏 lost-wake 语义后对 futex registry 做分片。
+BuildStorm 会反复访问 Rust sysroot、Cargo registry、target 描述和同一构建目录。syscall 画像已经证明 statx、openat 和 readlinkat 的路径具有很高重复率。原调用链却可能在 syscall、VFS bridge 和具体文件系统之间重复拆分路径、查询 mount、读取 metadata，再以字符串 key 进入页缓存。
 
-这一阶段我们格外注意锁的所有权。查询路径不在锁内做用户拷贝、调度或文件系统操作；分片只改变 registry 的竞争范围，不改变 futex key 的匹配和唤醒顺序。对没有完整端到端收益的 scheduler 轻量查询，我们没有因为代码更短就保留。
+优化后的方向是让一次 lookup 产生可消费的稳定结果。解析结果携带节点身份、metadata 和 mount identity，\code{openat}、\code{statx} 以及后续 read 不必重新从字符串开始。mount namespace 使用 Arc/COW 快照，普通读取不再深拷贝整份命名空间；正 dentry 采用有界淘汰，负 dentry 记录确定的 \code{NotFound}，在目录发生创建、重命名等改变时失效。对根文件系统的稳定只读操作，则建立不依赖全局可变 FS 锁的只读访问契约。
 
-\section{把物理页清零移出前台分配路径}
-最后一项收益明显的优化来自物理页分配。用户匿名页、零填充映射和页表页必须得到清零页面，原实现由发起分配的 CPU 同步完成清零。我们在单轮实验中看到，完整 BuildStorm 从约 530\,s 降到约 502\,s，说明这段工作已经成为前台高频成本。
+缓存策略来自访问数据，而不是“越大越好”。块缓存画像记录了 15,530,833 次读取，但只有 211,798 次命中，命中率约 1.36\%；第一次 miss 后再次访问的 ghost revisit 只有约 0.51\%。因此第二次命中才准入的策略避免让一次性编译流量污染有限缓存，完整候选由 797.21 秒降到 783.00 秒。相比之下，文件页缓存命中约 56\%，更值得承载工具链的重复只读页。
 
-我们增加了一个全局固定容量的 LIFO 空页池。idle CPU 在进入 WFI 前尝试从普通 frame allocator 批量取得 raw frame，在池锁外完成整页清零，再把页面发布到池中；前台分配先 pop 已清零页面，池不足时才回退到同步清零。当前正式设计使用 1024 页容量、256 页低水位、idle 补充批量 32 页和同步 miss 补充批量 16 页。池是可回收缓存，不改变 raw frame 的“内容未定义”契约；已经被写入后释放的页面回普通 allocator，不回流到空页池。
+页缓存优化也包括稳定 key 和生命周期处理。复用 file key 后，构造 key 的指令由约 1151 万降到 353 万；关闭文件时不立即全量清除干净页，使 \code{purge\_closed\_file} 从约 3.50 亿条指令降到接近零。这里仍然保留 truncate、rename、写回和文件身份变化的失效边界，不能把“读路径稳定”扩展成“永不失效”。
 
-并发约束比池本身更重要。一个 PPN 同一时刻只能属于普通 allocator、清零中的 producer、空页池或调用者之一；清零期间 producer 独占唯一引用；不同时持有 allocator 锁和 pool 锁；池维护拿不到 allocator 锁时直接跳过，不自旋。这样即使 idle CPU 没有足够空闲时间，系统也只是退回原来的同步路径，不会把内存不足变成加载失败。
+\section{exec 与只读文件页：从重复读取走向物理页共享}
+
+文件路径收敛后，热点继续进入 exec、ELF 装载和 file-backed fault。多个 rustc 子进程会装载同一工具链 ELF 和只读映射；若每个进程都重新分配物理页、清零并从文件复制，VFS 命中只能省去磁盘访问，不能消除内存端的重复工作。
+
+我们首先让 exec 前缀识别、ELF 头和 PT\_LOAD 解析复用同一个稳定文件句柄，并在双架构上保留 lazy ELF 的差异处理。随后对只读 ELF 页建立以稳定文件身份和页偏移为 key 的物理页缓存。一次 profile 中共有 40,960 次可共享只读 ELF fault，其中只有 7,325 个唯一页 key，重复率为 82.11\%；仅按 4 KiB 页面估算，重复 fault 至少对应约 131.39 MiB 可避免的清零与复制。
+
+进一步的只读可执行 mmap 缓存把同一原则扩展到 ELF loader 之外。64 MiB 配置的完整候选为 640.95 秒；扩大到 128 MiB 后为 534.26 秒，在该组独立 A/B 中改善 16.65\%。继续增至 192 MiB 并未证明更好，因此容量仍由工作集测量决定。缓存只接受内容稳定、权限只读、文件身份和偏移明确的页；私有可写映射、文件变化和 COW 继续走原有路径。
+
+\section{按实际页表变化进行 TLB 同步}
+
+syscall profile 显示大量 4 KiB \code{mprotect(RW)}，而 WaterOS 的 private anonymous mmap 已经是 lazy VMA。对于尚未驻留的页面，mprotect 只改变 VMA 元数据，并没有旧 PTE 可供 CPU 缓存。原实现仍然在 MM 层和 syscall helper 中执行全地址空间 flush 与远端 shootdown，造成重复同步。
+
+我们没有直接删除 fence，而是修改接口返回“是否实际改变驻留 PTE”的摘要。双架构 \code{MmapOps::mprotect} 遍历目标范围：未驻留 lazy 页只更新 VMA，相同权限不重写 PTE，权限或 PPN 确实变化时才标记 changed。syscall 层仅在成功且 changed 为真时执行一次本地 flush 和远端 shootdown；错误路径继续保守刷新，因为范围前部可能已经修改而后部才报错。
+
+固定镜像的交错结果为候选 810.26 秒、main 829.67 秒、候选 803.36 秒，候选中位数 806.81 秒，相对夹在中间的 main 改善约 2.76\%。同样的原则也用于 mmap/munmap 的变化汇总，以及 COW fault 的单页失效。这里优化的是同步范围，而不是省略必要同步。
+
+\section{任务、futex 与每 CPU 快路径}
+
+BuildStorm 会创建大量短生命周期进程，但“进程很多”不等于应该增加更多全局索引。per-parent child index 曾使完整轮退化，current pid 快路径和调度 nice 快路径也没有稳定收益。最终保留的方案集中在调用次数高、且所有权简单的状态上：当前用户地址空间按 CPU 缓存，减少同一 CPU 上的 registry 查询；futex registry 按 key 分片，缩小不相关地址之间的竞争；进程 I/O 统计将同一次双向搬运的计数合并到一次 owner 查找和一次锁内更新。
+
+这些改动都不跨越等待和唤醒边界。futex 分片仍按同一个 FutexKey 匹配 waiter，注册、条件复查和入队的 lost-wake 防护不变；查询路径不会在持锁时访问用户地址、文件系统或调度器。与其追求“完全无锁”，我们更重视缩小共享范围而不改变事件顺序。
+
+\section{把物理页清零移出繁忙 CPU}
+
+当只读文件页能够复用后，匿名页、页表页和零填充映射的前台清零变得更突出。Rust 编译的大 crate 会在单个繁忙 vCPU 上集中触发 fault，而其他 vCPU 有较长 idle 时间。页面必须清零是安全语义，不能删除；但清零不必由请求页面的 CPU 同步完成。
+
+因此我们增加了一个全局固定容量的 LIFO 零页池。idle CPU 在进入 WFI 前尝试批量取得 raw frame，在池锁和 allocator 锁之外清零，再发布到池中；前台 zeroed allocation 先 pop 已清零页，池不足时同步批量补充并保留单页兜底。正式参数为 1024 页容量、256 页低水位、idle 批量 32 页和同步 miss 批量 16 页，最多占用 4 MiB 可回收内存。
 
 \begin{figure}[htbp]
   \centering
-  \fbox{\parbox{0.82\textwidth}{\centering
-    allocator 分配 raw frame $\rightarrow$ idle CPU 锁外清零 $\rightarrow$ zeroed pool\\[4pt]
-    前台分配：pool 命中直接返回；miss 时批量补充并保留同步兜底
+  \fbox{\parbox{0.86\textwidth}{\centering
+    普通 allocator 分配 raw frame $\rightarrow$ producer 独占 $\rightarrow$ 锁外清零 $\rightarrow$ zeroed pool\\[5pt]
+    demand：pool 命中直接返回；miss 时同步补充；内存压力下可排空并归还 allocator
   }}
   \caption{预清零物理页的所有权转移路径}
 \end{figure}
+
+并发约束比池本身更重要。一个 PPN 同一时刻只能属于普通 allocator、清零中的 producer、零页池或调用者之一；不同时持有 allocator 锁和 pool 锁；idle 维护拿不到 allocator 锁就跳过，不自旋；已经被写入后释放的页面回普通 allocator，不以“曾经清零”为由回池。池只是缓存，任何时候失效都退回原来的同步清零路径。
+
+256 页统计实验中，demand hit 为 2,158,384，miss 为 29,864，命中率 98.6353\%；78.16\% 的 refill 页面由 idle CPU 完成，OOM drain 为 0。该结果证明工作迁移确实发生，也说明小池仍会在 fault 突发中达到容量上限，因此正式配置才提高到 1024 页。RISC-V 用户返回路径同时消除了浮点寄存器的重复恢复，避免在高频 trap return 中重复执行 32 次 \code{fld}。本章各项优化都保留慢路径和错误路径；缓存未命中或 idle CPU 无法补充时，系统仍回到原有实现。
