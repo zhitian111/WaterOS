@@ -1,8 +1,39 @@
-//! 平台物理内存布局：从引导 DTB 解析 RAM 上界（bring-up 期供 MM 初始化）。
+//! 平台物理内存布局：以 [`KernelMemoryLayout`] 契约描述 RAM 与恒等映射 MMIO；
+//! RAM 上界优先从引导 DTB 解析，失败时用 `wateros-base-config` 回退值。
 
-/// 物理 RAM 上界（不包含）：优先解析平台 DTB `memory@*` 的 `reg`；失败时用
-/// `wateros-base-config` 回退值。
+use api_v0::memory::{KernelMemoryLayout, PhysicalRange};
+
+/// QEMU RISC-V `virt` 恒等映射 MMIO 区间（与 `config::mm` 常量一致）。
+const MMIO_RANGES : [PhysicalRange; 2] = [
+    PhysicalRange::new(
+        config::mm::QEMU_VIRT_MMIO_PHYS_START,
+        config::mm::QEMU_VIRT_MMIO_PHYS_END,
+    ),
+    PhysicalRange::new(
+        config::mm::QEMU_VIRT_RTC_PHYS_START,
+        config::mm::QEMU_VIRT_RTC_PHYS_END,
+    ),
+];
+
+/// 当前平台的 RAM/MMIO 布局；RISC-V 使用探测虚拟页验证新安装页表。
+pub fn kernel_memory_layout() -> KernelMemoryLayout {
+    KernelMemoryLayout {
+        ram : PhysicalRange::new(config::mm::QEMU_VIRT_PHYS_RAM_BASE,
+                                 detect_ram_end_exclusive()),
+        mmio : &MMIO_RANGES,
+        probe_virtual_page : Some(0x4000_0000),
+    }
+    .validate()
+    .expect("QEMU RISC-V memory layout must be valid")
+}
+
+/// 物理 RAM 上界（不包含）：由 [`kernel_memory_layout`] 派生，保持单一事实来源。
 pub fn physical_ram_end_exclusive() -> usize {
+    kernel_memory_layout().ram.end
+}
+
+/// 优先解析平台 DTB `memory@*` 的 `reg`；失败时用 `wateros-base-config` 回退值。
+fn detect_ram_end_exclusive() -> usize {
     use config::mm::QEMU_VIRT_PHYS_RAM_END as FALLBACK;
     let dtb_pa = crate::dtb::dtb_pa();
     if dtb_pa == 0 {

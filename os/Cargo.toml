@@ -98,10 +98,9 @@
         "mm/self_test-loongarch64",
         "platform/impl-qemu-loongarch64-virt",
         # "runtime/impl-trace",
-        # "runtime/impl-info",
+        # main 分支固定为 error 等级
         # "runtime/impl-debug",
         # "runtime/impl-warn",
-        # main 分支固定为 error 等级
         "runtime/impl-error",
         # "dashboard-debug",
         "dep:klog",
@@ -154,6 +153,54 @@
         "runtime/impl-riscv64",
         "syscall/impl-kernel",
         #"dashboard-debug",
+    ]
+    # VisionFive 2 / JH7110（RISC-V64 板级 profile；任务 05 平台、任务 06 驱动）。
+    jh7110-visionfive2 = [
+        "dep:cred",
+        "dep:driver",
+        "dep:fdt",
+        "dep:fs",
+        "dep:ipc",
+        "dep:network",
+        "heap-tlsf",
+        "driver/impl-block-cache",
+        "driver/impl-jh7110-visionfive2",
+        "ipc/all",
+        "impl-sv39",
+        "mm/vfs-root-read",
+        "mm/self_test-sv39",
+        "platform/impl-jh7110-visionfive2",
+        "runtime/impl-info",
+        "dep:klog",
+        "klog/default",
+        "runtime/impl-platform-console",
+        "runtime/impl-riscv64",
+        "syscall/impl-kernel",
+        "vfs-bridge",
+    ]
+    # Loongson 2K1000LA（LoongArch64 板级 profile）。
+    loongson2k1000la = [
+        "dep:cred",
+        "dep:driver",
+        "dep:fdt",
+        "dep:fs",
+        "dep:ipc",
+        "dep:network",
+        "heap-tlsf",
+        "driver/impl-block-cache",
+        "driver/impl-loongson2k1000la",
+        "ipc/all",
+        "mm/impl-loongarch64",
+        "mm/vfs-root-read",
+        "mm/self_test-loongarch64",
+        "platform/impl-loongson2k1000la",
+        "runtime/impl-info",
+        "dep:klog",
+        "klog/default",
+        "runtime/impl-platform-console",
+        "runtime/impl-loongarch64",
+        "syscall/impl-kernel",
+        "vfs-bridge",
     ]
     syscall-trace = [  ]
     # 统一内核态组件自检；不启动用户态测试。

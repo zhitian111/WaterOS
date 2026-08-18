@@ -97,3 +97,22 @@ pub fn disable_soft_interrupt() {
         sie::clear_ssoft();
     }
 }
+
+/// 在当前 hart 打开 SEIE（监督态外部中断使能）。
+///
+/// 调用方必须先完成本 hart 的 PLIC context 初始化（threshold/claim 就绪），否则
+/// 外部中断到达后会进入 trap 层并触发"控制器不可用"的启动契约 panic。
+#[inline]
+pub fn enable_external_interrupt() {
+    unsafe {
+        sie::set_sext();
+    }
+}
+
+/// 在当前 hart 关闭 SEIE。
+#[inline]
+pub fn disable_external_interrupt() {
+    unsafe {
+        sie::clear_sext();
+    }
+}

@@ -100,7 +100,7 @@ WaterOS 已在以下环境中完成构建、启动及赛事测试验证。
       <td align="center">本地开发与测试</td>
     </tr>
     <tr>
-      <td align="center" rowspan="2"><strong>LoongArch64</strong></td>
+      <td align="center" rowspan="3"><strong>LoongArch64</strong></td>
       <td align="center"><code>QEMU 9.2.1</code></td>
       <td align="center" rowspan="2">QEMU 直接加载内核</td>
       <td align="center" rowspan="2"><code>VirtIO PCI</code></td>
@@ -109,6 +109,12 @@ WaterOS 已在以下环境中完成构建、启动及赛事测试验证。
     <tr>
       <td align="center"><code>QEMU 11.0.2</code></td>
       <td align="center">本地开发与测试</td>
+    </tr>
+    <tr>
+      <td align="center">Loongson 2K1000LA 真机</td>
+      <td align="center">U-Boot + TFTP uImage</td>
+      <td align="center">SATA/AHCI</td>
+      <td align="center"><a href="./docs/tasks/real-hardware-port/reports/2026-08-16-loongson2k1000-sata-ahci-success.md">块读写、MBR、ext4 RW</a></td>
     </tr>
   </tbody>
 </table>
@@ -358,7 +364,7 @@ make run ARCH=la PROFILE=final SMP=4 SDCARD=/path/to/rootfs.img
 | `ARCH` | 目标架构。`rv` 选择 RISC-V64、OpenSBI 和 VirtIO MMIO；`la` 选择 LoongArch64 和 VirtIO PCI | `rv` |
 | `PROFILE` | 赛事阶段。`pre` 启用初赛 bring-up，`final` 启用 `final_online` bring-up | `pre` |
 | `SMP` | QEMU 虚拟 CPU 数量，只接受 `1..8` | `8` |
-| `MODE` | guest 启动行为：`auto` 执行内核编排的测试队列；`shell` 进入交互终端；`run` 执行 `SCRIPT` 指定的脚本 | `auto` |
+| `MODE` | guest 启动行为：`auto` 执行内核编排的测试队列；`shell` 进入交互终端；`run` 执行 `SCRIPT` 指定的脚本。Loongson 2K1000LA 真机 profile 未显式指定模式时默认进入 `/bin/bash`（无该文件则回退 `/bin/sh`） | `auto`（2K1000LA 真机默认 `shell`） |
 | `SCRIPT` | `MODE=run` 时要执行的 guest 脚本，必须是绝对路径；其他模式下不能设置 | 空 |
 | `GUEST_SHELL` | 覆盖 guest 命令解释器，必须是 guest 内的绝对路径；留空时由内核自动选择 | 空 |
 | `SDCARD` | 本次运行使用的根文件系统镜像，可覆盖架构和阶段对应的默认镜像 | 见下方镜像参数 |
@@ -515,12 +521,21 @@ make la_symbol_at ADDR=0x9000000000200000
 
 WaterOS 的核心架构、`wateros-*` 组件和用户空间构建系统由团队维护，同时使用 Rust
 生态中的基础库完成设备访问、网络协议、数据结构和底层解析。较关键的内核依赖包括
-`virtio-drivers`、`smoltcp`、`fdt`、`riscv`、`sbi-rt`、`spin` 与 `rlsf`。
+`virtio-drivers`、`simple-ahci`（2K1000 AHCI/SATA）、`pci`、`irq-loongarch`
+（LIOINTC/EIOINTC/PCH-PIC）、`smoltcp`、`fdt`、`riscv`、`sbi-rt`、`spin` 与 `rlsf`。
 
 `os/vendor/` 保存项目直接维护的文件系统依赖：`another_ext4` 作为当前 ext4 后端，并维护
 包括 ext4 fast/extent 符号链接创建与读取、WaterOS 块设备适配的容量/溢出检查，以及运行期 unlink 延迟回收在内的 WaterOS 集成补丁；
 `ext4_rs` 与 `ext4plus` 通过 `[patch.crates-io]` 指向本地版本。对这些代码的修改保留在
 vendor 目录中，并继续遵守各上游项目的许可证。
+
+Loongson 2K1000 的 SATA/AHCI 实际执行后端使用 `simple-ahci 0.1.1-preview.1`
+（MulanPSL-2.0 OR MIT），其 WaterOS HAL 和真机验证结论见
+[`SATA/AHCI 真机闭环报告`](./docs/tasks/real-hardware-port/reports/2026-08-16-loongson2k1000-sata-ahci-success.md)。
+`os/vendor/` 中的 `isomorphic_drivers`（rCore 生态，按 MIT 登记，见
+`os/vendor/isomorphic_drivers/WATEROS.md`）当前只保留作 AHCI bring-up 诊断对照；PCI
+配置空间扫描继续使用 robigalia/pci 的 LoongArch MemoryMapped 扩展 fork
+（MIT/Apache-2.0，见 `os/vendor/pci/WATEROS.md`）。
 
 `user/vendor/` 保存用户空间构建所需的固定版本源码。目前包括以 GPL-2.0 许可发布的
 BusyBox 1.33.1，以及以 MPL-1.1 许可发布的 Microwindows/Nano-X。构建器始终在
@@ -541,6 +556,7 @@ BusyBox 1.33.1，以及以 MPL-1.1 许可发布的 Microwindows/Nano-X。构建�
 | `async-lock` | 3.4.2 | Apache-2.0 OR MIT |
 | `async-trait` | 0.1.89 | MIT OR Apache-2.0 |
 | `base64` | 0.13.1 | MIT/Apache-2.0 |
+| `bitfield-struct` | 0.11.0 | MIT |
 | `bitflags` | 1.3.2 | MIT/Apache-2.0 |
 | `bitflags` | 2.11.1 | MIT OR Apache-2.0 |
 | `byteorder` | 1.5.0 | Unlicense OR MIT |
@@ -563,8 +579,11 @@ BusyBox 1.33.1，以及以 MPL-1.1 许可发布的 Microwindows/Nano-X。构建�
 | `ext4_rs` | 1.3.3 | MIT |
 | `ext4plus` | 0.1.0-rc.2 | MIT OR Apache-2.0 |
 | `fdt` | 0.1.5 | MPL-2.0 |
+| `isomorphic_drivers` | 0.1.0 | MIT（见 vendor WATEROS.md） |
+| `pci` | 0.0.1 | MIT/Apache-2.0（vendor fork） |
 | `hash32` | 0.3.1 | MIT OR Apache-2.0 |
 | `heapless` | 0.8.0 | MIT OR Apache-2.0 |
+| `irq-loongarch` | 0.1.1-pre.1 | MIT OR Apache-2.0 |
 | `libc` | 0.2.186 | MIT OR Apache-2.0 |
 | `lock_api` | 0.4.14 | MIT OR Apache-2.0 |
 | `log` | 0.4.29 | MIT OR Apache-2.0 |
@@ -585,6 +604,7 @@ BusyBox 1.33.1，以及以 MPL-1.1 许可发布的 Microwindows/Nano-X。构建�
 | `sbi-rt` | 0.0.3 | MulanPSL-2.0 OR MIT |
 | `sbi-spec` | 0.0.7 | MulanPSL-2.0 OR MIT |
 | `scopeguard` | 1.2.0 | MIT OR Apache-2.0 |
+| `simple-ahci` | 0.1.1-preview.1 | MulanPSL-2.0 OR MIT |
 | `smoltcp` | 0.12.0 | 0BSD |
 | `spin` | 0.10.0 | MIT |
 | `stable_deref_trait` | 1.2.1 | MIT OR Apache-2.0 |
@@ -595,6 +615,9 @@ BusyBox 1.33.1，以及以 MPL-1.1 许可发布的 Microwindows/Nano-X。构建�
 | `thiserror-impl` | 2.0.18 | MIT OR Apache-2.0 |
 | `unicode-ident` | 1.0.24 | (MIT OR Apache-2.0) AND Unicode-3.0 |
 | `unicode-width` | 0.1.14 | MIT OR Apache-2.0 |
+| `volatile` | 0.3.0 | MIT OR Apache-2.0 |
+| `volatile` | 0.6.1 | MIT OR Apache-2.0 |
+| `volatile-macro` | 0.6.0 | MIT OR Apache-2.0 |
 | `virtio-drivers` | 0.12.0 | MIT |
 | `zerocopy` | 0.8.48 | BSD-2-Clause OR Apache-2.0 OR MIT |
 | `zerocopy-derive` | 0.8.48 | BSD-2-Clause OR Apache-2.0 OR MIT |

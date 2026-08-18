@@ -1,0 +1,18 @@
+[package]
+    name = "wateros-platform-impl-jh7110-visionfive2"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    api-v0 = { path = "../../platform-api/api-v0/", package = "wateros-platform-api-v0", default-features = true }
+    base = { path = "../../../wateros-base/", package = "wateros-base", default-features = true }
+    fdt = "0.1.5"
+    log = "0.4"
+
+[target.'cfg(target_arch = "riscv64")'.dependencies]
+    opensbi-common = { path = "../impl-opensbi-common/", package = "wateros-platform-impl-opensbi-common" }
+
+[features]
+    api-v0 = [  ]
+    default = [ "api-v0" ]
+    self_test = [ ]

@@ -25,7 +25,18 @@ pub fn mount_default_root_rw() -> fs_api_v0::FsResult<()> {
     let Some(path) = devfs::active_impl::default_root_block_path() else {
         return Err(fs_api_v0::FsError::NotMounted);
     };
-    mount_root_rw_from_block_path(path.as_str())
+    let whole_disk = mount_root_rw_from_block_path(path.as_str());
+    if whole_disk.is_ok() {
+        return whole_disk;
+    }
+    // 整盘不是文件系统（例如带分区表的整盘镜像）时，回退到首个可挂载的分区设备。
+    for partition in devfs::active_impl::partition_block_paths() {
+        logging::info!("[fs::rootfs] whole-disk mount failed; trying partition {}", partition);
+        if let Ok(()) = mount_root_rw_from_block_path(partition.as_str()) {
+            return Ok(());
+        }
+    }
+    whole_disk
 }
 
 /// 从块设备路径挂载读写根卷并保存全局 [`SharedRwFs`]。

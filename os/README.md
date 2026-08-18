@@ -48,6 +48,23 @@ make run ARCH=rv PROFILE=final SDCARD=/path/to/rootfs.img
 `Error`）。`log` 会在编译期裁掉更详细的日志调用及参数求值，operator 模式不会在启动后
 重新调整级别。
 
+Loongson 2K1000LA 真机构建使用单独的板级目标；`la2k_tftp` 会先生成 uImage 和 U-Boot
+启动脚本，再同步到指定 TFTP 根目录并以前台方式启动服务：
+
+```bash
+make la2k_check
+make la2k_uimage
+make la2k_tftp TFTP_LISTEN=192.168.1.2 TFTP_ROOT=/srv/tftp
+```
+
+该路径需要 LoongArch GNU objcopy、`mkimage`（缺失时内核 uImage 可回退到项目脚本）、
+`dnsmasq` 和 `sudo`。真机 SATA 验证结果见
+[`2K1000 SATA/AHCI 闭环报告`](../docs/tasks/real-hardware-port/reports/2026-08-16-loongson2k1000-sata-ahci-success.md)。
+
+Loongson 2K1000LA（`loongson2k1000la`）板级构建在未显式指定 `operator-run` 或
+`operator-shell` 时默认绕过 `/sbin/init`，直接以交互方式启动 `/bin/bash`；若镜像没有
+该文件，内核再回退到 `/bin/sh`。QEMU LoongArch 和其它板级 profile 不受此默认行为影响。
+
 ## 常见开发场景
 
 ### 交互终端

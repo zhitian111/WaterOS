@@ -47,15 +47,10 @@ const CSR_PWCH : usize = 0x1D;
 const CSR_STLBPS : usize = 0x1E;
 const CSR_TLBRENTRY : usize = 0x88;
 const CSR_TLBREHI : usize = 0x8E;
-const CSR_DMW0 : usize = 0x180;
 const CSR_EUEN : usize = 0x2;
 const LOONGARCH_PAGE_SIZE_BITS : usize = 12;
 const LOONGARCH_PWCL_4K_3LEVEL : usize = 12 | (9 << 5) | (21 << 10) | (9 << 15);
 const LOONGARCH_PWCH_4K_3LEVEL : usize = 30 | (9 << 6);
-/// PLV0 专用直接映射窗口：VA[47:0] → PA[47:0]，MAT 为一致可缓存。
-/// 此处不开放 PLV3，迫使用户代码走 PGDL/TLB，同时 trap/重填入口与内核栈不依赖
-/// 当前用户 PGDL。
-const LOONGARCH_DMW0_PLV0_CACHED : usize = 0x11;
 /// `PRMD.PPLV`：返回后特权级域（与 `returns_to_user` 判定一致）。
 const LOONGARCH_PRMD_PPLV_MASK : usize = 0x3;
 /// `PRMD.PIE`：返回时全局中断使能快照位（与 `set_return_to_user_raw` 配合）。
@@ -66,6 +61,8 @@ const LOONGARCH_USER_PLV : usize = 0x3;
 const TIMER_INTERRUPT_PENDING : usize = 1 << 11;
 /// `ESTAT.IS.IPI`：核间中断挂起位。
 const IPI_INTERRUPT_PENDING : usize = 1 << 12;
+/// `ESTAT.IS.HWI0..HWI7`：硬件外部中断挂起位（LoongArch 位 2..=9）。
+const EXTERNAL_INTERRUPT_PENDING : usize = 0b1111_1111 << 2;
 /// 单次定时器中断后重新武装的切片长度（StableCounter
 /// 刻度）；与调度策略相关，非用户 ABI。
 const TIMER_SLICE_TICKS : u64 = 10_000_000;
@@ -82,6 +79,9 @@ fn decode_loongarch64_trap_cause(estat : usize) -> TrapCause {
     }
     if (estat & TIMER_INTERRUPT_PENDING) != 0 {
         return TrapCause::Interrupt(Interrupt::SupervisiorTimer);
+    }
+    if (estat & EXTERNAL_INTERRUPT_PENDING) != 0 {
+        return TrapCause::Interrupt(Interrupt::SupervisiorExternel);
     }
 
     let ecode = (estat >> 16) & 0x3F;
@@ -116,7 +116,6 @@ fn write_csr<const CSR: usize>(value : usize) {
 /// 安装异常入口：将 `__alltraps` 写入 `EENTRY`（与 `trap.S` 中符号地址一致）。
 pub fn init_trap() {
     let addr = __alltraps as *const () as usize;
-    write_csr::<CSR_DMW0>(LOONGARCH_DMW0_PLV0_CACHED);
     write_csr::<CSR_EENTRY>(addr);
     write_csr::<CSR_TLBRENTRY>(__tlb_refill as *const () as usize);
     write_csr::<CSR_STLBPS>(LOONGARCH_PAGE_SIZE_BITS);

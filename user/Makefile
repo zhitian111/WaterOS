@@ -12,6 +12,18 @@ OUTPUT ?=
 JOBS ?=
 TOOLCHAIN_ARCHIVE ?=
 FORCE ?=0
+BOOT_DIR ?=
+BOOT_SIZE_MB ?= 64
+# 整盘镜像（带 GPT/MBR 分区表）开关与参数。
+DISK ?= 0
+PARTITION_TABLE ?= gpt
+DISK_SIZE_MB ?=
+FILESYSTEM_IMAGES ?=
+FILESYSTEM_TYPES ?=
+
+comma := ,
+FILESYSTEM_IMAGE_ARGS := $(foreach image,$(subst $(comma), ,$(FILESYSTEM_IMAGES)),--filesystem-image $(image))
+FILESYSTEM_TYPE_ARGS := $(foreach type,$(subst $(comma), ,$(FILESYSTEM_TYPES)),--filesystem-type $(type))
 
 PYTHON ?= python3
 TOOL := $(PYTHON) ./tools/userland.py
@@ -60,6 +72,8 @@ help:
 	@echo "  make image  ARCH=rv PACKAGE=pacman IMAGE_SIZE_MB=512  # pacman local package install (RV)"
 	@echo "  make image  ARCH=rv PACKAGE=base-layout,busybox,operator-tools"
 	@echo "  make overlay ARCH=rv PACKAGE=operator BASE_IMAGE=../os/sdcard-rv.img"
+	@echo "  make disk   ARCH=rv PACKAGE=minimal BOOT_DIR=../os/build/jh7110-boot  # VF2 整盘（P3 FAT boot + P4 rootfs）"
+	@echo "  make disk   ARCH=la PACKAGE=minimal PARTITION_TABLE=mbr FILESYSTEM_IMAGES=a.ext4,b.ext4 FILESYSTEM_TYPES=83,83"
 	@echo "  make inspect ARCH=rv"
 	@echo "  make test"
 	@echo
@@ -69,6 +83,7 @@ help:
 	@echo "  SKIP_PACKAGE=<empty>"
 	@echo "  IMAGE_SIZE_MB=256 BLOCK_SIZE=4096 INODE_SIZE=256"
 	@echo "  JOBS=<host CPU count> OUTPUT=build/images/wateros-<arch>.ext4"
+	@echo "  FILESYSTEM_IMAGES=<empty> FILESYSTEM_TYPES=<empty>"
 	@echo "Package presets:"
 	@echo "  all       = every package supported by ARCH"
 	@echo "  minimal   = base-layout,busybox"
@@ -97,7 +112,15 @@ build:
 image:
 	$(TOOL) image $(COMMON) --image-size-mb $(IMAGE_SIZE_MB) \
 		--block-size $(BLOCK_SIZE) --inode-size $(INODE_SIZE) \
-		$(if $(strip $(OUTPUT)),--output $(OUTPUT),)
+		$(if $(strip $(OUTPUT)),--output $(OUTPUT),) \
+		$(if $(filter 1,$(DISK)),--disk --partition-table $(PARTITION_TABLE) \
+			$(if $(strip $(DISK_SIZE_MB)),--disk-size-mb $(DISK_SIZE_MB),) \
+			$(if $(strip $(BOOT_DIR)),--boot-dir $(BOOT_DIR) \
+				--boot-size-mb $(BOOT_SIZE_MB),) \
+			$(FILESYSTEM_IMAGE_ARGS) $(FILESYSTEM_TYPE_ARGS),)
+
+disk:
+	$(MAKE) image DISK=1
 
 overlay:
 	@test -n "$(BASE_IMAGE)" || { echo "BASE_IMAGE is required" >&2; exit 2; }

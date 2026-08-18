@@ -5,8 +5,11 @@
         "./platform-arch/arch-api/api-v0/",
         "./platform-arch/arch-impl/impl-loongarch64/",
         "./platform-arch/arch-impl/impl-riscv64/",
+        "./platform-impl/impl-jh7110-visionfive2/",
+        "./platform-impl/impl-opensbi-common/",
         "./platform-impl/impl-qemu-loongarch64-virt/",
         "./platform-impl/impl-qemu-riscv64-opensbi/",
+        "./platform-impl/impl-loongson2k1000la/",
     ]
 [package]
     name = "wateros-platform"
@@ -17,6 +20,8 @@
     api-v0 = { path = "./platform-api/api-v0/", package = "wateros-platform-api-v0", default-features = false }
     impl-qemu-loongarch64-virt = { path = "./platform-impl/impl-qemu-loongarch64-virt/", package = "wateros-platform-impl-qemu-loongarch64-virt", default-features = true, optional = true }
     impl-qemu-riscv64-opensbi = { path = "./platform-impl/impl-qemu-riscv64-opensbi/", package = "wateros-platform-impl-qemu-riscv64-opensbi", default-features = false, optional = true }
+    impl-jh7110-visionfive2 = { path = "./platform-impl/impl-jh7110-visionfive2/", package = "wateros-platform-impl-jh7110-visionfive2", default-features = true, optional = true }
+    impl-loongson2k1000la = { path = "./platform-impl/impl-loongson2k1000la/", package = "wateros-platform-impl-loongson2k1000la", default-features = true, optional = true }
     arch = { path = "./platform-arch/", package = "wateros-platform-arch", default-features = false }
     config = { path = "../wateros-base/base-config/", package = "wateros-base-config" }
 log = { version = "0.4.29" }
@@ -24,11 +29,13 @@ base = { path = "../wateros-base/", package = "wateros-base", default-features =
 debug = { path = "../wateros-debug/", package = "wateros-debug", default-features = false }
 
 [features]
-    self_test = [ "impl-qemu-loongarch64-virt?/self_test", "impl-qemu-riscv64-opensbi?/self_test" ]
+    self_test = [ "impl-qemu-loongarch64-virt?/self_test", "impl-qemu-riscv64-opensbi?/self_test", "impl-jh7110-visionfive2?/self_test", "impl-loongson2k1000la?/self_test" ]
     api-v0 = [
         "arch/api-v0",
         "impl-qemu-loongarch64-virt?/api-v0",
         "impl-qemu-riscv64-opensbi?/api-v0",
+        "impl-jh7110-visionfive2?/api-v0",
+        "impl-loongson2k1000la?/api-v0",
     ]
     default = [ "api-v0", "impl-qemu-riscv64-opensbi" ]
     impl-qemu-loongarch64-virt = [
@@ -40,6 +47,16 @@ debug = { path = "../wateros-debug/", package = "wateros-debug", default-feature
         "api-v0",
         "arch/impl-riscv64",
         "dep:impl-qemu-riscv64-opensbi",
+    ]
+    impl-jh7110-visionfive2 = [
+        "api-v0",
+        "arch/impl-riscv64",
+        "dep:impl-jh7110-visionfive2",
+    ]
+    impl-loongson2k1000la = [
+        "api-v0",
+        "arch/impl-loongarch64",
+        "dep:impl-loongson2k1000la",
     ]
 
 [profile.dev]

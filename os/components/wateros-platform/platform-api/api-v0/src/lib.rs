@@ -10,6 +10,7 @@
 
 pub mod boot;
 pub mod console;
+pub mod memory;
 pub mod reset;
 /// 支持 SMP 的平台所需的 CPU bring-up 与 online 状态契约。
 pub mod smp;

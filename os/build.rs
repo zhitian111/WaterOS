@@ -28,6 +28,16 @@ fn main() {
     println!("cargo::rustc-link-arg=-T./components/wateros-platform/platform-impl/\
               impl-qemu-riscv64-opensbi/src/linker/link.ld");
 
+    #[cfg(feature = "jh7110-visionfive2")]
+    println!("cargo::rerun-if-changed=./components/wateros-platform/platform-impl/\
+              impl-jh7110-visionfive2/src/linker/link.ld");
+    #[cfg(feature = "jh7110-visionfive2")]
+    println!("cargo::rerun-if-changed=./components/wateros-platform/platform-impl/\
+              impl-jh7110-visionfive2/src/asm/_start.S");
+    #[cfg(feature = "jh7110-visionfive2")]
+    println!("cargo::rustc-link-arg=-T./components/wateros-platform/platform-impl/\
+              impl-jh7110-visionfive2/src/linker/link.ld");
+
     // LoongArch 使用独立的入口汇编和链接布局；保持与 RISC-V 分支隔离，
     // 避免把不兼容的 ISA 指令或入口符号传给错误的目标架构。
     #[cfg(feature = "qemu-loongarch64-virt")]
@@ -39,4 +49,14 @@ fn main() {
     #[cfg(feature = "qemu-loongarch64-virt")]
     println!("cargo::rustc-link-arg=-T./components/wateros-platform/platform-impl/\
               impl-qemu-loongarch64-virt/src/linker/link.ld");
+
+    #[cfg(feature = "loongson2k1000la")]
+    println!("cargo::rerun-if-changed=./components/wateros-platform/platform-impl/\
+              impl-loongson2k1000la/src/linker/link.ld");
+    #[cfg(feature = "loongson2k1000la")]
+    println!("cargo::rerun-if-changed=./components/wateros-platform/platform-impl/\
+              impl-loongson2k1000la/src/asm/_start.S");
+    #[cfg(feature = "loongson2k1000la")]
+    println!("cargo::rustc-link-arg=-T./components/wateros-platform/platform-impl/\
+              impl-loongson2k1000la/src/linker/link.ld");
 }

@@ -66,6 +66,34 @@ build/images/wateros-rv.ext4.sha256
 - `.manifest.json` 记录镜像内各路径的类型、权限和摘要；
 - `.sha256` 记录整个镜像的 SHA-256。
 
+物理板需要带分区表的整盘镜像时，使用 `make image DISK=1` 或 `make disk`，会在同一目录
+额外产出 `wateros-<arch>.img`（GPT 默认；可用 `PARTITION_TABLE=mbr` 切换）。该镜像
+由 `user/tools/root_image.py` 构建并校验（分区表 + `e2fsck -fn`），
+rootfs 分区内容与 staging 树一致；raw `.ext4` 仍保留供 QEMU 使用。
+
+需要把已有的无分区文件系统一起写入整盘时，使用 `FILESYSTEM_IMAGES` 指定逗号分隔的
+镜像路径，使用 `FILESYSTEM_TYPES` 按相同顺序指定分区类型。例如：
+
+```bash
+make disk ARCH=la PACKAGE=minimal IMAGE_SIZE_MB=64 \
+  FILESYSTEM_IMAGES=/tmp/data.ext4,/tmp/cache.ext4 \
+  FILESYSTEM_TYPES=83,83 PARTITION_TABLE=mbr
+```
+
+生成布局为 P1 WaterOS rootfs、P2 `/tmp/data.ext4`、P3 `/tmp/cache.ext4`。未指定
+`DISK_SIZE_MB` 时，构建器会按根分区和附加镜像总容量自动计算整盘大小；指定后容量不足会
+直接失败。MBR 只允许总计 4 个主分区（根分区加最多 3 个附加镜像），更多镜像请使用 GPT。
+`FILESYSTEM_TYPES` 省略时，MBR 使用 `83`，GPT 使用 `L`（Linux filesystem）。附加镜像
+必须是不带自身分区表的原始文件系统镜像。与 `BOOT_DIR` 同时使用时，VisionFive 2 的
+P1/P2/P3/P4 启动布局保持不变，附加镜像从 P5 开始；该组合应使用 GPT，因为 VF2 的
+MBR 布局已经占满 4 个主分区。
+
+VisionFive 2 需要传 `BOOT_DIR`（任务 14 的 `jh7110_bootdir` 素材目录，含
+uImage、`extlinux/extlinux.conf`、`uEnv.txt`、可选 DTB）：此时整盘镜像采用
+官方镜像同款分区编号（P1/P2 固件占位、P3 FAT 启动分区、P4 ext4 rootfs），
+出厂 U-Boot 的 `bootpart=3`/`rootpart=4` 默认值无需改动即可自动启动。
+`BOOT_SIZE_MB` 控制 P3 容量，默认 64。
+
 ## Make 参数
 
 运行 `make help` 可以查看当前入口和默认值。
@@ -76,6 +104,13 @@ build/images/wateros-rv.ext4.sha256
 | `ARCH`          | `rv`                               | 目标架构，可选`rv`、`la`          |
 | `PACKAGE`       | `all`                              | 要组合的 package 预设或自定义列表 |
 | `IMAGE_SIZE_MB` | `256`                              | EXT4 镜像容量，单位 MiB           |
+| `DISK`          | `0`                                | 置 `1` 额外产出带分区表的整盘镜像 `.img` |
+| `PARTITION_TABLE`| `gpt`                             | 整盘镜像分区表：`gpt` 或 `mbr`     |
+| `DISK_SIZE_MB`  | 空（无附加镜像时沿用 `IMAGE_SIZE_MB`） | 整盘镜像容量，单位 MiB             |
+| `FILESYSTEM_IMAGES` | 空                           | 逗号分隔的无分区文件系统镜像，依次写入 P2、P3… |
+| `FILESYSTEM_TYPES`  | 空                           | 与 `FILESYSTEM_IMAGES` 对应的分区类型列表 |
+| `BOOT_DIR`      | 空                                | 传入后启用 VisionFive 2 布局：P3 FAT 启动分区内容（P4 rootfs） |
+| `BOOT_SIZE_MB`  | `64`                              | VisionFive 2 P3 启动分区容量，单位 MiB |
 | `BLOCK_SIZE`    | `4096`                             | EXT4 块大小                       |
 | `INODE_SIZE`    | `256`                              | EXT4 inode 大小                   |
 | `JOBS`          | 宿主 CPU 数                        | 并行编译任务数                    |
@@ -466,8 +501,8 @@ packages/<name>/
 | `busybox` | 静态 shell 与常用 applet | RV、LA |
 | `operator-tools` | WaterOS 现场诊断脚本 | RV、LA |
 | `microwindows` | Nano-X、演示程序、Doom | RV、LA |
-| `mgba` | mGBA 模拟器及示例 ROM | RV |
-| `waterfm` | Nano-X 文件管理器 | RV |
+| `mgba` | mGBA 模拟器及示例 ROM | RV、LA |
+| `waterfm` | Nano-X 文件管理器 | RV、LA |
 | `openjdk21` | OpenJDK 21 headless、zlib 与 JVM 冒烟探针 | RV、LA |
 | `minecraft-server` | Minecraft Java 1.21.11 服务端与启动验收脚本 | RV、LA（显式选择） |
 
@@ -601,14 +636,16 @@ Arch 的 `riscv64-gnu-toolchain-musl-bin` 通常只以 `riscv64-linux-musl-` 前
 `user/build/toolchains/rv/archlinux-compat/bin/` 生成私有兼容前缀；无需手动设置
 `RV_CROSS_COMPILE`。
 
-构建当前图形用户空间（mGBA 与 WaterFM，且避开 OpenJDK）使用：
+构建当前图形用户空间（Nano-X、mGBA 与 WaterFM，且避开 OpenJDK）使用：
 
 ```bash
 make image ARCH=rv PACKAGE=waterfm JOBS=4
 ```
 
+将 `ARCH=rv` 改为 `ARCH=la` 即可构建 LoongArch 图形用户空间；两个架构都会安装
+`/usr/bin/start-nanox`，并由启动器根据实际安装的 `waterfm`/`water-mgba` 保留对应菜单项。
 `PACKAGE=waterfm` 会自动包含 `mgba`、Nano-X 和它们的基础依赖。显式设置
-`RV_CROSS_COMPILE` 时仍完全由该环境变量接管。
+`RV_CROSS_COMPILE` 或 `LA_CROSS_COMPILE` 时仍完全由对应环境变量接管。
 
 ## Minecraft Java 服务端
 

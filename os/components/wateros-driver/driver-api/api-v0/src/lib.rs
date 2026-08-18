@@ -102,6 +102,21 @@ pub trait MachineDriver {
         Ok(None)
     }
 
+    /// 在全局中断打开前，为指定 CPU 初始化机器本地中断状态。
+    ///
+    /// 在全局设备发现之后、该 CPU 打开全局中断之前调用；没有 per-CPU 硬件的
+    /// profile 保留默认 `Ok(())`。
+    fn init_current_cpu(&self, _cpu_raw : usize) -> DriverResult<()> { Ok(()) }
+
+    /// 处理一次机器外部中断。
+    ///
+    /// 返回 `true` 表示已 claim 并 complete 至少一个中断源；`false` 表示本
+    /// 控制器当前没有 pending 源。未配置外部中断路由的 profile 保留默认
+    /// `Unsupported`；trap 层在外部中断到达时调用本方法。
+    fn handle_external_interrupt(&self, _cpu_raw : usize) -> DriverResult<bool> {
+        Err(DriverError::Unsupported)
+    }
+
     /// 驱动自检。
     fn test(&self);
 }

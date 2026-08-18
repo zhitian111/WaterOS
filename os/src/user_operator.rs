@@ -69,7 +69,16 @@ impl BootPlan {
         {
             OperatorMode::Run
         }
-        #[cfg(not(any(feature = "operator-shell", feature = "operator-run")))]
+        #[cfg(all(not(any(feature = "operator-shell", feature = "operator-run")),
+                  feature = "loongson2k1000la"))]
+        {
+            // The 2K1000 board has no reliable userspace-init bring-up path
+            // while its flash image is being developed. Keep the serial
+            // console usable by default; explicit operator features still win.
+            OperatorMode::Shell
+        }
+        #[cfg(all(not(any(feature = "operator-shell", feature = "operator-run")),
+                  not(feature = "loongson2k1000la")))]
         {
             OperatorMode::Auto
         }
@@ -192,7 +201,7 @@ fn configure_tty(mode : TtyMode) {
     }
 }
 
-fn start_console_input_task() {
+pub(crate) fn start_console_input_task() {
     if !CONSOLE_INPUT_TASK_STARTED.swap(true, Ordering::AcqRel) {
         task::spawn_kernel_task(console_input_main, 0);
     }
@@ -254,13 +263,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_build_selects_automatic_evaluation() {
-        #[cfg(not(any(feature = "operator-shell", feature = "operator-run")))]
+    fn default_build_selects_profile_startup_mode() {
+        #[cfg(all(not(any(feature = "operator-shell", feature = "operator-run")),
+                  not(feature = "loongson2k1000la")))]
         {
             let plan = build_plan();
             assert_eq!(plan.mode, OperatorMode::Auto);
             assert_eq!(plan.on_exit, ExitPolicy::Shutdown);
         }
+        #[cfg(all(not(any(feature = "operator-shell", feature = "operator-run")),
+                  feature = "loongson2k1000la"))]
+        assert_eq!(build_plan().mode, OperatorMode::Shell);
         #[cfg(feature = "operator-shell")]
         assert_eq!(build_plan().mode, OperatorMode::Shell);
         #[cfg(feature = "operator-run")]

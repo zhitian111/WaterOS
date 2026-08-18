@@ -8,7 +8,8 @@
 QEMU、OpenSBI 等服务组合成稳定入口。它承接启动参数、DTB、内存边界、计时器、控制台、
 复位和跨 CPU IPI，并统一错误与时间单位。`platform-arch` 负责 CSR、trap、分页和本地中断，
 `platform-impl` 负责 SBI、IOCSR、mailbox；调度、页表策略和设备驱动归其它组件。当前覆盖
-QEMU RISC-V + OpenSBI 与 QEMU LoongArch `virt`，远端 TLB shootdown 尚未实现。
+QEMU RISC-V + OpenSBI、QEMU LoongArch `virt`、VisionFive 2/JH7110 与 Loongson 2K1000LA；
+远端 TLB shootdown 尚未实现。
 
 ## 定位和边界
 
@@ -18,9 +19,9 @@ trap 和 syscall 提供统一入口，但不拥有调度策略、进程状态、
 `platform-impl` 解释 QEMU/固件约定并实现 SBI、IOCSR、DTB、console、timer、reset 和 SMP
 运输；`wateros-platform/src` 保存跨架构组合语义（例如 IPI reason 和 tick 换算）。
 
-`Cargo.toml` 的默认组合是 `api-v0 + impl-qemu-riscv64-opensbi`；LoongArch 使用
-`--no-default-features --features api-v0,impl-qemu-loongarch64-virt`。两个 platform profile
-和两个 arch profile 均为互斥选择；`self_test` 只在显式启用时导出。
+`Cargo.toml` 的默认组合是 `api-v0 + impl-qemu-riscv64-opensbi`；其它构建分别选择
+`impl-qemu-loongarch64-virt`、`impl-jh7110-visionfive2` 或 `impl-loongson2k1000la`。platform
+profile 与 arch profile 均为互斥选择；`self_test` 只在显式启用时导出。
 
 ## 代码地图
 
@@ -29,7 +30,7 @@ trap 和 syscall 提供统一入口，但不拥有调度策略、进程状态、
 | 聚合门面 | `src/lib.rs`、`src/{boot,time,timer,smp,console,wall_clock}.rs` | 选择 `active_impl`，保存 DTB 入口、时间频率缓存和软件 IPI reason；不直接写硬件寄存器 |
 | 平台契约 | `platform-api/api-v0/src/{boot,time,timer,smp,console,reset}.rs` | 最小稳定类型/错误；不绑定某个 ISA 或 QEMU 实现 |
 | 架构契约与实现 | `platform-arch/arch-api/api-v0/`、`platform-arch/arch-impl/impl-{riscv64,loongarch64}/` | trap、任务切换、分页、CSR、中断和本地计时；RISC-V 另有 `ipi.rs` |
-| 机器实现 | `platform-impl/impl-qemu-riscv64-opensbi/`、`impl-qemu-loongarch64-virt/` | 入口参数、DTB/RAM 解析、SBI 或 IOCSR mailbox、deadline timer、console、reset |
+| 机器实现 | `platform-impl/impl-{qemu-riscv64-opensbi,qemu-loongarch64-virt,jh7110-visionfive2,loongson2k1000la}/` | 入口参数、DTB/RAM 解析、SBI 或板级中断/SMP 运输、deadline timer、console、reset |
 | 链接与入口 | `linker/kernel-sections.ld`、各 profile `src/asm/_start.S` 与 `linker/link.ld` | 固定内核段布局和最早期栈/入口；不承载运行期策略 |
 
 ## 核心状态与数据结构
@@ -40,7 +41,7 @@ trap 和 syscall 提供统一入口，但不拥有调度策略、进程状态、
 | `PENDING_IPI` (`src/smp.rs`) | `AtomicU8[MAX_CPUS]`，每 CPU 的 `IpiKind` 位图 | 发送方 `fetch_or(..., Release)` 后才调用 profile 运输；目标 trap 用 `swap(0, AcqRel)` 一次取走并合并原因。它不表示 CPU online，也不替代 scheduler 的 need-resched |
 | LoongArch `CPU_STATES` / `CONFIGURED_CPU_MASK` | profile 内 `AtomicU8[MAX_CPUS]` / `AtomicU64` | DTB `/cpus` 解析后 `Release` 发布可用 CPU；`start_cpu` 用 `compare_exchange` 从 stopped 抢占启动所有权。状态镜像不是 scheduler online mask |
 | `PlatformTimerDeadline` | API 中的 `u64` 绝对 tick | 必须与 `arch::time::read_time_tick` 同源；RISC-V 直接交 SBI，LoongArch 在本 CPU 读取 `rdtime.d` 后转换为相对、至少 1 tick 且按 4 tick 对齐 |
-| DTB 指针与 RAM 上界 | 各 profile 的静态原子/缓存及 `memory::physical_ram_end_exclusive()` | `init_when_boot` 先保存物理 DTB 地址；后续 memory 解析返回不含上界，供恒等映射和帧分配器使用；未选 profile 时回退 `config::mm::QEMU_VIRT_PHYS_RAM_END` |
+| DTB 指针与内存布局 | 各 profile 的静态原子/缓存及 `memory::kernel_layout()` | `init_when_boot` 先保存物理 DTB 地址；后续解析 RAM/MMIO 布局并派生不含上界的 `physical_ram_end_exclusive()`，供映射和帧分配器使用 |
 
 ## 关键链路
 
@@ -134,8 +135,8 @@ LoongArch 还从 DTB `/cpus` 得到运行期 configured mask；两者都不等�
 
 ## 限制与后续边界
 
-- 当前只实现 QEMU RISC-V + OpenSBI 与 QEMU LoongArch `virt` 两个 profile；README 不把其它板卡
-  或固件写成已支持。
+- 当前实现 QEMU RISC-V + OpenSBI、QEMU LoongArch `virt`、VisionFive 2/JH7110 与
+  Loongson 2K1000LA 四个 profile；真机能力仍以对应板卡验证报告为准。
 - LoongArch profile 的远端 TLB shootdown 尚未实现，且其启动参数不承诺 RISC-V 的 hart/DTB ABI。
 - 频率缓存没有运行期重配置协议；启动后修改会破坏 deadline 换算契约。
 - `configured_cpu_mask`/firmware 状态、IPI reason 和 scheduler online 状态是三套状态，平台层

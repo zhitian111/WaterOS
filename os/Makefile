@@ -16,7 +16,7 @@ BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 .PHONY: rv_pre_run-gdb rv_final_run-gdb rv_final_run_log-gdb rv_final_debug_run-gdb
 .PHONY: rv_qemu_run rv_qemu_run_snapshot
 .PHONY: rv_qemu_run_with_log
-.PHONY: la_check la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
+.PHONY: la_check la2k_check jh7110_check kernel-la2k la2k_uimage la2k_bootscr la2k_tftp kernel-jh7110 jh7110_uimage jh7110_bootdir dd_img_vf2 dd_img_2k1000 la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
 .PHONY: kernel-la kernel-la-best kernel-la-pre kernel-la-final la_pre_run la_final_run la_final_run_log
 .PHONY: la_pre_run-gdb la_final_run-gdb la_final_run_log-gdb
 .PHONY: la_qemu_run la_qemu_run_snapshot
@@ -93,6 +93,14 @@ GDB_BUILD_ID ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknow
 HEAP_ALLOCATOR_FEATURE ?= heap-tlsf
 operator_env = WATEROS_OPERATOR_SHELL="$(GUEST_SHELL)" WATEROS_OPERATOR_SCRIPT="$(SCRIPT)"
 cargo_env = $(if $(filter 1,$(GDB_BUILD)),WATEROS_DEBUG_BUILD_ID="$(GDB_BUILD_ID)" WATEROS_DEBUG_FRAME_POINTERS=1 RUSTFLAGS="$(strip $(RUSTFLAGS) $(GDB_FRAME_FLAGS))",)
+# Loongson 2K1000 经 U-Boot 在高 cached 段（VSEG=9）执行，不能使用
+# LoongArch small code model 的 32 位 PC 相对寻址；此处固定为 large。
+# 2K1000 的 LA264 核不支持硬件非对齐访问，关闭默认 `ual`，避免 LLVM
+# 为 `starts_with`/字符串比较等优化出 `ld.w` 非对齐内存访问。
+la2k_rustflags = $(strip $(RUSTFLAGS) -C code-model=large -C target-feature=-ual)
+# 2K1000 关闭 `ual` 后必须连 `core`/`alloc` 一起重编；否则预编译的
+# `core::fmt` 仍包含非对齐 `ldx.h`，在 LA264 上触发 ALE。
+la2k_build_std_flags = -Z build-std=core,alloc
 cargo_build = $(operator_env) $(cargo_env) cargo build
 
 kernel_rv_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
@@ -177,6 +185,9 @@ help:
 	@echo "  make debug ARCH=rv PROFILE=pre       自动启动并 watch"
 	@echo "  make debug-server ARCH=rv PROFILE=pre  手动挡：终端一启动 QEMU"
 	@echo "  make gdb                             手动挡：终端二连接"
+	@echo "  make dd_img_vf2 DEVICE=/dev/sdX     烧录 VisionFive 2 整盘镜像（先 cd user && make disk）"
+	@echo "  make dd_img_2k1000 DEVICE=/dev/sdX  烧录 Loongson 2K1000 整盘镜像（先 make disk ARCH=la）"
+	@echo "  make la2k_tftp                       启动 2K1000 TFTP 服务并同步最新启动文件"
 	@echo "  make snapshot / make watch           附加当前活动会话"
 	@echo "  make doctor                          检查 GDB/QEMU/符号工具"
 	@echo "  make show-config                     显示当前最终生效配置"
@@ -475,6 +486,105 @@ la_check:
 	$(call INFO, "开始对 loongarch64 平台进行 cargo check ...")
 	@$(operator_env) $(cargo_env) cargo check $(SELECTED_LA_FLAG)
 	$(call INFO, "对 loongarch64 平台的 cargo check 完成！")
+
+jh7110_check:
+	$(call INFO, "开始对 jh7110-visionfive2 平台进行 cargo check ...")
+	@$(operator_env) $(cargo_env) cargo check --no-default-features \
+		--features jh7110-visionfive2,pre --target riscv64gc-unknown-none-elf
+	$(call INFO, "对 jh7110-visionfive2 平台的 cargo check 完成！")
+
+la2k_check:
+	$(call INFO, "开始对 loongson2k1000la 平台进行 cargo check ...")
+	@$(operator_env) RUSTFLAGS="$(la2k_rustflags)" cargo check $(la2k_build_std_flags) --no-default-features \
+		--features loongson2k1000la,pre --target loongarch64-unknown-none
+	$(call INFO, "对 loongson2k1000la 平台的 cargo check 完成！")
+
+# Loongson 2K1000LA（PMON/uImage）构建与 uImage 生成
+kernel-la2k:
+	$(call INFO, "开始构建 loongson2k1000la 内核...")
+	@$(operator_env) RUSTFLAGS="$(la2k_rustflags)" cargo build $(la2k_build_std_flags) $(CARGO_PROFILE_ARG) --no-default-features \
+		--features loongson2k1000la,pre --target loongarch64-unknown-none
+	@cp ./target/loongarch64-unknown-none/release/wateros ./kernel-la2k
+	$(call INFO, "loongson2k1000la 内核构建完成！")
+
+la2k_uimage: kernel-la2k
+	@loongarch64-linux-gnu-objcopy -O binary --strip-all --remove-section=.kernel.heap \
+		./kernel-la2k ./kernel-la2k.bin
+	@if mkimage -A loongarch -O linux -T kernel -C none \
+		-a 0x98000000 -e 0x98000000 \
+		-n "WaterOS 2K1000LA" -d ./kernel-la2k.bin ./kernel-la2k.ui 2>/dev/null; then \
+		echo "[Makefile] [INFO] uImage（mkimage）生成完成：kernel-la2k.ui"; \
+	else \
+		python3 ./scripts/root_image/mk_uimage.py \
+			--input ./kernel-la2k.bin --output ./kernel-la2k.ui \
+			--load 0x98000000 --entry 0x98000000 \
+			--name "WaterOS 2K1000LA"; \
+	fi
+
+la2k_bootscr:
+	@mkdir -p ./build
+	@mkimage -T script -C none -n "WaterOS 2K1000 boot" \
+		-d ./scripts/root_image/boot-loongson2k1000.cmd ./build/wateros-2k1000.scr
+	$(call INFO, "Loongson 2K1000 网络启动脚本生成完成：./build/wateros-2k1000.scr")
+
+TFTP_LISTEN ?= 192.168.1.2
+TFTP_ROOT ?= /srv/tftp
+
+la2k_tftp: la2k_uimage la2k_bootscr
+	@echo "备忘录：请在连接串口进入uboot后依次执行："
+	@echo "setenv serverip 192.168.1.2"
+	@echo "setenv ipaddr 192.168.1.20"
+	@echo "tftpboot 0x9000000091000000 wateros-2k1000.scr"
+	@echo "source 0x9000000091000000"
+	@bash ./scripts/real-hardware/tftp_serve.sh "$(TFTP_LISTEN)" "$(TFTP_ROOT)"
+
+# VisionFive 2 / JH7110（U-Boot/uImage）构建与打包
+kernel-jh7110:
+	$(call INFO, "开始构建 jh7110-visionfive2 内核...")
+	@$(operator_env) $(cargo_env) cargo build $(CARGO_PROFILE_ARG) --no-default-features \
+		--features jh7110-visionfive2,pre --target riscv64gc-unknown-none-elf
+	@cp ./target/riscv64gc-unknown-none-elf/release/wateros ./kernel-jh7110
+	$(call INFO, "jh7110-visionfive2 内核构建完成！")
+
+jh7110_uimage: kernel-jh7110
+	@riscv64-linux-gnu-objcopy -O binary --strip-all --remove-section=.kernel.heap \
+		./kernel-jh7110 ./kernel-jh7110.bin
+	@if mkimage -A riscv -O linux -T kernel -C none \
+		-a 0x40200000 -e 0x40200000 \
+		-n "WaterOS VisionFive 2" -d ./kernel-jh7110.bin ./kernel-jh7110.ui 2>/dev/null; then \
+		echo "[Makefile] [INFO] uImage（mkimage）生成完成：kernel-jh7110.ui"; \
+	else \
+		python3 ./scripts/root_image/mk_uimage.py \
+			--input ./kernel-jh7110.bin --output ./kernel-jh7110.ui \
+			--load 0x40200000 --entry 0x40200000 --arch riscv \
+			--name "WaterOS VisionFive 2"; \
+	fi
+
+jh7110_bootdir: jh7110_uimage
+	@mkdir -p ./build/jh7110-boot/extlinux
+	@cp ./kernel-jh7110.ui ./build/jh7110-boot/wateros-jh7110.ui
+	@cp ./scripts/root_image/jh7110-extlinux.conf ./build/jh7110-boot/extlinux/extlinux.conf
+	@cp ./scripts/root_image/jh7110-uEnv.txt ./build/jh7110-boot/uEnv.txt
+	@cp ./scripts/root_image/jh7110-vf2-uEnv.txt ./build/jh7110-boot/vf2_uEnv.txt
+	@if mkimage -A riscv -T script -C none -n "WaterOS VisionFive 2 boot" \
+		-d ./scripts/root_image/boot-visionfive2.cmd ./build/jh7110-boot/boot.scr 2>/dev/null; then \
+		echo "[Makefile] [INFO] boot.scr 生成完成"; \
+	else \
+		echo "[Makefile] [WARN] mkimage 不可用，boot.scr 未生成（可手动 bootm）"; \
+	fi
+	$(call INFO, "启动素材目录：./build/jh7110-boot/（如需板级 DTB，放入 jh7110-starfive-visionfive-2-v1.3b.dtb）")
+
+# 整盘镜像烧录（先由 user/ 的 make disk 生成镜像，再执行本目标）。
+VF2_DD_IMAGE ?= ../user/build/images/wateros-rv.img
+LA2K_DD_IMAGE ?= ../user/build/images/wateros-la.img
+
+dd_img_vf2:
+	@test -n "$(DEVICE)" || { $(call ERROR_CMD,请先指定目标块设备 variable=DEVICE example=/dev/sdX image=$(VF2_DD_IMAGE),2); exit 2; }
+	@bash ./scripts/real-hardware/dd_image.sh "$(VF2_DD_IMAGE)" "$(DEVICE)"
+
+dd_img_2k1000:
+	@test -n "$(DEVICE)" || { $(call ERROR_CMD,请先指定目标块设备 variable=DEVICE example=/dev/sdX image=$(LA2K_DD_IMAGE),2); exit 2; }
+	@bash ./scripts/real-hardware/dd_image.sh "$(LA2K_DD_IMAGE)" "$(DEVICE)"
 
 # rv_link_app_asm:
 # 	$(call INFO, "开始生成批处理系统的 asm 文件...")

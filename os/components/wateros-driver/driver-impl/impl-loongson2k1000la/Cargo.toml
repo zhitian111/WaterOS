@@ -1,0 +1,27 @@
+[package]
+    name = "wateros-driver-impl-loongson2k1000la"
+    version = "0.1.0"
+    edition = "2024"
+
+[dependencies]
+    api-v0 = { path = "../../driver-api/api-v0", package = "wateros-driver-api-v0", default-features = true }
+    character = { path = "../../driver-character", package = "wateros-driver-character", default-features = true, features = [
+        "impl-null-stub",
+        "impl-rtc-stub",
+        "impl-uart-16550",
+    ] }
+    common = { path = "../impl-common", package = "wateros-driver-impl-common", default-features = true }
+    fdt = "0.1.5"
+    log = "0.4.29"
+    network = { path = "../../driver-network", package = "wateros-driver-network", default-features = false, features = [ "api-v0" ] }
+    spin = "0.10.0"
+
+[target.'cfg(target_arch = "loongarch64")'.dependencies]
+    ahci = { path = "../../driver-block/block-impl/impl-ahci", package = "wateros-driver-block-impl-ahci", default-features = true, features = [ "dma" ] }
+    irq-loongarch = { version = "0.1.1-pre.1", features = [ "liointc" ] }
+    platform = { path = "../../../wateros-platform", package = "wateros-platform", default-features = false, features = [ "impl-loongson2k1000la" ] }
+
+[features]
+    api-v0 = [  ]
+    default = [ "api-v0" ]
+    self_test = [ ]

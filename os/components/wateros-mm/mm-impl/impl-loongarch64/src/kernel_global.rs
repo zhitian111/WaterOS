@@ -3,8 +3,8 @@
 //!
 //! ## trap 与映射语义
 //!
-//! [`init`] 在 **S 态**（内核 PLV0）安装 PGDL 后映射 QEMU virt **RAM
-//! 恒等区**（`0x9000_0000` 起，`R|W|X`）与 **MMIO**（`R|W`），保证内核、trap
+//! [`init`] 在 **S 态**（内核 PLV0）安装 PGDL 后映射平台 **RAM**
+//! （`R|W|X`、一致可缓存）与 **MMIO**（`R|W`、强序非缓存），保证内核、trap
 //! 入口、设备 MMIO 访问在同一套映射下有效；不包含 `U`
 //! 位，用户态须使用独立用户页表或后续 `protect`/`map_identity_range_user`
 //! 等路径。
@@ -39,8 +39,6 @@ static KERNEL_ASPACE : BootOnceCell<KernelAddressSpaceCell> = BootOnceCell::new(
 /// 装载等路径读取。
 static PHYS_RAM_END_EXCL : AtomicUsize = AtomicUsize::new(0);
 
-/// QEMU virt LoongArch64 RAM 基址（与 link.ld 一致）。
-const LOONGARCH64_RAM_BASE : usize = 0x9000_0000;
 /// 低地址 UART、PLIC/MSI 等 MMIO 窗口起点（含）。
 const LOONGARCH64_LOW_MMIO_START : usize = 0x1000_0000;
 /// 低地址 MMIO 窗口终点（不含）。
@@ -49,6 +47,25 @@ const LOONGARCH64_LOW_MMIO_END : usize = 0x3000_0000;
 const LOONGARCH64_PCI_MMIO_START : usize = 0x4000_0000;
 /// VirtIO PCI MMIO 窗口终点（不含）。
 const LOONGARCH64_PCI_MMIO_END : usize = 0x8000_0000;
+const LOONGSON2K1000_PCI_ECAM_KERNEL_VA : usize = 0x40_0000_0000;
+const LOONGSON2K1000_PCI_ECAM_PHYS : usize = 0xFE_0000_0000;
+const LOONGSON2K1000_PCI_ECAM_SIZE : usize = 0x0100_0000;
+const LOONGARCH64_PHYS_ADDR_MASK : usize = 0x0000_FFFF_FFFF_FFFF;
+const LOONGARCH64_WINDOW_BASE_MASK : usize = 0xFFFF_0000_0000_0000;
+
+#[inline]
+fn phys_page_for_va(va : usize) -> PhysPageNum {
+    PhysPageNum((va & LOONGARCH64_PHYS_ADDR_MASK) / PAGE_SIZE)
+}
+
+#[inline]
+fn kernel_va_window_base() -> usize {
+    let kernel_start_addr : usize;
+    unsafe {
+        core::arch::asm!("la {}, kernel_start", out(reg) kernel_start_addr);
+    }
+    kernel_start_addr & LOONGARCH64_WINDOW_BASE_MASK
+}
 
 #[inline]
 pub(crate) fn phys_ram_end_exclusive() -> usize {
@@ -81,17 +98,22 @@ pub fn kernel_satp() -> usize { api_v0::kernel_satp::get() }
 /// `ram_end_exclusive` 为物理 RAM 上界（不包含），应与 DTB `/memory` 或
 /// bring-up 约定一致。
 pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
-    // 先发布 RAM 上界，再初始化帧池和页表；后续 ELF/用户地址空间路径依赖这三个状态已一致建立。
-    assert!(ram_end_exclusive > LOONGARCH64_RAM_BASE,
+    let ram_base_low = platform::memory::kernel_layout().ram.start;
+    assert!(ram_end_exclusive > ram_base_low,
             "kernel_mm: ram_end_exclusive must be above RAM base");
     PHYS_RAM_END_EXCL.store(ram_end_exclusive, Ordering::Release);
 
+    let window_base = kernel_va_window_base();
+    let kernel_ram_start = window_base | ram_base_low;
+    let kernel_ram_end = window_base | ram_end_exclusive;
+
     // 内核镜像结束地址之后的帧才可分配，避免覆盖正在执行的内核代码或静态数据。
-    let kernel_end_addr : usize;
+    let kernel_end_va : usize;
     unsafe {
-        core::arch::asm!("la {}, kernel_end", out(reg) kernel_end_addr);
+        core::arch::asm!("la {}, kernel_end", out(reg) kernel_end_va);
     }
-    let start_ppn = (kernel_end_addr + PAGE_SIZE - 1) / PAGE_SIZE;
+    let kernel_end_pa = kernel_end_va & LOONGARCH64_PHYS_ADDR_MASK;
+    let start_ppn = (kernel_end_pa + PAGE_SIZE - 1) / PAGE_SIZE;
     let end_ppn = ram_end_exclusive / PAGE_SIZE;
     frame_alloctor::init_frame_allocator(PhysPageNum(start_ppn),
                                          PhysPageNum(end_ppn));
@@ -99,16 +121,16 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
     let mut aspace = LoongArch64AddressSpace::new_kernel()
         .expect("kernel_mm: LoongArch64AddressSpace::new_kernel failed");
 
-    let map_identity = |aspace : &mut LoongArch64AddressSpace,
-                        start : usize,
-                        end : usize,
-                        perm : PagePerm,
-                        what : &str| {
+    let map_ram_identity = |aspace : &mut LoongArch64AddressSpace,
+                            start : usize,
+                            end : usize,
+                            perm : PagePerm,
+                            what : &str| {
         let lo = VirtAddr(start).floor_page();
         let hi = VirtAddr(end).ceil_page();
         for vpn_raw in lo.0..hi.0 {
             let vpn = VirtPageNum(vpn_raw);
-            let ppn = vpn.to_phys_page_identity();
+            let ppn = phys_page_for_va(vpn.start_addr().0);
             aspace.map_page_to_ppn(vpn, ppn, perm)
                   .unwrap_or_else(|e| {
                       panic!("kernel_mm: identity map {} [{:#x},{:#x}): {:?}",
@@ -117,36 +139,67 @@ pub fn init(_dtb_pa : usize, ram_end_exclusive : usize) {
         }
     };
 
-    map_identity(&mut aspace,
-                 LOONGARCH64_RAM_BASE,
-                 ram_end_exclusive,
-                 PagePerm::R | PagePerm::W | PagePerm::X,
-                 "RAM");
+    let map_mmio_identity = |aspace : &mut LoongArch64AddressSpace,
+                             start : usize,
+                             end : usize,
+                             perm : PagePerm,
+                             what : &str| {
+        let lo = VirtAddr(start).floor_page();
+        let hi = VirtAddr(end).ceil_page();
+        for vpn_raw in lo.0..hi.0 {
+            let vpn = VirtPageNum(vpn_raw);
+            let ppn = vpn.to_phys_page_identity();
+            aspace.map_mmio_page_to_ppn(vpn, ppn, perm)
+                  .unwrap_or_else(|e| {
+                      panic!("kernel_mm: identity map {} [{:#x},{:#x}): {:?}",
+                             what, start, end, e)
+                  });
+        }
+    };
+
+    map_ram_identity(&mut aspace,
+                     kernel_ram_start,
+                     kernel_ram_end,
+                     PagePerm::R | PagePerm::W | PagePerm::X,
+                     "RAM");
 
     // 访问 UART、PLIC/MSI、PCI ECAM 等低地址 MMIO 必须映射；与 `-m` 无关。
-    map_identity(&mut aspace,
-                 LOONGARCH64_LOW_MMIO_START,
-                 LOONGARCH64_LOW_MMIO_END,
-                 PagePerm::R | PagePerm::W,
-                 "low MMIO");
+    map_mmio_identity(&mut aspace,
+                      LOONGARCH64_LOW_MMIO_START,
+                      LOONGARCH64_LOW_MMIO_END,
+                      PagePerm::R | PagePerm::W,
+                      "low MMIO");
 
     // VirtIO PCI transport 会在该窗口内分配 BAR，启用 PGDL 后也要恒等映射。
-    map_identity(&mut aspace,
-                 LOONGARCH64_PCI_MMIO_START,
-                 LOONGARCH64_PCI_MMIO_END,
-                 PagePerm::R | PagePerm::W,
-                 "PCI MMIO");
+    map_mmio_identity(&mut aspace,
+                      LOONGARCH64_PCI_MMIO_START,
+                      LOONGARCH64_PCI_MMIO_END,
+                      PagePerm::R | PagePerm::W,
+                      "PCI MMIO");
+
+    // 2K1000 的 PCIe ECAM 物理地址超出三级页表低 39 位虚拟空间，映射到固定内核 VA 别名。
+    for page in 0..(LOONGSON2K1000_PCI_ECAM_SIZE / PAGE_SIZE) {
+        let vpn = VirtPageNum(LOONGSON2K1000_PCI_ECAM_KERNEL_VA / PAGE_SIZE + page);
+        let ppn = PhysPageNum(LOONGSON2K1000_PCI_ECAM_PHYS / PAGE_SIZE + page);
+        aspace.map_mmio_page_to_ppn(vpn, ppn, PagePerm::R | PagePerm::W)
+              .unwrap_or_else(|e| {
+                  panic!("kernel_mm: map 2K1000 PCI ECAM {:#x} -> {:#x}: {:?}",
+                         vpn.start_addr().0,
+                         ppn.start_addr().0,
+                         e)
+              });
+    }
 
     // 选一枚帧池内真实 RAM 帧，用已建立的 RAM 恒等映射做 PGDL 切换后的访存探针。
     // 避免额外低地址 VA 受 LoongArch64 PGDL/PGDH 选择规则影响。
     let probe_ppn = frame_alloc_result().expect("kernel_mm: frame oom for probe");
-    let probe_va = VirtAddr(probe_ppn.0 * PAGE_SIZE + 0x2A0);
+    let probe_va = VirtAddr(window_base | (probe_ppn.0 * PAGE_SIZE + 0x2A0));
 
     let pgdl_target = aspace.satp_value();
     runtime::logging::trace!("[kernel-mm] identity map RAM [{:#x},{:#x}) MMIO [{:#x},{:#x}) pgdl \
                               target={:#x}",
-                             LOONGARCH64_RAM_BASE,
-                             ram_end_exclusive,
+                             kernel_ram_start,
+                             kernel_ram_end,
                              LOONGARCH64_LOW_MMIO_START,
                              LOONGARCH64_LOW_MMIO_END,
                              pgdl_target);

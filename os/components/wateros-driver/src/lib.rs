@@ -35,22 +35,34 @@ pub mod network {
 pub use impl_qemu_loongarch64_virt::uart;
 #[cfg(feature = "impl-qemu-riscv64-virt")]
 pub use impl_qemu_riscv64_virt::uart;
+#[cfg(feature = "impl-jh7110-visionfive2")]
+pub use impl_jh7110_visionfive2::uart;
 
 use alloc::vec::Vec;
 use api_v0::{MachineDriver, SupportedDeviceEntry};
 
-/// 当前 feature 选中的机器驱动契约实现（QEMU RV/LA）。
+/// 当前 feature 选中的机器驱动契约实现。
 pub fn machine() -> &'static dyn MachineDriver {
     #[cfg(feature = "impl-qemu-loongarch64-virt")]
     {
-        impl_qemu_loongarch64_virt::machine()
+        return impl_qemu_loongarch64_virt::machine();
     }
     #[cfg(feature = "impl-qemu-riscv64-virt")]
     {
-        impl_qemu_riscv64_virt::machine()
+        return impl_qemu_riscv64_virt::machine();
+    }
+    #[cfg(feature = "impl-jh7110-visionfive2")]
+    {
+        return impl_jh7110_visionfive2::machine();
+    }
+    #[cfg(feature = "impl-loongson2k1000la")]
+    {
+        return impl_loongson2k1000la::machine();
     }
     #[cfg(not(any(feature = "impl-qemu-loongarch64-virt",
-                  feature = "impl-qemu-riscv64-virt")))]
+                  feature = "impl-qemu-riscv64-virt",
+                  feature = "impl-jh7110-visionfive2",
+                  feature = "impl-loongson2k1000la")))]
     {
         // 未选择任何平台是配置错误；此分支只作为编译期显式失败的兜底。
         core::unreachable!("no machine driver feature selected")
@@ -90,8 +102,25 @@ pub fn test() {
     character::api_v0::test();
     assert_eq!(display::supported_devices().len(), 3);
     network::test();
-    machine().test();
+    hardware_test();
     log::trace!("[driver] test end");
+}
+
+/// 统一板级驱动测试入口。
+///
+/// 该函数只执行驱动已经注册的纯软件检查和板级 `MachineDriver::test`
+/// 钩子，不重新初始化设备，也不改变块设备、网络设备或中断控制器状态。
+pub fn hardware_test() {
+    let entries = supported_device_entries();
+    log::info!("[driver][hardware-test] begin: {} declared devices", entries.len());
+    for entry in entries {
+        log::info!("[driver][hardware-test] device subsystem={} name={} compatible={}",
+                   entry.subsystem,
+                   entry.name,
+                   entry.compatible);
+    }
+    machine().test();
+    log::info!("[driver][hardware-test] complete");
 }
 
 /// 驱动组件统一内核态自检入口；仅探测和验证已注册的内核设备能力。
@@ -105,9 +134,14 @@ pub fn self_test() {
     character::api_v0::test();
     assert_eq!(display::supported_devices().len(), 3);
     network::test();
+    hardware_test();
     #[cfg(feature = "impl-qemu-loongarch64-virt")]
     impl_qemu_loongarch64_virt::self_test();
     #[cfg(feature = "impl-qemu-riscv64-virt")]
     impl_qemu_riscv64_virt::self_test();
+    #[cfg(feature = "impl-jh7110-visionfive2")]
+    impl_jh7110_visionfive2::self_test();
+    #[cfg(feature = "impl-loongson2k1000la")]
+    impl_loongson2k1000la::self_test();
     log::info!("[driver] self_test complete");
 }

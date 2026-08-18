@@ -3,7 +3,7 @@ use super::*;
 #[path = "aliases.rs"]
 mod aliases;
 pub(crate) use aliases::linux_vd_disk_path;
-use aliases::{push_block_alias, push_char_alias};
+use aliases::{linux_vd_partition_path, push_block_alias, push_char_alias};
 
 #[derive(Default)]
 // 本结构代码由AI完成
@@ -35,10 +35,8 @@ static DEVFS: Mutex<DevFsImpl> = Mutex::new(DevFsImpl {
 impl DevFsManager for KernelDevFsManager {
 // 本方法代码由AI完成
     fn refresh(&mut self) {
-        // 先复制驱动注册表快照再持有 devfs 锁，避免锁顺序反转和设备句柄递归访问。
-        let block_snapshot: alloc::vec::Vec<_> = (0..block_device_count())
-            .filter_map(|idx| block_device_at(idx).map(|dev| (idx, dev)))
-            .collect();
+        // 先复制包含磁盘/分区角色的驱动注册表快照再持有 devfs 锁，避免锁顺序反转。
+        let block_snapshot = block_devices_snapshot();
         let char_snapshot: alloc::vec::Vec<_> = (0..character_device_count())
             .filter_map(|idx| {
                 character_device_at(idx).map(|dev| {
@@ -59,13 +57,28 @@ impl DevFsManager for KernelDevFsManager {
         inner.block_bindings.clear();
         inner.character_bindings.clear();
 
-        for (idx, dev) in block_snapshot {
-            let vd = linux_vd_disk_path(idx);
-            push_block_alias(&mut inner, format!("/dev/vblk{}", idx), dev.clone());
-            push_block_alias(&mut inner, vd.clone(), dev.clone());
-            if idx == 0 {
-                push_block_alias(&mut inner, alloc::format!("{vd}1"), dev.clone());
-                push_block_alias(&mut inner, alloc::format!("{vd}2"), dev.clone());
+        for (idx, dev, role) in &block_snapshot {
+            match role {
+                BlockDeviceRole::Disk { disk_number } => {
+                    let vd = linux_vd_disk_path(*disk_number);
+                    push_block_alias(&mut inner, format!("/dev/vblk{}", idx), dev.clone());
+                    push_block_alias(&mut inner, vd, dev.clone());
+                }
+                BlockDeviceRole::Partition { parent_device_index, partition_number } => {
+                    let disk_number = block_snapshot.iter().find_map(|(index, _, role)| {
+                        if *index == *parent_device_index {
+                            if let BlockDeviceRole::Disk { disk_number } = role {
+                                return Some(*disk_number);
+                            }
+                        }
+                        None
+                    });
+                    if let Some(disk_number) = disk_number {
+                        push_block_alias(&mut inner,
+                                         linux_vd_partition_path(disk_number, *partition_number),
+                                         dev.clone());
+                    }
+                }
             }
         }
 
@@ -243,4 +256,23 @@ pub fn lookup_character_device(path: &str) -> fs_api_v0::FsResult<SharedCharacte
 pub fn default_root_block_path() -> Option<String> {
     let m = KernelDevFsManager;
     m.default_root_block_path()
+}
+
+/// 分区块设备路径（如 `/dev/vda1`、`/dev/vdb2`）：由角色快照生成的节点，
+/// 供根挂载在整盘不是文件系统时回退使用。
+pub fn partition_block_paths() -> Vec<String> {
+    let inner = DEVFS.lock();
+    inner
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.node_type, api_v0::DevNodeType::Block))
+        .filter(|n| {
+            n.path.starts_with("/dev/vd")
+                && n.path
+                    .as_bytes()
+                    .get(7..)
+                    .is_some_and(|suffix| suffix.iter().any(u8::is_ascii_digit))
+        })
+        .map(|n| n.path.clone())
+        .collect()
 }

@@ -203,6 +203,23 @@ pub mod interrupt {
         #[cfg(feature = "impl-loongarch64")]
         impl_loongarch64::interrupt::disable_soft_interrupt();
     }
+
+    /// 打开监督态外部中断（RISC-V `sie.SEIE`）。
+    ///
+    /// 调用方必须先完成本 CPU 的外部中断控制器（PLIC/EXTIOI）初始化；LoongArch
+    /// 的 EXTIOI 使能由任务 11（2K1000）落地，当前为空操作。
+    #[inline]
+    pub fn enable_external_interrupt() {
+        #[cfg(feature = "impl-riscv64")]
+        impl_riscv64::interrupt::enable_external_interrupt();
+    }
+
+    /// 关闭监督态外部中断。
+    #[inline]
+    pub fn disable_external_interrupt() {
+        #[cfg(feature = "impl-riscv64")]
+        impl_riscv64::interrupt::disable_external_interrupt();
+    }
 }
 
 /// 地址空间激活与必要的地址翻译缓存刷新原语；页表内容在 MM 组件。

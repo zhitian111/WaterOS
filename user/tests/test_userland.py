@@ -49,11 +49,28 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual([package.name for package in la_packages],
                          ["base-layout", "busybox", "operator-tools", "microwindows"])
 
+    def test_nanox_apps_are_supported_and_dependency_ordered_on_both_arches(self) -> None:
+        expected = ["base-layout", "busybox", "operator-tools", "microwindows",
+                    "mgba", "waterfm"]
+        self.assertEqual([package.name for package in
+                          userland.resolve_packages(("waterfm",), "rv")], expected)
+        self.assertEqual([package.name for package in
+                          userland.resolve_packages(("waterfm",), "la")], expected)
+
+        start_nanox = (userland.PACKAGE_ROOT / "microwindows/scripts/start-nanox")
+        self.assertTrue(start_nanox.is_file())
+        self.assertIn("/usr/bin/waterfm", start_nanox.read_text(encoding="utf-8"))
+        self.assertIn("/usr/bin/water-mgba", start_nanox.read_text(encoding="utf-8"))
+
     def test_all_selects_every_package_supported_by_architecture(self) -> None:
         rv = userland.parse_package_names("all", "rv")
         la = userland.parse_package_names("all", "la")
         self.assertIn("microwindows", rv)
         self.assertIn("microwindows", la)
+        self.assertIn("mgba", rv)
+        self.assertIn("mgba", la)
+        self.assertIn("waterfm", rv)
+        self.assertIn("waterfm", la)
         self.assertIn("openjdk21", rv)
         self.assertIn("openjdk21", la)
         self.assertNotIn("minecraft-server", rv)

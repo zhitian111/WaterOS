@@ -102,4 +102,3 @@ pub fn handle_lazy_file_fault<S, A>(aspace : &mut S,
 
     Ok(true)
 }
-    /// 取得可修改的惰性 VMA 集合；加载文件页时可能需要更新 loader 的内部状态。
