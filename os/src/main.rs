@@ -29,7 +29,6 @@ mod trap_handler;
 mod user_bringup_bus;
 mod user_bringup_busybox;
 mod user_bringup_common;
-mod user_bringup_ltp_exclusions;
 mod user_bringup_mm;
 mod user_bringup_posix_fs;
 mod user_bringup_root_layout;
