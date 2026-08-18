@@ -47,17 +47,17 @@ user bring-up
 → mount_root_rw_from_block_path
 → devfs::lookup_block_device
 → ACTIVE_FS_IMPL（必须为 Some）
-→ imp.mount_ro(device.clone)
 → imp.mount_rw(device)
+→ 从 RW 实例构造共享状态的只读适配视图
 → 分别写 ROOT_FS / ROOT_RW_FS / ROOT_DEV_PATH
 → bump_mount_generation
 ```
 
 为什么 RW 根还要 RO 句柄：VFS 写路径用 `ROOT_RW_FS`，但 ELF loader 当前直接从
-`root_fs()` 读取。缺 RO 会在 exec 时表现为 `LoadElfError::NoRootFs`/根卷错误，即使 shell
-之前能写文件。
+`root_fs()` 读取。这里的 RO 句柄是 RW 实例的只读接口适配，两者共享目录项和元数据
+缓存；不能对同一块设备再独立 mount 一个 RO 实例，否则写后读可见性无法保证。
 
-所有可失败的查找、RO mount 和 RW mount 都在写全局槽前完成，这避免这些失败留下半状态。
+所有可失败的查找和 RW mount 都在写全局槽前完成，这避免这些失败留下半状态。
 但最终提交仍是三个独立加锁赋值；当前没有并发 root switch 设计。启动期单写者假设下可用，
 若支持运行期切换必须改成统一状态对象/事务锁。
 

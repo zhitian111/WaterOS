@@ -167,6 +167,48 @@ unsafe impl Send for LocalRwFs {}
 /// 线程间共享的读写文件系统句柄（`Arc<Mutex<...>>`）。
 pub type SharedRwFs = Arc<Mutex<LocalRwFs>>;
 
+/// 将一个 [`SharedRwFs`] 暴露为只读视图。
+///
+/// 该视图与写路径持有同一个 RW 文件系统实例，因此目录项、元数据以及实现内部缓存不会
+/// 在根卷的 RO/RW 两个独立挂载之间分叉。外层 [`SharedFs`] 只负责适配接口；所有实际读取
+/// 仍在 `SharedRwFs` 的互斥锁下完成。
+struct SharedRwReadOnlyView {
+    inner : SharedRwFs,
+}
+
+impl ReadOnlyFs for SharedRwReadOnlyView {
+    fn mount(&mut self, _device : SharedBlockDevice) -> FsResult<()> {
+        Err(FsError::Unsupported)
+    }
+
+    fn is_mounted(&self) -> bool { self.inner.lock().is_mounted() }
+
+    fn exists(&self, path : &str) -> FsResult<bool> { self.inner.lock().exists(path) }
+
+    fn metadata(&self, path : &str) -> FsResult<FsMetadata> {
+        self.inner.lock().metadata(path)
+    }
+
+    fn read(&self, path : &str) -> FsResult<Vec<u8>> { self.inner.lock().read(path) }
+
+    fn read_range(&self, path : &str, offset : u64, buf : &mut [u8]) -> FsResult<usize> {
+        self.inner.lock().read_range(path, offset, buf)
+    }
+
+    fn read_dir(&self, path : &str) -> FsResult<Vec<FsDirEntry>> {
+        self.inner.lock().read_dir(path)
+    }
+
+    fn read_symlink(&self, path : &str) -> FsResult<Vec<u8>> {
+        self.inner.lock().read_symlink(path)
+    }
+}
+
+/// 构造与 `rw` 共享同一挂载实例的只读句柄。
+pub fn shared_read_only_view(rw : SharedRwFs) -> SharedFs {
+    Arc::new(Mutex::new(LocalFs::new(Box::new(SharedRwReadOnlyView { inner: rw }))))
+}
+
 /// 单个文件系统实现的统一注册接口。`impl-*` crate 暴露一个 `'static` 实例（如 `&IMPL`）供聚合层登记。
 ///
 /// 设计要点：
