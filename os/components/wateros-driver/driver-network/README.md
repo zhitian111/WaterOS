@@ -68,3 +68,7 @@ probe_virtio_devices()
 
 - 走 PCI ECAM 枚举并初始化 virtio-net（`VirtioPciNetDevice`），为 BAR 分配 MMIO 地址并开启
   `MEMORY_SPACE` / `BUS_MASTER`。
+
+## 并发与回归
+
+网卡mutex内只做有界send/receive，不能反向进入协议栈、socket或scheduler；RX buffer和设备Arc覆盖poll生命周期。回归验证MAC/MTU/link、空RX、小buffer不得误消费、最大/连续帧、recycle失败、DMA OOM，以及RV/LA上的ARP、ICMP、UDP、TCP长流量和锁序。

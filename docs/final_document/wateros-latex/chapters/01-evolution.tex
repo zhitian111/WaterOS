@@ -1,122 +1,93 @@
-% 第1章：项目概述。
-%
-% 本章沿用初赛文档的叙述方式，在原有技术背景上更新多核、双架构和用户态工作负载。
-
 \chapter{项目概述}
 
-\wateros{}是用Rust编写的\code{no\_std}操作系统内核，面向操作系统竞赛在QEMU上完成
-bring-up与测例验收。内核已经在RISC-V64 OpenSBI与LoongArch64 \code{virt}两条主线上
-跑通启动、trap分发、分页、任务调度与用户ELF执行；文件系统、VFS、系统调用、IPC和
-网络也接在同一套用户态路径上。在原有单核主线的基础上，当前实现进一步接通了八核
-启动、per-CPU运行状态、核间中断、跨核任务唤醒和TLB shootdown。
+\wateros{}是一个使用Rust编写的\code{no\_std}内核。目前项目以QEMU为主要运行环境，
+支持RISC-V64和LoongArch64两种架构，并按照Linux generic 64-bit ABI向用户程序提供
+系统调用。项目的目标不是逐项复刻Linux内部结构，而是实现一条能够持续运行实际用户
+程序的内核主路径：程序可以从ext4根文件系统装载，在多核环境中创建进程和线程，通过
+文件、管道、共享内存与socket交换数据，并在退出后正确回收资源。
 
-两条平台路径的入口参数、trap frame、页表格式、定时器与VirtIO总线不同，差异收束在
-\code{wateros-platform}、\code{wateros-driver}和\code{wateros-mm}各自的平台或架构实现中。
-进入task、FS/VFS、IPC、network、cred、klog和syscall之后，上层逻辑共用同一套接口，
-用户程序在两条路径上看到的fd、进程、地址空间与系统调用编号保持一致。多核支持也沿用
-这条边界：CPU启动、IPI和本地TLB操作由架构层完成，任务状态、地址空间生命周期和缓存
-一致性仍由对应组件负责。
+随着系统逐步能够运行BusyBox、glibc/musl测试程序、CAgent以及编译类负载，开发重点也
+发生了变化。早期工作主要是补齐单个系统调用；当前更需要处理跨组件状态，例如fork时
+地址空间与文件描述符的继承、退出时任务与进程资源的回收、文件页缓存的写回，以及地址
+空间在多个CPU之间切换时的TLB一致性。本文因此以这些实际执行路径为主线说明设计，测试
+通过数量只作为实现结果的证据，不作为“完整兼容Linux”的替代说法。
 
-立项时除了竞赛验收，我们也希望内核能支撑多人并行开发和教学演示。单体仓库里改一处
-驱动往往要牵一串头文件和全局状态；我们更想要的是：组员互不了解对方模块细节，仍能在
-抽象层上对接。熟悉某一域的人把\code{api-v0}里的trait和类型定下来，再用本层原语往上
-拼接口；只打算贡献某一个\code{impl-*}的人可以在crate内部实现细节，不必追问这些原语
-最后被谁、以何种方式调用。组装操作系统时因此主要面对稳定模块名和契约，而不是同时
-盯着所有底层实现。
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.94\textwidth]{pic/系统能力图.png}
+  \caption{WaterOS系统能力概览}
+  \label{fig:system-capabilities}
+\end{figure}
+\FloatBarrier
 
-Rust和这种拆法比较合拍。\code{api-v0}用trait列出必须实现的行为，\code{pub}边界控制
-后来接手的人能看到的面；所有权和借用检查把一部分内存与并发问题拦在编译期，代码评审
-时可以把精力放在逻辑是否正确、feature组合是否合理。每个\code{impl-*}在
-\code{Cargo.toml}里注册成feature之后，根crate切换feature即可更换实现。驱动允许多个
-实现按设备类型组合；堆分配器、平台arch实现和调度器策略这类互斥选项，则在聚合层检查
-配置冲突，避免一组无法工作的实现进入内核镜像。
+\section{设计目标与约束}
 
-目前的开发重点已经从“让单个测例进入内核”转向“让完整用户态工作流稳定结束”。除原有
-basic、BusyBox、glibc/musl和LTP定向用例外，内核还需要承受CAgent中的并发网络请求，
-以及BuildStorm中Cargo、rustc、多进程、多线程、动态链接、内存映射和大量文件读写的
-组合压力。这些负载没有引入另一套特化接口，而是直接复用现有的task、MM、VFS、网络和
-系统调用主路径，用来暴露单项测例不容易触发的并发与资源回收问题。
-
-\section{设计目标}
+WaterOS的设计工作围绕以下几项约束展开：
 
 \begin{itemize}
-  \item 在QEMU中完成可启动、可抢占调度、可装载并执行用户ELF的内核主线，并在
-  RISC-V64与LoongArch64上支持八核启动和多核任务运行。
-  \item 系统调用编号与参数布局对齐Linux generic 64-bit ABI，使根文件系统中的
-  glibc/musl程序能够沿标准系统调用路径进入内核。
-  \item 在两种架构上分别接通VirtIO块设备与网卡、ext4读写根卷和VFS fd会话，支撑
-  BusyBox脚本、网络服务以及Cargo/rustc工具链工作负载。
-  \item 保持平台相关代码与MM、task、VFS、IPC、network、syscall等上层模块分离，
-  新增平台或替换具体实现时不改动上层聚合接口。
-  \item 明确多核执行中的任务唯一运行、锁边界、跨核唤醒、TLB失效和对象回收条件，
-  使并发正确性不依赖偶然的运行时序。
+  \item \strong{以用户态执行路径为边界。}系统调用入口、用户指针检查、内核对象和
+  设备访问必须能够连成闭环；仅声明接口而没有后端实现，不视为功能完成。
+  \item \strong{隔离平台差异。}RISC-V64和LoongArch64分别实现启动、异常、分页和
+  中断等底层能力，任务、文件系统、网络与系统调用层尽量复用同一套接口。
+  \item \strong{按生命周期管理资源。}任务进入就绪队列之前完成必要的关联状态，
+  退出后按进程、地址空间、文件描述符和缓存对象各自的引用关系回收，避免多核环境下
+  出现“对象已经可见但尚未初始化”或“仍被使用却提前释放”的情况。
+  \item \strong{保留可复现的验证入口。}构建参数、根文件系统、QEMU配置和串口日志
+  都由脚本保存；历史结果和当前候选版本的复测结果分开记录。
 \end{itemize}
 
-\section{当前实现摘要}
+项目仍有明确的工程边界。当前只支持4 KiB页，不包含大页；网络协议栈以IPv4 TCP/UDP
+为主；权限与capability尚未达到完整Linux语义；少用系统调用会返回\code{ENOSYS}。
+这些限制不会妨碍已经接通的工作负载运行，但在评价兼容范围时需要单独说明。
 
-\begin{longtable}{L{3.2cm}L{10.3cm}}
-  \caption{WaterOS当前实现摘要}\label{tab:current-summary}\\
-  \toprule[1.5pt]
-  子系统 & 当前实现状态 \\
-  \midrule[1pt]
+\section{当前系统能力}
+
+\begin{longtable}{L{3.0cm}L{10.5cm}}
+  \caption{WaterOS当前实现范围}\label{tab:current-summary}\\
+  \toprule
+  子系统 & 已接通的主要路径与边界 \\
+  \midrule
   \endfirsthead
-  \toprule[1.5pt]
-  子系统 & 当前实现状态 \\
-  \midrule[1pt]
+  \toprule
+  子系统 & 已接通的主要路径与边界 \\
+  \midrule
   \endhead
-  启动与平台 &
-  RISC-V64从OpenSBI接收hart id与DTB物理地址，通过SBI HSM启动从核；LoongArch64使用
-  QEMU \code{virt}平台的启动、异常和核间中断路径。BSP负责全局服务初始化，AP使用独立
-  启动栈完成本核trap、timer、CPU-local和idle task初始化，全部就绪后进入online集合。\\
-  内存管理 &
-  RISC-V64使用Sv39页表，LoongArch64使用独立的三级4 KiB页表实现。当前已接通内核页表、
-  用户地址空间、ELF装载、COW fork、惰性mmap、用户缺页和user access拷贝；页表修改会
-  根据地址空间的活动CPU集合执行本地失效或跨核TLB shootdown。\\
-  任务与调度 &
-  task组件提供内核与用户任务、fork/clone/exec、线程组、wait族和zombie回收。调度状态
-  按CPU组织，任务迁移、阻塞唤醒、timer tick和reschedule IPI共同维持多核运行；任务
-  退出后由统一的生命周期状态决定何时从调度结构移除并释放资源。\\
-  IPC与信号 &
-  已实现waitqueue、pipe、futex、SysV共享内存和信号主路径。futex等待与唤醒和任务状态
-  转换相连，信号覆盖disposition、pending、mask、signal frame与基础的syscall restart，
-  并处理多线程退出、组退出和父进程等待之间的关系。\\
-  驱动 &
-  RISC-V64经设备树扫描VirtIO-MMIO块设备与网卡，LoongArch64经PCI枚举VirtIO设备。
-  块设备注册到统一设备表供文件系统使用；网络设备接入smoltcp协议栈；字符设备提供
-  控制台及用户态所需的设备节点。\\
-  文件系统与VFS &
-  ext4读写根卷通过FS接口接入VFS，devfs、procfs和ramfs挂在同一命名空间内。VFS提供
-  mount table、页缓存、路径解析和per-task fd会话，支持cwd、dup、fork继承与CLOEXEC；
-  写路径需要同时维护页缓存、inode大小、目录项和底层ext4元数据的一致性。\\
-  网络 &
-  socket系统调用通过统一fd对象连接到smoltcp及UNIX socket实现，覆盖CAgent所需的
-  TCP/UDP并发连接、poll类等待和常用socket选项。网络poller、设备队列和用户线程之间
-  使用明确的唤醒关系，避免只能依赖定时轮询推进连接状态。\\
-  系统调用与ABI &
-  Linux generic64系统调用层覆盖文件IO、进程线程、内存、时间、目录、凭证、pipe、
-  poll/epoll、futex、SysV IPC、INET/UNIX socket等主路径。返回值统一使用Linux错误码，
-  用户指针在进入具体子系统前完成范围、权限和跨页检查。\\
-  验证与复现 &
-  原有basic、BusyBox、glibc/musl和LTP定向入口继续用于回归；CAgent检查网络、计时和
-  系统状态接口，BuildStorm检查Cargo/rustc并行编译链。两种架构分别保留构建、启动、
-  客体成功标记和文件系统检查记录，不以宿主脚本退出码代替用户态结果。\\
-  \bottomrule[1.5pt]
+  平台与启动 & RISC-V64通过OpenSBI接收启动参数并管理从核，LoongArch64使用QEMU
+  \code{virt}平台的启动与中断机制。两种架构均可启动八个虚拟CPU，但固件、页表格式和
+  设备枚举路径不同。\\
+  任务与调度 & 提供进程、线程、fork/clone/exec、等待与退出回收；调度器按CPU维护运行
+  状态，支持FIFO、RR以及CFS风格的普通调度类，并通过IPI处理跨核唤醒和重新调度。\\
+  内存管理 & 提供物理页帧、用户页表、VMA、ELF惰性装载、匿名映射、COW fork、缺页
+  处理和跨页用户内存复制。RISC-V64已接入跨核TLB失效；LoongArch64远程TLB失效仍是待补能力。\\
+  IPC与信号 & pipe、futex、SysV共享内存和signal分别实现，并共享任务等待/唤醒能力。
+  futex尚不支持PI，bitset等待/唤醒仅支持\code{FUTEX\_BITSET\_MATCH\_ALL}；signal frame位于系统调用与
+  trap返回路径。\\
+  文件与存储 & VFS维护路径、挂载、每任务fd/cwd和全局文件页缓存，ext4作为默认磁盘
+  文件系统，另有rootfs、devfs、procfs和ramfs。当前没有承诺ext4 journal恢复与掉电一致性。\\
+  驱动与终端 & RISC-V64通过DTB发现VirtIO-MMIO设备，LoongArch64通过PCI ECAM发现
+  VirtIO设备；统一注册块、字符、网络、显示和输入设备。TTY支持控制台行规程与UNIX98
+  PTY，但Linux作业控制、完整ioctl和设备权限语义仍不齐全。\\
+  网络 & 基于smoltcp实现IPv4 TCP/UDP，并将socket接入VFS fd。协议栈由全局poller推进；
+  当前还没有从网卡中断到每个socket等待队列的完整事件唤醒链路，也不支持IPv6。\\
+  系统调用 & 按Linux generic64编号分发已实现调用，负责参数校验、用户内存复制、子系统
+  错误到errno的转换以及部分完成语义；未登记调用返回\code{ENOSYS}。\\
+  凭证与权限 & 按任务保存uid/gid、supplementary groups及有限capability状态，支持fork复制
+  和线程共享。当前setid、root与inode权限检查仍是Linux语义的子集。\\
+  \bottomrule
 \end{longtable}
 
-\section{当前局限}
+\section{实现主线}
 
-本节记录当前实现与完整Linux语义之间仍存在的边界。这些限制不影响已经跑通的主路径，
-但在增加用户程序或扩大压力测试时仍需继续验证。
+WaterOS早期以单架构启动和基础系统调用为主，许多功能可以通过一个小型用户程序单独
+验证。随着BusyBox、glibc/musl测试程序和编译类负载接入，问题逐渐从“接口是否存在”
+转向“多个对象能否保持一致”。例如，fork不仅要创建任务，还要处理地址空间、文件描述符、
+凭证与信号状态；文件映射也不只是建立页表项，还涉及缺页装载、共享页缓存和写回时机。
 
-\begin{itemize}
-  \item \strong{Linux语义仍是子集。}复杂job control、少用系统调用、完整capability、
-  部分文件系统flag和极端信号组合仍有未覆盖边界，不能把测例通过等同于完整Linux兼容。
-  \item \strong{双架构需要分别验证。}两种架构共用上层机制，但固件入口、页表、TLB、
-  中断和VirtIO总线不同；一种架构上的运行结果不能代替另一种架构。
-  \item \strong{多核放大了生命周期问题。}任务、地址空间、fd、socket和缓存对象可能
-  同时被多个CPU访问，退出、取消映射和回收路径仍需通过更长时间的并发负载继续检查。
-  \item \strong{文件系统异常路径覆盖有限。}当前验证以正常运行、同步写和正常关闭后的
-  完整性检查为主，掉电点注入、journal恢复和复杂多挂载场景仍需要单独测试。
-  \item \strong{运行环境需要固定。}完整工作负载依赖匹配版本的QEMU、固件、根文件系统
-  和用户态工具链。提交前需要在同一版本上重新运行，避免混用不同阶段的日志和结果。
-\end{itemize}
+因此，当前实现以用户程序实际经过的路径为主线。平台层先提供启动、异常、时钟和设备
+访问能力，任务与内存管理建立进程执行环境，VFS、文件系统、网络和IPC维护用户可见对象，
+系统调用层最后完成ABI参数与内部接口之间的转换。每条路径都要求创建、使用和销毁三个
+阶段闭合，不能只以调用入口能够返回作为完成标准。
+
+双架构支持也推动了这条主线的稳定。RISC-V64与LoongArch64保留各自的页表、中断、固件和
+设备发现实现，上层组件则通过共同接口复用。这样既能避免把平台细节散落到通用代码中，
+也能在测试时明确区分共享逻辑问题与架构适配问题。

@@ -34,8 +34,19 @@ need_latexmk() {
     echo "错误: 未找到 xelatex，请安装 texlive-xetex / texlive-langchinese。" >&2
     exit 1
   fi
+  # pip --user 安装的脚本在 macOS 上通常不在非交互 shell 的 PATH 中。
+  # 若 Pygments 模块存在，自动加入其用户脚本目录。
+  if ! command -v pygmentize >/dev/null 2>&1 \
+      && command -v python3 >/dev/null 2>&1 \
+      && python3 -c 'import pygments' >/dev/null 2>&1; then
+    python_user_bin="$(python3 -c 'import site; print(site.USER_BASE + "/bin")')"
+    if [[ -x "$python_user_bin/pygmentize" ]]; then
+      export PATH="$python_user_bin:$PATH"
+    fi
+  fi
   if ! command -v pygmentize >/dev/null 2>&1; then
     echo "错误: 未找到 pygmentize（minted 语法高亮需要）。" >&2
+    echo "  可执行: python3 -m pip install --user Pygments" >&2
     echo "  Arch: sudo pacman -S python-pygments" >&2
     exit 1
   fi

@@ -177,3 +177,7 @@ CPU 的 current task 一致。
 调用方通常应使用 `wateros-task` 的聚合接口，不应直接操作全局 scheduler。新增调度路径时必须
 继续保持三条边界：状态与队列在 scheduler 锁内原子更新；IPI 在锁外发送；上下文真正保存完成
 之前，旧任务不得发布到其它 CPU。
+
+## 失败边界与回归
+
+任何任务同时出现在两队列、Running CPU与current不符、切换保存前远端发布、timekeeper重复推进或锁内发IPI都是一致性错误。回归需覆盖五种policy、抢占/yield、affinity/offline、wait/timeout、exit/reap和SMP远端唤醒，并在RV/LA压力下检查队列计数、switch/timer与地址空间active CPU基线。

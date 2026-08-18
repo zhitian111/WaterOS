@@ -157,3 +157,7 @@ get_robust_list
 排查 futex 卡顿时，重点对照 debug snapshot 与 task 的 `Blocking(WaitQueue(...))` 状态：检查
 wake 调用是否推进、active-users 是否长期不归零、任务是否已经被 scheduler 唤醒却没有完成
 wait 收尾，以及 shared key 是否使用了稳定共享身份。
+
+## 回归入口
+
+覆盖private/shared key、值复检、timeout/interrupt、WAKE/bitset数量、requeue、robust exit和queue ID复用；特别暂停waiter于登记后未入队窗口验证不丢唤醒/不过量唤醒，并在forkheavy后确认queue、active-users与heap回到基线。

@@ -101,3 +101,7 @@ WaitQueue 句柄表示一个调度器等待对象，不表示拥有其中 Task�
 
 排查等待卡住时，应把 IPC 对象条件、WaitQueueId、TCB 的 Blocking target、deadline 和目标
 CPU 的 ready 状态放在同一条链路上检查，不能只观察 IPC 对象内部是否调用过 wake。
+
+## 失败边界与回归
+
+条件闭包阻塞/用户fault、持对象锁wait、提前复用ID或active owner遗漏都会造成死锁/误唤醒。回归覆盖检查—登记窗口、wake与timeout同tick、signal/exit、requeue和远端CPU wake，并确认释放后的stale Copy不再使用。

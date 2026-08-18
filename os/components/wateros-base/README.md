@@ -101,3 +101,7 @@ cargo test --workspace
 
 修改公共类型后还应在 `os/` 工作区检查 RISC-V 与 LoongArch profile，确保没有遗留兼容别名或
 只在单架构出现的调用点。
+
+## 失败边界与回归
+
+`CpuId` 越容量、CpuMask 截断、OnceCell 重复初始化和持 spin 锁睡眠都属于调用方错误，base 不会替上层恢复。回归需覆盖 mask 字节边界、每 CPU 槽越界、OnceCell 多 CPU 竞争/可见性和锁 try-lock；随后执行 RV/LA `make check`，公共布局变化还要核对所有 FFI/静态数组消费者。

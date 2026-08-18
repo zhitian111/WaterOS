@@ -4,13 +4,14 @@
 
 ```bash
 cd docs/final_document/wateros-latex
-latexmk -xelatex -outdir=build -interaction=nonstopmode main.tex
+./scripts/build.bash build
 ```
 
-PDF 输出到 `build/main.pdf`。清理使用：
+PDF 输出到 `build/main.pdf`。脚本会启用 XeLaTeX、shell escape 和 minted 所需选项。
+若缺少 Pygments，请先执行 `python3 -m pip install --user Pygments`。清理使用：
 
 ```bash
-latexmk -C -outdir=build main.tex
+./scripts/build.bash clean
 ```
 
 ## 写作原则

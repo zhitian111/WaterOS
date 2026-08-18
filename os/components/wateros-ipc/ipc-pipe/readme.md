@@ -35,7 +35,9 @@
 - 非阻塞端点在暂时无法进行 I/O 时返回 WouldBlock。
 - 条件等待在 scheduler 临界区再次检查 PipeState，避免状态改变后任务仍然睡眠。
 - 被唤醒任务的 CPU 选择、远端入队和 IPI 由 task scheduler 完成，pipe 不绑定 CPU。
-- 当前没有 Linux `PIPE_BUF` 原子写入保证，`O_DIRECT` 仅记录标志，尚未实现 packet mode。
+- stream mode 当前没有完整的 Linux `PIPE_BUF` 并发原子写保证。`O_DIRECT` 已实现
+  packet mode：一次记录最多 4096 字节，读取缓冲过小时丢弃该 packet 未返回的尾部；
+  fd-session 仍需负责 Linux flag/errno 的 ABI 转换。
 
 ## 调用链路
 
@@ -126,3 +128,7 @@ PipeState 只描述内存状态，不直接阻塞任务。调用方在锁内得�
 
 排查 pipe 卡顿时，应同时检查缓冲 len、读写端引用和对应 WaitQueue：常见问题不是 ring buffer
 本身，而是最后一个端点未释放、条件等待闭包与状态不一致，或唤醒发生在仍持有对象锁时。
+
+## 回归入口
+
+测试空/满/环绕、PIPE_BUF原子写、partial和首字节EFAULT、nonblock、读写端最后关闭、SIGPIPE/EOF、poll及wake-timeout竞态；fork/dup/exec/exit后端点引用、waiter和heap必须回到基线。

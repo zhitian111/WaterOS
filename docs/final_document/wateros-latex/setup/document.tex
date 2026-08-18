@@ -1,4 +1,5 @@
 % 决赛文档使用的独立版式，字体、版心、标题、目录和页眉页脚与初赛文档一致。
+% 适配 CSTCloud / Overleaf 在线环境
 
 \usepackage[a4paper,text={165.0true mm,242true mm},top=25.0true mm,left=25.0true mm,head=7.5true mm,headsep=7.5true mm,foot=17true mm]{geometry}
 \usepackage{fontspec}
@@ -8,54 +9,44 @@
 \usepackage{tabularx}
 \usepackage{array}
 \usepackage{multirow}
+\usepackage{placeins}
 \usepackage{xcolor}
 \usepackage{xurl}
 \usepackage{enumitem}
 \usepackage{titletoc}
-\usepackage[outputdir=build]{minted}
+\usepackage{minted}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit}
 \usepackage{fancyhdr}
 \usepackage{hyperref}
 
+% ============================================================
+% 英文字体设置（使用在线环境通用字体）
+% ============================================================
 \IfFontExistsTF{Times New Roman}
   {\setmainfont{Times New Roman}}
-  {\setmainfont{Nimbus Roman}}
+  {\setmainfont{TeX Gyre Termes}}
+
 \IfFontExistsTF{Arial}
   {\setsansfont{Arial}}
-  {\setsansfont{Nimbus Sans}}
-\IfFontExistsTF{DejaVu Sans Mono}
-  {\setmonofont{DejaVu Sans Mono}}
-  {\setmonofont{Nimbus Mono PS}}
+  {\setsansfont{TeX Gyre Heros}}
 
-\IfFileExists{/mnt/c/Windows/Fonts/msyhbd.ttc}{
-  \setCJKmainfont[BoldFont=msyhbd.ttc,BoldFeatures={Path=/mnt/c/Windows/Fonts/}]{SimSun}
-}{
-  \setCJKmainfont{Noto Serif CJK SC}
-}
-\IfFileExists{/mnt/c/Windows/Fonts/msyh.ttc}{
-  \setCJKsansfont[Path=/mnt/c/Windows/Fonts/,BoldFont=msyhbd.ttc]{msyh.ttc}
-}{
-  \setCJKsansfont{Noto Sans CJK SC}
-}
-\IfFontExistsTF{NSimSun}
-  {\setCJKmonofont{NSimSun}}
-  {\setCJKmonofont{Noto Sans Mono CJK SC}}
+% 使用 TeX Live 标配字体文件，避免依赖系统字体索引，并显式给出粗体、斜体字形。
+\setmonofont{lmmono10-regular.otf}[
+  BoldFont=lmmonolt10-bold.otf,
+  ItalicFont=lmmonoslant10-regular.otf
+]
 
-\IfFileExists{/mnt/c/Windows/Fonts/consola.ttf}{
-  \setmonofont[
-    Path=/mnt/c/Windows/Fonts/,
-    BoldFont=consolab.ttf,
-    ItalicFont=consolai.ttf,
-    BoldItalicFont=consolaz.ttf
-  ]{consola.ttf}
-}{
-  \IfFontExistsTF{DejaVu Sans Mono}
-    {\setmonofont{DejaVu Sans Mono}}
-    {\setmonofont{Nimbus Mono PS}}
-}
+% ============================================================
+% 中文字体设置
+% ============================================================
+% ctexbook 会按运行平台自动选择完整的中文宋体、黑体和仿宋字体集：
+% macOS 使用系统字体，TeX Live/Overleaf 使用随发行版提供的 Fandol。
+% 此处不再用不存在的 SimSun 等名称覆盖它，避免中文落入西文字体。
 
-% 与初赛文档一致的中文字体别名和字号。
+% ============================================================
+% 与初赛文档一致的中文字体别名和字号
+% ============================================================
 \newcommand{\song}{\songti}
 \newcommand{\fs}{\fangsong}
 \newcommand{\kai}{\kaishu}
@@ -73,6 +64,9 @@
 \newcommand{\wuhao}{\fontsize{10.5pt}{10.5pt}\selectfont}
 \newcommand{\xiaowu}{\fontsize{9pt}{9pt}\selectfont}
 
+% ============================================================
+% 颜色定义
+% ============================================================
 \definecolor{WaterBlue}{HTML}{0A7EA4}
 \definecolor{WaterPurple}{HTML}{6F42C1}
 \definecolor{SoftBlue}{HTML}{EEF7FA}
@@ -81,6 +75,9 @@
 \definecolor{PendingRed}{HTML}{A61B1B}
 \definecolor{VerifiedGreen}{HTML}{176B3A}
 
+% ============================================================
+% Hyperref 设置
+% ============================================================
 \hypersetup{
   unicode=true,
   pdftitle={WaterOS决赛设计文档},
@@ -91,12 +88,40 @@
   hidelinks
 }
 
+% ============================================================
+% CTeX 章节格式
+% ============================================================
 \ctexset{
-  chapter={name={第,章},number=\arabic{chapter},format=\linespread{1.0}\zihao{-3}\heiti\centering,aftername=\quad,beforeskip=7pt,afterskip=18pt,pagestyle=plain},
-  section={format=\zihao{-3}\heiti\raggedright,name={},number=\arabic{chapter}.\arabic{section},beforeskip=1.0ex plus 0.2ex minus .2ex,afterskip=1.0ex plus 0.2ex minus .2ex,aftername=\quad},
-  subsection={format=\zihao{-4}\heiti\raggedright,name={},number=\arabic{chapter}.\arabic{section}.\arabic{subsection},beforeskip=1.0ex plus 0.2ex minus .2ex,afterskip=1.0ex plus 0.2ex minus .2ex,aftername=\quad}
+  chapter={
+    name={第,章},
+    number=\arabic{chapter},
+    format=\linespread{1.0}\zihao{-3}\heiti\centering,
+    aftername=\quad,
+    beforeskip=7pt,
+    afterskip=18pt,
+    pagestyle=plain
+  },
+  section={
+    format=\zihao{-3}\heiti\raggedright,
+    name={},
+    number=\arabic{chapter}.\arabic{section},
+    beforeskip=1.0ex plus 0.2ex minus .2ex,
+    afterskip=1.0ex plus 0.2ex minus .2ex,
+    aftername=\quad
+  },
+  subsection={
+    format=\zihao{-4}\heiti\raggedright,
+    name={},
+    number=\arabic{chapter}.\arabic{section}.\arabic{subsection},
+    beforeskip=1.0ex plus 0.2ex minus .2ex,
+    afterskip=1.0ex plus 0.2ex minus .2ex,
+    aftername=\quad
+  }
 }
 
+% ============================================================
+% 目录设置
+% ============================================================
 \setcounter{tocdepth}{1}
 \setcounter{secnumdepth}{4}
 \setlength{\parindent}{2em}
@@ -105,6 +130,9 @@
 \setitemize{leftmargin=3em,itemsep=0em,partopsep=0em,parsep=0em,topsep=0em}
 \setenumerate{leftmargin=3em,itemsep=0em,partopsep=0em,parsep=0em,topsep=0em}
 
+% ============================================================
+% 正文样式
+% ============================================================
 \makeatletter
 \renewcommand\normalsize{
   \@setfontsize\normalsize{12pt}{12pt}
@@ -119,6 +147,9 @@
 \renewcommand{\CJKglue}{\hspace -0.1 pt plus 0.08\baselineskip}
 \makeatother
 
+% ============================================================
+% 目录标题样式
+% ============================================================
 \renewcommand{\contentsname}{\xiaoer 目\qquad 录}
 \titlecontents{chapter}[0em]{\vspace{2pt}\sihao\song\bfseries}
   {\thecontentslabel\quad}{\mbox{}}
@@ -127,12 +158,17 @@
   {\thecontentslabel\quad}{}
   {\hspace{.5em}\titlerule*[3pt]{$\cdot$}\xiaosi\contentspage}
 
+% ============================================================
+% 页眉页脚
+% ============================================================
 \pagestyle{fancy}
 \fancyhf{}
 \fancyhead[C]{\song\wuhao 操作系统内核设计文档 - WaterOS}
 \fancyfoot[C]{\song\xiaowu ~\thepage~}
 
-% 与初赛文档一致的图表编号与标题样式。
+% ============================================================
+% 图表编号与标题样式
+% ============================================================
 \renewcommand{\tablename}{表}
 \renewcommand{\figurename}{图}
 \renewcommand{\thefigure}{\arabic{chapter}-\arabic{figure}}
@@ -150,11 +186,16 @@
   \vskip\belowcaptionskip}
 \makeatother
 
+% ============================================================
+% 表格列类型
+% ============================================================
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 \newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 
-% 与初赛文档一致的 Pygments / minted 代码高亮。
+% ============================================================
+% Pygments / minted 代码高亮
+% ============================================================
 \usemintedstyle{emacs}
 \setminted{
   fontsize=\wuhao,
@@ -173,6 +214,9 @@
 \newminted{toml}{}
 \newminted{text}{style=default}
 
+% ============================================================
+% 自定义命令
+% ============================================================
 \newcommand{\wateros}{WaterOS}
 \newcommand{\code}[1]{\textnormal{\rmfamily #1}}
 \newcommand{\syscall}[1]{\textnormal{\rmfamily #1}}
