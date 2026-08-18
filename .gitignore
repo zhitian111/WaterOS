@@ -1,6 +1,7 @@
 # 文件系统垃圾
 .DS_Store
 **/.DS_Store
+/docs/final_document/wateros-latex/tmp/
 
 # 项目工具/IDE 配置文件
 .codegraph/

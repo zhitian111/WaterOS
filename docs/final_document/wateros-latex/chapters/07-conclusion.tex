@@ -71,12 +71,73 @@ WaterOS的顶层组合、组件接口、平台适配、任务与内存管理集�
 
 \section{AI工具使用说明}
 
-开发过程中使用了Claude Code、Codex和Cursor等AI辅助工具，涉及部分代码补全、测试脚本、
-问题定位和文档整理。AI工具主要用于生成候选实现、搜索相关调用路径、整理重复性测试命令
-以及修改文字表达，不负责决定系统的组件边界和兼容范围。架构方案、接口取舍、代码合入与
-结果判定均由团队成员完成；所有纳入主线的修改都需要经过代码检查、目标架构编译或实际运行
-验证。AI给出的内容如果不能从源码、日志或实验中复现，不作为本文结论。
+开发过程中使用了Claude Code、Codex和Cursor等AI辅助工具。AI主要参与功能代码生成、重复性
+接口适配、跨组件调用关系检索、故障定位、定向测试编写以及开发文档整理。系统的组件边界、
+接口取舍、兼容范围和最终合入决定由项目成员负责；AI生成或修改的实现仍需经过源码审查、
+目标架构编译以及与修改范围相对应的运行测试，不能复现的内容不作为本文结论。
 
-初赛阶段统计过AI参与代码比例，但当前源码已经发生较大变化，旧比例不能直接沿用。最终
-提交冻结后，应以确定的commit重新扫描，记录纳入目录、排除目录、标记行和统计命令。现有
-统计脚本保存在技术文档目录中；重新统计之前，本文不填写推测比例。
+\begin{longtable}{L{2.8cm}L{2.3cm}L{9.1cm}}
+  \caption{项目组件中的AI工具使用情况}\label{tab:ai-usage-by-module}\\
+  \toprule
+  组件 & 组件功能 & AI使用情况 \\
+  \midrule
+  \endfirsthead
+  \toprule
+  组件 & 组件功能 & AI使用情况 \\
+  \midrule
+  \endhead
+  \code{wateros-task} & 进程、线程、调度与生命周期 &
+  当前组件无AI生成内容。\\
+  \code{wateros-base} & 基础类型、配置与同步原语 &
+  当前组件无AI生成内容。\\
+  \code{wateros-runtime} & 启动、日志、panic与内核堆支持 &
+  当前组件无AI生成内容。\\
+  \code{wateros-network} & IPv4、TCP/UDP与socket运行时 &
+  当前组件无AI生成内容。\\
+  \code{wateros-klog} & 内核日志记录与读取 &
+  当前组件无AI生成内容。\\
+  \code{wateros-utils} & 无状态通用工具 &
+  当前组件无AI生成内容。\\
+  \code{wateros-platform} & 架构、硬件与固件平台适配 &
+  平台相关汇编代码以及LoongArch架构和QEMU LoongArch平台实现由AI生成，涉及启动入口、异常与
+  中断入口、上下文相关汇编、架构寄存器操作和平台服务接线；其余平台接口与RISC-V实现不计入。\\
+  \code{wateros-mm} & 地址空间与虚拟内存 &
+  AI生成了部分用户地址空间、用户访问、页表、堆与mmap实现，并分别适配RISC-V Sv39和
+  LoongArch64；相关代码通过双架构构建以及缺页、COW、mmap/munmap和地址空间回收场景验证。\\
+  \code{wateros-syscall} & 系统调用与ABI适配 &
+  AI生成了用户内存复制和错误转换等公共路径，并补充文件、网络、任务、内存、poll、SysV IPC、
+  mount和ioctl等generic64 ABI实现；合入前按Linux参数、flag和errno语义检查，并通过LTP、
+  BusyBox及定向用户程序验证。\\
+  \code{wateros-vfs} & 统一文件访问接口 &
+  AI生成了FS桥接、fd会话和页缓存中的主要实现，包括文件与目录句柄、fd注册表、cwd、文件锁、
+  挂载表、符号链接、tmpfs和分页句柄；相关功能通过文件、目录、dup/fork、poll和写回路径验证。\\
+  \code{wateros-fs} & 文件系统实现与挂载 &
+  AI生成了ext4适配与自测、procfs路径解析和内容渲染、devfs设备节点管理以及rootfs挂载注册等
+  功能；项目成员结合镜像读写、目录项、挂载和设备节点测试检查结果。\\
+  \code{wateros-ipc} & 信号、futex、共享内存与等待队列 &
+  实现层部分由AI生成，涉及futex等待与唤醒、信号状态、共享内存、pipe和waitqueue等对象的
+  状态管理、任务阻塞及资源回收；IPC公共接口和系统调用ABI由项目成员核对并通过定向测试验证。\\
+  \code{wateros-driver} & 设备驱动与块缓存 &
+  AI生成了块缓存管理器以及RTC、null字符设备适配，项目成员检查设备注册、基本读写、缓存同步、
+  边界返回值和平台构建。\\
+  \code{wateros-cred} & 任务身份、凭证与权限状态 &
+  实现层部分由AI生成，包括\code{impl-root}中的任务凭证侧表、UID/GID与附加组状态、fork复制、
+  线程共享以及任务退出时的清理逻辑；公共接口和权限语义由项目成员审查确认。\\
+  \code{wateros-tty} & 控制台与伪终端 &
+  组件完整由AI生成，包括termios公共类型、控制台行规程、canonical/raw输入、回显与控制字符、
+  阻塞读取、\code{VMIN/VTIME}、UNIX98 PTY、等待队列以及关闭和hangup处理。项目成员负责与
+  VFS、信号、UART和系统调用层集成，并使用shell、PTY和Nano-X终端场景验证。\\
+  \code{wateros-gui} & 窗口、控件、输入与软件合成 &
+  组件完整由AI生成，包括GUI公共数据模型、窗口层级与焦点管理、控件交互、键鼠事件转换、
+  软件光栅绘制、脏区合成及framebuffer刷新。项目成员负责显示和输入设备接入，并通过Nano-X
+  与桌面演示场景验证。\\
+  \code{wateros-debug} & 调试状态与故障诊断 &
+  组件完整由AI生成，包括面向GDB的诊断ABI、每CPU状态快照、事件环、构建标识、锁持有关系
+  跟踪及\code{TrackedMutex}。项目成员完成调试入口接入，并通过故障注入和多核场景检查诊断
+  数据的一致性。\\
+  组件README与源码注释 & 开发文档与代码说明 &
+  项目组件目录中的README文档以及面向维护的源码注释由AI生成和整理，内容包括组件职责、调用
+  方向、数据结构、并发约束、Linux ABI差距、故障定位和回归入口；项目成员依据当前源码和实际
+  测试结果复核，文档描述不作为实现已经完成的唯一依据。\\
+  \bottomrule
+\end{longtable}
