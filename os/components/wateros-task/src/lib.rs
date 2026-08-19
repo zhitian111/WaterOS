@@ -43,9 +43,11 @@ pub fn self_test() {
     log::info!("[task] self_test begin");
     active_impl::self_test();
     let mask = online_cpu_mask();
-    assert!(mask.bits() != 0, "at least the boot CPU must be online");
+    assert!(mask.bits() != 0,
+            "at least the boot CPU must be online");
     let idle_ticks = total_idle_ticks();
-    log::info!("[task] self_test observed idle_ticks={}", idle_ticks);
+    log::info!("[task] self_test observed idle_ticks={}",
+               idle_ticks);
     log::info!("[task] self_test complete; no task state was mutated");
 }
 /// 启动调度器并切入第一批可运行任务。

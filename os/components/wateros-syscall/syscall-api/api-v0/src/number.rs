@@ -16,6 +16,7 @@ impl SyscallNumber {
     #[inline]
     pub const fn raw(self) -> usize { self.0 }
 }
+pub const SECCOMP : usize = 277;
 
 // 文件与描述符
 pub const READ : usize = 63;

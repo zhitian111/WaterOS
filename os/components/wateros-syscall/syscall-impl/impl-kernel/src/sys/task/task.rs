@@ -2,10 +2,12 @@
 //! 本模块代码由AI完成
 use alloc::collections::BTreeMap;
 
+use alloc::vec::Vec;
 use api_v0::ErrNo;
 use api_v0::SyscallArgs;
 use api_v0::UserRet;
 use spin::Mutex;
+
 
 use crate::user_copy::{copy_from_user, copy_to_user_struct};
 
@@ -404,4 +406,55 @@ pub(crate) fn sys_prctl(args : SyscallArgs) -> UserRet {
         PR_CAPBSET_DROP => super::super::cred::cap::cap_bset_drop(args.arg(1)),
         _ => UserRet::from_error(ErrNo::EINVAL),
     }
+}
+
+pub fn syscomp(args : SyscallArgs) -> UserRet {
+    let operation = args.arg(0);
+    let flags = args.arg(1);
+    let ptr = args.arg(2);
+    if flags != 0 {
+        return UserRet(22);
+    }
+    let is_sec_mode = task::current_process_snapshot().map(|process| process.is_sec_mode)
+                                                      .unwrap();
+    let pid = task::current_process_snapshot().map(|process| process.pid)
+                                              .unwrap();
+    use alloc::vec;
+    use task::SeccompWhitlist;
+    if is_sec_mode == true {
+        return UserRet(22);
+    }
+    if operation == 0x100 {
+        task::set_process_sec_mode(pid, true);
+        task::set_process_white_list(pid, SeccompWhitlist { len : 3,
+                                                            syscall:
+                                                                vec![63, 64, 93] });
+        return UserRet(0);
+    }
+    use crate::user_copy::copy_from_user;
+    if operation == 0x101 {
+        let mut len_buf = [0u8; 4];
+        copy_from_user(&mut len_buf, ptr);
+        let len = i32::from_ne_bytes(len_buf);
+        let mut vec_ptr_buf = [0u8; 8];
+        copy_from_user(&mut vec_ptr_buf, ptr + 4);
+        let while_ptr = usize::from_ne_bytes(vec_ptr_buf);
+        use log::*;
+        error!("white list len = {}, ptr = {}",
+               len, while_ptr);
+        let mut buf = Vec::<u8>::new();
+        buf.resize(len as usize * 4, 0u8);
+        copy_from_user(&mut buf, while_ptr);
+        let new_whitelist = Vec::<i32>::new();
+        for i in 0..len as usize {
+            let new_buf = [buf[i * 4],
+                           buf[i * 4 + 1],
+                           buf[i * 4 + 2],
+                           buf[i * 4 + 3]];
+            let tem_val = i32::from_ne_bytes(new_buf);
+            error!("white list add = {}", tem_val);
+        }
+        return UserRet(22);
+    }
+    return UserRet(22);
 }

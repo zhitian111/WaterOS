@@ -218,6 +218,20 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             let syscall_nr = cx.syscall_nr()
                                .raw();
             let syscall_args = cx.syscall_args();
+            let sys_white_list =
+                task::current_process_snapshot().map(|process| process.sys_white_list)
+                                                .unwrap();
+            let mut sys_can_run = sys_white_list.contains(&syscall_nr);
+            let is_sec = task::current_process_snapshot().map(|process_snapshot| {
+                                                             process_snapshot.is_sec_mode
+                                                         })
+                                                         .unwrap();
+            warn!("probe : is_sed = {}, sys_can_run = {}, sys_white_list = {:?}",
+                  is_sec, sys_can_run, sys_white_list);
+            if is_sec != true {
+                sys_can_run = true;
+            }
+
             #[cfg_attr(not(any(debug_assertions, feature = "syscall-trace")),
                        allow(unused_variables))]
             let regs = syscall_args.as_regs();
@@ -261,7 +275,13 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 finish_trap_return(frame, cx, raw_cause);
                 return;
             }
-            let syscall_ret = dispatch_syscall_from_trap(syscall_nr, syscall_args);
+            let mut syscall_ret = 0isize;
+            if sys_can_run == true {
+                syscall_ret = dispatch_syscall_from_trap(syscall_nr, syscall_args);
+            } else {
+                syscall_ret = syscall::ErrNo::ENOSYS.raw();
+            }
+
             #[cfg(feature = "stall-debug")]
             crate::stall_debug::record_syscall_exit(stall_trace);
             hot_syscall_trace!("[syscall] nr={} ret={}",

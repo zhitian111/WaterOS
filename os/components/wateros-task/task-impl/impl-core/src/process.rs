@@ -11,8 +11,10 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use api_v0::{
     AddressSpaceRef, CloneFlags, ProcessCaps, ProcessError, ProcessId, ProcessResult,
     ProcessSnapshot, ProcessState, ProcessTaskRole, ProcessTaskSnapshot, ProcessTaskState,
-    ResourceLimit, TaskClearTid, TaskExitCode, TaskId, ThreadId,
+    ResourceLimit, SeccompWhitlist, SecompMode, TaskClearTid, TaskExitCode, TaskId, ThreadId,
 };
+
+use crate::process;
 
 #[derive(Clone, Debug)]
 struct ProcessTask {
@@ -58,9 +60,9 @@ pub struct ProcessIoCounters {
 
 impl ProcessIoCounters {
     fn saturating_add(counter : &AtomicU64, value : u64) {
-        let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                           Some(current.saturating_add(value))
-                       });
+        let _ = counter.fetch_update(Ordering::Relaxed,
+                                     Ordering::Relaxed,
+                                     |current| Some(current.saturating_add(value)));
     }
 
     pub fn account(&self, read : bool, bytes : u64) {
@@ -79,10 +81,14 @@ impl ProcessIoCounters {
     }
 
     pub fn snapshot(&self) -> [u64; 4] {
-        [self.rchar.load(Ordering::Relaxed),
-         self.wchar.load(Ordering::Relaxed),
-         self.syscr.load(Ordering::Relaxed),
-         self.syscw.load(Ordering::Relaxed)]
+        [self.rchar
+             .load(Ordering::Relaxed),
+         self.wchar
+             .load(Ordering::Relaxed),
+         self.syscr
+             .load(Ordering::Relaxed),
+         self.syscw
+             .load(Ordering::Relaxed)]
     }
 }
 
@@ -147,7 +153,11 @@ pub struct ProcessControlBlock {
     /// Linux 将 PDEATHSIG 绑定到创建线程；线程成为孤儿后，收养它的 subreaper/init
     /// 进程成为下一死亡来源。
     parent_death_source : Option<ParentDeathSource>,
+    seccomp_mode : Option<SecompMode>,
+    seccomp_whitelist : SeccompWhitlist,
+    is_sec_mode : bool,
 }
+
 
 /// 已从 registry 移除的进程；释放 registry 锁后才能丢弃其拥有的资源。
 pub(crate) struct RetiredProcess {
@@ -184,7 +194,12 @@ impl ProcessControlBlock {
                           task_count : self.tasks.len(),
                           state : self.state,
                           pgid : self.pgid,
-                          sid : self.sid }
+                          sid : self.sid,
+
+                          sys_white_list : self.seccomp_whitelist
+                                               .syscall
+                                               .clone(),
+                          is_sec_mode : self.is_sec_mode }
     }
 
     fn ptask_snapshot(&self, task_id : TaskId) -> Option<ProcessTaskSnapshot> {
@@ -260,6 +275,36 @@ impl ProcessRegistry {
             .get_mut(&pid)
     }
 
+    pub fn set_seccomp_mode(&mut self, pid : ProcessId, mode : SecompMode) -> ProcessResult<()> {
+        if let Some(process) = self.process_mut(pid) {
+            process.seccomp_mode = Some(mode);
+        }
+        Ok(())
+    }
+    pub fn get_seccomp_mode(&self, pid : ProcessId) -> Option<SecompMode> {
+        self.processes
+            .get(&pid)
+            .map(|process| process.seccomp_mode)?
+    }
+
+    pub fn set_sec_mode(&mut self, pid : ProcessId, mode : bool) -> ProcessResult<()> {
+        if let Some(process) = self.process_mut(pid) {
+            process.is_sec_mode = mode;
+        }
+        Ok(())
+    }
+    pub fn get_sec_mode(&self, pid : ProcessId) -> Option<bool> {
+        self.processes
+            .get(&pid)
+            .map(|process| process.is_sec_mode)
+    }
+
+    pub fn set_seccomp_whitelist(&mut self, pid : ProcessId, whitelist : SeccompWhitlist) {
+        if let Some(process) = self.process_mut(pid) {
+            process.seccomp_whitelist = whitelist
+        }
+    }
+
     /// 从两个反查索引中移除一个已从进程任务表删除的任务。
     fn remove_task_indexes(&mut self, pid : ProcessId, task_id : TaskId, tid : ThreadId) {
         assert_eq!(self.pid_for_task
@@ -322,6 +367,7 @@ impl ProcessRegistry {
         } else {
             ProcessId::from_raw(0)
         };
+        use alloc::vec;
         let process = ProcessControlBlock { pid,
                                             leader_task_id : task_id,
                                             parent_pid,
@@ -343,7 +389,12 @@ impl ProcessRegistry {
                                             keep_caps : false,
                                             stop_wait_pending : false,
                                             continued_wait_pending : false,
-                                            umask : 0o022 };
+                                            umask : 0o022,
+                                            seccomp_mode : None,
+                                            seccomp_whitelist : SeccompWhitlist { len : 0,
+                                                                                  syscall:
+                                                                                      vec::Vec::new() },
+                                            is_sec_mode : false };
         self.insert_process(process);
         assert_eq!(self.pid_for_task
                        .insert(task_id, pid),
@@ -869,12 +920,19 @@ impl ProcessRegistry {
     }
 
     pub fn process_io_for_task(&self, task_id : TaskId) -> Option<Arc<ProcessIoCounters>> {
-        let pid = self.pid_for_task.get(&task_id)?;
-        self.processes.get(pid).map(|process| process.io_counters.clone())
+        let pid = self.pid_for_task
+                      .get(&task_id)?;
+        self.processes
+            .get(pid)
+            .map(|process| {
+                process.io_counters
+                       .clone()
+            })
     }
 
     pub fn process_io_snapshot(&self, task_id : TaskId) -> Option<[u64; 4]> {
-        self.process_io_for_task(task_id).map(|counters| counters.snapshot())
+        self.process_io_for_task(task_id)
+            .map(|counters| counters.snapshot())
     }
 
     pub fn task_id_for_thread(&self, tid : ThreadId) -> Option<TaskId> {
@@ -1271,7 +1329,8 @@ mod tests {
     #[test]
     fn process_io_is_shared_by_threads_and_cleared_on_fork() {
         let mut registry = ProcessRegistry::new();
-        let parent = registry.create_process_for_task(10, None, None).unwrap();
+        let parent = registry.create_process_for_task(10, None, None)
+                             .unwrap();
         registry.add_task_to_process(parent,
                                      10,
                                      12,
@@ -1279,15 +1338,20 @@ mod tests {
                                      0,
                                      None)
                 .unwrap();
-        let leader_io = registry.process_io_for_task(10).unwrap();
-        let thread_io = registry.process_io_for_task(12).unwrap();
+        let leader_io = registry.process_io_for_task(10)
+                                .unwrap();
+        let thread_io = registry.process_io_for_task(12)
+                                .unwrap();
         assert!(Arc::ptr_eq(&leader_io, &thread_io));
         leader_io.account(true, 7);
         thread_io.account(false, 11);
-        assert_eq!(registry.process_io_snapshot(10), Some([7, 11, 1, 1]));
+        assert_eq!(registry.process_io_snapshot(10),
+                   Some([7, 11, 1, 1]));
 
-        registry.create_process_like_fork(parent, 10, 13, None).unwrap();
-        assert_eq!(registry.process_io_snapshot(13), Some([0, 0, 0, 0]));
+        registry.create_process_like_fork(parent, 10, 13, None)
+                .unwrap();
+        assert_eq!(registry.process_io_snapshot(13),
+                   Some([0, 0, 0, 0]));
     }
 
     #[test]

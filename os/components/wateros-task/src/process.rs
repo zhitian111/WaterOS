@@ -8,6 +8,13 @@ use crate::{
     TaskWaitTarget, ThreadId,
 };
 
+pub fn set_process_sec_mode(pid : ProcessId, enabled : bool) -> ProcessResult<()> {
+    active_impl::set_process_sec_mode(pid, enabled)
+}
+use crate::SeccompWhitlist;
+pub fn set_process_white_list(pid : ProcessId, whitelist : SeccompWhitlist) -> ProcessResult<()> {
+    active_impl::set_process_white_list(pid, whitelist)
+}
 /// 查询进程语义快照；第一阶段仅供内部 bring-up / 后续 syscall 迁移使用。
 pub fn process_snapshot(pid : ProcessId) -> Option<ProcessSnapshot> {
     active_impl::process_snapshot(pid)
@@ -63,6 +70,7 @@ pub fn current_process_identity() -> Option<(ProcessId, Option<ProcessId>)> {
     let task_id = crate::schedule::current_task_id()?;
     active_impl::process_identity_for_task(task_id)
 }
+
 
 /// 当前运行任务的用户态线程 ID。
 pub fn current_thread_id() -> Option<ThreadId> {

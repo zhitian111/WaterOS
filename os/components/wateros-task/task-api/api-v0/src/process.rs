@@ -239,8 +239,11 @@ pub enum ProcessError {
 /// 一个 `false`。
 pub type ProcessResult<T> = Result<T, ProcessError>;
 
+use crate::SecompMode;
+
+use alloc::vec::Vec;
 /// 对外可见的进程语义快照。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProcessSnapshot {
     pub pid : ProcessId,
     pub leader_task_id : TaskId,
@@ -252,4 +255,6 @@ pub struct ProcessSnapshot {
     pub pgid : ProcessId,
     /// 会话 ID；`0` 表示尚未加入会话。
     pub sid : ProcessId,
+    pub sys_white_list : Vec<usize>,
+    pub is_sec_mode : bool,
 }

@@ -40,6 +40,7 @@ macro_rules! noarg_syscalls {
 }
 
 arg_syscalls! {
+    api_v0::SECCOMP => sys::syscomp,
     api_v0::SCHED_SETPARAM => sys::sys_sched_setparam,
     api_v0::SCHED_SETSCHEDULER => sys::sys_sched_setscheduler,
     api_v0::SCHED_GETSCHEDULER => sys::sys_sched_getscheduler,

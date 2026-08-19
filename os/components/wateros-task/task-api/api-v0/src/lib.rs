@@ -31,3 +31,19 @@ pub use task::{
 };
 pub use user::{AddressSpaceHandle, UserImageInfo, UserStack, UserTask, UserTaskEntryPc};
 pub use wait::{TaskWaitResult, TaskWaitTarget};
+
+pub const SECCOMP_SET_MODE_STRICT_FAIL : usize = 0x100;
+pub const SECCOMP_SET_MODE_WHITELIST : usize = 0x101;
+use alloc::vec::Vec;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SecompMode {
+    SeccompSetModeStrictFail,
+    SeccompSetModeWhitelist,
+    None,
+}
+
+#[derive(Clone, Debug)]
+pub struct SeccompWhitlist {
+    pub len : usize,
+    pub syscall : Vec<usize>,
+}

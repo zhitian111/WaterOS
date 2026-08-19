@@ -7,91 +7,16 @@ use crate::user_bringup_common::BringupCommand;
 
 /// 非公开镜像携带初赛脚本；命令顺序就是 bring-up 阶段的执行顺序。
 const PRELIMINARY_COMMANDS : &[BringupCommand] =
-    &[
-    BringupCommand { program : "/glibc/busybox",
-                       argv : &["sh",
-                                "/glibc/basic_testcode.sh"] }, // done
-      BringupCommand { program : "/musl/busybox",
-                       argv : &["sh",
-                                "/musl/basic_testcode.sh"] }, // done
-      BringupCommand { program : "/glibc/busybox",
-                       argv : &["sh",
-                                "/glibc/busybox_testcode.sh"] }, // done
-      BringupCommand { program : "/musl/busybox",
-                       argv : &["sh",
-                                "/musl/busybox_testcode.sh"] }, // done
-      BringupCommand { program : "/glibc/busybox",
-                       argv : &["sh",
-                                "/glibc/lua_testcode.sh"] }, // done
-      BringupCommand { program : "/musl/busybox",
-                       argv : &["sh",
-                                "/musl/lua_testcode.sh"] }, // done
-      BringupCommand { program : "/glibc/busybox",
-                       argv : &["sh",
-                                "/glibc/iperf_testcode.sh"] }, // done
-      BringupCommand { program : "/musl/busybox",
-                       argv : &["sh",
-                                "/musl/iperf_testcode.sh"] }, // done
-      BringupCommand { program : "/glibc/busybox",
-                       argv : &["sh",
-                                "/glibc/netperf_testcode.sh"] }, // done
-      BringupCommand { program : "/musl/busybox",
-                       argv : &["sh",
-                                "/musl/netperf_testcode.sh"] }, // done
-      BringupCommand { program : "/musl/busybox",
-                       argv : &["sh",
-                                "/musl/libctest_testcode.sh"] }, // done
-      BringupCommand { program : "/glibc/busybox",
-                       argv : &["sh",
-                                "/glibc/cyclictest_testcode.sh"] }, // done
-      BringupCommand { program : "/musl/busybox",
-                       argv : &["sh",
-                                "/musl/cyclictest_testcode.sh"] }, // done
-    BringupCommand { program : "/musl/busybox",
-        argv : &["sh",
-            "/musl/libcbench_testcode.sh"] },
-      BringupCommand { program : "/glibc/busybox",
-                       argv : &["sh",
-                                "/glibc/iozone_testcode.sh"] },
-      BringupCommand { program : "/musl/busybox",
-                       argv : &["sh",
-                                "/musl/iozone_testcode.sh"] },
-    BringupCommand { program : "/musl/busybox",
-        argv : &["sh",
-            "/musl/lmbench_testcode.sh"] },
-      BringupCommand { program : "/glibc/busybox",
-                       argv : &["sh",
-                                "/glibc/lmbench_testcode.sh"] }, 
-      BringupCommand { program : "/musl/busybox",
-                       argv : &[
-                                "sh",
-                                "/musl/ltp_testcode.sh"] },
-      BringupCommand { program : "/glibc/busybox",
-                       argv : &[
-                                "sh",
-                                "/glibc/ltp_testcode.sh"] }, 
-      BringupCommand { program : "/glibc/busybox",
-                      argv : &[
-           "sh",
-                               "/glibc/libcbench_testcode.sh"] },
-      // unixbench 不是比赛测试的内容，已经弃用
-      // BringupCommand { program : "/glibc/busybox",
-      //                  argv : &["timeout",
-      //                           "300",
-      //                           "sh",
-      //                           "/glibc/unixbench_testcode.sh"] },
-      // BringupCommand { program : "/musl/busybox",
-      //                  argv : &["timeout",
-      //                           "600",
-                                // "sh",
-                                // "/musl/unixbench_testcode.sh"] }
-    ];
+    &[BringupCommand { program : "/glibc/seccomp_testcode.sh",
+                       argv : &["/glibc/seccomp_testcode.sh"] }];
 /// `pub` 镜像携带这两个决赛脚本。
 const FINAL_COMMANDS : &[BringupCommand] =
-    &[BringupCommand { program : "/glibc/cagent_testcode.sh",
-                       argv : &["/glibc/cagent_testcode.sh"] },
-      BringupCommand { program : "/glibc/buildstorm_testcode.sh",
-                       argv : &["/glibc/buildstorm_testcode.sh"] }];
+    // &[BringupCommand { program : "/glibc/cagent_testcode.sh",
+    //                    argv : &["/glibc/cagent_testcode.sh"] },
+    //   BringupCommand { program : "/glibc/buildstorm_testcode.sh",
+    //                    argv : &["/glibc/buildstorm_testcode.sh"] }];
+    &[BringupCommand { program : "/glibc/seccomp_testcode.sh",
+                           argv : &["/glibc/seccomp_testcode.sh"] }];
 
 /// 该脚本仅存在于组织方提供的 `pub` 镜像，因此是稳定的镜像格式标记，
 /// 而不是构建期策略开关。

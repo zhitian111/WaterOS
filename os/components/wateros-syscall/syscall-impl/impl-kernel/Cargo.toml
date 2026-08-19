@@ -24,7 +24,7 @@
     api-v0 = [ "api-v0/api-v0", "fd-session" ]
     bringup-stats = [  ]
     cred-session = [ "cred/api-v0", "cred/impl-root", "dep:cred" ]
-    default = [ "impl-kernel" ]
+    default = [ "impl-kernel" , "api-v0"]
     fd-session = [
         "cred-session",
         "dep:ipc",

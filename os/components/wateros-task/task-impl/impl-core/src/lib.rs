@@ -17,8 +17,8 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use api_v0::{
-    ProcessCaps, ProcessId, ProcessResult, ProcessSnapshot, ProcessTaskSnapshot, TaskClearTid,
-    TaskId, ThreadId,
+    ProcessCaps, ProcessId, ProcessResult, ProcessSnapshot, ProcessTaskSnapshot, SeccompWhitlist,
+    TaskClearTid, TaskId, ThreadId,
 };
 use arch::interrupt::ArchInterruptState;
 use base::sync::MultiprocessorSafeCell;
@@ -29,7 +29,9 @@ mod process;
 mod tcb;
 
 pub use api_v0::TaskBootstrap;
-pub use process::{ParentDeathNotification, ProcessControlBlock, ProcessIoCounters, ProcessRegistry};
+pub use process::{
+    ParentDeathNotification, ProcessControlBlock, ProcessIoCounters, ProcessRegistry,
+};
 pub use tcb::TaskControlBlock;
 
 #[cfg(feature = "self_test")]
@@ -89,11 +91,15 @@ fn with_process_io_cached(task_id : TaskId, f : impl Fn(&ProcessIoCounters)) {
 }
 
 pub fn account_task_io(task_id : TaskId, read : bool, bytes : u64) {
-    with_process_io_cached(task_id, |counters| counters.account(read, bytes));
+    with_process_io_cached(task_id, |counters| {
+        counters.account(read, bytes)
+    });
 }
 
 pub fn account_task_io_transfer(task_id : TaskId, bytes : u64) {
-    with_process_io_cached(task_id, |counters| counters.account_transfer(bytes));
+    with_process_io_cached(task_id, |counters| {
+        counters.account_transfer(bytes)
+    });
 }
 
 pub fn process_io_snapshot(task_id : TaskId) -> Option<[u64; 4]> {
@@ -300,6 +306,13 @@ pub fn set_process_child_subreaper(pid : ProcessId, enabled : bool) -> ProcessRe
     with_process_registry(|registry| registry.set_process_child_subreaper(pid, enabled))
 }
 
+pub fn set_process_sec_mode(pid : ProcessId, enabled : bool) -> ProcessResult<()> {
+    with_process_registry(|registry| registry.set_sec_mode(pid, enabled))
+}
+pub fn set_process_white_list(pid : ProcessId, whitelist : SeccompWhitlist) -> ProcessResult<()> {
+    with_process_registry(|registry| registry.set_seccomp_whitelist(pid, whitelist));
+    Ok(())
+}
 /// 查询进程 capability 三集合。
 pub fn process_caps(pid : ProcessId) -> Option<ProcessCaps> {
     with_process_registry(|registry| registry.process_caps(pid))
