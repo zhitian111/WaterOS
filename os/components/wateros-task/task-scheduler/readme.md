@@ -7,25 +7,27 @@
 
 ## 模块分层
 
-| 层 | 路径 | 职责 |
-| --- | --- | --- |
-| 聚合层 | `src/lib.rs` | 选择并导出当前的多类调度器实现。 |
-| 调度器 API | `scheduler-api/api-v0/` | 定义并实现 TaskRegistry、CPUState、CFS/FIFO/RR 队列和 WaitQueues。 |
-| 调度器实现 | `scheduler-impl/impl-multi-class/` | 实现调度决策、任务放置、生命周期转换、上下文切换和 SMP 重调度。 |
-| 任务门面 | `wateros-task/src/` | 协调 scheduler 与 process，并向 syscall、trap 和 IPC 提供稳定接口。 |
+
+| 层         | 路径                               | 职责                                                                |
+| ------------ | ------------------------------------ | --------------------------------------------------------------------- |
+| 聚合层     | `src/lib.rs`                       | 选择并导出当前的多类调度器实现。                                    |
+| 调度器 API | `scheduler-api/api-v0/`            | 定义并实现 TaskRegistry、CPUState、CFS/FIFO/RR 队列和 WaitQueues。  |
+| 调度器实现 | `scheduler-impl/impl-multi-class/` | 实现调度决策、任务放置、生命周期转换、上下文切换和 SMP 重调度。     |
+| 任务门面   | `wateros-task/src/`                | 协调 scheduler 与 process，并向 syscall、trap 和 IPC 提供稳定接口。 |
 
 多类调度器实现按职责拆分如下：
 
-| 文件 | 内容 |
-| --- | --- |
-| `src/lib.rs` | 全局 scheduler 容器、锁外 IPI 派发和 yield/block/sleep/exit 等入口。 |
-| `src/scheduler.rs` | `MultiClassScheduler`、首次运行、普通调度和上下文切换准备。 |
-| `src/scheduler/cpu.rs` | CPU online、timekeeper、负载统计、快照和重调度请求。 |
-| `src/scheduler/tasks.rs` | task 创建、发布、查询、exec 和 affinity。 |
-| `src/scheduler/policy.rs` | policy、priority、nice、I/O priority 属性和抢占判断。 |
-| `src/scheduler/runqueue.rs` | 就绪队列选择、入队、出队和 CPU 放置。 |
-| `src/scheduler/wait.rs` | wait queue 分配、条件等待、唤醒、timeout 和 requeue。 |
-| `src/scheduler/query.rs` | task/CPU 查询以及调度停滞诊断。 |
+
+| 文件                        | 内容                                                                 |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| `src/lib.rs`                | 全局 scheduler 容器、锁外 IPI 派发和 yield/block/sleep/exit 等入口。 |
+| `src/scheduler.rs`          | `MultiClassScheduler`、首次运行、普通调度和上下文切换准备。          |
+| `src/scheduler/cpu.rs`      | CPU online、timekeeper、负载统计、快照和重调度请求。                 |
+| `src/scheduler/tasks.rs`    | task 创建、发布、查询、exec 和 affinity。                            |
+| `src/scheduler/policy.rs`   | policy、priority、nice、I/O priority 属性和抢占判断。                |
+| `src/scheduler/runqueue.rs` | 就绪队列选择、入队、出队和 CPU 放置。                                |
+| `src/scheduler/wait.rs`     | wait queue 分配、条件等待、唤醒、timeout 和 requeue。                |
+| `src/scheduler/query.rs`    | task/CPU 查询以及调度停滞诊断。                                      |
 
 ## 实现说明
 

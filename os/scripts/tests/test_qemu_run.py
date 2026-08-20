@@ -136,7 +136,11 @@ class QemuRunTests(unittest.TestCase):
                     root=root,
                 )
                 self.assertIn("-display", launch.argv)
-                self.assertIn("cocoa", launch.argv)
+                # macOS cocoa 后端应附带 zoom-to-fit=on 等比缩放（防黑边）
+                display_arg = launch.argv[launch.argv.index("-display") + 1]
+                self.assertTrue(display_arg.startswith("cocoa"),
+                                f"unexpected display arg: {display_arg!r}")
+                self.assertIn("zoom-to-fit=on", display_arg)
                 self.assertNotIn("gtk", launch.argv)
                 launch.cleanup()
 
