@@ -141,8 +141,15 @@ def build_qemu_launch(
         raise QemuConfigError("WOS_GRAPHICS 必须是 0 或 1")
     graphics = graphics_value == "1"
     display_backend = _choose_display_backend(arch, _value(env, "WOS_QEMU_DISPLAY", "auto"))
+    # cocoa 后端支持 `zoom-to-fit=on`：把 guest 画面等比放大到窗口/全屏大小，
+    # 避免分辨率固定时四周出现黑边。其它后端（sdl/gtk/none）无此选项，保持原样。
+    display_arg = (
+        f"{display_backend},zoom-to-fit=on"
+        if display_backend == "cocoa"
+        else display_backend
+    )
     console_args = (
-        ["-display", display_backend, "-serial", "stdio", "-monitor", "none"]
+        ["-display", display_arg, "-serial", "stdio", "-monitor", "none"]
         if graphics
         else ["-nographic"]
     )
