@@ -12,6 +12,21 @@ use frame_alloctor::GlobalPhysFrameAllocator;
 use crate::pagetable::LoongArch64AddressSpace;
 use crate::user_aspace;
 
+#[inline]
+fn phys_access_addr(pa : usize) -> usize {
+    #[cfg(feature = "loongson2k1000la")]
+    {
+        // 2K1000 的 CPU 物理内存访问必须使用 DMW1 缓存窗口。不要从
+        // `kernel_start` 运行时推导窗口基址：在用户 syscall 的页表/重定位
+        // 场景下该符号可能被解析为低地址，进而把内核 memcpy 指向未映射的
+        // 物理别名（典型 fault 地址为 0xbf8a8000）。
+        const CACHED_WINDOW_BASE : usize = 0x9000_0000_0000_0000;
+        return CACHED_WINDOW_BASE | pa;
+    }
+    #[cfg(not(feature = "loongson2k1000la"))]
+    { pa }
+}
+
 /// 绑定到指定用户地址空间句柄的拷贝实现。
 pub struct LoongArch64UserMemoryOps {
     /// `LoadedElf::user_aspace_ptr` 对应的内核不透明句柄。
@@ -121,7 +136,7 @@ fn atomic_load_user_u32(handle : usize, user_addr : VirtAddr) -> MmResult<u32> {
         if !perm.user() || !perm.readable() {
             return Err(MmError::AccessViolation);
         }
-        let value = unsafe { &*(pa.0 as *const AtomicU32) }.load(Ordering::SeqCst);
+        let value = unsafe { &*(phys_access_addr(pa.0) as *const AtomicU32) }.load(Ordering::SeqCst);
         Ok(value)
     })
 }
@@ -199,7 +214,7 @@ fn atomic_compare_exchange_user_u32(handle : usize,
         }
         let pa = aspace.translate_addr(user_addr)?
                        .ok_or(MmError::AccessViolation)?;
-        let atomic = unsafe { &*(pa.0 as *const AtomicU32) };
+        let atomic = unsafe { &*(phys_access_addr(pa.0) as *const AtomicU32) };
         Ok(match atomic.compare_exchange(expected,
                                          desired,
                                          Ordering::SeqCst,
@@ -290,7 +305,7 @@ fn copy_to_user_in_aspace(aspace : &mut LoongArch64AddressSpace,
             };
             let page_room = PAGE_SIZE - user_addr.page_offset();
             let chunk = page_room.min(kernel_src.len() - done);
-            let dst = unsafe { core::slice::from_raw_parts_mut(pa.0 as *mut u8, chunk) };
+            let dst = unsafe { core::slice::from_raw_parts_mut(phys_access_addr(pa.0) as *mut u8, chunk) };
             dst.copy_from_slice(&kernel_src[done..done + chunk]);
             Ok(chunk)
         })();
@@ -342,7 +357,7 @@ fn copy_from_user_in_aspace(aspace : &mut LoongArch64AddressSpace,
 
         let page_room = PAGE_SIZE - user_addr.page_offset();
         let chunk = page_room.min(kernel_buf.len() - done);
-        let src = unsafe { core::slice::from_raw_parts(pa.0 as *const u8, chunk) };
+        let src = unsafe { core::slice::from_raw_parts(phys_access_addr(pa.0) as *const u8, chunk) };
         kernel_buf[done..done + chunk].copy_from_slice(src);
         done += chunk;
         user_addr = VirtAddr(user_addr.0

@@ -11,21 +11,27 @@ use klog as _;
 #[cfg(feature = "gui")]
 use runtime::logging::info;
 use runtime::logging::warn;
-#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "qemu-loongarch64-virt"))]
+#[cfg(any(feature = "qemu-riscv64-opensbi",
+              feature = "qemu-loongarch64-virt",
+              feature = "jh7110-visionfive2",
+              feature = "loongson2k1000la"))]
 use syscall as _;
 
 mod boot_timebase;
-mod device_irq;
 #[cfg(feature = "dashboard-debug")]
 mod dashboard;
 #[cfg(feature = "gdb-fault-injection")]
 mod debug_fault;
+mod device_irq;
+#[cfg(feature = "loongson2k1000la")]
+mod early_paging;
 #[cfg(feature = "stall-debug")]
 mod stall_debug;
 mod trap_handler;
 mod user_bringup_bus;
 mod user_bringup_busybox;
 mod user_bringup_common;
+mod user_bringup_init;
 #[cfg(not(feature = "disable-ltp-prune"))]
 mod user_bringup_ltp_exclusions;
 mod user_bringup_mm;
@@ -43,6 +49,29 @@ pub fn panic_handler(_panic_info : &core::panic::PanicInfo) -> ! {
 #[alloc_error_handler]
 pub fn alloc_error_handler(layout : core::alloc::Layout) -> ! {
     runtime::heap_allocator::handle_alloc_error(layout)
+}
+
+unsafe extern "C" {
+    /// `.bss` 起始地址（链接脚本定义，位于 `.bss.stack` 之后）。
+    static bss_start: u8;
+    /// 需要清零的 BSS 结束地址（链接脚本定义，不包含 `.kernel.heap`）。
+    static bss_zero_end: u8;
+}
+
+/// 在正式 Rust 入口最先清空内核 BSS。
+///
+/// 固件不保证 BSS 内容为零；`spin::Mutex`、原子标志和各类全局状态都位于 BSS，
+/// 若残留 DRAM 旧值会在首次访问时表现为锁死或随机失败。`.bss.stack` 由链接脚本
+/// 放在 `bss_start` 之前，因此当前调用栈不会被清零。
+///
+/// RUNTIME_ORDER: 必须在任何 Rust 静态变量读取、锁获取、日志或堆分配前调用。
+pub(crate) unsafe fn clear_bss() {
+    let start = core::ptr::addr_of!(bss_start) as *mut u8;
+    let end = core::ptr::addr_of!(bss_zero_end) as *mut u8;
+    let len = end as usize - start as usize;
+    unsafe {
+        core::ptr::write_bytes(start, 0, len);
+    }
 }
 
 // ── 共享 bring-up ──────────────────────────────────────────────
@@ -66,12 +95,16 @@ extern "C" fn network_poller_task(_arg : usize) -> ! {
                 network::stack::poll_at_millis(millis);
                 millis
             }
-            Err(_) => { network::stack::poll(); 0 }
+            Err(_) => {
+                network::stack::poll();
+                0
+            }
         };
         network::stack::poll_socket_events();
         let timeout = if driver::irq::network_irq_ready() {
             network::stack::poll_delay_millis(millis).map(|ms| {
-                ms.div_ceil(base_config::task::SCHED_TIMER_PERIOD_MS).max(1)
+                ms.div_ceil(base_config::task::SCHED_TIMER_PERIOD_MS)
+                  .max(1)
             })
         } else {
             // 不支持 IRQ 的设备仍需进展；已接入 IRQ 的网卡没有固定轮询周期。
@@ -121,7 +154,8 @@ extern "C" fn gui_refresh_task(_arg : usize) -> ! {
 /// 该入口不启动用户态 workload；调用者在它成功返回后再进入用户态 bring-up。
 fn init_services_after_boot() -> bool {
     if let Err(err) = device_irq::init() {
-        warn!("[irq] controller initialization failed: {}", err);
+        warn!("[irq] controller initialization failed: {}",
+              err);
         return false;
     }
     match driver::machine().init_after_boot() {
@@ -131,7 +165,9 @@ fn init_services_after_boot() -> bool {
         }
         Ok(()) => {
             driver::irq::for_each_irq(|irq| {
-                assert!(platform::irq::enable(irq), "invalid registered device IRQ {}", irq);
+                assert!(platform::irq::enable(irq),
+                        "invalid registered device IRQ {}",
+                        irq);
             });
             platform::arch::interrupt::enable_external_interrupt();
             driver::irq::install_wait_hook(device_irq::wait_for_device);
@@ -238,8 +274,13 @@ fn run_self_tests() {
     runtime::logging::info!("[self-test] unified kernel self_test complete");
 }
 
-#[cfg(feature = "qemu-riscv64-opensbi")]
-mod qemu_riscv64_opensbi {
+#[cfg(any(feature = "qemu-riscv64-opensbi", feature = "jh7110-visionfive2"))]
+mod riscv64_opensbi_entry {
+    //! RISC-V64 OpenSBI 引导入口（QEMU virt 与 VisionFive 2 共用）。
+    //!
+    //! 两个平台都以 a0=hart id、a1=DTB 物理地址进入（OpenSBI/U-Boot 约定），
+    //! AP 启动都走 SBI HSM；差异（UART/内存/DTB 来源）由 `platform-impl`
+    //! 的 active_impl 提供，入口本身无需分叉。
     use crate::{
         bringup_user_and_optional_services, init_after_boot, init_services_after_boot,
         init_when_boot,
@@ -257,10 +298,11 @@ mod qemu_riscv64_opensbi {
 
     fn start_secondary_harts(boot_cpu : task::CpuId, dtb_pa : usize) -> base::cpu::CpuMask {
         let entry = __wateros_arch_boot as *const () as usize;
+        let configured = platform::smp::configured_cpu_mask();
         let mut requested = base::cpu::CpuMask::EMPTY;
         for raw in 0..base_config::task::MAX_CPUS {
             let cpu = task::CpuId::from_raw(raw);
-            if cpu == boot_cpu {
+            if cpu == boot_cpu || !configured.contains(cpu) {
                 continue;
             }
             info!("[smp] hart_start cpu={} entry={:#x} opaque={:#x}",
@@ -336,9 +378,10 @@ mod qemu_riscv64_opensbi {
     #[unsafe(no_mangle)]
     pub fn wateros_kernel_main(cpu_raw : usize, dtb_pa : usize, _platform_arg1 : usize) -> ! {
         let cpu_id = task::CpuId::from_raw(cpu_raw);
-        platform::arch::cpu::init_current_cpu(cpu_id).expect("init current CPU");
-        mask_boot_interrupts();
-        // OpenSBI 提供 boot hart；次级 hart 可能直接由固件进入，也可能通过下方 SBI HSM 入口进入。
+        // OpenSBI supplies the boot hart.  Secondary harts can arrive either
+        // directly from firmware or through the SBI HSM entry below. `BSP_HART`
+        // has a non-zero initializer and is consequently stored in `.data`, so it
+        // is safe to use before the BSP clears `.bss`.
         if BSP_HART.compare_exchange(usize::MAX,
                                      cpu_raw,
                                      Ordering::AcqRel,
@@ -347,6 +390,14 @@ mod qemu_riscv64_opensbi {
         {
             wait_ap_boot_ready(cpu_id);
         }
+        // Only the BSP may clear global BSS. An AP reaches this same Rust entry
+        // after `hart_start`; clearing here on the AP would erase the scheduler
+        // and all other global state already initialized by the BSP.
+        unsafe {
+            crate::clear_bss();
+        }
+        platform::arch::cpu::init_current_cpu(cpu_id).expect("init current CPU");
+        mask_boot_interrupts();
         // BSP 初始化：驱动 → 日志 → timebase → 堆 → arch → 任务 → trap
         runtime::init_console();
         runtime::showlogo();
@@ -383,10 +434,12 @@ mod qemu_loongarch64_virt {
         bringup_user_and_optional_services, init_after_boot, init_services_after_boot,
         init_when_boot,
     };
-    use core::sync::atomic::{AtomicBool, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use runtime::logging::*;
 
-    static BSP_CLAIMED : AtomicBool = AtomicBool::new(false);
+    /// Non-zero initialization keeps the claim marker in `.data`, so BSP's
+    /// one-time BSS clear cannot erase it while APs are entering concurrently.
+    static BSP_HART : AtomicUsize = AtomicUsize::new(usize::MAX);
     static AP_BOOT_READY : AtomicBool = AtomicBool::new(false);
 
     unsafe extern "C" {
@@ -463,10 +516,21 @@ mod qemu_loongarch64_virt {
     #[unsafe(no_mangle)]
     pub fn wateros_kernel_main(cpu_raw : usize, _argc : usize, _argv : usize, _envp : usize) -> ! {
         let cpu_id = task::CpuId::from_raw(cpu_raw);
-        mask_boot_interrupts();
-        if BSP_CLAIMED.swap(true, Ordering::AcqRel) {
+        // QEMU may release several CPUs into the ELF entry at once. Claim the
+        // BSP before clearing BSS; an AP must wait until the scheduler and MM
+        // are fully initialized instead of clearing those globals again.
+        if BSP_HART.compare_exchange(usize::MAX,
+                                     cpu_raw,
+                                     Ordering::AcqRel,
+                                     Ordering::Acquire)
+                   .is_err()
+        {
             wait_ap_boot_ready(cpu_id);
         }
+        unsafe {
+            crate::clear_bss();
+        }
+        mask_boot_interrupts();
 
         runtime::init_console();
         runtime::showlogo();
@@ -493,6 +557,137 @@ mod qemu_loongarch64_virt {
         AP_BOOT_READY.store(true, Ordering::Release);
         let requested_aps = start_secondary_cpus(cpu_id);
         wait_for_secondary_online(requested_aps);
+
+        if init_services_after_boot() {
+            bringup_user_and_optional_services();
+        }
+        #[cfg(feature = "stall-debug")]
+        crate::stall_debug::start();
+        #[cfg(feature = "dashboard-debug")]
+        crate::dashboard::start();
+        platform::interrupt::enable_timer_interrupt().unwrap();
+        platform::arch::interrupt::enable_soft_interrupt();
+        platform::timer::set_timer_after_ms(100).unwrap();
+        platform::interrupt::enable_global_interrupt().unwrap();
+        task::run_first_task()
+    }
+}
+
+#[cfg(feature = "loongson2k1000la")]
+mod loongson2k1000la {
+    use crate::{
+        bringup_user_and_optional_services, init_after_boot, init_services_after_boot,
+        init_when_boot,
+    };
+    use arch_api_v0::kernel_trap::register_kernel_trap_handler;
+    use platform::arch::trap::{ActiveTrapFrame as TrapContext, TrapFrameRead};
+    use runtime::logging::*;
+
+    fn mask_boot_interrupts() {
+        platform::interrupt::disable_global_interrupt().expect("disable global interrupt");
+        platform::interrupt::disable_timer_interrupt().expect("disable timer interrupt");
+        platform::arch::interrupt::disable_soft_interrupt();
+    }
+
+    fn write_early_hex(mut value : usize) {
+        let mut buf = [0u8; 18];
+        let mut pos = buf.len();
+        loop {
+            pos -= 1;
+            let digit = (value & 0xF) as u8;
+            buf[pos] = if digit < 10 {
+                b'0' + digit
+            } else {
+                b'a' + digit - 10
+            };
+            value >>= 4;
+            if value == 0 {
+                break;
+            }
+        }
+        let _ = platform::active_impl::console::console_write_raw_buffer(&buf[pos..]);
+    }
+
+    extern "C" fn early_2k_trap(frame : *mut u8) {
+        let cx = unsafe { &mut *(frame as *mut TrapContext) };
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"\r\nEARLY2K estat=0x");
+        write_early_hex(cx.raw_cause());
+        let _ = platform::active_impl::console::console_write_raw_buffer(b" era=0x");
+        write_early_hex(cx.user_pc());
+        let _ = platform::active_impl::console::console_write_raw_buffer(b" badv=0x");
+        write_early_hex(cx.fault_addr());
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"\r\n");
+        let _ = platform::active_impl::console::console_flush();
+        loop {
+            core::hint::spin_loop();
+        }
+    }
+
+    /// Loongson 2K1000LA 内核入口（U-Boot `go` 裸镜像）。
+    ///
+    /// `a0` = 逻辑 CPU id；`a1/a2/a3` 为 PMON/U-Boot 透传参数。
+    /// U-Boot `go kernel dtb` 通过 argc/argv 传入 DTB；同时兼容少量
+    /// vendor/legacy 固件直接在寄存器中传递 DTB 的形式。
+    #[unsafe(no_mangle)]
+    pub fn wateros_kernel_main_rust(cpu_raw : usize,
+                                    boot_arg1 : usize,
+                                    boot_arg2 : usize,
+                                    boot_arg3 : usize)
+                                    -> ! {
+        unsafe {
+            crate::clear_bss();
+        }
+        crate::early_paging::init();
+        let cpu_id = task::CpuId::from_raw(cpu_raw);
+        mask_boot_interrupts();
+
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K0\r\n");
+        runtime::init_console();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K1\r\n");
+        runtime::showlogo();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K2\r\n");
+        klog::init();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K3\r\n");
+        runtime::logging::init();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K4\r\n");
+        runtime::heap_allocator::init();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K5\r\n");
+
+        platform::arch::cpu::init_current_cpu(cpu_id).expect("BSP init current CPU");
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K6\r\n");
+        platform::arch::init();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K7\r\n");
+        register_kernel_trap_handler(early_2k_trap);
+        let _ = platform::smp::init_ipi();
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K8\r\n");
+        let mut dtb_pa = platform::active_impl::boot::device_tree_phys_addr();
+        if dtb_pa == 0 {
+            dtb_pa = platform::active_impl::boot::probe_dtb_from_boot_args([boot_arg1, boot_arg2,
+                                                                            boot_arg3]);
+            if dtb_pa != 0 {
+                platform::active_impl::dtb::store(dtb_pa);
+                info!("[boot] FDT discovered from U-Boot boot arguments at {:#x}",
+                      dtb_pa);
+            }
+        }
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K9\r\n");
+        init_when_boot(dtb_pa);
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K10\r\n");
+        let configured =
+            platform::active_impl::smp::init_configured_cpu_mask(dtb_pa).expect("initialize \
+                                                                                 LoongArch CPU \
+                                                                                 topology");
+        let _ = platform::active_impl::console::console_write_raw_buffer(b"K11\r\n");
+        info!("[smp] 2K1000 configured CPU mask={:#x}",
+              configured.bits());
+        let memory_end = platform::physical_ram_end_exclusive();
+        init_after_boot(dtb_pa, memory_end, cpu_id);
+        task::set_cpu_online(cpu_id);
+
+        // PM 控制器：DTB 优先，PMON 无 DTB 时回退板级固定基址（0x1FE2_7000）。
+        let pm_base = platform::active_impl::reset::discover_pm_base(dtb_pa);
+        info!("[boot] 2K1000 PM controller base={:?}",
+              pm_base);
 
         if init_services_after_boot() {
             bringup_user_and_optional_services();

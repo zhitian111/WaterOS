@@ -2,7 +2,7 @@
 name = "mgba"
 version = "0.10.5-wateros-2"
 source = "vendor/mgba"
-architectures = ["rv"]
+architectures = ["rv", "la"]
 dependencies = ["microwindows"]
 build = "build.py"
 install_prefix = "/usr"

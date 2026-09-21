@@ -42,6 +42,7 @@ SECTIONS
     *(.bss.scheduler)
     kernel_scheduler_bss_end = .;
   }
+  bss_zero_end = .;
 
   . = ALIGN(4K);
   .dma (NOLOAD) : {

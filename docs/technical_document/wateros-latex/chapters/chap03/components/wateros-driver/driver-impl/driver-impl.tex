@@ -1,5 +1,5 @@
 % 【本文件写什么】独立子 crate，无 api/impl 目录树：driver-impl
-% - 职责：板级驱动 impl：QEMU RISC-V / LoongArch 与 dummy。
+% - 职责：板级驱动 impl：两个 QEMU profile 与两个真机 profile。
 % - 源码：os/components/wateros-driver/driver-impl/src/
 % - 对外暴露的函数/类型、在聚合 lib.rs 中的重导出方式
 % - 实现要点、feature，若有、与其它子 crate 的边界
@@ -8,10 +8,9 @@
 
 \subsection{driver-impl}
 
-\code{driver-impl}承载平台相关的\code{active\_impl}：三选一feature别名到\code{impl\_qemu\_riscv64\_opensbi}、\code{impl\_qemu\_loongarch64\_virt}或\code{impl\_dummy}。聚合\code{lib.rs}将\code{init\_when\_boot}、\code{physical\_ram\_end\_exclusive}与\code{init\_after\_boot}委托给选中impl；RISC-V与LoongArch另导出\code{uart}子模块供早期串口与\code{klog}使用。
+\code{driver-impl}承载平台相关实现：QEMU RISC-V、QEMU LoongArch64 virt、VisionFive 2/JH7110 与 Loongson 2K1000LA。聚合\code{lib.rs}通过互斥 feature 返回对应\code{MachineDriver}；未选择平台会显式失败，不提供 dummy 回退。各 RISC-V 与 LoongArch 平台按需导出\code{uart}子模块供早期串口与\code{klog}使用。
 
 平台impl职责边界：解析DTB或PCI配置空间、实例化各子系统\code{impl-virtio-*}驱动、调用\code{register\_*}、同步\code{devfs}，以及推导物理RAM上界供MM恒等映射。不包含文件系统挂载或socket系统调用逻辑。重复\code{init\_after\_boot}幂等：第二次调用记录\code{WARN}并忽略，避免重复注册。
 
-\input{chapters/chap03/components/wateros-driver/driver-impl/impl/dummy}
 \input{chapters/chap03/components/wateros-driver/driver-impl/impl/qemu-loongarch64-virt}
 \input{chapters/chap03/components/wateros-driver/driver-impl/impl/qemu-riscv64-opensbi}

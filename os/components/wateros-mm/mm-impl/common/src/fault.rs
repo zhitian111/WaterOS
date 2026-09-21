@@ -87,7 +87,9 @@ pub fn handle_vma_fault<S, A>(aspace : &mut S,
 
     let ppn = alloc_zeroed_frame_with_alloc(allocator)?;
     let pa = ppn.0 * PAGE_SIZE;
-    let dst = unsafe { core::slice::from_raw_parts_mut(pa as *mut u8, PAGE_SIZE) };
+    let dst = unsafe {
+        core::slice::from_raw_parts_mut(phys_access_addr(pa) as *mut u8, PAGE_SIZE)
+    };
     // 取得可修改的 VMA；加载文件页时可能需要更新 loader 的内部状态。
     if let Err(error) = aspace.vma_set_mut()
                               .get_mut(index)

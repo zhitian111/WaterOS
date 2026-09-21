@@ -69,7 +69,16 @@ impl BootPlan {
         {
             OperatorMode::Run
         }
-        #[cfg(not(any(feature = "operator-shell", feature = "operator-run")))]
+        #[cfg(all(not(any(feature = "operator-shell", feature = "operator-run")),
+                  feature = "loongson2k1000la"))]
+        {
+            // The 2K1000 board has no reliable userspace-init bring-up path
+            // while its flash image is being developed. Keep the serial
+            // console usable by default; explicit operator features still win.
+            OperatorMode::Shell
+        }
+        #[cfg(all(not(any(feature = "operator-shell", feature = "operator-run")),
+                  not(feature = "loongson2k1000la")))]
         {
             OperatorMode::Auto
         }
@@ -105,6 +114,8 @@ struct ShellCandidate {
     argv0 : &'static str,
 }
 
+static OPERATOR_STARTED : AtomicBool = AtomicBool::new(false);
+
 fn shell_candidates(requested : Option<&str>) -> Vec<ShellCandidate> {
     let mut result = Vec::new();
     if let Some(path) = requested {
@@ -118,8 +129,10 @@ fn shell_candidates(requested : Option<&str>) -> Vec<ShellCandidate> {
         result.push(ShellCandidate { program : path.to_string(),
                                      argv0 });
     }
-    for (program, argv0) in [("/bin/bash", "bash"),
-                             ("/bin/sh", "sh"),
+    // The LoongArch image ships a native BusyBox `/bin/sh`; `/bin/bash` may
+    // be left over from a RISC-V rootfs and would execute as garbage code.
+    for (program, argv0) in [("/bin/sh", "sh"),
+                             ("/bin/bash", "bash"),
                              ("/glibc/busybox", "sh"),
                              ("/musl/busybox", "sh")]
     {
@@ -178,7 +191,13 @@ fn run_shell_once(requested : Option<&str>, script : Option<&str>) -> bool {
     false
 }
 
-pub(crate) fn start() { task::spawn_kernel_task(operator_main, 0); }
+pub(crate) fn start() {
+    if OPERATOR_STARTED.swap(true, Ordering::AcqRel) {
+        warn!("[{LOG_TAG}] duplicate start ignored");
+        return;
+    }
+    task::spawn_kernel_task(operator_main, 0);
+}
 
 fn configure_tty(mode : TtyMode) {
     let mode = match mode {
@@ -192,7 +211,7 @@ fn configure_tty(mode : TtyMode) {
     }
 }
 
-fn start_console_input_task() {
+pub(crate) fn start_console_input_task() {
     if !CONSOLE_INPUT_TASK_STARTED.swap(true, Ordering::AcqRel) {
         crate::device_irq::init_console_wait();
         task::spawn_kernel_task(console_input_main, 0);
@@ -275,13 +294,14 @@ extern "C" fn operator_main(_arg : usize) -> ! {
         ExitPolicy::Shell => {}
     }
 
+    // Run the selected shell once.  A failed user program must not be
+    // relaunched forever: that hides the original failure and floods UART.
+    let _ = run_shell_once(plan.shell
+                                      .as_deref(),
+                           None);
+    error!("[{LOG_TAG}] shell attempt finished; operator is idle");
     loop {
-        if !run_shell_once(plan.shell
-                               .as_deref(),
-                           None)
-        {
-            task::sleep_for_ticks(100);
-        }
+        task::sleep_for_ticks(1000);
     }
 }
 
@@ -290,13 +310,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_build_selects_automatic_evaluation() {
-        #[cfg(not(any(feature = "operator-shell", feature = "operator-run")))]
+    fn default_build_selects_profile_startup_mode() {
+        #[cfg(all(not(any(feature = "operator-shell", feature = "operator-run")),
+                  not(feature = "loongson2k1000la")))]
         {
             let plan = build_plan();
             assert_eq!(plan.mode, OperatorMode::Auto);
             assert_eq!(plan.on_exit, ExitPolicy::Shutdown);
         }
+        #[cfg(all(not(any(feature = "operator-shell", feature = "operator-run")),
+                  feature = "loongson2k1000la"))]
+        assert_eq!(build_plan().mode, OperatorMode::Shell);
         #[cfg(feature = "operator-shell")]
         assert_eq!(build_plan().mode, OperatorMode::Shell);
         #[cfg(feature = "operator-run")]
@@ -313,8 +337,8 @@ mod tests {
                                           })
                                           .collect();
         assert_eq!(paths, ["/musl/busybox",
-                           "/bin/bash",
                            "/bin/sh",
+                           "/bin/bash",
                            "/glibc/busybox"]);
     }
 }

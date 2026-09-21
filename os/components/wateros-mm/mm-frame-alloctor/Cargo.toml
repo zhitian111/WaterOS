@@ -14,3 +14,4 @@
     default = [ "api-v0", "impl-stack" ]
     impl-stack = [  ]
     self_test = [ "impl-stack/self_test" ]
+    loongson2k1000la = [ "impl-stack/loongson2k1000la" ]

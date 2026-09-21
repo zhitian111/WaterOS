@@ -27,6 +27,13 @@
     default = [ "api-v0", "impl-sv39" ]
     cache-layer-diagnostics = [ "impl-common/cache-layer-diagnostics" ]
     impl-loongarch64 = [ "api-v0", "impl-loongarch64/api-v0" ]
+    # 仅 2K1000 使用高 cached 物理别名；QEMU LoongArch 保持低地址恒等映射。
+    loongson2k1000la = [
+        "api-v0/loongson2k1000la",
+        "impl-loongarch64/loongson2k1000la",
+        "impl-common/loongson2k1000la",
+        "frame-alloctor/loongson2k1000la",
+    ]
     impl-sv39 = [ "api-v0", "impl-sv39/api-v0", "impl-sv39/impl-riscv64" ]
     qemu-riscv64-opensbi = [  ]
     vfs-root-read = [

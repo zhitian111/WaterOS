@@ -16,7 +16,7 @@ BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 .PHONY: rv_pre_run-gdb rv_final_run-gdb rv_final_run_log-gdb rv_final_debug_run-gdb
 .PHONY: rv_qemu_run rv_qemu_run_snapshot
 .PHONY: rv_qemu_run_with_log
-.PHONY: la_check la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
+.PHONY: la_check la2k_check jh7110_check kernel-la2k la2k_raw la2k_uimage la2k_dtb la2k_bootdir la2k_bootscr la2k_image la2k_tftp_prepare la2k_tftp kernel-jh7110 jh7110_uimage jh7110_bootdir vf2_img_latest dd_img_vf2 dd_img_2k1000 la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
 .PHONY: kernel-la kernel-la-best kernel-la-pre kernel-la-final la_pre_run la_final_run la_final_run_log
 .PHONY: la_pre_run-gdb la_final_run-gdb la_final_run_log-gdb
 .PHONY: la_qemu_run la_qemu_run_snapshot
@@ -42,6 +42,14 @@ common_dependencies = $(shell find . -name "*.rs") \
 kernel_rv_dependencies = $(common_dependencies)
 
 COMMA := ,
+empty :=
+space := $(empty) $(empty)
+
+# 传递给 user/ 镜像构建器的附加裸文件系统镜像（逗号分隔）。
+FILESYSTEM_IMAGES ?=
+FILESYSTEM_TYPES ?=
+FILESYSTEM_IMAGES_ABS := $(subst $(COMMA), ,$(foreach image,$(subst $(COMMA), ,$(FILESYSTEM_IMAGES)),$(abspath $(image))))
+FILESYSTEM_IMAGES_ABS := $(subst $(space),$(COMMA),$(strip $(FILESYSTEM_IMAGES_ABS)))
 
 # ── 操作者可覆盖的默认值 ──────────────────────────────────────────
 # 命令行变量优先，例如：make run ARCH=la PROFILE=final SMP=4。
@@ -93,6 +101,14 @@ GDB_BUILD_ID ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknow
 HEAP_ALLOCATOR_FEATURE ?= heap-tlsf
 operator_env = WATEROS_OPERATOR_SHELL="$(GUEST_SHELL)" WATEROS_OPERATOR_SCRIPT="$(SCRIPT)"
 cargo_env = $(if $(filter 1,$(GDB_BUILD)),WATEROS_DEBUG_BUILD_ID="$(GDB_BUILD_ID)" WATEROS_DEBUG_FRAME_POINTERS=1 RUSTFLAGS="$(strip $(RUSTFLAGS) $(GDB_FRAME_FLAGS))",)
+# Loongson 2K1000 经 U-Boot 在高 cached 段（VSEG=9）执行，不能使用
+# LoongArch small code model 的 32 位 PC 相对寻址；此处固定为 large。
+# 2K1000 的 LA264 核不支持硬件非对齐访问，关闭默认 `ual`，避免 LLVM
+# 为 `starts_with`/字符串比较等优化出 `ld.w` 非对齐内存访问。
+la2k_rustflags = $(strip $(RUSTFLAGS) -C code-model=large -C target-feature=-ual)
+# 2K1000 关闭 `ual` 后必须连 `core`/`alloc` 一起重编；否则预编译的
+# `core::fmt` 仍包含非对齐 `ldx.h`，在 LA264 上触发 ALE。
+la2k_build_std_flags = -Z build-std=core,alloc
 cargo_build = $(operator_env) $(cargo_env) cargo build
 
 kernel_rv_flag := $(CARGO_PROFILE_ARG) --target riscv64gc-unknown-none-elf \
@@ -169,6 +185,12 @@ help:
 	@echo "  make debug ARCH=rv PROFILE=pre       自动启动并 watch"
 	@echo "  make debug-server ARCH=rv PROFILE=pre  手动挡：终端一启动 QEMU"
 	@echo "  make gdb                             手动挡：终端二连接"
+	@echo "  make dd_img_vf2 DEVICE=/dev/sdX     烧录 VisionFive 2 整盘镜像（先 cd user && make disk）"
+	@echo "  make vf2_img_latest                  UI 有更新时自动重建 VisionFive 2 整盘镜像"
+	@echo "  make dd_img_2k1000 DEVICE=/dev/sdX  烧录 Loongson 2K1000 可启动整盘镜像"
+	@echo "  FILESYSTEM_IMAGES=a.ext4,b.ext4 FILESYSTEM_TYPES=83,83  为 user 整盘镜像追加文件系统分区"
+	@echo "  make la2k_tftp                       构建 SATA 镜像、内核并启动 2K1000 TFTP 服务"
+	@echo "  make la2k_tftp_prepare               仅准备分片镜像与 U-Boot 烧录脚本"
 	@echo "  make snapshot / make watch           附加当前活动会话"
 	@echo "  make doctor                          检查 GDB/QEMU/符号工具"
 	@echo "  make show-config                     显示当前最终生效配置"
@@ -467,6 +489,169 @@ la_check:
 	$(call INFO, "开始对 loongarch64 平台进行 cargo check ...")
 	@$(operator_env) $(cargo_env) cargo check $(SELECTED_LA_FLAG)
 	$(call INFO, "对 loongarch64 平台的 cargo check 完成！")
+
+jh7110_check:
+	$(call INFO, "开始对 jh7110-visionfive2 平台进行 cargo check ...")
+	@$(operator_env) $(cargo_env) cargo check --no-default-features \
+		--features jh7110-visionfive2 --target riscv64gc-unknown-none-elf
+	$(call INFO, "对 jh7110-visionfive2 平台的 cargo check 完成！")
+
+la2k_check:
+	$(call INFO, "开始对 loongson2k1000la 平台进行 cargo check ...")
+	@$(operator_env) RUSTFLAGS="$(la2k_rustflags)" cargo check $(la2k_build_std_flags) --no-default-features \
+		--features loongson2k1000la --target loongarch64-unknown-none
+	$(call INFO, "对 loongson2k1000la 平台的 cargo check 完成！")
+
+# Loongson 2K1000LA 内核构建。QEMU/调试仍保留 ELF 与 uImage，真机启动
+# 使用同一 payload 的裸二进制，通过 U-Boot `go` 绕过 legacy bootm handoff。
+kernel-la2k:
+	$(call INFO, "开始构建 loongson2k1000la 内核...")
+	@$(operator_env) RUSTFLAGS="$(la2k_rustflags)" cargo build $(la2k_build_std_flags) $(CARGO_PROFILE_ARG) --no-default-features \
+		--features loongson2k1000la --target loongarch64-unknown-none
+	@cp ./target/loongarch64-unknown-none/release/wateros ./kernel-la2k
+	$(call INFO, "loongson2k1000la 内核构建完成！")
+
+la2k_raw: kernel-la2k
+	@loongarch64-linux-gnu-objcopy -O binary --strip-all --remove-section=.kernel.heap \
+		./kernel-la2k ./kernel-la2k.bin
+	$(call INFO, "loongson2k1000la 裸内核生成完成：kernel-la2k.bin")
+
+la2k_uimage: la2k_raw
+	@if mkimage -A loongarch -O linux -T kernel -C none \
+		-a 0x98000000 -e 0x98000000 \
+		-n "WaterOS 2K1000LA" -d ./kernel-la2k.bin ./kernel-la2k.ui 2>/dev/null; then \
+		echo "[Makefile] [INFO] uImage（mkimage）生成完成：kernel-la2k.ui"; \
+	else \
+		python3 ./scripts/root_image/mk_uimage.py \
+			--input ./kernel-la2k.bin --output ./kernel-la2k.ui \
+			--load 0x98000000 --entry 0x98000000 \
+			--name "WaterOS 2K1000LA"; \
+	fi
+
+LA2K_BOOT_DIR ?= ./build/la2k-boot
+LA2K_BOOT_SIZE_MB ?= 16
+LA2K_DTB_SOURCE ?= ./scripts/root_image/loongson2k1000.dts
+LA2K_DTB_FILE ?= ./build/loongson2k1000.dtb
+
+la2k_dtb:
+	@mkdir -p "$(dir $(LA2K_DTB_FILE))"
+	@dtc -q -I dts -O dtb -o "$(LA2K_DTB_FILE)" "$(LA2K_DTB_SOURCE)"
+	$(call INFO, "Loongson 2K1000 DTB 生成完成：$(LA2K_DTB_FILE)")
+
+la2k_bootdir: la2k_raw la2k_dtb
+	@mkdir -p "$(LA2K_BOOT_DIR)"
+	@cp ./kernel-la2k.bin "$(LA2K_BOOT_DIR)/kernel-la2k.bin"
+	@cp "$(LA2K_DTB_FILE)" "$(LA2K_BOOT_DIR)/loongson2k1000.dtb"
+	@if mkimage -A loongarch -T script -C none -n "WaterOS 2K1000 boot" \
+		-d ./scripts/root_image/boot-loongson2k1000.cmd "$(LA2K_BOOT_DIR)/boot.scr" 2>/dev/null; then \
+		:; \
+	else \
+		mkimage -T script -C none -n "WaterOS 2K1000 boot" \
+			-d ./scripts/root_image/boot-loongson2k1000.cmd "$(LA2K_BOOT_DIR)/boot.scr"; \
+	fi
+	@cp ./scripts/root_image/loongson2k1000-uEnv.txt "$(LA2K_BOOT_DIR)/uEnv.txt"
+	$(call INFO, "Loongson 2K1000 启动素材目录：$(LA2K_BOOT_DIR)")
+
+la2k_bootscr: la2k_bootdir
+	@cp "$(LA2K_BOOT_DIR)/boot.scr" ./build/wateros-2k1000.scr
+	$(call INFO, "Loongson 2K1000 SATA 启动脚本生成完成：./build/wateros-2k1000.scr")
+
+# 2K1000 SATA GPT 整盘布局：P1 FAT 启动分区（raw/DTB/boot.scr），P2 EXT4 rootfs。
+LA2K_PACKAGE ?= minimal
+LA2K_PARTITION_TABLE ?= gpt
+LA2K_IMAGE ?= ../user/build/images/wateros-la.img
+
+la2k_image: la2k_bootscr
+	@WATEROS_USER_CFLAGS="-mstrict-align" $(MAKE) -C ../user disk ARCH=la PACKAGE="$(LA2K_PACKAGE)" \
+		PARTITION_TABLE="$(LA2K_PARTITION_TABLE)" OUTPUT="$(LA2K_IMAGE:.img=.ext4)" \
+		BOOT_DIR="$(abspath $(LA2K_BOOT_DIR))" BOOT_LAYOUT=boot-root \
+		BOOT_SIZE_MB="$(LA2K_BOOT_SIZE_MB)" \
+		FILESYSTEM_IMAGES="$(FILESYSTEM_IMAGES_ABS)" FILESYSTEM_TYPES="$(FILESYSTEM_TYPES)"
+
+LA2K_TFTP_SERVER_IP ?= 192.168.1.2
+LA2K_TFTP_ROOT ?= ./build/la2k-tftp
+LA2K_TFTP_BOARD_IP ?= 192.168.1.20
+LA2K_TFTP_CHUNK_MB ?= 32
+LA2K_TFTP_ARGS = --image "$(LA2K_IMAGE)" --boot-dir "$(LA2K_BOOT_DIR)" \
+	--tftp-root "$(LA2K_TFTP_ROOT)" --server-ip "$(LA2K_TFTP_SERVER_IP)" \
+	--board-ip "$(LA2K_TFTP_BOARD_IP)" --chunk-mb "$(LA2K_TFTP_CHUNK_MB)"
+
+la2k_tftp_prepare: la2k_image
+	@bash ./scripts/la2k/prepare_tftp.sh $(LA2K_TFTP_ARGS) --prepare-only
+
+la2k_tftp: la2k_image
+	@bash ./scripts/la2k/prepare_tftp.sh $(LA2K_TFTP_ARGS)
+
+# VisionFive 2 / JH7110（U-Boot/uImage）构建与打包
+kernel-jh7110:
+	$(call INFO, "开始构建 jh7110-visionfive2 内核...")
+	@$(operator_env) $(cargo_env) cargo build $(CARGO_PROFILE_ARG) --no-default-features \
+		--features jh7110-visionfive2 --target riscv64gc-unknown-none-elf
+	@cp ./target/riscv64gc-unknown-none-elf/release/wateros ./kernel-jh7110
+	$(call INFO, "jh7110-visionfive2 内核构建完成！")
+
+jh7110_uimage: kernel-jh7110
+	@riscv64-linux-gnu-objcopy -O binary --strip-all --remove-section=.kernel.heap \
+		./kernel-jh7110 ./kernel-jh7110.bin
+	@if mkimage -A riscv -O linux -T kernel -C none \
+		-a 0x40200000 -e 0x40200000 \
+		-n "WaterOS VisionFive 2" -d ./kernel-jh7110.bin ./kernel-jh7110.ui 2>/dev/null; then \
+		echo "[Makefile] [INFO] uImage（mkimage）生成完成：kernel-jh7110.ui"; \
+	else \
+		python3 ./scripts/root_image/mk_uimage.py \
+			--input ./kernel-jh7110.bin --output ./kernel-jh7110.ui \
+			--load 0x40200000 --entry 0x40200000 --arch riscv \
+			--name "WaterOS VisionFive 2"; \
+	fi
+
+jh7110_bootdir: jh7110_uimage
+	@mkdir -p ./build/jh7110-boot/extlinux
+	@if cmp -s ./kernel-jh7110.ui ./build/jh7110-boot/wateros-jh7110.ui 2>/dev/null; then \
+		echo "[Makefile] [INFO] jh7110 UI 未变化，保留现有启动文件"; \
+	else \
+		cp ./kernel-jh7110.ui ./build/jh7110-boot/wateros-jh7110.ui; \
+		echo "[Makefile] [INFO] jh7110 UI 已更新"; \
+	fi
+	@cp ./scripts/root_image/jh7110-extlinux.conf ./build/jh7110-boot/extlinux/extlinux.conf
+	@cp ./scripts/root_image/jh7110-uEnv.txt ./build/jh7110-boot/uEnv.txt
+	@cp ./scripts/root_image/jh7110-vf2-uEnv.txt ./build/jh7110-boot/vf2_uEnv.txt
+	@if mkimage -A riscv -T script -C none -n "WaterOS VisionFive 2 boot" \
+		-d ./scripts/root_image/boot-visionfive2.cmd ./build/jh7110-boot/boot.scr 2>/dev/null; then \
+		echo "[Makefile] [INFO] boot.scr 生成完成"; \
+	else \
+		echo "[Makefile] [WARN] mkimage 不可用，boot.scr 未生成（可手动 bootm）"; \
+	fi
+	$(call INFO, "启动素材目录：./build/jh7110-boot/（如需板级 DTB，放入 jh7110-starfive-visionfive-2-v1.3b.dtb）")
+
+# 整盘镜像烧录（先由 user/ 的 make disk 生成镜像，再执行本目标）。
+VF2_DD_IMAGE ?= ../user/build/images/wateros-rv.img
+LA2K_DD_IMAGE ?= ../user/build/images/wateros-la.img
+VF2_BOOT_UI ?= ./build/jh7110-boot/wateros-jh7110.ui
+
+# 真实文件目标：只有启动 UI 比整盘镜像更新，或镜像尚不存在时，才重新
+# 调用 user/ 的 disk 构建。这样可以避免“UI 已经换了但镜像仍是旧的”这类
+# 依赖断裂，也避免每次调用便无条件重建整盘镜像。
+$(VF2_BOOT_UI): jh7110_bootdir
+
+$(VF2_DD_IMAGE): $(VF2_BOOT_UI)
+	@mkdir -p "$(dir $@)"
+	@$(MAKE) -C ../user vf2_disk_latest ARCH=rv \
+		VF2_BOOT_DIR="$(abspath $(dir $(VF2_BOOT_UI)))" \
+		VF2_BOOT_UI="$(abspath $(VF2_BOOT_UI))" \
+		VF2_DISK_IMAGE="$(abspath $@)" \
+		FILESYSTEM_IMAGES="$(FILESYSTEM_IMAGES_ABS)" \
+		FILESYSTEM_TYPES="$(FILESYSTEM_TYPES)"
+
+vf2_img_latest: $(VF2_DD_IMAGE)
+	@echo "[Makefile] [INFO] VisionFive 2 镜像已是最新：$(VF2_DD_IMAGE)"
+
+dd_img_vf2:
+	@test -n "$(DEVICE)" || { $(call ERROR_CMD,请先指定目标块设备 variable=DEVICE example=/dev/sdX image=$(VF2_DD_IMAGE),2); exit 2; }
+	@bash ./scripts/real-hardware/dd_image.sh "$(VF2_DD_IMAGE)" "$(DEVICE)"
+
+dd_img_2k1000:
+	@test -n "$(DEVICE)" || { $(call ERROR_CMD,请先指定目标块设备 variable=DEVICE example=/dev/sdX image=$(LA2K_DD_IMAGE),2); exit 2; }
+	@bash ./scripts/real-hardware/dd_image.sh "$(LA2K_DD_IMAGE)" "$(DEVICE)"
 
 # rv_link_app_asm:
 # 	$(call INFO, "开始生成批处理系统的 asm 文件...")

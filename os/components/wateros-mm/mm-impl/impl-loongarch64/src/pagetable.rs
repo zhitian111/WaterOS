@@ -30,6 +30,40 @@ pub(crate) use impl_common::{
     handle_vma_fault, VmArea, VmaAccess, VmaBacking, VmaKind, VmaSet, VmaSharing,
 };
 
+/// 高 cached/uncached 段窗口只保留高 16 位；低 48 位是物理地址。
+const LOONGARCH64_PHYS_ADDR_MASK : usize = 0x0000_FFFF_FFFF_FFFF;
+#[cfg(feature = "loongson2k1000la")]
+const LOONGARCH64_WINDOW_BASE_MASK : usize = 0xFFFF_0000_0000_0000;
+
+#[inline]
+fn kernel_va_window_base() -> usize {
+    #[cfg(feature = "loongson2k1000la")]
+    {
+        // 2K1000 DMW1 is the cached direct-memory window. Keep this fixed
+        // instead of deriving it from `kernel_start` in trap/page-fault paths.
+        return 0x9000_0000_0000_0000;
+    }
+    #[cfg(not(feature = "loongson2k1000la"))]
+    { 0 }
+}
+
+#[inline]
+fn phys_to_kernel_va(pa : usize) -> usize {
+    kernel_va_window_base() | (pa & LOONGARCH64_PHYS_ADDR_MASK)
+}
+
+/// LoongArch 页表项 MAT（Memory Access Type）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemoryAccessType {
+    StronglyOrderedUncached = 0,
+    CoherentCached = 1,
+}
+
+impl MemoryAccessType {
+    #[inline]
+    const fn pte_bits(self) -> usize { (self as usize) << 4 }
+}
+
 /// LoongArch64 PTE 标志位。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct LoongArch64PteFlags(usize);
@@ -49,9 +83,6 @@ impl LoongArch64PteFlags {
 
     /// PLV = 3（用户态可访问）。
     const PLV_USER : usize = 3usize << 2;
-    /// MAT = 1（Coherent Cached，一致可缓存）。
-    const MAT_CACHED : usize = 1usize << 4;
-
     const PLV_MASK : usize = 3usize << 2;
 
     #[inline]
@@ -104,13 +135,26 @@ impl LoongArch64PteFlags {
         f
     }
 
-    /// 从 [`PagePerm`] 构造 PTE 标志：V=1, MAT=CoherentCached，PLV 由
-    /// `perm.user()` 决定。LoongArch 的写权限由硬件 D 位执行，W 位只供软件遍历。
+    /// 从 [`PagePerm`] 构造普通 RAM 的 PTE 标志。
     #[inline]
     fn from_perm(perm : PagePerm) -> Self {
+        Self::from_perm_with_mat(perm, MemoryAccessType::CoherentCached)
+    }
+
+    /// 从 [`PagePerm`] 构造强序非缓存 MMIO 的 PTE 标志。
+    #[inline]
+    fn from_mmio_perm(perm : PagePerm) -> Self {
+        #[cfg(feature = "loongson2k1000la")]
+        { Self::from_perm_with_mat(perm, MemoryAccessType::StronglyOrderedUncached) }
+        #[cfg(not(feature = "loongson2k1000la"))]
+        { Self::from_perm_with_mat(perm, MemoryAccessType::CoherentCached) }
+    }
+
+    #[inline]
+    fn from_perm_with_mat(perm : PagePerm, mat : MemoryAccessType) -> Self {
         let mut f = Self::V; // 页表项始终有效。
         f.0 |= Self::P.0; // 物理页已存在。
-        f.0 |= Self::MAT_CACHED;
+        f.0 |= mat.pte_bits();
         if perm.user() {
             f.0 |= Self::PLV_USER; // PLV = 3。
         }
@@ -202,7 +246,8 @@ fn vpn_indexes(vpn : VirtPageNum) -> [usize; 3] {
 #[inline]
 unsafe fn table_mut(ppn : PhysPageNum) -> &'static mut [LoongArch64Pte; LOONGARCH64_ENTRIES] {
     let pa = ppn.0 * PAGE_SIZE;
-    unsafe { &mut *(pa as *mut [LoongArch64Pte; LOONGARCH64_ENTRIES]) }
+    let va = phys_to_kernel_va(pa);
+    unsafe { &mut *(va as *mut [LoongArch64Pte; LOONGARCH64_ENTRIES]) }
 }
 
 struct UserLeafPage {
@@ -244,8 +289,9 @@ unsafe fn collect_user_leaf_pages(ppn : PhysPageNum,
 #[inline]
 pub(crate) fn zero_phys_page(ppn : PhysPageNum) {
     let pa = ppn.0 * PAGE_SIZE;
+    let va = phys_to_kernel_va(pa);
     unsafe {
-        core::ptr::write_bytes(pa as *mut u8, 0, PAGE_SIZE);
+        core::ptr::write_bytes(va as *mut u8, 0, PAGE_SIZE);
     }
 }
 
@@ -680,7 +726,7 @@ impl LoongArch64AddressSpace {
                 while page.0 < page_end.0 {
                     if let Some(pa) = self.translate_addr(page)? {
                         let src = unsafe {
-                            core::slice::from_raw_parts(pa.page_start().0 as *const u8,
+                            core::slice::from_raw_parts(phys_to_kernel_va(pa.page_start().0) as *const u8,
                                                         PAGE_SIZE)
                         };
                         let file_offset = vma.file_offset + (page.0 - vma.start.0);
@@ -963,8 +1009,8 @@ impl LoongArch64AddressSpace {
 
         // 引用计数 > 1：复制整页并切换 PTE 指向新帧
         let new_ppn = frame_alloc_result().map_err(MmError::from)?;
-        let src = old_ppn.0 * PAGE_SIZE;
-        let dst = new_ppn.0 * PAGE_SIZE;
+        let src = phys_to_kernel_va(old_ppn.0 * PAGE_SIZE);
+        let dst = phys_to_kernel_va(new_ppn.0 * PAGE_SIZE);
         unsafe {
             core::ptr::copy_nonoverlapping(src as *const u8,
                                            dst as *mut u8,
@@ -1049,8 +1095,8 @@ impl LoongArch64AddressSpace {
             return Ok(true);
         }
         let new_ppn = frame_alloc_result().map_err(MmError::from)?;
-        let src = old_ppn.0 * PAGE_SIZE;
-        let dst = new_ppn.0 * PAGE_SIZE;
+        let src = phys_to_kernel_va(old_ppn.0 * PAGE_SIZE);
+        let dst = phys_to_kernel_va(new_ppn.0 * PAGE_SIZE);
         unsafe {
             core::ptr::copy_nonoverlapping(src as *const u8,
                                            dst as *mut u8,
@@ -1197,6 +1243,32 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
 }
 
 impl LoongArch64AddressSpace {
+    fn map_page_to_ppn_with_flags(&mut self,
+                                  vpn : VirtPageNum,
+                                  ppn : PhysPageNum,
+                                  flags : LoongArch64PteFlags)
+                                  -> MmResult<()> {
+        let (pte, _level) = self.walk_create(vpn)?;
+        if pte.flags()
+              .is_valid()
+        {
+            return Err(MmError::AlreadyMapped);
+        }
+        pte.set(ppn, flags);
+        Ok(())
+    }
+
+    /// 映射内核设备页，使用 MAT=0（Strongly-ordered UnCached）。
+    pub(crate) fn map_mmio_page_to_ppn(&mut self,
+                                       vpn : VirtPageNum,
+                                       ppn : PhysPageNum,
+                                       perm : PagePerm)
+                                       -> MmResult<()> {
+        self.map_page_to_ppn_with_flags(vpn,
+                                        ppn,
+                                        LoongArch64PteFlags::from_mmio_perm(perm))
+    }
+
     /// 汇总页表叶子与 VMA 元数据，供 procfs/debugger 只读观察。
     pub(crate) fn user_mapping_snapshot(&self) -> Vec<api_v0::user_mapping::UserMappingSnapshot> {
         use api_v0::user_mapping::{UserMappingKind, UserMappingSnapshot};
@@ -1301,15 +1373,9 @@ impl AddressSpaceOps for LoongArch64AddressSpace {
                        ppn : PhysPageNum,
                        perm : PagePerm)
                        -> MmResult<()> {
-        let (pte, _level) = self.walk_create(vpn)?;
-        if pte.flags()
-              .is_valid()
-        {
-            return Err(MmError::AlreadyMapped);
-        }
-        pte.set(ppn,
-                LoongArch64PteFlags::from_perm(perm));
-        Ok(())
+        self.map_page_to_ppn_with_flags(vpn,
+                                        ppn,
+                                        LoongArch64PteFlags::from_perm(perm))
     }
 
     fn unmap_page_to_ppn(&mut self, vpn : VirtPageNum) -> MmResult<Option<PhysPageNum>> {

@@ -14,6 +14,14 @@ pub use api_v0::*;
 
 use mm_api::addr::{PhysPageNum, PAGE_SIZE};
 
+#[inline]
+fn frame_kernel_addr(pa : usize) -> usize {
+    #[cfg(feature = "loongson2k1000la")]
+    { 0x9000_0000_0000_0000usize | pa }
+    #[cfg(not(feature = "loongson2k1000la"))]
+    { pa }
+}
+
 /// 独占拥有一页、可由内核通过 RAM 恒等映射访问的物理帧。
 ///
 /// 当前 RISC-V64 与 LoongArch64 内核页表都会恒等映射完整可分配 RAM。该类型将这一
@@ -48,14 +56,14 @@ impl OwnedPhysPage {
     /// 提供；设备页、已解除映射页或非直映射平台不能使用此接口。
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
-        unsafe { core::slice::from_raw_parts((self.frame.0 * PAGE_SIZE) as *const u8, PAGE_SIZE) }
+        unsafe { core::slice::from_raw_parts(frame_kernel_addr(self.frame.0 * PAGE_SIZE) as *const u8, PAGE_SIZE) }
     }
 
     /// 独占借用整页可写字节；与 [`Self::as_bytes`] 相同依赖恒等映射，且 `&mut self` 防止安全 Rust
     /// 层同时取得第二个可写借用，调用方仍须排除硬件/DMA 并发访问。
     #[inline]
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
-        unsafe { core::slice::from_raw_parts_mut((self.frame.0 * PAGE_SIZE) as *mut u8, PAGE_SIZE) }
+        unsafe { core::slice::from_raw_parts_mut(frame_kernel_addr(self.frame.0 * PAGE_SIZE) as *mut u8, PAGE_SIZE) }
     }
 }
 

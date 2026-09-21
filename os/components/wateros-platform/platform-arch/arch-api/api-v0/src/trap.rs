@@ -25,6 +25,8 @@ pub enum Exception {
     IllegalInstruction,
     /// 断点。
     Breakpoint,
+    /// 数据地址错误（例如硬件不支持的非对齐访问）。
+    AddressError,
     /// 当前 arch-api 未建模的异常码。
     Unsupported(usize),
 }

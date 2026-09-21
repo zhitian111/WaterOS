@@ -8,3 +8,9 @@ frame_alloctor_api_v0 = { path = "../../mm-frame-alloctor/frame-alloctor-api/api
 base = { path = "../../../wateros-base/", package = "wateros-base", default-features = true }
 log = { version = "0.4.29" }
 spin = "0.10"
+
+[features]
+default = []
+# Loongson 2K1000 LA264 has UAL disabled; keep this marker at the API layer so
+# the initial user ABI (including AT_HWCAP) can follow the selected board.
+loongson2k1000la = []

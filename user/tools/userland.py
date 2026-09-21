@@ -104,6 +104,17 @@ def _archlinux_rv_musl_prefix() -> str | None:
     return str(prefix)
 
 
+def _archlinux_la_glibc_prefix() -> str | None:
+    """Return Arch's complete LoongArch GNU toolchain prefix when installed."""
+    if not _is_arch_linux():
+        return None
+    prefix = "loongarch64-unknown-linux-gnu-"
+    required = ("gcc", "ar", "ranlib", "strip", "readelf")
+    if not all(shutil.which(f"{prefix}{suffix}") for suffix in required):
+        return None
+    return prefix
+
+
 def load_architecture(name: str) -> Architecture:
     raw = load_toml(CONFIG_ROOT / "architectures.toml").get("architectures", {})
     if name not in raw:
@@ -114,7 +125,8 @@ def load_architecture(name: str) -> Architecture:
         managed_prefix = (BUILD_ROOT / "toolchains" / name / "bin"
                           / entry["cross_compile"])
         managed_compiler = Path(f"{managed_prefix}gcc")
-        compat_prefix = _archlinux_rv_musl_prefix() if name == "rv" else None
+        compat_prefix = (_archlinux_rv_musl_prefix() if name == "rv"
+                         else _archlinux_la_glibc_prefix())
         cross = (str(managed_prefix) if managed_compiler.is_file()
                  else compat_prefix or entry["cross_compile"])
     if not cross:
@@ -591,10 +603,32 @@ def parse_arguments() -> argparse.Namespace:
     add_build_arguments(build_parser)
     image_parser = commands.add_parser("image", help="build a standalone EXT4 image")
     add_build_arguments(image_parser)
-    image_parser.add_argument("--image-size-mb", type=int, default=256)
+    def image_size(value: str) -> int | None:
+        if value.lower() == "auto":
+            return None
+        try:
+            return int(value)
+        except ValueError as error:
+            raise argparse.ArgumentTypeError("must be a positive MiB value or auto") from error
+    image_parser.add_argument("--image-size-mb", type=image_size, default=None)
     image_parser.add_argument("--block-size", type=int, default=4096)
     image_parser.add_argument("--inode-size", type=int, default=256)
     image_parser.add_argument("--output", type=Path)
+    image_parser.add_argument("--disk", action="store_true",
+                              help="also build a partitioned GPT/MBR disk image (.img)")
+    image_parser.add_argument("--partition-table", choices=("gpt", "mbr"), default="gpt")
+    image_parser.add_argument("--disk-size-mb", type=int, default=0,
+                              help="disk image size in MiB (auto-sized with --filesystem-image)")
+    image_parser.add_argument("--boot-dir", type=Path,
+                              help="VisionFive 2 layout: P3 FAT boot from this dir, P4 ext4 rootfs")
+    image_parser.add_argument("--boot-size-mb", type=int, default=64)
+    image_parser.add_argument("--boot-layout", choices=("vf2", "boot-root"), default="vf2")
+    image_parser.add_argument("--filesystem-image", dest="filesystem_images", action="append",
+                              type=Path, default=[],
+                              help="raw unpartitioned filesystem image for P2+")
+    image_parser.add_argument("--filesystem-type", dest="filesystem_types", action="append",
+                              default=[],
+                              help="partition type for each --filesystem-image")
     overlay_parser = commands.add_parser("overlay", help="copy and augment an EXT4 image")
     add_build_arguments(overlay_parser)
     overlay_parser.add_argument("--base-image", type=Path, required=True)
@@ -634,10 +668,30 @@ def main() -> int:
         # Local import keeps package/config unit tests independent from e2fsprogs.
         import image as image_tool
         if args.command == "image":
+            if args.filesystem_images and not args.disk:
+                raise UserlandError("--filesystem-image requires --disk")
+            if args.filesystem_types and len(args.filesystem_types) != len(args.filesystem_images):
+                raise UserlandError("--filesystem-type count must match --filesystem-image count")
+            if args.boot_dir is not None and args.partition_table == "mbr":
+                max_filesystem_images = 0 if args.boot_layout == "vf2" else 2
+            else:
+                max_filesystem_images = 3
+            if args.partition_table == "mbr" and len(args.filesystem_images) > max_filesystem_images:
+                raise UserlandError("MBR does not have enough primary partitions for the requested layout")
             staging = build_packages(architecture, package_names, args.jobs)
             output = args.output or image_tool.default_image_path(architecture.name)
+            image_size_mb = image_tool.resolve_image_size(
+                staging, args.image_size_mb, args.block_size, args.inode_size)
             image_tool.create_image(staging, output, architecture.name,
-                                    args.image_size_mb, args.block_size, args.inode_size)
+                                    image_size_mb, args.block_size, args.inode_size)
+            if args.disk:
+                disk_output = output.with_suffix(".img")
+                disk_size = args.disk_size_mb or None
+                image_tool.create_disk_image(staging, disk_output, architecture.name,
+                                             image_size_mb, args.partition_table,
+                                             args.boot_dir, args.boot_size_mb,
+                                             args.filesystem_images, args.filesystem_types,
+                                             disk_size, args.boot_layout)
             return 0
         if args.command == "overlay":
             staging = build_packages(architecture, package_names, args.jobs)

@@ -17,9 +17,12 @@ scripts/
 ├── config/            # Cargo feature 树的导出、转换和应用
 ├── debug/             # QEMU/GDB 调试、停滞检测与符号解析
 ├── gdb/               # 在 GDB 内加载的 WaterOS 扩展
+├── la2k/              # 2K1000 整盘镜像分片与 TFTP 烧录准备
 ├── maintenance/       # 清理、统计、导出和仓库维护
 ├── pc-hot/            # 基于 QEMU TCG plugin 的 PC 与等待热点分析
+├── real-hardware/     # 物理板块设备镜像写入
 ├── run/               # 统一 QEMU 启动器、兼容入口与并行运行
+├── root_image/        # 物理板内核 uImage 与启动模板（rootfs 整盘镜像见 user/tools）
 ├── setup/             # Rust、链接工具链和官方测试环境初始化
 ├── source/            # Shell 与 Python 脚本共用模块
 ├── syscall-profile/   # 系统调用频次和开销画像
@@ -71,6 +74,9 @@ Makefile 调用的底层脚本传递运行环境。常用直接入口如下：
 | `analysis/elf_syscalls.py` | ELF 可执行文件或动态库 | rootfs、动态库搜索目录、文本/JSON 输出和严格模式 |
 | `testing/operator_smoke.py` | `--arch {rv,la}` | profile、SMP、模式、Guest 脚本、超时和日志路径 |
 | `testing/ltp_prune_sdcard_before.sh` | 无 | 镜像、起始用例、libc、dry-run 和重置源镜像 |
+| `user/tools/root_image.py` | `build` 或 `verify` | `--output`、`--manifest`、`--copy-tree`、`--size-mib`、`--partition-table {mbr,gpt}`、`--source-root`、`--extra-image`/`--extra-partition-type`（P2 起追加无分区文件系统）、`--root-size-mib`、`--boot-dir`/`--boot-size-mib`（VisionFive 2：P3 FAT boot + P4 rootfs） |
+| `real-hardware/dd_image.sh` | `<image> <device>` | 交互确认（输入 `y`）；防呆：整盘/非系统盘/未挂载/容量校验；由 `make dd_img_vf2`、`make dd_img_2k1000` 包装 |
+| `la2k/prepare_tftp.sh` | `--image IMAGE` | 分片 2K1000 GPT 镜像、生成 U-Boot SATA 烧录脚本；默认以前台 `dnsmasq` 提供 TFTP，`--prepare-only` 仅准备文件；由 `make la2k_tftp{,_prepare}` 包装 |
 
 表格只用于入口导航，脚本的 `--help` 是参数名称、默认值和副作用的权威说明。新增或修改
 参数时必须同时更新帮助文本；供 Makefile 调用的兼容包装脚本可以将帮助直接转发给实际

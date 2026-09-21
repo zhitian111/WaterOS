@@ -39,6 +39,11 @@ pub const BLOCK_SUPPORTED_DEVICES: &[SupportedDeviceEntry] = &[
         name: "virtio-blk-pci-modern",
         compatible: "pci1af4,1042",
     },
+    SupportedDeviceEntry {
+        subsystem: "block",
+        name: "starfive-jh7110-mmc",
+        compatible: "starfive,jh7110-mmc",
+    },
 ];
 
 /// 返回本子系统声明支持的设备条目（非排他；可与其它子系统条目并存）。
@@ -77,4 +82,15 @@ pub fn self_test() {
     impl_block_cache::self_test();
     assert!(supported_devices().iter().all(|device| !device.compatible.is_empty()));
     log::info!("[driver/block] self_test complete");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn starfive_mmc_compatible_is_declared() {
+        let compatibles = alloc::vec![String::from("starfive,jh7110-mmc")];
+        assert!(block_subsystem_claims_device(&compatibles, DeviceType::Block));
+    }
 }

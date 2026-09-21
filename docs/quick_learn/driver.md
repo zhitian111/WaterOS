@@ -87,7 +87,7 @@ sequenceDiagram
 
 **绑定过程**：DTB 节点 → 与各子系统 `supported_devices()` 的 `compatible` 匹配（如 `virtio,mmio`、`ns16550a`、`pci1af4,10xx`）→ 构造具体设备（如 `VirtioGpuMmioDevice::from_mmio`）→ 注册进子系统注册表 → 上层用子系统公共 API 取用。
 
-**`machine()` 三选一**（`driver-impl`）：QEMU RISC-V、QEMU LoongArch64 virt、或 dummy 占位。上层只依赖 `MachineDriver` 契约，不感知具体平台——换平台不用改上层。
+**`machine()` 四选一**（`driver-impl`）：QEMU RISC-V、QEMU LoongArch64 virt、VisionFive 2/JH7110 或 Loongson 2K1000LA。未选择平台是配置错误；上层只依赖 `MachineDriver` 契约，不感知具体平台。
 
 ---
 

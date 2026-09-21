@@ -29,13 +29,25 @@ const AT_RANDOM : usize = 25;
 /// 向用户 ABI 报告的页面大小；必须与 MM API 的 4 KiB 页粒度保持一致。
 const PAGE_SIZE : usize = 4096;
 
-#[cfg(any(target_arch = "loongarch64", test))]
+#[cfg(all(any(target_arch = "loongarch64", test), not(feature = "loongson2k1000la")))]
 const HWCAP_LOONGARCH_UAL : usize = 1 << 2;
 #[cfg(any(target_arch = "loongarch64", test))]
 const HWCAP_LOONGARCH_FPU : usize = 1 << 3;
 
 #[cfg(any(target_arch = "loongarch64", test))]
-const fn loongarch_elf_hwcap() -> usize { HWCAP_LOONGARCH_UAL | HWCAP_LOONGARCH_FPU }
+const fn loongarch_elf_hwcap() -> usize {
+    #[cfg(feature = "loongson2k1000la")]
+    {
+        // LA264 on the 2K1000 does not support user-mode unaligned accesses.
+        HWCAP_LOONGARCH_FPU
+    }
+    #[cfg(not(feature = "loongson2k1000la"))]
+    {
+        // QEMU la464 exposes UAL; keep advertising it for the generic
+        // LoongArch profile and nested QEMU workloads.
+        HWCAP_LOONGARCH_UAL | HWCAP_LOONGARCH_FPU
+    }
+}
 
 fn push_to_user_stack<Ops : UserMemoryOps>(ops : &Ops,
                                            sp : &mut usize,
@@ -105,7 +117,8 @@ fn elf_hwcap() -> usize {
     #[cfg(target_arch = "loongarch64")]
     {
         // LoongArch 的位分配与 RISC-V 不同。仅报告已保存/恢复的基础能力，避免 glibc 在内核尚未
-        // 保存 LSX/LASX 寄存器时选择对应路径；QEMU la464 公开 UAL，且其 TCG 后端需要 auxv 报告它。
+        // 保存 LSX/LASX 寄存器时选择对应路径。2K1000 的 LA264 关闭 UAL；其它当前目标为
+        // QEMU la464，公开 UAL 且其 TCG 后端需要 auxv 报告它。
         loongarch_elf_hwcap()
     }
     #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
@@ -215,11 +228,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn loongarch_hwcap_advertises_tcg_host_requirements() {
+    fn loongarch_hwcap_matches_platform_capabilities() {
         let hwcap = loongarch_elf_hwcap();
-        assert_ne!(hwcap & HWCAP_LOONGARCH_UAL, 0);
-        assert_ne!(hwcap & HWCAP_LOONGARCH_FPU, 0);
-        assert_eq!(hwcap & !((1 << 2) | (1 << 3)), 0,
-                   "do not advertise unsaved LSX/LASX or unrelated extensions");
+        #[cfg(feature = "loongson2k1000la")]
+        assert_eq!(hwcap, HWCAP_LOONGARCH_FPU,
+                   "2K1000 LA264 must not advertise UAL");
+        #[cfg(not(feature = "loongson2k1000la"))]
+        {
+            assert_ne!(hwcap & HWCAP_LOONGARCH_UAL, 0);
+            assert_ne!(hwcap & HWCAP_LOONGARCH_FPU, 0);
+            assert_eq!(hwcap & !((1 << 2) | (1 << 3)), 0,
+                       "do not advertise unsaved LSX/LASX or unrelated extensions");
+        }
     }
 }

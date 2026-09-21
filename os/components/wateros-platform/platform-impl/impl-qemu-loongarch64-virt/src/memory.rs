@@ -1,4 +1,32 @@
-//! 平台物理内存布局：从引导 DTB 解析 RAM 上界（bring-up 期供 MM 初始化）。
+//! 平台物理内存布局：以 [`KernelMemoryLayout`] 契约描述 RAM 与恒等映射 MMIO；
+//! RAM 上界从引导 DTB 解析（含 QEMU 8.x 编码修正），失败时用回退值。
+
+use api_v0::memory::{KernelMemoryLayout, PhysicalRange};
+
+/// QEMU LoongArch64 `virt` 的 RAM 基址：内核从该物理地址启动。
+const QEMU_RAM_BASE : usize = 0x9000_0000;
+
+/// QEMU LoongArch64 `virt` 恒等映射 MMIO 区间。
+const MMIO_RANGES : [PhysicalRange; 2] = [
+    PhysicalRange::new(0x1000_0000, 0x3000_0000),
+    PhysicalRange::new(0x4000_0000, 0x8000_0000),
+];
+
+/// 当前平台的 RAM/MMIO 布局；LoongArch 通过 RAM 恒等映射探测，不使用探测虚拟页。
+pub fn kernel_memory_layout() -> KernelMemoryLayout {
+    KernelMemoryLayout {
+        ram : PhysicalRange::new(QEMU_RAM_BASE, detect_ram_end_exclusive()),
+        mmio : &MMIO_RANGES,
+        probe_virtual_page : None,
+    }
+    .validate()
+    .expect("QEMU LoongArch64 memory layout must be valid")
+}
+
+/// 物理 RAM 上界（不包含）：由 [`kernel_memory_layout`] 派生，保持单一事实来源。
+pub fn physical_ram_end_exclusive() -> usize {
+    kernel_memory_layout().ram.end
+}
 
 /// 修正部分 QEMU 8.x LoongArch `virt` 直接内核启动生成的异常 `reg` 编码。
 ///
@@ -20,7 +48,7 @@ fn normalize_qemu8_region(base : usize, size : usize) -> (usize, usize) {
 /// 放在 `0..0x1000_0000`，其余 768 MiB 放在
 /// `0x9000_0000..0xc000_0000`。内核从 `0x9000_0000` 启动，帧分配器只能
 /// 使用包含内核的高 RAM 段，不能跨过中间 MMIO/空洞。
-pub fn physical_ram_end_exclusive() -> usize {
+fn detect_ram_end_exclusive() -> usize {
     let dtb_pa = crate::dtb::dtb_pa();
     if dtb_pa != 0 {
         if let Ok(fdt) = unsafe { fdt::Fdt::from_ptr(dtb_pa as *const u8) } {

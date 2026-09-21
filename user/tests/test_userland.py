@@ -35,6 +35,29 @@ class ConfigurationTests(unittest.TestCase):
                 str(compiler.parent / "riscv64-buildroot-linux-musl-"),
             )
 
+    def test_archlinux_loongarch_toolchain_is_discovered(self) -> None:
+        prefix = "loongarch64-unknown-linux-gnu-"
+
+        def which(tool: str) -> str | None:
+            return f"/usr/bin/{tool}" if tool.startswith(prefix) else None
+
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(userland, "BUILD_ROOT", Path(temporary)), \
+                mock.patch.object(userland, "_is_arch_linux", return_value=True), \
+                mock.patch.object(userland.shutil, "which", side_effect=which), \
+                mock.patch.dict("os.environ", {}, clear=True):
+            architecture = userland.load_architecture("la")
+        self.assertEqual(architecture.cross_compile, prefix)
+
+    def test_incomplete_archlinux_loongarch_toolchain_uses_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(userland, "BUILD_ROOT", Path(temporary)), \
+                mock.patch.object(userland, "_is_arch_linux", return_value=True), \
+                mock.patch.object(userland.shutil, "which", return_value=None), \
+                mock.patch.dict("os.environ", {}, clear=True):
+            architecture = userland.load_architecture("la")
+        self.assertEqual(architecture.cross_compile, "loongarch64-linux-gnu-")
+
     def test_packages_resolve_dependencies_once(self) -> None:
         packages = userland.resolve_packages(("operator-tools",), "rv")
         self.assertEqual([package.name for package in packages],
@@ -49,11 +72,28 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual([package.name for package in la_packages],
                          ["base-layout", "busybox", "operator-tools", "microwindows"])
 
+    def test_nanox_apps_are_supported_and_dependency_ordered_on_both_arches(self) -> None:
+        expected = ["base-layout", "busybox", "operator-tools", "microwindows",
+                    "mgba", "waterfm"]
+        self.assertEqual([package.name for package in
+                          userland.resolve_packages(("waterfm",), "rv")], expected)
+        self.assertEqual([package.name for package in
+                          userland.resolve_packages(("waterfm",), "la")], expected)
+
+        start_nanox = (userland.PACKAGE_ROOT / "microwindows/scripts/start-nanox")
+        self.assertTrue(start_nanox.is_file())
+        self.assertIn("/usr/bin/waterfm", start_nanox.read_text(encoding="utf-8"))
+        self.assertIn("/usr/bin/water-mgba", start_nanox.read_text(encoding="utf-8"))
+
     def test_all_selects_every_package_supported_by_architecture(self) -> None:
         rv = userland.parse_package_names("all", "rv")
         la = userland.parse_package_names("all", "la")
         self.assertIn("microwindows", rv)
         self.assertIn("microwindows", la)
+        self.assertIn("mgba", rv)
+        self.assertIn("mgba", la)
+        self.assertIn("waterfm", rv)
+        self.assertIn("waterfm", la)
         self.assertIn("openjdk21", rv)
         self.assertIn("openjdk21", la)
         self.assertNotIn("minecraft-server", rv)

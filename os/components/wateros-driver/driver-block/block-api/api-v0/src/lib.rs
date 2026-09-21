@@ -1,12 +1,18 @@
-//! 块设备抽象：逻辑块寻址、全局注册表与默认块大小常量。
+//! 块设备抽象：逻辑块寻址、全局注册表、MBR/GPT 分区发现与默认块大小常量。
 //!
 //! [`BlockDevice`] 提供按块与按字节读取的默认实现；写路径由具体设备决定是否支持。
+//! 整盘注册时若首扇区包含可解析的分区表，对应分区设备会以
+//! [`BlockDeviceRole::Partition`] 紧随整盘注册，供 devfs 暴露 `/dev/vdaN` 等路径。
 
 #![no_std]
 extern crate alloc;
 
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 use spin::Mutex;
+
+pub mod partition;
+pub use partition::{GptPartition, MbrPartition, PartitionBlockDevice, PartitionScanError, scan_gpt,
+                    scan_mbr};
 
 pub use driver_api::{DriverError, DriverResult};
 
@@ -19,27 +25,49 @@ pub struct Lba(pub u64);
 
 impl From<usize> for Lba {
     /// 将 `usize` 截断/拓宽为 `u64` LBA（与平台指针宽度一致的内核路径常用）。
-    fn from(value : usize) -> Self { Self(value as u64) }
+    fn from(value : usize) -> Self {
+        Self(value as u64)
+    }
 }
 
 impl From<u64> for Lba {
     /// 直接包装为 LBA，无额外校验（非法 LBA 由具体设备在读时拒绝）。
-    fn from(value : u64) -> Self { Self(value) }
+    fn from(value : u64) -> Self {
+        Self(value)
+    }
 }
 
 /// 可在多任务间共享的块设备句柄（内部可变性由 `spin::Mutex` 提供）。
 pub type SharedBlockDevice = Arc<Mutex<Box<dyn BlockDevice>>>;
 
-// 注册顺序稳定：`register_block_device` 返回的下标即在此 `Vec` 中的位置。
-static BLOCK_DEVICES : Mutex<Vec<SharedBlockDevice>> = Mutex::new(Vec::new());
+/// 块设备在注册表中的语义角色：整盘或整盘的分区视图。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockDeviceRole {
+    /// 整盘；`disk_number` 为 Linux 风格盘号（vda/vdb…）。
+    Disk { disk_number : usize },
+    /// 整盘上的分区视图；`parent_device_index` 为整盘在注册表中的下标。
+    Partition { parent_device_index : usize, partition_number : u32 },
+}
+
+struct RegisteredBlockDevice {
+    device : SharedBlockDevice,
+    role : BlockDeviceRole,
+}
+
+/// 注册顺序稳定：`register_block_device` 返回整盘下标，分区紧随其后。
+static BLOCK_DEVICES : Mutex<Vec<Option<RegisteredBlockDevice>>> = Mutex::new(Vec::new());
 
 /// 块设备语义契约：按块读写为必须实现；按字节读提供默认实现（内部临时缓冲整段块）。
 pub trait BlockDevice: Send {
     /// 设备逻辑块大小；默认 [`BLOCK_SIZE`]。
-    fn block_size(&self) -> usize { BLOCK_SIZE }
+    fn block_size(&self) -> usize {
+        BLOCK_SIZE
+    }
 
     /// 设备总块数；未知时返回 `None`（默认）。
-    fn total_blocks(&self) -> Option<u64> { None }
+    fn total_blocks(&self) -> Option<u64> {
+        None
+    }
 
     /// 在请求进入设备或缓存前校验整块请求。
     ///
@@ -112,31 +140,170 @@ pub trait BlockDevice: Send {
     }
 }
 
-/// 将设备追加到全局表末尾，返回其索引（从 0 起）。
+/// 将整盘追加到全局表末尾，返回整盘下标（从 0 起）。
+///
+/// 若首扇区包含受支持的 MBR 主分区表（或 GPT 保护性 MBR），对应的有界分区设备
+/// 会紧随整盘注册；没有分区表是合法的整盘文件系统布局。
 pub fn register_block_device(device : SharedBlockDevice) -> usize {
+    let scan = scan_mbr(&device);
+    let mut children = Vec::new();
+    let mut gpt_error = None;
+    match &scan {
+        Ok(partitions) => {
+            for partition in partitions {
+                if let Ok(child) = PartitionBlockDevice::shared(device.clone(),
+                                                                partition.start_lba,
+                                                                partition.sectors)
+                {
+                    children.push((partition.number as u32, child));
+                }
+            }
+        }
+        Err(PartitionScanError::ProtectiveGpt) => {
+            match scan_gpt(&device) {
+                Ok(partitions) => {
+                    for partition in partitions {
+                        if let Some(sectors) = partition.end_lba
+                                                         .checked_sub(partition.start_lba)
+                                                         .and_then(|count| count.checked_add(1))
+                        {
+                            if let Ok(child) = PartitionBlockDevice::shared(device.clone(),
+                                                                            partition.start_lba,
+                                                                            sectors)
+                            {
+                                children.push((partition.number, child));
+                            }
+                        }
+                    }
+                }
+                Err(error) => gpt_error = Some(error),
+            }
+        }
+        Err(_) => {}
+    }
+
     let mut devices = BLOCK_DEVICES.lock();
-    devices.push(device);
-    devices.len() - 1
+    let disk_number = first_available_disk_number(&devices);
+    let disk_index = devices.len();
+    devices.push(Some(RegisteredBlockDevice { device : device.clone(),
+                                              role : BlockDeviceRole::Disk { disk_number } }));
+    for (partition_number, child) in children {
+        devices.push(Some(RegisteredBlockDevice {
+            device : child,
+            role : BlockDeviceRole::Partition { parent_device_index : disk_index,
+                                                partition_number },
+        }));
+    }
+    drop(devices);
+
+    match scan {
+        Ok(_) => {}
+        // 没有 MBR 签名是合法的整盘文件系统布局，不需要告警。
+        Err(PartitionScanError::InvalidSignature) => {}
+        // Protective MBR is expected when GPT was parsed successfully. Only
+        // report the bounded GPT failure that prevented child registration.
+        Err(PartitionScanError::ProtectiveGpt) if gpt_error.is_none() => {}
+        Err(error) => {
+            #[cfg(feature = "logging")]
+            logging::warn!("[driver-block-api] disk #{disk_number} partition scan skipped: {error:?}");
+            #[cfg(not(feature = "logging"))]
+            let _ = error;
+        }
+    }
+    if let Some(error) = gpt_error {
+        #[cfg(feature = "logging")]
+        logging::warn!("[driver-block-api] disk #{disk_number} GPT scan failed: {error:?}");
+        #[cfg(not(feature = "logging"))]
+        let _ = error;
+    }
+    disk_index
 }
 
-/// 当前已注册块设备数量。
+fn first_available_disk_number(devices : &[Option<RegisteredBlockDevice>]) -> usize {
+    (0..).find(|candidate| {
+             !devices.iter()
+                     .flatten()
+                     .any(|entry| {
+                         matches!(entry.role,
+                                  BlockDeviceRole::Disk { disk_number }
+                                  if disk_number == *candidate)
+                     })
+         })
+         .expect("finite registry always has a free disk number")
+}
+
+/// 当前已注册块设备数量，包括整盘与自动发现的分区设备。
 pub fn block_device_count() -> usize {
     BLOCK_DEVICES.lock()
-                 .len()
+                 .iter()
+                 .flatten()
+                 .count()
 }
 
-/// 取表中第一个设备，常用于根文件系统绑定单盘场景。
+/// 取表中第一个活动设备（整盘），常用于根文件系统绑定单盘场景。
 pub fn first_block_device() -> Option<SharedBlockDevice> {
     BLOCK_DEVICES.lock()
-                 .first()
-                 .cloned()
+                 .iter()
+                 .flatten()
+                 .next()
+                 .map(|entry| entry.device.clone())
 }
 
-/// 按下标取设备；越界返回 `None`。
+/// 按下标取活动设备；越界或已注销返回 `None`。
 pub fn block_device_at(index : usize) -> Option<SharedBlockDevice> {
     BLOCK_DEVICES.lock()
                  .get(index)
-                 .cloned()
+                 .and_then(Option::as_ref)
+                 .map(|entry| entry.device.clone())
+}
+
+/// 按下标取设备角色；越界或已注销返回 `None`。
+pub fn block_device_role_at(index : usize) -> Option<BlockDeviceRole> {
+    BLOCK_DEVICES.lock()
+                 .get(index)
+                 .and_then(Option::as_ref)
+                 .map(|entry| entry.role)
+}
+
+/// 不持注册表锁地快照所有活动设备及其角色。
+pub fn block_devices_snapshot() -> Vec<(usize, SharedBlockDevice, BlockDeviceRole)> {
+    BLOCK_DEVICES.lock()
+                 .iter()
+                 .enumerate()
+                 .filter_map(|(index, entry)| {
+                     entry.as_ref()
+                          .map(|entry| (index, entry.device.clone(), entry.role))
+                 })
+                 .collect()
+}
+
+/// 注销一个注册表槽位；注销整盘时连带移除其分区子设备。
+///
+/// 已存在的 [`SharedBlockDevice`] 克隆不受影响；物理热拔驱动必须先静默 DMA 并让
+/// 在途 I/O 失败再调用，该硬件序列无法在无目标板环境下测试。
+pub fn unregister_block_device(index : usize) -> bool {
+    let mut devices = BLOCK_DEVICES.lock();
+    let Some(role) = devices.get(index)
+                            .and_then(Option::as_ref)
+                            .map(|entry| entry.role)
+    else {
+        return false;
+    };
+    devices[index] = None;
+    if matches!(role, BlockDeviceRole::Disk { .. }) {
+        for entry in devices.iter_mut() {
+            if entry.as_ref()
+                    .is_some_and(|entry| {
+                        matches!(entry.role,
+                                 BlockDeviceRole::Partition { parent_device_index, .. }
+                                 if parent_device_index == index)
+                    })
+            {
+                *entry = None;
+            }
+        }
+    }
+    true
 }
 
 /// 自检：校验常量与样例设备的 [`read_prefix`] 行为。
@@ -179,15 +346,18 @@ impl SampleBlockDevice {
 }
 
 impl BlockDevice for SampleBlockDevice {
-    fn total_blocks(&self) -> Option<u64> { Some(2) }
+    fn total_blocks(&self) -> Option<u64> {
+        Some(2)
+    }
 
     fn read_blocks(&mut self, start_block : Lba, buf : &mut [u8]) -> DriverResult<()> {
         if buf.len() % BLOCK_SIZE != 0 {
             return Err(DriverError::InvalidParam);
         }
-        let start = usize::try_from(start_block.0).map_err(|_| DriverError::InvalidParam)?
-                                                  .checked_mul(BLOCK_SIZE)
-                                                  .ok_or(DriverError::InvalidParam)?;
+        let start = usize::try_from(start_block.0)
+            .map_err(|_| DriverError::InvalidParam)?
+            .checked_mul(BLOCK_SIZE)
+            .ok_or(DriverError::InvalidParam)?;
         let end = start.checked_add(buf.len())
                        .ok_or(DriverError::InvalidParam)?;
         let src = self.bytes
@@ -201,5 +371,7 @@ impl BlockDevice for SampleBlockDevice {
         Err(DriverError::Unsupported)
     }
 
-    fn flush(&mut self) -> DriverResult<()> { Ok(()) }
+    fn flush(&mut self) -> DriverResult<()> {
+        Ok(())
+    }
 }

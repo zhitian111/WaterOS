@@ -1,0 +1,11 @@
+[package]
+name = "vim"
+version = "9.1.1590-wateros1"
+source = ""
+architectures = ["rv", "la"]
+default = true
+dependencies = ["base-layout", "busybox"]
+build = "build.py"
+install_prefix = "/usr"
+allow_overwrite = []
+inputs = []

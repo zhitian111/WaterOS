@@ -81,6 +81,24 @@ const SEGV_ACCERR : i32 = 2;
 /// 当前支持架构的 syscall/trap 指令宽度，用于将用户 PC 前进到下一条指令。
 const SYSCALL_INSN_BYTES : usize = 4;
 
+#[cfg(feature = "loongson2k1000la")]
+fn emulate_unaligned_user_access(cx : &mut TrapContext) -> bool {
+    use mm::api::user_access::UserMemoryOps;
+
+    let memory = mm::ActiveUserMemoryOps::new(task::current_task_user_aspace_ptr());
+    platform::arch::trap::emulate_unaligned_access(
+                                                   cx,
+                                                   |address, destination| {
+                                                       matches!(memory.copy_from_user(destination, mm::api::addr::VirtAddr(address)),
+                     Ok(copied) if copied == destination.len())
+                                                   },
+                                                   |address, source| {
+                                                       matches!(memory.copy_to_user(mm::api::addr::VirtAddr(address), source),
+                     Ok(copied) if copied == source.len())
+                                                   },
+    )
+}
+
 /// 在投递 SIGSEGV 前打印任务与用户态 fault 上下文。
 fn log_unhandled_user_fault_probe(cx : &TrapContext, trap_cause : TrapCause, raw_cause : usize) {
     if let Some(s) = task::current_process_task_snapshot() {
@@ -212,6 +230,13 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                       cx,
                       raw_cause);
     let trap_cause = cx.trap_cause();
+    #[cfg(feature = "loongson2k1000la")]
+    let unaligned_emulated = cx.returns_to_user() &&
+                             matches!(trap_cause,
+                                      TrapCause::Exception(Exception::AddressError)) &&
+                             emulate_unaligned_user_access(cx);
+    #[cfg(not(feature = "loongson2k1000la"))]
+    let unaligned_emulated = false;
     let mut restart = None;
     match trap_cause {
         TrapCause::Exception(Exception::UserEnvCall) => {
@@ -492,7 +517,10 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
             }
         }
         _ => {
-            if cx.returns_to_user() {
+            if unaligned_emulated {
+                // LA264 has no hardware UAL support; the arch layer advanced
+                // ERA after byte-wise emulation, so resume the same task.
+            } else if cx.returns_to_user() {
                 let (signal, code, address) = match trap_cause {
                     // ILL_ILLOPC and the faulting instruction address.
                     TrapCause::Exception(Exception::IllegalInstruction) => {
@@ -500,6 +528,9 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                     }
                     TrapCause::Exception(Exception::Breakpoint) => {
                         (syscall::SIGTRAP, TRAP_BRKPT, cx.user_pc())
+                    }
+                    TrapCause::Exception(Exception::AddressError) => {
+                        (syscall::SIGBUS, BUS_ADRERR, cx.fault_addr())
                     }
                     _ => (syscall::SIGSEGV, SEGV_MAPERR, cx.fault_addr()),
                 };
@@ -510,6 +541,16 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                       cx.user_pc(),
                       cx.fault_addr(),
                       signal);
+                if matches!(trap_cause,
+                            TrapCause::Exception(Exception::Breakpoint))
+                {
+                    // Breakpoint has no meaningful BadV; dump the LoongArch
+                    // argument/return registers so a user abort can be tied
+                    // to the preceding syscall or ABI failure.
+                    warn!("[trap] breakpoint regs args={:?} sp={:#x}",
+                          cx.syscall_args(),
+                          cx.user_sp());
+                }
                 if !syscall::raise_current_fault_signal(signal, code, address) {
                     kill_current_user_task("user exception", trap_cause, cx, signal);
                 }
@@ -521,11 +562,12 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 }
                 finish_trap_return(frame, cx, raw_cause);
                 return;
+            } else {
+                fatal_kernel_trap("unexpected trap",
+                                  trap_cause,
+                                  raw_cause,
+                                  cx);
             }
-            fatal_kernel_trap("unexpected trap",
-                              trap_cause,
-                              raw_cause,
-                              cx);
         }
     }
 

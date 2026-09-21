@@ -10,6 +10,7 @@
 - Makefile 设计、参数传播、目标分层与扩展约定：[`makefile.md`](./makefile.md)。
 - 脚本选型、直接调用场景与状态影响：[`scripts/README.md`](./scripts/README.md)。
 - 完整脚本清单、参数示例与目录规范：[`os/scripts/README.md`](../../os/scripts/README.md)。
+- 2K1000 GPT 镜像分片、TFTP 烧录和副作用说明：[`os/scripts/la2k/README.md`](../../os/scripts/la2k/README.md)。
 - GDB、停滞检测、现场快照和故障注入：[`debugging.md`](./debugging.md)。
 - QEMU plugin 的 PC 热点与 WFI 等待时间统计：[`pc-hot.md`](./pc-hot.md)。
 - ELF 可执行文件、动态库依赖及 Linux syscall 静态审计：[`elf-syscalls.md`](./elf-syscalls.md)。

@@ -25,6 +25,19 @@ use core::sync::atomic::AtomicU64;
 use frame_alloctor::{frame_alloc_result, frame_dealloc_result, frame_inc_ref, frame_ref_count};
 use vfs_api::VfsFileContentIdentity;
 
+/// Convert a physical byte address to the address usable by kernel code.
+/// Only the 2K1000 profile runs kernel RAM through the high cached window;
+/// QEMU LoongArch keeps the original low-address identity mapping.
+#[inline]
+pub(crate) fn phys_access_addr(pa : usize) -> usize {
+    #[cfg(feature = "loongson2k1000la")]
+    {
+        0x9000_0000_0000_0000usize | pa
+    }
+    #[cfg(not(feature = "loongson2k1000la"))]
+    { pa }
+}
+
 /// 私有匿名映射的惰性缺页 loader：缺页时不做任何加载，
 /// 直接保留 VMA 缺页路径预先清零的页（等价于按需零页）。
 ///

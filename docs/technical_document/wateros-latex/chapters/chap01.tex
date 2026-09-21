@@ -49,7 +49,7 @@ Rust和这种拆法比较合拍。\code{api-v0}用trait列出必须实现的行�
   多类调度队列已含 FIFO/RR 骨架，当前有效策略仍为CFS类路径；单核假设，阻塞与睡眠委托waitqueue。 \\
   驱动 &
   RISC-V经DTB扫描VirtIO-MMIO块设备与网卡；LoongArch经PCI枚举VirtIO-PCI设备。
-  块设备注册到统一\code{BlockDevice}表并配合\code{impl-block-cache}；网络栈为smoltcp，字符设备含UART与若干桩节点；非QEMU板级仅有\code{impl-dummy}占位。 \\
+  块设备注册到统一\code{BlockDevice}表并配合\code{impl-block-cache}；网络栈为smoltcp，字符设备含UART与若干桩节点；VisionFive 2/JH7110 与 Loongson 2K1000LA 使用各自的真实板级驱动。 \\
   文件系统与VFS &
   默认\code{impl-ext4-rs}提供ext4读写根卷，挂载入口为 \code{mount\_default\_root\_rw}；devfs、procfs与根卷句柄由\code{impl-kernel}实现。
   VFS经\code{impl-fs-bridge}消费FS API，叠加挂载表、页缓存与\code{impl-fd-session}的per-task fd表、cwd、dup/fork继承与CLOEXEC；\code{FsAsyncIo}尚未实现。 \\
@@ -75,7 +75,7 @@ Rust和这种拆法比较合拍。\code{api-v0}用trait列出必须实现的行�
   \item \wosstrong{单核与中断。}当前为单hart bring-up，无SMP调度，也无完整IRQ驱动链；抢占依赖定时器tick与显式yield/block。
   \item \wosstrong{Linux语义子集。}调度RT策略、NUMA、完整\code{/proc}字段、SUID exec、journal恢复等均未按生产内核实现；procfs与securityfs以满足LTP子集为主。
   \item \wosstrong{凭证与安全。}\code{wateros-cred}的cap与inode权限多为桩；VFS open未与凭证深度联动；\code{klog}的\syscall{syslog}读写未做权限校验，且无\code{/dev/kmsg}节点。
-  \item \wosstrong{stub与占位crate。}\code{wateros-ipc-api-v0}与部分\code{impl-dummy}仅保证编译通过；非QEMU平台无法真实启动。
+  \item \wosstrong{stub与占位crate。}\code{wateros-ipc-api-v0}与部分\code{impl-dummy}仍仅保证编译通过；驱动平台选择不再提供 dummy 回退。
   \item \wosstrong{LTP覆盖。}\code{ltp\_testcode.sh}已接入bring-up队列，但内核syscall/VFS/信号语义未覆盖LTP全集，部分用例预期失败或需从队列中排除。
   \item \wosstrong{用户态工具链。}仓库内\code{user/}子模块仅构建RISC-V用户态烟测ELF；LoongArch测程依赖根卷内预置的glibc/musl二进制与脚本。
 \end{itemize}

@@ -47,14 +47,13 @@ const CSR_PWCH : usize = 0x1D;
 const CSR_STLBPS : usize = 0x1E;
 const CSR_TLBRENTRY : usize = 0x88;
 const CSR_TLBREHI : usize = 0x8E;
+#[cfg(not(feature = "loongson2k1000la"))]
 const CSR_DMW0 : usize = 0x180;
 const CSR_EUEN : usize = 0x2;
 const LOONGARCH_PAGE_SIZE_BITS : usize = 12;
 const LOONGARCH_PWCL_4K_3LEVEL : usize = 12 | (9 << 5) | (21 << 10) | (9 << 15);
 const LOONGARCH_PWCH_4K_3LEVEL : usize = 30 | (9 << 6);
-/// PLV0 专用直接映射窗口：VA[47:0] → PA[47:0]，MAT 为一致可缓存。
-/// 此处不开放 PLV3，迫使用户代码走 PGDL/TLB，同时 trap/重填入口与内核栈不依赖
-/// 当前用户 PGDL。
+#[cfg(not(feature = "loongson2k1000la"))]
 const LOONGARCH_DMW0_PLV0_CACHED : usize = 0x11;
 /// `PRMD.PPLV`：返回后特权级域（与 `returns_to_user` 判定一致）。
 const LOONGARCH_PRMD_PPLV_MASK : usize = 0x3;
@@ -66,6 +65,8 @@ const LOONGARCH_USER_PLV : usize = 0x3;
 const TIMER_INTERRUPT_PENDING : usize = 1 << 11;
 /// `ESTAT.IS.IPI`：核间中断挂起位。
 const IPI_INTERRUPT_PENDING : usize = 1 << 12;
+/// `ESTAT.IS.HWI0..HWI7`：板级外部中断挂起位（LoongArch 位 2..=9）。
+const EXTERNAL_INTERRUPT_PENDING : usize = 0b1111_1111 << 2;
 /// 单次定时器中断后重新武装的切片长度（StableCounter
 /// 刻度）；与调度策略相关，非用户 ABI。
 const TIMER_SLICE_TICKS : u64 = 10_000_000;
@@ -84,8 +85,7 @@ fn decode_loongarch64_trap_cause(estat : usize) -> TrapCause {
     if ecode == 0 && (estat & TIMER_INTERRUPT_PENDING) != 0 {
         return TrapCause::Interrupt(Interrupt::SupervisiorTimer);
     }
-
-    if ecode == 0 && (estat & (1 << 2)) != 0 {
+    if (estat & EXTERNAL_INTERRUPT_PENDING) != 0 {
         return TrapCause::Interrupt(Interrupt::SupervisiorExternel);
     }
     match ecode {
@@ -93,7 +93,9 @@ fn decode_loongarch64_trap_cause(estat : usize) -> TrapCause {
         // ecode 2 = PIS (store invalid), ecode 4 = PME (page modified).
         2 | 4 => TrapCause::Exception(Exception::StorePageFault),
         3 | 6 => TrapCause::Exception(Exception::InstructionPageFault),
-        9 => TrapCause::Exception(Exception::Breakpoint),
+        // ADEM: data address error (not a software breakpoint).  LA264 raises
+        // this for non-aligned loads/stores when UAL is disabled.
+        9 => TrapCause::Exception(Exception::AddressError),
         11 => TrapCause::Exception(Exception::UserEnvCall),
         12 => TrapCause::Exception(Exception::Breakpoint),
         13 => TrapCause::Exception(Exception::IllegalInstruction),
@@ -119,6 +121,7 @@ fn write_csr<const CSR: usize>(value : usize) {
 /// 安装异常入口：将 `__alltraps` 写入 `EENTRY`（与 `trap.S` 中符号地址一致）。
 pub fn init_trap() {
     let addr = __alltraps as *const () as usize;
+    #[cfg(not(feature = "loongson2k1000la"))]
     write_csr::<CSR_DMW0>(LOONGARCH_DMW0_PLV0_CACHED);
     write_csr::<CSR_EENTRY>(addr);
     write_csr::<CSR_TLBRENTRY>(__tlb_refill as *const () as usize);
@@ -131,6 +134,167 @@ pub fn init_trap() {
     unsafe {
         asm!("invtlb 0, $zero, $zero");
     }
+}
+
+/// Emulate an integer unaligned access on LA264, whose UAL bit is disabled.
+///
+/// Instruction and data access must go through the caller-provided fallible
+/// user-memory callbacks. A failed or cross-page access therefore returns
+/// `false` instead of causing a nested kernel fault. LL/SC is deliberately not
+/// emulated because byte copies cannot preserve its atomic reservation
+/// semantics.
+#[cfg(feature = "loongson2k1000la")]
+fn read_unaligned_value<ReadUser>(read_user : &mut ReadUser,
+                                  address : usize,
+                                  size : usize)
+                                  -> Option<usize>
+where ReadUser : FnMut(usize, &mut [u8]) -> bool {
+    let mut bytes = [0u8; core::mem::size_of::<usize>()];
+    read_user(address, &mut bytes[..size]).then_some(usize::from_le_bytes(bytes))
+}
+
+#[cfg(feature = "loongson2k1000la")]
+fn write_unaligned_value<WriteUser>(write_user : &mut WriteUser,
+                                    address : usize,
+                                    value : usize,
+                                    size : usize)
+                                    -> bool
+where WriteUser : FnMut(usize, &[u8]) -> bool {
+    write_user(address, &value.to_le_bytes()[..size])
+}
+
+#[cfg(feature = "loongson2k1000la")]
+pub fn emulate_unaligned_access<ReadUser, WriteUser>(cx : &mut TrapContext,
+                                                     mut read_user : ReadUser,
+                                                     mut write_user : WriteUser)
+                                                     -> bool
+where ReadUser : FnMut(usize, &mut [u8]) -> bool,
+      WriteUser : FnMut(usize, &[u8]) -> bool {
+    let mut instruction = [0u8; core::mem::size_of::<u32>()];
+    if !read_user(cx.era, &mut instruction) {
+        return false;
+    }
+    let inst = u32::from_le_bytes(instruction) as usize;
+
+    // 2RI12: ld/st.{b,h,w,d} with a signed 12-bit byte offset.
+    let opcode10 = (inst >> 22) & 0x3ff;
+    if (0xa0..=0xaa).contains(&opcode10) {
+        let immediate = ((inst >> 10) & 0xfff) as isize;
+        let immediate = if immediate & 0x800 != 0 { immediate - 0x1000 } else { immediate };
+        let base = (inst >> 5) & 0x1f;
+        let register = inst & 0x1f;
+        let address = (cx.x[base] as isize).wrapping_add(immediate) as usize;
+        let (size, store) = match opcode10 {
+            0xa0 | 0xa8 => (1, false),
+            0xa1 | 0xa9 => (2, false),
+            0xa2 | 0xaa => (4, false),
+            0xa3 => (8, false),
+            0xa4 => (1, true),
+            0xa5 => (2, true),
+            0xa6 => (4, true),
+            0xa7 => (8, true),
+            _ => return false,
+        };
+        if store {
+            if !write_unaligned_value(&mut write_user, address, cx.x[register], size) {
+                return false;
+            }
+        } else {
+            let Some(value) = read_unaligned_value(&mut read_user, address, size) else {
+                return false;
+            };
+            let value = match opcode10 {
+                0xa0 => (value as u8 as i8) as isize as usize,
+                0xa1 => (value as u16 as i16) as isize as usize,
+                0xa2 => (value as u32 as i32) as isize as usize,
+                _ => value,
+            };
+            if register != 0 {
+                cx.x[register] = value;
+            }
+        }
+        cx.era = cx.era.wrapping_add(4);
+        return true;
+    }
+
+    // 3R: indexed ldx/stx forms, including unsigned loads.
+    let opcode17 = (inst >> 15) & 0x1ffff;
+    if (0x7000..=0x7050).contains(&opcode17) {
+        let index = (inst >> 10) & 0x1f;
+        let base = (inst >> 5) & 0x1f;
+        let register = inst & 0x1f;
+        let address = cx.x[base].wrapping_add(cx.x[index]);
+        let (size, store) = match opcode17 {
+            0x7000 | 0x7040 => (1, false),
+            0x7008 | 0x7048 => (2, false),
+            0x7010 | 0x7050 => (4, false),
+            0x7018 => (8, false),
+            0x7020 => (1, true),
+            0x7028 => (2, true),
+            0x7030 => (4, true),
+            0x7038 => (8, true),
+            _ => return false,
+        };
+        if store {
+            if !write_unaligned_value(&mut write_user, address, cx.x[register], size) {
+                return false;
+            }
+        } else {
+            let Some(value) = read_unaligned_value(&mut read_user, address, size) else {
+                return false;
+            };
+            let value = match opcode17 {
+                0x7000 => (value as u8 as i8) as isize as usize,
+                0x7008 => (value as u16 as i16) as isize as usize,
+                0x7010 => (value as u32 as i32) as isize as usize,
+                _ => value,
+            };
+            if register != 0 {
+                cx.x[register] = value;
+            }
+        }
+        cx.era = cx.era.wrapping_add(4);
+        return true;
+    }
+
+    // 2RI14: only ldptr/stptr are safe to emulate. LL/SC (0x20..=0x23)
+    // requires architectural reservation semantics and is rejected above.
+    let opcode8 = (inst >> 24) & 0xff;
+    if (0x24..=0x27).contains(&opcode8) {
+        let immediate = ((inst >> 10) & 0x3fff) as isize;
+        let immediate = if immediate & 0x2000 != 0 { immediate - 0x4000 } else { immediate } << 2;
+        let base = (inst >> 5) & 0x1f;
+        let register = inst & 0x1f;
+        let address = (cx.x[base] as isize).wrapping_add(immediate) as usize;
+        let (size, store) = match opcode8 {
+            0x24 => (4, false),
+            0x25 => (4, true),
+            0x26 => (8, false),
+            0x27 => (8, true),
+            _ => return false,
+        };
+        if store {
+            if !write_unaligned_value(&mut write_user, address, cx.x[register], size) {
+                return false;
+            }
+        } else {
+            let Some(value) = read_unaligned_value(&mut read_user, address, size) else {
+                return false;
+            };
+            let value = if size == 4 {
+                (value as u32 as i32) as isize as usize
+            } else {
+                value
+            };
+            if register != 0 {
+                cx.x[register] = value;
+            }
+        }
+        cx.era = cx.era.wrapping_add(4);
+        return true;
+    }
+
+    false
 }
 
 /// LoongArch64 当前不需要 RISC-V `SUM` 一类的用户页访问准备。

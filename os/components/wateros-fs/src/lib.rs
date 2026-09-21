@@ -116,21 +116,17 @@ pub fn init_after_boot() {
         }
     };
 
-    let mut chosen : Option<(&'static dyn api_v0::FsImpl, api_v0::FsKind)> = None;
-    for imp in registered_fs_impls() {
-        match imp.probe(&device) {
-            Ok(Some(kind)) if imp.supports(kind, api_v0::FsAccessMode::ReadWrite) => {
-                chosen = Some((*imp, kind));
-                break;
+    let mut chosen = probe_root_device(&device);
+    if chosen.is_none() {
+        // 整盘不是文件系统（带分区表的整盘镜像）时，探测第一个可识别的分区。
+        for partition in devfs::active_impl::partition_block_paths() {
+            if let Ok(partition_device) = devfs::active_impl::lookup_block_device(&partition) {
+                if let Some(found) = probe_root_device(&partition_device) {
+                    logging::info!("[fs] init: probed root partition {}", partition);
+                    chosen = Some(found);
+                    break;
+                }
             }
-            Ok(Some(kind)) if imp.supports(kind, api_v0::FsAccessMode::ReadOnly) => {
-                chosen = Some((*imp, kind));
-                break;
-            }
-            Ok(_) => {}
-            Err(err) => logging::warn!("[fs] probe via {} failed: {:?}",
-                                       imp.name(),
-                                       err),
         }
     }
 
@@ -145,6 +141,27 @@ pub fn init_after_boot() {
                    kind);
     rootfs::active_impl::set_active_fs_impl(imp);
     logging::info!("[fs] init end");
+}
+
+/// 用已注册 FS 实现探测块设备，返回首个识别出的 (impl, kind)。
+fn probe_root_device(
+    device : &driver_block_api_v0::SharedBlockDevice,
+) -> Option<(&'static dyn api_v0::FsImpl, api_v0::FsKind)> {
+    for imp in registered_fs_impls() {
+        match imp.probe(device) {
+            Ok(Some(kind)) if imp.supports(kind, api_v0::FsAccessMode::ReadWrite) => {
+                return Some((*imp, kind));
+            }
+            Ok(Some(kind)) if imp.supports(kind, api_v0::FsAccessMode::ReadOnly) => {
+                return Some((*imp, kind));
+            }
+            Ok(_) => {}
+            Err(err) => logging::warn!("[fs] probe via {} failed: {:?}",
+                                       imp.name(),
+                                       err),
+        }
+    }
+    None
 }
 
 /// FS 启动前阶段入口；只建立不依赖块设备的边界，不提前访问根卷。
