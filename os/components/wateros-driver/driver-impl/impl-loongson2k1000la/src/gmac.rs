@@ -699,6 +699,9 @@ impl NetworkDevice for LoongsonGmacDevice {
 }
 
 pub fn register_from_dtb(dtb_pa : usize) -> DriverResult<usize> {
+    if dtb_pa == 0 {
+        return register_board_fallback();
+    }
     let fdt = read_fdt(dtb_pa)?;
     for node in fdt.all_nodes() {
         let compatibles = compatible_list(&node);
@@ -714,21 +717,33 @@ pub fn register_from_dtb(dtb_pa : usize) -> DriverResult<usize> {
                        mmio.base);
             continue;
         }
-        let mac_address = mac_address_from_node(&node);
-        let device = LoongsonGmacDevice::from_mmio(MmioRegion { base : mmio.base,
-                                                                size : if mmio.size == 0 {
-                                                                    DEFAULT_MMIO_SIZE
-                                                                } else {
-                                                                    mmio.size
-                                                                } },
-                                                   mac_address)?;
-        let index = register_network_device(Arc::new(Mutex::new(Box::new(device))));
-        log::info!("[driver][2k1000] registered {DEVICE_NAME} network device #{} mac={:02x?}",
-                   index,
-                   mac_address);
-        return Ok(index);
+        return register_mmio(MmioRegion { base : mmio.base,
+                                          size : if mmio.size == 0 {
+                                              DEFAULT_MMIO_SIZE
+                                          } else {
+                                              mmio.size
+                                          } },
+                             mac_address_from_node(&node));
     }
     Err(DriverError::NotFound)
+}
+
+/// Register GMAC0 from the board profile when PMON supplied no DTB.  The
+/// address is the same one used by the board DTS (`ethernet@40040000`).
+pub fn register_board_fallback() -> DriverResult<usize> {
+    log::info!("[driver][2k1000] using board GMAC0 fallback base={:#x}", GMAC0_PADDR);
+    register_mmio(MmioRegion { base : GMAC0_PADDR,
+                               size : DEFAULT_MMIO_SIZE },
+                  DEFAULT_MAC_ADDRESS)
+}
+
+fn register_mmio(mmio : MmioRegion, mac_address : [u8; 6]) -> DriverResult<usize> {
+    let device = LoongsonGmacDevice::from_mmio(mmio, mac_address)?;
+    let index = register_network_device(Arc::new(Mutex::new(Box::new(device))));
+    log::info!("[driver][2k1000] registered {DEVICE_NAME} network device #{} mac={:02x?}",
+               index,
+               mac_address);
+    Ok(index)
 }
 
 pub fn test() {

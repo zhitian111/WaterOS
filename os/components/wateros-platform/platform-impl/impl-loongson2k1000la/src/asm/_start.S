@@ -1,12 +1,28 @@
 # 2K1000LA PMON/uImage 入口：PMON 加载 uImage 后跳转到 _start。
-# arch boot ABI: $r4 = 逻辑 CPU id（读 CSR 0x20/CPUNUM）；$r5/$r6/$r7 = 透传参数
-# （PMON 不携带 UEFI argc/argv/envp，内核忽略）。
+# arch boot ABI: $r4 = 逻辑 CPU id（读 CSR 0x20/CPUNUM）；$r5/$r6/$r7 = 透传参数。
+# U-Boot CONFIG_LOONGSON_BOOT_FIXUP 调用内核时使用 a0=argc、a1=argv、
+# a2=bootparam、a3=fdt；保留 a3，使 Rust 入口能够发现真实 DTB。
 # U-Boot 2022.04 上 load/entry 落在 0x9000000098000000 窗口，避开
 # 物理 0x90000000 处的 U-Boot lock-cache 保留区。
     .section .text.entry.platform
     .globl _start
     .align 2
 _start:
+    /*
+     * U-Boot `go` enters with PG enabled and relies on the firmware's DMW
+     * windows.  Re-establish both windows before the first Rust-visible
+     * access: DMW1 covers this cached code/data segment and DMW0 is the
+     * uncached MMIO alias used by the 2K1000 UART and devices.
+     */
+    pcaddi $t0, 0x0
+    srli.d $t0, $t0, 0x30
+    slli.d $t0, $t0, 0x30
+    addi.d $t0, $t0, 0x11
+    csrwr $t0, 0x181
+    ori $t0, $zero, 0x1
+    lu52i.d $t0, $t0, -0x800
+    csrwr $t0, 0x180
+
     /* 早期 MMIO 串口探针：在进入 Rust 前先写一个 'W'，用于区分
      * “U-Boot 未跳转”与“WaterOS 进入后在初始化早期挂死”。 */
     li.d $t0, 0x800000001fe20000
@@ -17,9 +33,12 @@ _start:
     ori $t1, $zero, 0x57
     st.b $t1, $t0, 0
 
-    move $r7, $r6
-    move $r6, $r5
+    /* WaterOS 不消费 vendor bootparam，但必须保留 U-Boot 的 a3=FDT。 */
+    move $t0, $r7
+    move $t1, $r5
     move $r5, $r4
+    move $r6, $t1
+    move $r7, $t0
     csrrd $r4, 0x20
     andi $r4, $r4, 0x1ff
     b __wateros_arch_boot

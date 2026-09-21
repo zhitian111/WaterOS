@@ -1,0 +1,70 @@
+/dts-v1/;
+
+/ {
+    model = "WaterOS Loongson 2K1000LA";
+    compatible = "loongson,ls2k1000", "loongson,ls2k";
+    #address-cells = <2>;
+    #size-cells = <2>;
+
+    chosen {
+        stdout-path = "serial0:115200n8";
+        bootargs = "console=ttyS0,115200n8 root=/dev/vda2 rw";
+    };
+
+    memory@90000000 {
+        device_type = "memory";
+        reg = <0x0 0x90000000 0x0 0x30000000>;
+    };
+
+    cpus {
+        #address-cells = <1>;
+        #size-cells = <0>;
+        timebase-frequency = <100000000>;
+
+        cpu@0 {
+            device_type = "cpu";
+            compatible = "loongarch";
+            reg = <0>;
+        };
+
+        cpu@1 {
+            device_type = "cpu";
+            compatible = "loongarch";
+            reg = <1>;
+        };
+    };
+
+    soc {
+        compatible = "simple-bus";
+        #address-cells = <2>;
+        #size-cells = <2>;
+        ranges;
+
+        serial0: serial@1fe20000 {
+            compatible = "ns16550a";
+            reg = <0x0 0x1fe20000 0x0 0x100>;
+            reg-io-width = <1>;
+            reg-shift = <0>;
+            status = "okay";
+        };
+
+        ethernet@40040000 {
+            compatible = "snps,dwmac-3.70a", "ls,ls-gmac";
+            reg = <0x0 0x40040000 0x0 0x8000>;
+            status = "okay";
+            local-mac-address = [62 19 1a 02 a8 91];
+        };
+
+        rtc@1fe27800 {
+            compatible = "loongson,ls2k1000-rtc", "loongson,ls2k-rtc", "loongson,ls-rtc";
+            reg = <0x0 0x1fe27800 0x0 0x100>;
+            status = "okay";
+        };
+
+        ahci@400e0000 {
+            compatible = "snps,spear-ahci";
+            reg = <0x0 0x400e0000 0x0 0x10000>;
+            status = "okay";
+        };
+    };
+};

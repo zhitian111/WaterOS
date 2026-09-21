@@ -15,8 +15,13 @@ const PTE_MAT_CACHED: u64 = 1 << 4;
 const PTE_P: u64 = 1 << 7;
 const PTE_W: u64 = 1 << 8;
 const PTE_NX: u64 = 1 << 62;
+// U-Boot 2022.04 on some 2K1000 images ignores `fdt_high` and relocates the
+// blob below 16 MiB.  Keep a small cached DMW alias for that relocation area.
+const LOW_RAM_START_VA: usize = 0x9000_0000_0000_0000;
+const LOW_RAM_END_VA: usize = 0x9000_0000_0100_0000;
 const RAM_START_VA: usize = 0x9000_0000_9000_0000;
 const RAM_END_VA: usize = 0x9000_0000_c000_0000;
+const LOW_RAM_LEAF_COUNT: usize = 8;
 const RAM_LEAF_COUNT: usize = 384;
 const PHYS_MASK: usize = 0x0000_ffff_ffff_ffff;
 
@@ -24,11 +29,13 @@ const PHYS_MASK: usize = 0x0000_ffff_ffff_ffff;
 struct PageTable([u64; 512]);
 
 #[repr(C, align(4096))]
-struct LeafTables([[u64; 512]; RAM_LEAF_COUNT]);
+struct LeafTables<const N: usize>([[u64; 512]; N]);
 
 static mut ROOT: PageTable = PageTable([0; 512]);
-static mut MIDDLE: PageTable = PageTable([0; 512]);
-static mut LEAVES: LeafTables = LeafTables([[0; 512]; RAM_LEAF_COUNT]);
+static mut LOW_MIDDLE: PageTable = PageTable([0; 512]);
+static mut RAM_MIDDLE: PageTable = PageTable([0; 512]);
+static mut LOW_LEAVES: LeafTables<LOW_RAM_LEAF_COUNT> = LeafTables([[0; 512]; LOW_RAM_LEAF_COUNT]);
+static mut RAM_LEAVES: LeafTables<RAM_LEAF_COUNT> = LeafTables([[0; 512]; RAM_LEAF_COUNT]);
 
 #[inline]
 fn phys_addr(ptr: *const u8) -> usize {
@@ -49,33 +56,57 @@ fn leaf_entry(ppn: usize, flags: u64) -> u64 {
 ///
 /// 仅使用普通 store 与 CSR 操作，不依赖 heap/frame allocator/spin lock。
 pub fn init() {
-    let root_ppn = phys_addr(unsafe { core::ptr::addr_of!(ROOT) as *const u8 }) / PAGE_SIZE;
-    let middle_ppn = phys_addr(unsafe { core::ptr::addr_of!(MIDDLE) as *const u8 }) / PAGE_SIZE;
-    let leaves_ppn =
-        phys_addr(unsafe { core::ptr::addr_of!(LEAVES) as *const u8 }) / PAGE_SIZE;
+    let root_ppn = phys_addr(core::ptr::addr_of!(ROOT) as *const u8) / PAGE_SIZE;
+    let low_middle_ppn =
+        phys_addr(core::ptr::addr_of!(LOW_MIDDLE) as *const u8) / PAGE_SIZE;
+    let ram_middle_ppn =
+        phys_addr(core::ptr::addr_of!(RAM_MIDDLE) as *const u8) / PAGE_SIZE;
+    let low_leaves_ppn =
+        phys_addr(core::ptr::addr_of!(LOW_LEAVES) as *const u8) / PAGE_SIZE;
+    let ram_leaves_ppn =
+        phys_addr(core::ptr::addr_of!(RAM_LEAVES) as *const u8) / PAGE_SIZE;
 
+    let low_start_vpn = (LOW_RAM_START_VA >> PAGE_SHIFT) & ((1 << 27) - 1);
+    let low_end_vpn = (LOW_RAM_END_VA >> PAGE_SHIFT) & ((1 << 27) - 1);
     let start_vpn = (RAM_START_VA >> PAGE_SHIFT) & ((1 << 27) - 1);
     let end_vpn = (RAM_END_VA >> PAGE_SHIFT) & ((1 << 27) - 1);
     let flags_rwx = PTE_V | PTE_D | PTE_MAT_CACHED | PTE_P | PTE_W;
 
     unsafe {
         let root = &mut *core::ptr::addr_of_mut!(ROOT);
-        let middle = &mut *core::ptr::addr_of_mut!(MIDDLE);
-        let leaves = &mut *core::ptr::addr_of_mut!(LEAVES);
+        let low_middle = &mut *core::ptr::addr_of_mut!(LOW_MIDDLE);
+        let ram_middle = &mut *core::ptr::addr_of_mut!(RAM_MIDDLE);
+        let low_leaves = &mut *core::ptr::addr_of_mut!(LOW_LEAVES);
+        let ram_leaves = &mut *core::ptr::addr_of_mut!(RAM_LEAVES);
+
+        let low_idx2 = (low_start_vpn >> 18) & 0x1ff;
+        root.0[low_idx2] = table_entry(low_middle_ppn);
+        let low_first_idx1 = (low_start_vpn >> 9) & 0x1ff;
+        for leaf_index in 0..LOW_RAM_LEAF_COUNT {
+            low_middle.0[low_first_idx1 + leaf_index] =
+                table_entry(low_leaves_ppn + leaf_index);
+        }
+        for vpn in low_start_vpn..low_end_vpn {
+            let idx0 = vpn & 0x1ff;
+            let idx1 = (vpn >> 9) & 0x1ff;
+            let leaf_index = idx1 - low_first_idx1;
+            low_leaves.0[leaf_index][idx0] = leaf_entry(vpn, flags_rwx);
+        }
+
         let idx2 = (start_vpn >> 18) & 0x1ff;
-        root.0[idx2] = table_entry(middle_ppn);
+        root.0[idx2] = table_entry(ram_middle_ppn);
 
         let first_idx1 = (start_vpn >> 9) & 0x1ff;
         for leaf_index in 0..RAM_LEAF_COUNT {
             let idx1 = first_idx1 + leaf_index;
-            middle.0[idx1] = table_entry(leaves_ppn + leaf_index * PAGE_SIZE / PAGE_SIZE);
+            ram_middle.0[idx1] = table_entry(ram_leaves_ppn + leaf_index);
         }
 
         for vpn in start_vpn..end_vpn {
             let idx0 = (vpn >> 0) & 0x1ff;
             let idx1 = (vpn >> 9) & 0x1ff;
             let leaf_index = idx1 - first_idx1;
-            leaves.0[leaf_index][idx0] = leaf_entry(vpn, flags_rwx);
+            ram_leaves.0[leaf_index][idx0] = leaf_entry(vpn, flags_rwx);
         }
     }
 

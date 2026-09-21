@@ -27,9 +27,22 @@ const TOY_ENABLE : u32 = 1 << 11;
 const OSC_ENABLE : u32 = 1 << 8;
 #[cfg(target_arch = "loongarch64")]
 const ENABLE_MASK : u32 = RTC_ENABLE | TOY_ENABLE | OSC_ENABLE;
+/// 2K1000LA BSP RTC node (`rtc@1fe27800`) for PMON boots without a DTB.
+#[cfg(target_arch = "loongarch64")]
+const BOARD_RTC_BASE : usize = 0x1fe2_7800;
 
 #[cfg(target_arch = "loongarch64")]
 pub fn realtime_ns(dtb_pa : usize) -> DriverResult<u64> {
+    if dtb_pa == 0 {
+        log::info!("[driver][2k1000] using board RTC fallback base={:#x}",
+                   BOARD_RTC_BASE);
+        let unix_timestamp = read_unix_timestamp(BOARD_RTC_BASE);
+        return if unix_timestamp == 0 {
+            Err(DriverError::IoError)
+        } else {
+            Ok(unix_timestamp)
+        };
+    }
     let fdt = read_fdt(dtb_pa)?;
     let rtc = fdt.all_nodes()
                  .find(|node| {

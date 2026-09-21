@@ -19,6 +19,7 @@ use runtime::logging::warn;
 use syscall as _;
 
 mod boot_timebase;
+#[cfg(feature = "loongson2k1000la")]
 mod early_paging;
 #[cfg(feature = "dashboard-debug")]
 mod dashboard;
@@ -416,10 +417,12 @@ mod riscv64_opensbi_entry {
 mod qemu_loongarch64_virt {
     use crate::{bringup_user_and_optional_services, init_after_boot, init_services_after_boot,
                 init_when_boot};
-    use core::sync::atomic::{AtomicBool, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use runtime::logging::*;
 
-    static BSP_CLAIMED : AtomicBool = AtomicBool::new(false);
+    /// Non-zero initialization keeps the claim marker in `.data`, so BSP's
+    /// one-time BSS clear cannot erase it while APs are entering concurrently.
+    static BSP_HART : AtomicUsize = AtomicUsize::new(usize::MAX);
     static AP_BOOT_READY : AtomicBool = AtomicBool::new(false);
 
     unsafe extern "C" {
@@ -500,14 +503,22 @@ mod qemu_loongarch64_virt {
 
     #[unsafe(no_mangle)]
     pub fn wateros_kernel_main(cpu_raw : usize, _argc : usize, _argv : usize, _envp : usize) -> ! {
+        let cpu_id = task::CpuId::from_raw(cpu_raw);
+        // QEMU may release several CPUs into the ELF entry at once. Claim the
+        // BSP before clearing BSS; an AP must wait until the scheduler and MM
+        // are fully initialized instead of clearing those globals again.
+        if BSP_HART.compare_exchange(usize::MAX,
+                                     cpu_raw,
+                                     Ordering::AcqRel,
+                                     Ordering::Acquire)
+                   .is_err()
+        {
+            wait_ap_boot_ready(cpu_id);
+        }
         unsafe {
             crate::clear_bss();
         }
-        let cpu_id = task::CpuId::from_raw(cpu_raw);
         mask_boot_interrupts();
-        if BSP_CLAIMED.swap(true, Ordering::AcqRel) {
-            wait_ap_boot_ready(cpu_id);
-        }
 
         runtime::init_console();
         runtime::showlogo();
@@ -600,9 +611,14 @@ mod loongson2k1000la {
 
     /// Loongson 2K1000LA 内核入口（PMON + uImage）。
     ///
-    /// `a0` = 逻辑 CPU id；`a1/a2/a3` 为 PMON 透传（非 UEFI argc/argv/envp），忽略。
+    /// `a0` = 逻辑 CPU id；`a1/a2/a3` 为 PMON/U-Boot 透传参数。
+    /// U-Boot `go kernel dtb` 通过 argc/argv 传入 DTB；同时兼容少量
+    /// vendor/legacy 固件直接在寄存器中传递 DTB 的形式。
     #[unsafe(no_mangle)]
-    pub fn wateros_kernel_main_rust(cpu_raw : usize, _argc : usize, _argv : usize, _envp : usize) -> ! {
+    pub fn wateros_kernel_main_rust(cpu_raw : usize,
+                                    boot_arg1 : usize,
+                                    boot_arg2 : usize,
+                                    boot_arg3 : usize) -> ! {
         unsafe {
             crate::clear_bss();
         }
@@ -629,7 +645,18 @@ mod loongson2k1000la {
         register_kernel_trap_handler(early_2k_trap);
         let _ = platform::smp::init_ipi();
         let _ = platform::active_impl::console::console_write_raw_buffer(b"K8\r\n");
-        let dtb_pa = platform::active_impl::boot::device_tree_phys_addr();
+        let mut dtb_pa = platform::active_impl::boot::device_tree_phys_addr();
+        if dtb_pa == 0 {
+            dtb_pa = platform::active_impl::boot::probe_dtb_from_boot_args([
+                boot_arg1,
+                boot_arg2,
+                boot_arg3,
+            ]);
+            if dtb_pa != 0 {
+                platform::active_impl::dtb::store(dtb_pa);
+                info!("[boot] FDT discovered from U-Boot boot arguments at {:#x}", dtb_pa);
+            }
+        }
         let _ = platform::active_impl::console::console_write_raw_buffer(b"K9\r\n");
         init_when_boot(dtb_pa);
         let _ = platform::active_impl::console::console_write_raw_buffer(b"K10\r\n");
