@@ -191,6 +191,7 @@
         "driver/impl-loongson2k1000la",
         "ipc/all",
         "mm/impl-loongarch64",
+        "mm/loongson2k1000la",
         "mm/vfs-root-read",
         "mm/self_test-loongarch64",
         "platform/impl-loongson2k1000la",

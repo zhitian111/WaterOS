@@ -16,4 +16,5 @@ base = { path = "../../wateros-base/", package = "wateros-base", default-feature
     ]
     default = [ "api-v0", "impl-riscv64" ]
     impl-loongarch64 = [ "dep:impl-loongarch64" ]
+    loongson2k1000la = [ "impl-loongarch64/loongson2k1000la" ]
     impl-riscv64 = [ "dep:impl-riscv64" ]

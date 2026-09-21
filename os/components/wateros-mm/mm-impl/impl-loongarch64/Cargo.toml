@@ -28,3 +28,4 @@
     default = [ "api-v0" ]
     elf-lazy-map = [  ]
     vfs-root-read = [ "dep:vfs" ]
+    loongson2k1000la = [ "api-v0/loongson2k1000la", "impl-common/loongson2k1000la", "frame-alloctor/loongson2k1000la" ]
