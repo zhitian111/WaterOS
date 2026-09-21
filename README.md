@@ -112,7 +112,7 @@ WaterOS 已在以下环境中完成构建、启动及赛事测试验证。
     </tr>
     <tr>
       <td align="center">Loongson 2K1000LA 真机</td>
-      <td align="center">U-Boot + TFTP uImage</td>
+      <td align="center">U-Boot + SATA 镜像</td>
       <td align="center">SATA/AHCI</td>
       <td align="center"><a href="./docs/tasks/real-hardware-port/reports/2026-08-16-loongson2k1000-sata-ahci-success.md">块读写、MBR、ext4 RW</a></td>
     </tr>

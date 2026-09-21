@@ -60,7 +60,7 @@ Makefile 中的目标按职责分为以下几组：
 - 稳定入口：`help`、`show-config`、`build`、`check`、`run`、`shell`；
 - 调试入口：`doctor`、`debug`、`debug-server`、`gdb`、`snapshot`、`watch`；
 - 产物入口：`kernel-rv-*`、`kernel-la-*`、`all`；
-- 真机入口：`la2k_check`、`la2k_uimage`、`la2k_bootscr`、`la2k_tftp`、
+- 真机入口：`la2k_check`、`la2k_image`、`la2k_tftp_prepare`、`la2k_tftp`、
   `jh7110_check`、`jh7110_uimage`；
 - 地址与 trace 工具：`rv_pc_watch`、`la_pc_watch`、`*_symbol_at`、`*_elf_info`；
 - 配置维护：`configure`、`apply_features*`、`revert_features`；
@@ -89,14 +89,16 @@ kernel-la-pre       kernel-la-final
 
 ```bash
 make la2k_check
-make la2k_uimage
-make la2k_tftp TFTP_LISTEN=192.168.1.2 TFTP_ROOT=/srv/tftp
+make la2k_tftp LA2K_TFTP_SERVER_IP=192.168.1.2 \
+  LA2K_TFTP_ROOT=./build/la2k-tftp
 ```
 
-`la2k_uimage` 生成 `kernel-la2k`、`kernel-la2k.bin` 和 `kernel-la2k.ui`；这些都是本地
-构建产物并已由 `os/.gitignore` 排除。`la2k_tftp` 还生成 U-Boot script，随后调用
-`scripts/real-hardware/tftp_serve.sh` 同步文件并启动前台 `dnsmasq`。它会使用 `sudo` 写入
-TFTP 根目录，执行前必须确认监听地址和目标目录。
+`la2k_image` 通过 `user/tools` 生成 GPT 镜像：P1 FAT 保存 `kernel-la2k.bin`、DTB、
+`boot.scr` 和 `uEnv.txt`，P2 为根文件系统。`la2k_tftp` 调用
+`scripts/la2k/prepare_tftp.sh`，按 `LA2K_TFTP_CHUNK_MB`（默认 32 MiB）分片镜像、生成
+U-Boot 烧录脚本并启动前台 `dnsmasq`；`la2k_tftp_prepare` 只准备文件，不使用 `sudo`
+或启动服务。烧录脚本会覆盖 `scsi 0` 的 LBA 0 起始整盘内容，并执行 `saveenv`；运行前
+必须确认目标盘和网络参数。
 
 ## 镜像与写入策略
 

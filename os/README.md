@@ -48,17 +48,51 @@ make run ARCH=rv PROFILE=final SDCARD=/path/to/rootfs.img
 `Error`）。`log` 会在编译期裁掉更详细的日志调用及参数求值，operator 模式不会在启动后
 重新调整级别。
 
-Loongson 2K1000LA 真机构建使用单独的板级目标；`la2k_tftp` 会先生成 uImage 和 U-Boot
-启动脚本，再同步到指定 TFTP 根目录并以前台方式启动服务：
+Loongson 2K1000LA 真机构建使用单独的板级目标。推荐把整盘镜像通过网线写入板载 SATA，
+以后由硬盘上的 U-Boot 启动。GPT 的 FAT P1 保存 `boot.scr`、裸内核和 DTB；`boot.scr`
+使用 `go kernel dtb` 进入内核。
+
+该流程假设板端已经能进入带 `tftpboot`、`scsi`、`fatload`、`source` 和 `go` 命令的 U-Boot；
+它写入的是 WaterOS 启动盘，不替换 SPI/固件中的 U-Boot 本体。
 
 ```bash
 make la2k_check
-make la2k_uimage
-make la2k_tftp TFTP_LISTEN=192.168.1.2 TFTP_ROOT=/srv/tftp
+make la2k_tftp LA2K_TFTP_SERVER_IP=192.168.1.2 \
+  LA2K_TFTP_ROOT=./build/la2k-tftp
 ```
 
-该路径需要 LoongArch GNU objcopy、`mkimage`（缺失时内核 uImage 可回退到项目脚本）、
-`dnsmasq` 和 `sudo`。真机 SATA 验证结果见
+`la2k_tftp` 先用 `user/tools` 生成 `../user/build/images/wateros-la.img`，再将它按默认
+32 MiB 分片、生成 `build/la2k-tftp/wateros-2k1000-flash.scr` 并以前台 `dnsmasq`
+提供 TFTP。板端 U-Boot 串口执行：
+
+```text
+setenv serverip 192.168.1.2
+setenv ipaddr 192.168.1.20
+tftpboot 0x9000000091000000 wateros-2k1000-flash.scr
+source 0x9000000091000000
+```
+
+烧录脚本会逐片下载到 `0x94000000` 并从 LBA 0 连续执行 `scsi write`，因此会覆盖
+`scsi 0` 的现有分区表和数据。写入完成后，它会执行 `saveenv`，保存从 FAT P1 加载并
+`source boot.scr` 的 `bootcmd`，随后立即启动。后续复位或上电不再需要 TFTP。
+
+若只准备并检查分片与脚本，不启动服务：
+
+```bash
+make la2k_tftp_prepare
+```
+
+已有磁盘也可以手工启动：
+
+```text
+scsi reset
+scsi dev 0
+fatload scsi 0:1 0x9000000091000000 boot.scr
+source 0x9000000091000000
+```
+
+该路径需要 LoongArch GNU objcopy、`dtc`、`mkimage`、`dnsmasq` 和 `sudo`。SATA/AHCI
+读写已有真机验证；本次 `go` + DTB 交接仍需在板端复验。既有验证记录见
 [`2K1000 SATA/AHCI 闭环报告`](../docs/tasks/real-hardware-port/reports/2026-08-16-loongson2k1000-sata-ahci-success.md)。
 
 Loongson 2K1000LA（`loongson2k1000la`）板级构建在未显式指定 `operator-run` 或

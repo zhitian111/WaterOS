@@ -16,7 +16,7 @@ BUILD_NUM = $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
 .PHONY: rv_pre_run-gdb rv_final_run-gdb rv_final_run_log-gdb rv_final_debug_run-gdb
 .PHONY: rv_qemu_run rv_qemu_run_snapshot
 .PHONY: rv_qemu_run_with_log
-.PHONY: la_check la2k_check jh7110_check kernel-la2k la2k_uimage la2k_bootdir la2k_bootscr la2k_image la2k_flashscr la2k_tftp kernel-jh7110 jh7110_uimage jh7110_bootdir vf2_img_latest dd_img_vf2 dd_img_2k1000 la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
+.PHONY: la_check la2k_check jh7110_check kernel-la2k la2k_raw la2k_uimage la2k_dtb la2k_bootdir la2k_bootscr la2k_image la2k_tftp_prepare la2k_tftp kernel-jh7110 jh7110_uimage jh7110_bootdir vf2_img_latest dd_img_vf2 dd_img_2k1000 la_elf_info la_symbol_at la_pc_watch la_gdb_snapshot
 .PHONY: kernel-la kernel-la-best kernel-la-pre kernel-la-final la_pre_run la_final_run la_final_run_log
 .PHONY: la_pre_run-gdb la_final_run-gdb la_final_run_log-gdb
 .PHONY: la_qemu_run la_qemu_run_snapshot
@@ -198,7 +198,7 @@ help:
 	@echo "  make dd_img_2k1000 DEVICE=/dev/sdX  烧录 Loongson 2K1000 可启动整盘镜像"
 	@echo "  FILESYSTEM_IMAGES=a.ext4,b.ext4 FILESYSTEM_TYPES=83,83  为 user 整盘镜像追加文件系统分区"
 	@echo "  make la2k_tftp                       构建 SATA 镜像、内核并启动 2K1000 TFTP 服务"
-	@echo "  make la2k_flashscr                    生成通过 TFTP 写 SATA 的 U-Boot 脚本"
+	@echo "  make la2k_tftp_prepare               仅准备分片镜像与 U-Boot 烧录脚本"
 	@echo "  make snapshot / make watch           附加当前活动会话"
 	@echo "  make doctor                          检查 GDB/QEMU/符号工具"
 	@echo "  make show-config                     显示当前最终生效配置"
@@ -510,7 +510,8 @@ la2k_check:
 		--features loongson2k1000la,pre --target loongarch64-unknown-none
 	$(call INFO, "对 loongson2k1000la 平台的 cargo check 完成！")
 
-# Loongson 2K1000LA（PMON/uImage）构建与 uImage 生成
+# Loongson 2K1000LA 内核构建。QEMU/调试仍保留 ELF 与 uImage，真机启动
+# 使用同一 payload 的裸二进制，通过 U-Boot `go` 绕过 legacy bootm handoff。
 kernel-la2k:
 	$(call INFO, "开始构建 loongson2k1000la 内核...")
 	@$(operator_env) RUSTFLAGS="$(la2k_rustflags)" cargo build $(la2k_build_std_flags) $(CARGO_PROFILE_ARG) --no-default-features \
@@ -518,9 +519,12 @@ kernel-la2k:
 	@cp ./target/loongarch64-unknown-none/release/wateros ./kernel-la2k
 	$(call INFO, "loongson2k1000la 内核构建完成！")
 
-la2k_uimage: kernel-la2k
+la2k_raw: kernel-la2k
 	@loongarch64-linux-gnu-objcopy -O binary --strip-all --remove-section=.kernel.heap \
 		./kernel-la2k ./kernel-la2k.bin
+	$(call INFO, "loongson2k1000la 裸内核生成完成：kernel-la2k.bin")
+
+la2k_uimage: la2k_raw
 	@if mkimage -A loongarch -O linux -T kernel -C none \
 		-a 0x98000000 -e 0x98000000 \
 		-n "WaterOS 2K1000LA" -d ./kernel-la2k.bin ./kernel-la2k.ui 2>/dev/null; then \
@@ -534,14 +538,20 @@ la2k_uimage: kernel-la2k
 
 LA2K_BOOT_DIR ?= ./build/la2k-boot
 LA2K_BOOT_SIZE_MB ?= 16
+LA2K_DTB_SOURCE ?= ./scripts/root_image/loongson2k1000.dts
+LA2K_DTB_FILE ?= ./build/loongson2k1000.dtb
 
-la2k_bootdir: la2k_uimage
-	@mkdir -p "$(LA2K_BOOT_DIR)/extlinux"
-	@cp ./kernel-la2k.ui "$(LA2K_BOOT_DIR)/kernel-la2k.ui"
+la2k_dtb:
+	@mkdir -p "$(dir $(LA2K_DTB_FILE))"
+	@dtc -q -I dts -O dtb -o "$(LA2K_DTB_FILE)" "$(LA2K_DTB_SOURCE)"
+	$(call INFO, "Loongson 2K1000 DTB 生成完成：$(LA2K_DTB_FILE)")
+
+la2k_bootdir: la2k_raw la2k_dtb
+	@mkdir -p "$(LA2K_BOOT_DIR)"
+	@cp ./kernel-la2k.bin "$(LA2K_BOOT_DIR)/kernel-la2k.bin"
+	@cp "$(LA2K_DTB_FILE)" "$(LA2K_BOOT_DIR)/loongson2k1000.dtb"
 	@mkimage -T script -C none -n "WaterOS 2K1000 boot" \
 		-d ./scripts/root_image/boot-loongson2k1000.cmd "$(LA2K_BOOT_DIR)/boot.scr"
-	@cp ./scripts/root_image/loongson2k1000-extlinux.conf \
-		"$(LA2K_BOOT_DIR)/extlinux/extlinux.conf"
 	@cp ./scripts/root_image/loongson2k1000-uEnv.txt "$(LA2K_BOOT_DIR)/uEnv.txt"
 	$(call INFO, "Loongson 2K1000 启动素材目录：$(LA2K_BOOT_DIR)")
 
@@ -549,37 +559,31 @@ la2k_bootscr: la2k_bootdir
 	@cp "$(LA2K_BOOT_DIR)/boot.scr" ./build/wateros-2k1000.scr
 	$(call INFO, "Loongson 2K1000 SATA 启动脚本生成完成：./build/wateros-2k1000.scr")
 
-# 2K1000 SATA 整盘布局：P1 FAT 启动分区（UI/boot.scr），P2 EXT4 rootfs。
+# 2K1000 SATA GPT 整盘布局：P1 FAT 启动分区（raw/DTB/boot.scr），P2 EXT4 rootfs。
 LA2K_PACKAGE ?= minimal
-LA2K_PARTITION_TABLE ?= mbr
+LA2K_PARTITION_TABLE ?= gpt
 LA2K_IMAGE ?= ../user/build/images/wateros-la.img
 
 la2k_image: la2k_bootscr
-	@$(MAKE) -C ../user disk ARCH=la PACKAGE="$(LA2K_PACKAGE)" \
+	@WATEROS_USER_CFLAGS="-mstrict-align" $(MAKE) -C ../user disk ARCH=la PACKAGE="$(LA2K_PACKAGE)" \
 		PARTITION_TABLE="$(LA2K_PARTITION_TABLE)" OUTPUT="$(LA2K_IMAGE:.img=.ext4)" \
 		BOOT_DIR="$(abspath $(LA2K_BOOT_DIR))" BOOT_LAYOUT=boot-root \
 		BOOT_SIZE_MB="$(LA2K_BOOT_SIZE_MB)" \
 		FILESYSTEM_IMAGES="$(FILESYSTEM_IMAGES_ABS)" FILESYSTEM_TYPES="$(FILESYSTEM_TYPES)"
 
-la2k_flashscr: la2k_image
-	@mkdir -p ./build
-	@mkimage -T script -C none -n "WaterOS 2K1000 SATA flash" \
-		-d ./scripts/root_image/flash-loongson2k1000.cmd ./build/wateros-2k1000-flash.scr
-	$(call INFO, "Loongson 2K1000 SATA 网络烧录脚本生成完成：./build/wateros-2k1000-flash.scr")
+LA2K_TFTP_SERVER_IP ?= 192.168.1.2
+LA2K_TFTP_ROOT ?= ./build/la2k-tftp
+LA2K_TFTP_BOARD_IP ?= 192.168.1.20
+LA2K_TFTP_CHUNK_MB ?= 32
+LA2K_TFTP_ARGS = --image "$(LA2K_IMAGE)" --boot-dir "$(LA2K_BOOT_DIR)" \
+	--tftp-root "$(LA2K_TFTP_ROOT)" --server-ip "$(LA2K_TFTP_SERVER_IP)" \
+	--board-ip "$(LA2K_TFTP_BOARD_IP)" --chunk-mb "$(LA2K_TFTP_CHUNK_MB)"
 
-TFTP_LISTEN ?= 192.168.1.2
-TFTP_ROOT ?= /srv/tftp
+la2k_tftp_prepare: la2k_image
+	@bash ./scripts/la2k/prepare_tftp.sh $(LA2K_TFTP_ARGS) --prepare-only
 
-
-la2k_tftp: la2k_uimage la2k_bootscr la2k_flashscr la2k_image
-	@echo "备忘录：请在连接串口进入uboot后依次执行："
-	@echo "setenv serverip 192.168.1.2"
-	@echo "setenv ipaddr 192.168.1.20"
-	@echo "tftpboot 0x9000000091000000 wateros-2k1000-flash.scr  # 首次/更新 SATA 镜像"
-	@echo "source 0x9000000091000000"
-	@echo "tftpboot 0x9000000091000000 wateros-2k1000.scr       # 写盘后启动"
-	@echo "source 0x9000000091000000"
-	@bash ./scripts/real-hardware/tftp_serve.sh "$(TFTP_LISTEN)" "$(TFTP_ROOT)" "$(LA2K_IMAGE)"
+la2k_tftp: la2k_image
+	@bash ./scripts/la2k/prepare_tftp.sh $(LA2K_TFTP_ARGS)
 
 # VisionFive 2 / JH7110（U-Boot/uImage）构建与打包
 kernel-jh7110:

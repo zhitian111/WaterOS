@@ -654,9 +654,10 @@ Loongson 2K1000 的可启动实机镜像应从仓库根目录构建：
 make la2k_image
 ```
 
-产物 `user/build/images/wateros-la.img` 使用 MBR：P1 是包含
-`kernel-la2k.ui`、`boot.scr`、extlinux 和 uEnv 配置的 FAT 启动分区，P2 是 EXT4 根文件系统。
-启动脚本从 `scsi 0:1` 加载内核，WaterOS 从 `/dev/vda2` 挂载根文件系统。
+产物 `user/build/images/wateros-la.img` 默认使用 GPT：P1 是包含
+`kernel-la2k.bin`、`loongson2k1000.dtb`、`boot.scr` 和 `uEnv.txt` 的 FAT 启动分区，
+P2 是 EXT4 根文件系统。U-Boot 从 `scsi 0:1` 加载并执行 `boot.scr`；脚本再加载裸内核
+和 DTB，以 `go kernel dtb` 启动。WaterOS 从 `/dev/vda2` 挂载根文件系统。
 
 显式设置 `LA_CROSS_COMPILE` 时仍以环境变量为准；仓库中已经准备好的托管工具链也优先于
 Arch 系统工具链。

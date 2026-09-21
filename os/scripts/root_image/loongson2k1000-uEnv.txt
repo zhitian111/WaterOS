@@ -1,2 +1,2 @@
-loadaddr=0x9000000098000000
-bootcmd=tftpboot ${loadaddr} kernel-la2k.ui; bootm ${loadaddr}
+scriptaddr=0x9000000091000000
+bootcmd=scsi reset; scsi dev 0; fatload scsi 0:1 ${scriptaddr} boot.scr; source ${scriptaddr}
