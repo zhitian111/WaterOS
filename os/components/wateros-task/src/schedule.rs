@@ -59,6 +59,11 @@ pub fn sleep_for_ticks(ticks : TaskTick) -> TaskWaitResult {
 /// 尝试唤醒指定任务。
 pub fn wake_task(task_id : TaskId) -> bool { scheduler::wake_task(task_id) }
 
+/// 唤醒显式等待队列的一个任务，不在通知回调中同步切换当前任务。
+pub fn wake_one_in_wait_queue_deferred(queue: crate::WaitQueueId) -> Option<TaskId> {
+    scheduler::wake_one_in_wait_queue_deferred(queue)
+}
+
 /// 以 `Interrupted` 结果将指定任务从等待与超时队列中同时移除。
 pub fn interrupt_task(task_id : TaskId) -> bool { scheduler::interrupt_task(task_id) }
 

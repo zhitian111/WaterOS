@@ -1,7 +1,9 @@
 //! smoltcp 协议栈公共门面。
 //!
 //! 在设备驱动 `init_after_boot` 完成网卡注册后调用 [`init`]，
-//! 之后通过周期性 [`poll`] 驱动协议栈。
+//! 之后由设备 IRQ、socket 活动和 [`poll_delay_millis`] 指定的协议定时器驱动。
+
+mod activity;
 
 mod types;
 mod state;
@@ -15,7 +17,8 @@ mod udp;
 mod sockopt;
 
 pub use init::init;
-pub use poll::{poll, poll_at_millis, poll_socket_events};
+pub use activity::set_activity_notifier;
+pub use poll::{poll, poll_at_millis, poll_socket_events, poll_delay_millis};
 pub use receive::{socket_finish_recv, socket_prepare_recv, SocketRecvReservation};
 pub use socket::{
     network_socket_table_snapshot, socket_bind, socket_close, socket_connect, socket_kind,

@@ -115,6 +115,13 @@ pub fn init(dtb_pa : usize, ram_end_exclusive : usize) {
                  PagePerm::R | PagePerm::W,
                  "MMIO");
 
+    // 外部设备 IRQ 的优先级、使能和 claim/complete 寄存器位于 PLIC 窗口。
+    map_identity(&mut aspace,
+                 wateros_base_config::mm::QEMU_VIRT_PLIC_PHYS_START,
+                 wateros_base_config::mm::QEMU_VIRT_PLIC_PHYS_END,
+                 PagePerm::R | PagePerm::W,
+                 "PLIC MMIO");
+
     // Goldfish RTC 位于 0x0010_1000，不在 UART/VirtIO 的常规 MMIO 窗口内。
     map_identity(&mut aspace,
                  wateros_base_config::mm::QEMU_VIRT_RTC_PHYS_START,

@@ -147,6 +147,22 @@ pub mod interrupt {
 
     pub use api_v0::interrupt::ArchInterruptState;
 
+    /// Enable only the current CPU external interrupt input.
+    pub fn enable_external_interrupt() {
+        #[cfg(feature = "impl-riscv64")]
+        impl_riscv64::interrupt::enable_external_interrupt();
+        #[cfg(feature = "impl-loongarch64")]
+        impl_loongarch64::interrupt::enable_external_interrupt();
+    }
+
+    /// Mask only the current CPU external interrupt input.
+    pub fn disable_external_interrupt() {
+        #[cfg(feature = "impl-riscv64")]
+        impl_riscv64::interrupt::disable_external_interrupt();
+        #[cfg(feature = "impl-loongarch64")]
+        impl_loongarch64::interrupt::disable_external_interrupt();
+    }
+
     #[inline]
     pub fn enable_timer_interrupt() -> ArchTimeResult<()> {
         ArchInterruptImpl::enable_timer_interrupt()

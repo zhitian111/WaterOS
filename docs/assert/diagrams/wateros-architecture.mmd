@@ -1,5 +1,8 @@
 flowchart TB
 
+  subgraph components["组件依赖｜实线箭头指向被调用组件"]
+    direction TB
+
   subgraph entry["内核编排与用户接口层｜接收用户请求并组织内核启动"]
     direction LR
     wateros["wateros<br/>（内核入口与组件编排）"]
@@ -28,7 +31,7 @@ flowchart TB
     direction LR
     runtime["wateros-runtime<br/>（内核运行时）"]
     klog["wateros-klog<br/>（内核日志）"]
-    platform["wateros-platform<br/>（架构与平台适配）"]
+    platform["wateros-platform<br/>（架构、平台、IRQ）"]
     base["wateros-base<br/>（基础类型与配置）"]
     utils["wateros-utils<br/>（通用工具）"]
   end
@@ -68,3 +71,25 @@ flowchart TB
   class task,mm,vfs,ipc,cred,network service;
   class fs,tty,gui,driver interface;
   class runtime,klog,platform,base,utils foundation;
+
+
+  end
+
+  %% Runtime IRQ flow is separate from the component dependency arrows above.
+  subgraph irq_path["外部 IRQ 运行链路｜设备中断固定路由至 BSP"]
+    direction LR
+    irq_controller["platform::irq<br/>RV PLIC / LA PCH PIC + EXTIOI"]
+    irq_dispatch["wateros trap / device_irq<br/>有界 claim 与分发"]
+    irq_ack["driver::irq<br/>无锁确认共享线路设备<br/>发布原子事件"]
+    irq_complete["device_irq<br/>控制器 complete<br/>通知等待队列"]
+    irq_worker["网络 / 控制台工作任务<br/>唤醒后处理设备数据"]
+    irq_controller -->|外部 trap| irq_dispatch
+    irq_dispatch --> irq_ack
+    irq_ack --> irq_complete
+    irq_complete -->|延后唤醒| irq_worker
+  end
+  components ~~~ irq_path
+  class irq_controller foundation;
+  class irq_dispatch,irq_complete boundary;
+  class irq_ack interface;
+  class irq_worker service;

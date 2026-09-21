@@ -48,7 +48,8 @@ impl LoongArch64Paging {
     #[inline]
     fn write_pgdl(pgdl: usize) {
         unsafe {
-            asm!("csrwr {0}, {1}", in(reg) pgdl, const CSR_PGDL);
+            // CSRWR exchanges the GPR with the old CSR value; declare the clobber.
+            asm!("csrwr {0}, {1}", inout(reg) pgdl => _, const CSR_PGDL);
         }
     }
 
@@ -64,7 +65,8 @@ impl LoongArch64Paging {
     #[inline]
     fn write_asid(asid: usize) {
         unsafe {
-            asm!("csrwr {0}, {1}", in(reg) (asid & ASID_MASK), const CSR_ASID);
+            // CSRWR also overwrites its input GPR when writing ASID.
+            asm!("csrwr {0}, {1}", inout(reg) (asid & ASID_MASK) => _, const CSR_ASID);
         }
     }
 

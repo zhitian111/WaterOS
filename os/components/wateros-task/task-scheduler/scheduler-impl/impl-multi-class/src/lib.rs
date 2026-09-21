@@ -912,6 +912,27 @@ pub fn wake_all_in_wait_queue(wait_queue_id : WaitQueueId) -> usize {
     count
 }
 
+/// 唤醒一个等待者，但只发送重调度 IPI，不在调用者的栈上同步切换任务。
+///
+/// 硬 IRQ 和持有上层锁的通知回调使用此入口。调用者若仍持有自旋锁，必须
+/// 保持本地中断关闭直到释放锁；本核重调度与远端一样由后续 IPI/timer 处理。
+pub fn wake_one_in_wait_queue_deferred(wait_queue_id : WaitQueueId) -> Option<TaskId> {
+    let (woken, targets) = {
+        let _guard = InterruptGuard::new();
+        with_scheduler(|scheduler| {
+            let woken = scheduler.wake_one_in_wait_queue(wait_queue_id);
+            let targets = scheduler.take_pending_reschedule_cpus();
+            (woken, targets)
+        })
+    };
+    if !targets.is_empty() {
+        // 此入口可从硬 IRQ 调用，失败路径不能进入可能持锁的日志后端。
+        // need_resched 会保留，timer 路径会再次检查，不丢失已就绪任务。
+        let _ = platform::smp::send_ipi(targets, platform::smp::IpiKind::Reschedule);
+    }
+    woken
+}
+
 /// 从一个显式等待队列唤醒部分任务，并把其余等待者迁移到另一个等待队列。
 pub fn requeue_wait_queue(from_wait_queue_id : WaitQueueId,
                           to_wait_queue_id : WaitQueueId,

@@ -136,5 +136,11 @@ flowchart LR
 - 顶层 `supported_device_entries()` 是静态声明合并，不表示硬件已发现、已构造或可用。
 - 设备注册表只追加、不支持运行时删除或热插拔；成功的机器初始化也不保证至少有一个块、网卡或图形设备。
 - RISC-V 路径只从 DTB 识别 MMIO VirtIO；LoongArch 路径为 PCIe ECAM，并非两种 transport 的通用自动探测器。
-- 当前源码将 VirtIO I/O 完成细节委托 `vendor/virtio-drivers`，在本组件内没有可描述的独立 IRQ-to-wakeup 队列或中断亲和策略。
+- VirtIO virtqueue 完成回收委托 `vendor/virtio-drivers`；transport IRQ 与事件发布由 `impl-common` 管理，等待队列和 BSP 路由策略由顶层接线与 platform 管理。
 - `MachineDriver::realtime_ns()` 是可选能力；不支持时返回 `Ok(None)`，不能据此假定 RTC 总存在。顶层 facade 的 `init_after_boot()` 会吞掉错误，仅适合不需向上报告启动失败的调用方；内核启动主路径使用 `machine()` 的结果。
+
+## 外部设备中断
+
+`irq` facade 导出共用的 transport IRQ 注册表。RV 使用 DTB 的 PLIC source，LA 通过 VirtIO PCI ISR capability 和 INTx swizzle 绑定 PCH PIC pin。控制器初始化、source 使能和 trap dispatch 属于 platform/内核接线；本组件的 hard IRQ 只 ACK transport、发布事件位，不访问设备锁、virtqueue、网络协议栈或调度器。PCI 共享线会检查每个设备 ISR。
+
+块设备 read/write 使用非阻塞 VirtIO 请求，完成后回收同一组 DMA buffer。只在注册了 IRQ 的设备上调用内核提供的等待 hook；早期、未注册 IRQ 及无法接收该 IRQ 的 CPU 保留直接 used-ring 轮询。同步 `flush`、网络发送和 GPU 命令仍受底层库同步 API 限制；不可把这些路径描述为可调度的异步 I/O。输入设备 IRQ 已完成 transport ACK，但 GUI 输入消费者仍由刷新任务读取事件。UART RX 中断暂时屏蔽 IER 并保留硬件 FIFO，字符读取前重新使能，TTY 消费者在延后上下文每轮最多排空 64 字节，只有确认为空后才按 IRQ 事件序号注册等待；普通字符与终端控制事件分别报告，防止每读一个普通字节就误入休眠。设备和 TTY 锁期间禁止本核抢占，等待和让出 CPU 均在锁外。UART TX 保留有界轮询用于控制台输出。

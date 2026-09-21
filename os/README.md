@@ -20,6 +20,10 @@
 features 在编译期选择架构、平台与组件实现。`pre`/`final` 构建使用相同内核代码，auto
 模式根据根镜像是否存在 `/glibc/cagent_testcode.sh` 选择测试队列。
 
+设备外部中断经平台控制器、`src/device_irq.rs` 与驱动 transport ACK 接入。
+网络/控制台使用事件等待，同步块设备按运行上下文选择 IRQ 等待或轮询回退；
+详见[驱动 IRQ 说明](./components/wateros-driver/README.md#外部设备中断)。
+
 ## 快速开始
 
 下面的命令均在 `os/` 目录执行：

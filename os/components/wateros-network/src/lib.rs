@@ -22,6 +22,7 @@ pub mod stack {
 
     pub use impl_smoltcp::stack::{
         init, network_socket_table_snapshot, poll, poll_at_millis, poll_socket_events,
+        poll_delay_millis, set_activity_notifier,
     };
 
     pub(crate) use impl_smoltcp::stack::{

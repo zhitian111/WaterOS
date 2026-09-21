@@ -145,3 +145,6 @@ pub mod wall_clock;
 pub mod interrupt {
     pub use arch::interrupt::*;
 }
+
+/// Board external interrupt routing and acknowledgement.
+pub mod irq;

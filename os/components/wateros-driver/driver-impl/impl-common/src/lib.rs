@@ -10,3 +10,7 @@ extern crate alloc;
 
 pub mod dtb;
 pub mod virtio_hal;
+
+pub mod irq;
+pub mod block_io;
+pub mod pci_irq;

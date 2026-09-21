@@ -7,7 +7,7 @@
 `wateros-network` 为 WaterOS 提供面向 IPv4 的 TCP/UDP 网络运行时。组件以无后端依赖的
 `network-api` 描述端点、状态和错误，以 smoltcp 实现接口、路由及传输协议，并通过适配器把驱动层
 的 Ethernet 帧收发接入协议栈。网络 socket 被包装为可由 VFS fd 表持有的内核对象，因而 read、write、
-poll 和网络 syscall 能在不直接依赖 smoltcp 类型的前提下工作。启动完成后，顶层周期 poller 推进帧
+poll 和网络 syscall 能在不直接依赖 smoltcp 类型的前提下工作。启动完成后，顶层网络工作任务推进帧
 处理、连接状态和延迟关闭回收；syscall 等待路径也会主动轮询以取得进展。接收采用先预留、完成用户
 复制后再消费的租约模型，避免复制 fault 丢失数据。本组件不实现 AF_UNIX、用户 ABI 或设备发现，
 这些职责分别留在 syscall、VFS 与 driver 层。
@@ -141,15 +141,18 @@ timeout，失败转为 `Closed` 并保留 `ConnectionRefused` 或 `TimedOut` 供
   实际拷贝长度并消费该报文。UDP 无匹配本机接收者时丢弃且发送者仍成功；回环队列满也丢新包。
   `SocketSendError`、`SocketRecvError` 先映射到 VFS 错误，再由 syscall 映射 Linux errno，组件不直接
   返回用户 ABI 值（`src/socket/fd.rs`）。
-- **轮询与等待。** 启动成功后顶层创建 `network_poller_task`：它暂时关闭全局中断，驱动一次
-  `poll_at_millis` 与 `poll_socket_events`，恢复中断后休眠一个 tick（`os/src/main.rs`）。同时，网络
+- **事件与等待。** 启动成功后顶层创建 `network_poller_task`：它暂时关闭全局中断，驱动一次
+  `poll_at_millis` 与 `poll_socket_events`，随后按 `poll_delay_millis` 给出的协议超时等待。
+  网卡硬 IRQ 只 ACK transport 并唤醒任务；socket 状态变化在释放协议栈锁后也通知任务。
+  事件序号与调度器条件等待防止检查到休眠之间丢失唤醒。未注册网卡 IRQ 时保留每 tick 回退。
+  同时，网络
   syscall/poll 路径会显式调用 `drive_network_stack` 再以 scheduler tick 重试。当前仍没有从网卡事件到
-  socket wait queue 的专属唤醒链；读者依靠这两类轮询和调度重试，而不是本组件直接唤醒。
+  socket wait queue 的专属唤醒链；socket 读者仍通过调度重试检查已经处理的入站数据。
 
 ## 初始化、配置与可观测性
 
 内核启动在网卡注册后从 `os/src/main.rs` 调用 `network::stack::init(NetworkConfig { ... })`；成功后以
-`task::spawn_kernel_task(network_poller_task, 0)` 创建周期 poller。`init` 验证 prefix 长度不大于 32，
+`task::spawn_kernel_task(network_poller_task, 0)` 创建事件与协议超时驱动的工作任务。`init` 验证 prefix 长度不大于 32，
 选择第一个已注册网卡；没有网卡时创建 loopback-only adapter，并配置给定 IPv4 CIDR、默认网关、本地
 子网和 `127.0.0.0/8` 路由（`stack/init.rs`）。第二次初始化返回 `NetworkError::AlreadyInitialized`。
 

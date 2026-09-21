@@ -156,10 +156,17 @@ unsafe impl Hal for VirtioPciHal {
 
 /// 由 PCI 传输承载的 VirtIO 块设备。
 pub struct VirtioPciBlkDevice {
+    irq_wait: bool,
     inner : VirtIOBlk<VirtioPciHal, PciTransport>,
 }
 
 impl VirtioPciBlkDevice {
+    /// Enable completion interrupts after the platform has registered this device's IRQ route.
+    pub fn enable_irq_wait(&mut self) {
+        self.inner.enable_interrupts();
+        self.irq_wait = true;
+    }
+
     /// 从已发现的 PCI function 配置并初始化块设备；BAR 无法分配或握手失败时返回错误。
     pub fn from_pci_root<C : ConfigurationAccess>(root : &mut PciRoot<C>,
                                                   device_function : DeviceFunction,
@@ -177,7 +184,7 @@ impl VirtioPciBlkDevice {
             VirtIOBlk::<VirtioPciHal, PciTransport>::new(transport).map_err(|_| {
                                                                        DriverError::Unsupported
                                                                    })?;
-        Ok(Self { inner })
+        Ok(Self { inner, irq_wait: false })
     }
 
     /// 扫描内存映射 PCI CAM/ECAM 窗口中的 bus 0，返回首个 VirtIO 块设备。
@@ -306,16 +313,14 @@ impl BlockDevice for VirtioPciBlkDevice {
     fn read_blocks(&mut self, start_block : Lba, buf : &mut [u8]) -> DriverResult<()> {
         self.check_request_range(start_block, buf.len())?;
         let start = usize::try_from(start_block.0).map_err(|_| DriverError::InvalidParam)?;
-        self.inner
-            .read_blocks(start, buf)
+        common::block_io::read(&mut self.inner, start, buf, self.irq_wait)
             .map_err(|_| DriverError::IoError)
     }
 
     fn write_blocks(&mut self, start_block : Lba, buf : &[u8]) -> DriverResult<()> {
         self.check_request_range(start_block, buf.len())?;
         let start = usize::try_from(start_block.0).map_err(|_| DriverError::InvalidParam)?;
-        self.inner
-            .write_blocks(start, buf)
+        common::block_io::write(&mut self.inner, start, buf, self.irq_wait)
             .map_err(|_| DriverError::IoError)
     }
 

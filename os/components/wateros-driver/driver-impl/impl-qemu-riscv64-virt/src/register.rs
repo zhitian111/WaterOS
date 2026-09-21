@@ -74,7 +74,8 @@ pub(crate) fn probe_virtio_devices() -> Vec<String> {
         if claimed_by_block && info.device_type == DeviceType::Block {
             handled = true;
             match VirtioBlkDevice::from_mmio(mmio) {
-                Ok(dev) => {
+                Ok(mut dev) => {
+                    if register_irq(info, common::irq::BLOCK) { dev.enable_irq_wait(); }
                     let shared = {
                         #[cfg(feature = "block-cache")]
                         {
@@ -112,6 +113,7 @@ pub(crate) fn probe_virtio_devices() -> Vec<String> {
             handled = true;
             match VirtioNetDevice::from_mmio(mmio) {
                 Ok(dev) => {
+                    register_irq(info, common::irq::NETWORK);
                     let mac = dev.mac_address();
                     let idx = register_network_device(Arc::new(Mutex::new(Box::new(dev))));
                     net_regions.push(mmio);
@@ -139,6 +141,7 @@ pub(crate) fn probe_virtio_devices() -> Vec<String> {
             handled = true;
             match VirtioGpuMmioDevice::from_mmio(mmio) {
                 Ok(device) => {
+                    register_irq(info, common::irq::DISPLAY);
                     let framebuffer = device.info();
                     let device: Box<dyn DisplayDevice> = Box::new(device);
                     let idx = register_display_device(Arc::new(Mutex::new(device)));
@@ -162,6 +165,7 @@ pub(crate) fn probe_virtio_devices() -> Vec<String> {
             handled = true;
             match VirtioInputMmioDevice::from_mmio(mmio) {
                 Ok(device) => {
+                    register_irq(info, common::irq::INPUT);
                     let metadata = device.info().clone();
                     let device: Box<dyn InputDevice> = Box::new(device);
                     let idx = register_input_device(Arc::new(Mutex::new(device)));
@@ -214,6 +218,12 @@ pub(crate) fn probe_character_devices() {
 
     for (idx, base) in uart_bases.iter().enumerate() {
         let chr_idx = uart::register_uart_character_device(*base);
+        let irq = enumerate::DEVICE_INFOS.lock().iter().find(|info| info.mmio.is_some_and(|m| m.base == *base)).and_then(|info| info.irq);
+        if let Some(irq) = irq {
+            if unsafe { common::irq::register_uart(irq.irq, *base) }.is_err() {
+                log::warn!("[driver] UART IRQ registration failed: {}", irq.irq);
+            }
+        }
         log::info!(
             "[driver] registered character #{} (uart base={:#x}, dtb #{})",
             chr_idx,
@@ -236,4 +246,14 @@ pub(crate) fn probe_character_devices() {
         "[driver] character devices registered: count={}",
         character_device_count()
     );
+}
+
+/// Publish the lock-free transport ACK endpoint before enabling its controller source.
+fn register_irq(info: &DeviceInfo, event: u32) -> bool {
+    let (Some(mmio), Some(irq)) = (info.mmio, info.irq) else { return false; };
+    if mmio.size < 0x68 { return false; }
+    match unsafe { common::irq::register_mmio(irq.irq, mmio.base, event) } {
+        Ok(()) => { log::info!("[driver] IRQ {} registered for {}", irq.irq, info.node_name); true }
+        Err(error) => { log::warn!("[driver] IRQ {} registration failed: {:?}", irq.irq, error); false }
+    }
 }

@@ -15,6 +15,7 @@ use runtime::logging::warn;
 use syscall as _;
 
 mod boot_timebase;
+mod device_irq;
 #[cfg(feature = "dashboard-debug")]
 mod dashboard;
 #[cfg(feature = "gdb-fault-injection")]
@@ -46,9 +47,10 @@ pub fn alloc_error_handler(layout : core::alloc::Layout) -> ! {
 
 // ── 共享 bring-up ──────────────────────────────────────────────
 
-/// 网络协议栈轮询任务：周期性驱动 smoltcp 收发包。
+/// 网络工作任务：设备 IRQ/socket 活动唤醒，协议定时器负责重传等超时。
 extern "C" fn network_poller_task(_arg : usize) -> ! {
     loop {
+        let observed = device_irq::network_generation();
         // NETWORK_STACK 是跨 CPU 自旋锁。持锁期间禁止该内核任务被切出；syscall 调用者
         // 关中断进入该路径，若被切出就无法在自旋时让出 CPU。
         let interrupt_state =
@@ -57,18 +59,27 @@ extern "C" fn network_poller_task(_arg : usize) -> ! {
                                                                              poll");
         platform::arch::interrupt::disable_global_interrupt().expect("disable interrupts for \
                                                                       network poll");
-        match platform::timer::now_duration() {
+        let millis = match platform::timer::now_duration() {
             Ok(now) => {
                 let millis = now.as_millis()
                                 .min((i64::MAX / 1000) as u128) as i64;
                 network::stack::poll_at_millis(millis);
+                millis
             }
-            Err(_) => network::stack::poll(),
-        }
+            Err(_) => { network::stack::poll(); 0 }
+        };
         network::stack::poll_socket_events();
+        let timeout = if driver::irq::network_irq_ready() {
+            network::stack::poll_delay_millis(millis).map(|ms| {
+                ms.div_ceil(base_config::task::SCHED_TIMER_PERIOD_MS).max(1)
+            })
+        } else {
+            // 不支持 IRQ 的设备仍需进展；已接入 IRQ 的网卡没有固定轮询周期。
+            Some(1)
+        };
         platform::arch::interrupt::restore_global_interrupt_state(interrupt_state)
             .expect("restore interrupts after network poll");
-        task::sleep_for_ticks(1);
+        device_irq::wait_network(observed, timeout);
     }
 }
 
@@ -109,12 +120,21 @@ extern "C" fn gui_refresh_task(_arg : usize) -> ! {
 ///
 /// 该入口不启动用户态 workload；调用者在它成功返回后再进入用户态 bring-up。
 fn init_services_after_boot() -> bool {
+    if let Err(err) = device_irq::init() {
+        warn!("[irq] controller initialization failed: {}", err);
+        return false;
+    }
     match driver::machine().init_after_boot() {
         Err(ref err) => {
             warn!("driver init failed: {:?}", err);
             false
         }
         Ok(()) => {
+            driver::irq::for_each_irq(|irq| {
+                assert!(platform::irq::enable(irq), "invalid registered device IRQ {}", irq);
+            });
+            platform::arch::interrupt::enable_external_interrupt();
+            driver::irq::install_wait_hook(device_irq::wait_for_device);
             match driver::machine().realtime_ns() {
                 Ok(Some(ns)) => {
                     if platform::wall_clock::set_realtime_ns(u128::from(ns)).is_err() {
@@ -130,6 +150,7 @@ fn init_services_after_boot() -> bool {
                                                                 gateway : [10, 0, 2, 2] })
             {
                 Ok(()) => {
+                    device_irq::init_network_wait();
                     task::spawn_kernel_task(network_poller_task, 0);
                 }
                 Err(e) => warn!("network stack init skipped: {:?}", e),

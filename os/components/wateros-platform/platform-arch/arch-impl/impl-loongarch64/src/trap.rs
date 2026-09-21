@@ -77,14 +77,17 @@ const LOONGARCH_EUEN_FPE_SXE : usize = (1 << 0) | (1 << 1);
 
 #[inline]
 fn decode_loongarch64_trap_cause(estat : usize) -> TrapCause {
-    if (estat & IPI_INTERRUPT_PENDING) != 0 {
+    let ecode = (estat >> 16) & 0x3F;
+    if ecode == 0 && (estat & IPI_INTERRUPT_PENDING) != 0 {
         return TrapCause::Interrupt(Interrupt::SupervisiorSoft);
     }
-    if (estat & TIMER_INTERRUPT_PENDING) != 0 {
+    if ecode == 0 && (estat & TIMER_INTERRUPT_PENDING) != 0 {
         return TrapCause::Interrupt(Interrupt::SupervisiorTimer);
     }
 
-    let ecode = (estat >> 16) & 0x3F;
+    if ecode == 0 && (estat & (1 << 2)) != 0 {
+        return TrapCause::Interrupt(Interrupt::SupervisiorExternel);
+    }
     match ecode {
         1 | 7 | 8 => TrapCause::Exception(Exception::LoadPageFault),
         // ecode 2 = PIS (store invalid), ecode 4 = PME (page modified).

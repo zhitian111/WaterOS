@@ -194,17 +194,38 @@ fn configure_tty(mode : TtyMode) {
 
 fn start_console_input_task() {
     if !CONSOLE_INPUT_TASK_STARTED.swap(true, Ordering::AcqRel) {
+        crate::device_irq::init_console_wait();
         task::spawn_kernel_task(console_input_main, 0);
     }
 }
 
 extern "C" fn console_input_main(_arg : usize) -> ! {
+    const DRAIN_BUDGET : usize = 64;
     loop {
-        if let Some(event) = vfs::fd::poll_console_input_once() {
-            let _ = syscall::send_kernel_signal_to_process_group(event.process_group, event.signal);
-        } else {
-            platform::arch::interrupt::wait_for_interrupt();
+        let observed = crate::device_irq::console_generation();
+        let mut drained = 0;
+        for _ in 0..DRAIN_BUDGET {
+            // 设备和 TTY 都含自旋锁；不能让定时器将持锁任务切出。
+            let state = platform::arch::interrupt::read_global_interrupt_state()
+                .expect("read interrupt state for console input");
+            platform::arch::interrupt::disable_global_interrupt()
+                .expect("disable interrupts for console input");
+            let (consumed, event) = vfs::fd::poll_console_input_once();
+            if let Some(event) = event {
+                let _ = syscall::send_kernel_signal_to_process_group(event.process_group, event.signal);
+            }
+            platform::arch::interrupt::restore_global_interrupt_state(state)
+                .expect("restore interrupts after console input");
+            if !consumed { break; }
+            drained += 1;
+        }
+        if drained == DRAIN_BUDGET {
+            // 未确认 FIFO 为空时不能睡眠；先公平让出 CPU，再继续排空。
             task::yield_now();
+        } else if driver::irq::uart_irq_ready() {
+            crate::device_irq::wait_console(observed);
+        } else {
+            task::sleep_for_ticks(1);
         }
     }
 }

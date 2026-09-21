@@ -125,6 +125,8 @@ impl SerialPort for Ns16550Port {
     }
 
     fn try_read_byte(&mut self) -> Option<u8> {
+        // Rearm before checking LSR so arrival after an empty read cannot lose its interrupt.
+        common::irq::rearm_uart(self.base);
         let lsr = unsafe { self.layout.read_reg(self.base, REG_LSR) };
         if lsr & LSR_DATA_READY != 0 {
             let b = unsafe { self.layout.read_reg(self.base, REG_THR) };

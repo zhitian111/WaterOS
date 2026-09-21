@@ -41,6 +41,12 @@ timer/yield/block/exit/reschedule
 
 公开入口用 RAII 保存并关闭本 CPU 中断后加 scheduler 锁，退出恢复原状态。锁内累计 `pending_reschedule_cpus`，锁外发送定向 IPI，避免 IPI handler 反向等待同一锁。远端 IPI 只设置/消费重调度请求，不推进全局 tick。
 
+普通 wake 入口可能在锁外同步执行本核重调度。设备 IRQ 和通知回调使用
+`wake_one_in_wait_queue_deferred`：唤醒单个等待者后，把本核也纳入 Reschedule IPI，
+不在通知调用栈上执行 `__switch`。调用者若持有其它自旋锁，仍须关闭本地中断直到释放锁。
+IPI 发送失败时保留 `need_resched`，由 timer 重查。此入口避免 wake-all 的临时任务列表，
+但 runqueue 入队仍可能分配；它不是无分配 API，依赖现有中断安全堆分配器。
+
 目标上下文的返回地址若落入 kernel heap，`validate_switch_target` 会 panic，因为这通常表示 TCB/栈已释放或上下文被覆盖。遇到该错误应追查任务发布/回收时序和内核栈所有权，不要扩大允许地址范围。
 
 ## 多核 timeout 时间基准

@@ -103,11 +103,18 @@ const IOZONE_PROBE_MIN_WRITE_BYTES : usize = 4096;
 
 /// VirtIO-MMIO 上的块设备（`virtio-blk`）。
 pub struct VirtioBlkDevice {
+    irq_wait: bool,
     /// `virtio-drivers` 侧已握手的传输与队列状态。
     inner : VirtIOBlk<VirtioHal, MmioTransport<'static>>,
 }
 
 impl VirtioBlkDevice {
+    /// Enable completion interrupts after the platform has registered this device's IRQ route.
+    pub fn enable_irq_wait(&mut self) {
+        self.inner.enable_interrupts();
+        self.irq_wait = true;
+    }
+
     /// 在给定 MMIO 窗口内探测并初始化 `virtio-blk`；头指针或传输握手失败时映射为 [`DriverError`]。
     ///
     /// **须在** `init_frame_allocator`（或等价全局帧池初始化）**之后**调用。
@@ -120,7 +127,7 @@ impl VirtioBlkDevice {
             VirtIOBlk::<VirtioHal, MmioTransport>::new(transport).map_err(|_| {
                                                                      DriverError::Unsupported
                                                                  })?;
-        Ok(Self { inner })
+        Ok(Self { inner, irq_wait: false })
     }
 }
 
@@ -135,8 +142,7 @@ impl BlockDevice for VirtioBlkDevice {
         // 先做容量、整块长度和 LBA 溢出检查，再转换为 virtio-drivers 使用的 usize。
         self.check_request_range(start_block, buf.len())?;
         let start = usize::try_from(start_block.0).map_err(|_| DriverError::InvalidParam)?;
-        self.inner
-            .read_blocks(start, buf)
+        common::block_io::read(&mut self.inner, start, buf, self.irq_wait)
             .map_err(|_| DriverError::IoError)
     }
 
@@ -150,8 +156,7 @@ impl BlockDevice for VirtioBlkDevice {
                             start_block.0,
                             buf.len());
         }
-        let result = self.inner
-                         .write_blocks(start, buf)
+        let result = common::block_io::write(&mut self.inner, start, buf, self.irq_wait)
                          .map_err(|_| DriverError::IoError);
         if probe {
             match &result {

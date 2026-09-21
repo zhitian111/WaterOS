@@ -50,7 +50,8 @@ pub(crate) fn register_devices() -> DriverResult<()> {
         config_base
     );
     match enumerate::probe_virtio_blk_pci(config_base) {
-        Ok(Some((dev, info))) => {
+        Ok(Some((mut dev, info))) => {
+            if register_irq(config_base, info.bus, info.device, info.function, common::irq::BLOCK) { dev.enable_irq_wait(); }
             let shared = {
                 #[cfg(feature = "block-cache")]
                 {
@@ -91,6 +92,7 @@ pub(crate) fn register_devices() -> DriverResult<()> {
 
     match enumerate::probe_virtio_net_pci(config_base) {
         Ok(Some((dev, info))) => {
+            register_irq(config_base, info.bus, info.device, info.function, common::irq::NETWORK);
             let mac = dev.mac_address();
             let shared = {
                 let dev: Box<dyn NetworkDevice> = Box::new(dev);
@@ -124,6 +126,7 @@ pub(crate) fn register_devices() -> DriverResult<()> {
     #[cfg(feature = "display")]
     match enumerate::probe_virtio_gpu_pci(config_base) {
         Ok(Some((device, info))) => {
+            register_irq(config_base, info.bus, info.device, info.function, common::irq::DISPLAY);
             let framebuffer = device.info();
             let device: Box<dyn DisplayDevice> = Box::new(device);
             let idx = register_display_device(Arc::new(Mutex::new(device)));
@@ -151,6 +154,7 @@ pub(crate) fn register_devices() -> DriverResult<()> {
     match enumerate::probe_virtio_input_pci(config_base) {
         Ok(devices) => {
             for (device, info) in devices {
+                register_irq(config_base, info.bus, info.device, info.function, common::irq::INPUT);
                 let device_info = device.info().clone();
                 let device: Box<dyn InputDevice> = Box::new(device);
                 let idx = register_input_device(Arc::new(Mutex::new(device)));
@@ -168,5 +172,22 @@ pub(crate) fn register_devices() -> DriverResult<()> {
 
     register_builtin_character_devices();
     uart::register_uart_character_device();
+    if unsafe { common::irq::register_uart(2, uart::QEMU_LOONGARCH64_UART16550_BASE) }.is_err() {
+        log::warn!("[driver-la] UART IRQ registration failed");
+    }
     Ok(())
+}
+
+/// QEMU virt root PCI bus swizzles INTA..INTD to PCH pins 16..19.
+fn register_irq(config_base: usize, bus: u8, device: u8, function: u8, event: u32) -> bool {
+    let df = common::pci_irq::DeviceFunction { bus, device, function };
+    let result = unsafe { common::pci_irq::find_isr(config_base, df) }.and_then(|(isr, pin)| {
+        let irq = 16 + ((device as u32 + pin as u32 - 1) & 3);
+        unsafe { common::irq::register_pci(irq, isr, event) }?;
+        unsafe { common::pci_irq::enable_intx(config_base, df) };
+        log::info!("[driver-la] PCI {} INT{} -> IRQ {}", df, pin, irq);
+        Ok(())
+    });
+    if let Err(error) = result { log::warn!("[driver-la] PCI {} IRQ registration failed: {:?}", df, error); }
+    result.is_ok()
 }

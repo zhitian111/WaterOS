@@ -460,6 +460,9 @@ extern "C" fn wateros_kernel_trap_handler(frame : *mut u8) {
                 task::schedule_reschedule();
             }
         }
+        TrapCause::Interrupt(Interrupt::SupervisiorExternel) => {
+            crate::device_irq::dispatch();
+        }
         TrapCause::Interrupt(Interrupt::SupervisiorTimer) => {
             if let Err(err) = platform::timer::set_timer_after_ms(TIMER_REARM_MS) {
                 panic!("failed to re-arm timer in trap: {:?}",

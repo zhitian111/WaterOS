@@ -175,8 +175,9 @@ impl VirtioPciNetDevice {
         );
         let transport = PciTransport::new::<VirtioPciNetHal, C>(root, device_function)
             .map_err(|_| DriverError::Unsupported)?;
-        let inner = VirtIONet::<VirtioPciNetHal, PciTransport, 32>::new(transport, RX_BUF_LEN)
+        let mut inner = VirtIONet::<VirtioPciNetHal, PciTransport, 32>::new(transport, RX_BUF_LEN)
             .map_err(|_| DriverError::Unsupported)?;
+        inner.enable_interrupts();
         Ok(Self { inner })
     }
 

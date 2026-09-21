@@ -1,9 +1,10 @@
-# Machine Driver 公共 DTB 解析离线手册
+# Machine Driver 公共机制
 
 [Driver 总览](../../README.md) · [Driver API v0](../../driver-api/api-v0/README.md)
 
-本 crate 只放多个 machine profile 都复用、无硬件副作用的 DTB助手。VirtIO寄存器探测、
-PCI BAR、DMA、IRQ注册和设备发布必须留在 RV/LA machine impl。
+本 crate 提供 DTB 解析、共享 VirtIO DMA HAL、PCI ISR capability 解析，以及无锁 IRQ ACK 与块请求完成等待机制。板级 IRQ 路由、PCI BAR 分配和设备发布仍属于 RV/LA machine impl。
+
+`irq` 注册表永久持有设备寄存器端点，hard IRQ 只执行 MMIO/PCI ACK 和原子事件发布，不获取设备锁。`block_io` 使用非阻塞提交并等待真实 used-ring token，再以原缓冲区完成回收；启动期、无 IRQ 路由及不能接收设备 IRQ 的 CPU 使用轮询。安装的等待 hook 不得调度或临时开启全局中断，也不得在 DMA 未完成时返回超时而释放缓冲区。
 
 ## 1. 入口与前置条件
 
@@ -54,8 +55,8 @@ range translation验证。
 
 ### 2.3 `parse_irq(node)`
 
-只读 `interrupts` 的第一个 big-endian u32，并直接读节点自身的 `interrupt-parent`首 cell。
-缺任一必要内容时返回 `None`。
+只接受长度恰为四字节的 `interrupts` source cell，并直接读节点自身的 `interrupt-parent` 首 cell；多 cell 描述返回 `None`。
+缺 `interrupts` 时返回 `None`；`interrupt-parent` 在此仅记录为可选元数据。
 
 它不支持：
 
@@ -139,7 +140,7 @@ node name和完整 compatibles。不要先怀疑子系统 registry。
 
 ### IRQ不触发
 
-检查 `#interrupt-cells`。若大于 1，当前 parse_irq只保存第一 cell，很可能丢了类型/flags；
+检查 `#interrupt-cells`。多 cell 描述不会绑定到当前简单 parser；
 还要核对 interrupt-parent继承、controller初始化和路由。
 
 ## 7. 自回归

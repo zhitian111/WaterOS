@@ -60,6 +60,10 @@ Cargo feature 树负责在编译期选择目标平台、组件能力和具体实
 精简。目前，WaterOS 已实现 SMP 任务调度、虚拟内存、VFS 与 ext4、IPC、VirtIO
 设备、网络协议栈及常用 Linux 系统调用等核心能力。
 
+外部设备 IRQ 的控制器、VirtIO 共享线路确认及事件等待已接入平台/驱动分层；
+网络与控制台由事件唤醒工作任务，同步块 I/O 保留关中断和非路由 CPU 场景的兼容路径。
+具体范围和验证限制见[驱动 IRQ 说明](./os/components/wateros-driver/README.md#外部设备中断)。
+
 ## 赛事提交材料
 
 受赛事材料体积及 GitLab 仓库空间限制，设计文档、演示文件、系统镜像和阶段性提交产物
@@ -97,7 +101,7 @@ WaterOS 已在以下环境中完成构建、启动及赛事测试验证。
       <td align="center">赛事在线评测</td>
     </tr>
     <tr>
-      <td align="center"><code>QEMU 11.0.2</code></td>
+      <td align="center"><code>QEMU 11.0.2 / 11.1.1</code></td>
       <td align="center">本地开发与测试</td>
     </tr>
     <tr>
@@ -108,7 +112,7 @@ WaterOS 已在以下环境中完成构建、启动及赛事测试验证。
       <td align="center">赛事在线评测</td>
     </tr>
     <tr>
-      <td align="center"><code>QEMU 11.0.2</code></td>
+      <td align="center"><code>QEMU 11.0.2 / 11.1.1</code></td>
       <td align="center">本地开发与测试</td>
     </tr>
   </tbody>

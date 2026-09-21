@@ -97,3 +97,9 @@ pub fn disable_soft_interrupt() {
         sie::clear_ssoft();
     }
 }
+
+/// Enable the local external interrupt input after the board controller is ready.
+pub fn enable_external_interrupt() { unsafe { sie::set_sext(); } }
+
+/// Mask the local external interrupt input without changing global interrupt state.
+pub fn disable_external_interrupt() { unsafe { sie::clear_sext(); } }

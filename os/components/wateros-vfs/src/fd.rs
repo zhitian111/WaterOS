@@ -101,7 +101,9 @@ pub fn current_task_id() -> VfsResult<task::TaskId> {
 /// 从已注册的控制台字符设备轮询一个原始字节，并交给独立 TTY 行规程。
 ///
 /// 设备发现属于 VFS；行编辑、输入缓冲和终端策略属于 `wateros-tty`。
-pub fn poll_console_input_once() -> Option<tty::TtyControlEvent> {
+/// 返回 `(consumed, control_event)`，普通字符也会令 `consumed` 为真。
+/// 调用者须禁止本核抢占，返回后已释放设备和行规程锁。
+pub fn poll_console_input_once() -> (bool, Option<tty::TtyControlEvent>) {
     impl_fd_session::poll_console_input_once()
 }
 

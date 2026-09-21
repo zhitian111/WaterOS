@@ -239,7 +239,14 @@ open 规则由底层 `NamedPipe::open_read/open_write` 实现：blocking reader/
 
 TTY output 先经 line discipline `transform_output` 再写 console。input prepared-read 根据 canonical、VMIN、VTIME 和 O_NONBLOCK 选择 wait；signal 打断映射 Interrupted。
 
-非 TTY character device 若 driver `prepare_read` 暂无数据：nonblock 返回 WouldBlock，blocking 当前用 `task::yield_now()` 轮询；这是效率限制，新增 driver 应考虑事件/waitqueue 能力。
+非 TTY character device 若 driver `prepare_read` 暂无数据：nonblock 返回 WouldBlock，blocking
+以一个调度 tick 的睡眠回退等待，并传播 Interrupted。不能仅 yield：关中断的 syscall
+可能反复选中自身，使设备 IRQ 和 timer 永远无法处理。
+
+字符设备 `poll_wait_for_ticks` 对控制台 TTY 使用输入 waitqueue，按 poll 可读条件原子复查；
+其它字符设备使用一个 tick 的睡眠回退。没有 POLLIN 请求时返回 Unsupported，由上层采用
+通用等待策略。poll/select/epoll 必须通过 detached handle 调用此方法，睡眠不能持 OFD、
+registry 或底层设备锁。UART IRQ 只通知输入任务，行规程和唤醒 reader 在任务上下文执行。
 
 RTC 仅将 ioctl 下传 driver；read Unsupported/EOF 由当前兼容逻辑处理。设备 `stat` 与 `fstat` 都用 path hash 合成 inode，避免工具误判节点被替换。
 
@@ -363,7 +370,7 @@ release
 | exec 后 CLOEXEC 仍在 | take/close 两阶段或 shared table owner |
 | close_range unshare 后 fd 消失 | duplicate 失败被 `.ok()` 静默降级 |
 | pipe/TTY EFAULT 后数据丢失 | prepared read Drop/cancel/partial commit |
-| blocking device 占满 CPU | driver read 没有 waitqueue，使用 yield polling |
+| blocking device 无进展 | 检查等待是否真正阻塞；仅 yield 可能让关中断 syscall 不断选回自身 |
 | dup 一个 fd 后 close 另一个导致 flock 消失 | 当前每 slot 提前 release_flock_owner 缺口 |
 | 文件锁永久阻塞 | process exit cleanup、inode key、wake_all |
 | 同 inode 出现互不冲突的两套锁 | empty-entry remove 与并发 get 的竞态 |

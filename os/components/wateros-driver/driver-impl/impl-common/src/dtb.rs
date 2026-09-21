@@ -39,6 +39,10 @@ pub fn first_mmio_region(node: fdt::node::FdtNode<'_, '_>) -> Option<MmioRegion>
 /// 仅覆盖「单 cell 中断号 + 可选 interrupt-parent」形态；PLIC/GPIO 复用等复杂描述返回 `None` 而非误解析。
 pub fn parse_irq(node: &fdt::node::FdtNode<'_, '_>) -> Option<IrqLine> {
     let irq = node.property("interrupts")?.value;
+    // This helper supports one PLIC source cell only; never silently bind a multi-cell specifier.
+    if irq.len() != 4 {
+        return None;
+    }
     let irq_num = read_be_u32(irq, 0)?;
     let parent = node
         .property("interrupt-parent")

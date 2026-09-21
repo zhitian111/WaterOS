@@ -29,3 +29,6 @@ pub fn self_test() {
     assert!(memory::physical_ram_end_exclusive() > 0);
     log::info!("[platform/impl-qemu-loongarch64] self_test complete");
 }
+
+/// Board external interrupt controller.
+pub mod irq;

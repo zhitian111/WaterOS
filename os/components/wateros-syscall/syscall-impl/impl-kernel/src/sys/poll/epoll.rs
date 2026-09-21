@@ -369,7 +369,8 @@ fn epoll_wait_interests(
             continue;
         }
         let mut wait_on_this_fd = || !deadline.expired();
-        match vfs::fd::with_current_io(fd, |handle| {
+        // poll wait 可以阻塞；使用独立句柄，不能跨睡眠持有共享 OFD 锁。
+        match vfs::fd::with_current_io_detached(fd, |handle| {
             handle.poll_wait_for_ticks(events, wait_ticks, &mut wait_on_this_fd)
         }) {
             Ok(()) => any_wait = true,

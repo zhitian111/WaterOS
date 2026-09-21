@@ -140,3 +140,20 @@ LoongArch 还从 DTB `/cpus` 得到运行期 configured mask；两者都不等�
 - 频率缓存没有运行期重配置协议；启动后修改会破坏 deadline 换算契约。
 - `configured_cpu_mask`/firmware 状态、IPI reason 和 scheduler online 状态是三套状态，平台层
   不替调用方完成一致性或重试策略。
+
+## 外部设备 IRQ
+
+`platform::irq` 提供板级 `init(cpu_id)`、`enable`、`disable`、`claim` 和 `complete`。
+RISC-V 使用 QEMU virt PLIC，源号直接使用 DTB interrupts；LoongArch 使用 PCH PIC
+到 EXTIOI 的电平中断链，源号为 PCH 输入引脚（0..31，不加固件 GSI 偏移 64）。
+两平台均把设备 IRQ 固定路由到 BSP；AP 不开启外部中断，计时器和 IPI 保持各核独立。
+
+初始化必须在 MMIO 映射和 trap 入口就绪后、BSP 全局中断关闭时执行一次。注册驱动后
+再调用 `arch::interrupt::enable_external_interrupt()`；控制器 enable/disable 的寄存器
+读改写要求 BSP 且本地中断关闭。硬中断 claim/complete 无锁，不获取驱动锁。
+驱动必须先确认设备 IRQ 再完成控制器 IRQ。LoongArch claim 先清 EXTIOI pending，
+避免设备确认之后再清 pending 丢弃期间新来的边沿；PCH 电平由设备确认去断言。
+
+PLIC MMIO 范围是 `0x0c000000..0x10000000`，必须存在内核恒等映射。
+控制器不负责驱动注册、调度或线程唤醒；这些由上层驱动 IRQ 分发及任务层负责。
+实现按 QEMU virt 板级寄存器约定配置，不声明支持其它 PLIC/Loongson 板卡或 MSI。

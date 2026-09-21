@@ -6,6 +6,10 @@
 
 输入链：ICRNL → ISIG 控制字符 → canonical 编辑/EOF/换行或 raw 入队 → 生成短 echo 与控制事件 → 锁外输出/投递/wake。prepared read 暂时移走字节，finish 只提交 copied 前缀并按原顺序归还后缀。VMIN/VTIME 等待用 scheduler 临界区条件复查封住丢唤醒。
 
+控制台输入任务由 UART IRQ 唤醒后读取字符，再调用 `feed_input`；硬 IRQ 不进入 TTY 锁。
+`wait_for_readable_for_ticks` 供 VFS 的 poll/select/epoll 等待使用，在调度临界区复查
+`readable_now`，保留 canonical、EOF 和 raw 模式的 poll 就绪语义。等待时不持 TTY 或设备锁。
+
 PTY registry 只保存 number→Weak terminal 和 session→TerminalId。每对 terminal 有 master/slave read queue、space queue和 64 KiB 有界数据；master 写入经过 slave 行规程，slave 输出/echo 进入 master 队列。最后 master close 产生 hangup及 SIGHUP/SIGCONT 意图，最后 Arc Drop 才移除 registry 并释放 waitqueue ID。
 
 锁内禁止用户复制、调度、设备输出和信号投递。修改行规程时同时更新 console 与 PTY slave，覆盖 erase/kill/EOF/newline、OPOST/ONLCR、EFAULT 回滚、非阻塞、队列满、master/slave 不同关闭顺序和 session/job control。

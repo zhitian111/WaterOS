@@ -42,7 +42,10 @@ pub(super) fn with_stack_mut<R, E>(unavailable : E,
     let mut guard = NETWORK_STACK.lock();
     let stack = guard.as_mut()
                      .ok_or(unavailable)?;
-    f(stack)
+    let result = f(stack);
+    drop(guard);
+    super::activity::notify_activity();
+    result
 }
 
 /// 协议栈尚未初始化时跳过操作，供早期启动和周期性 poll 使用。

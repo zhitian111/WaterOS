@@ -111,3 +111,6 @@ pub fn self_test() {
     impl_qemu_riscv64_virt::self_test();
     log::info!("[driver] self_test complete");
 }
+
+/// Transport IRQ acknowledgement and deferred event notification.
+pub mod irq { pub use common::irq::*; }

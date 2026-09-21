@@ -394,6 +394,12 @@ pub fn wait_for_input(max_len: usize) -> TaskWaitResult {
     input_wait_queue().wait_current_while(|| !TTY.lock().readable_for(max_len))
 }
 
+/// 等待 poll 可读条件或超时，在调度临界区复查以避免输入到达时丢失唤醒。
+pub fn wait_for_readable_for_ticks(timeout_ticks: u64) -> TaskWaitResult {
+    input_wait_queue().wait_current_while_for_ticks(timeout_ticks,
+                                                    || !TTY.lock().readable_now())
+}
+
 /// 等待处理后输入的长度发生变化，或者等待指定 tick 数后超时。
 ///
 /// 通过等待长度变化实现 POSIX 非 canonical 字节间计时器：每个新字节都会重新开始

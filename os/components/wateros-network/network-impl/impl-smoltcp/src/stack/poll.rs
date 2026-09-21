@@ -22,6 +22,17 @@ pub fn poll_at_millis(millis : i64) { with_stack_if_ready(|stack| stack.poll_at_
 /// poll 后调用：更新 socket 状态，并回收已完成 TCP 关闭状态机的底层 socket。
 pub fn poll_socket_events() { with_stack_if_ready(NetworkStack::poll_socket_events); }
 
+/// 距离下一次协议定时器处理的毫秒数；None 表示可等待入站事件。
+/// 调用方必须在等待前复查事件序号，以覆盖并发 socket 更新。
+pub fn poll_delay_millis(millis : i64) -> Option<u64> {
+    with_stack_if_ready(|stack| {
+        stack.iface
+             .poll_delay(Instant::from_millis(millis.max(stack.last_poll_millis)),
+                         &stack.sockets)
+             .map(|delay| delay.total_millis())
+    }).flatten()
+}
+
 impl NetworkStack {
     fn poll_at_millis(&mut self, millis : i64) {
         let millis = millis.max(self.last_poll_millis);
@@ -50,9 +61,7 @@ impl NetworkStack {
                     updated.insert(h, (SocketState::Connected, None));
                 } else if socket.state() == tcp::State::Closed {
                     let error = if meta.connect_deadline_ms
-                                               .is_some_and(|deadline| {
-                                                   self.last_poll_millis >= deadline
-                                               })
+                                       .is_some_and(|deadline| self.last_poll_millis >= deadline)
                     {
                         SocketConnectError::TimedOut
                     } else {

@@ -1202,28 +1202,24 @@ pub(crate) fn open_console_tty(accmode : u32) -> Option<Box<dyn VfsIoHandle>> {
 /// 最多从物理控制台读取一个字节并送入共享 TTY。
 ///
 /// 在执行行规程处理和投递终端信号前释放设备锁。本函数只应由唯一的低优先级控制台
-/// 输入任务调用。
-pub fn poll_console_input_once() -> Option<TtyControlEvent> {
-    let device = default_serial_device()?;
-    const POLLIN : i16 = 0x001;
-    if device.lock()
-             .poll_revents(POLLIN)
-             .ok()? &
-       POLLIN ==
-       0
-    {
-        return None;
-    }
+/// 输入任务调用。返回值第一项明确表示是否消费了字节；普通输入不会产生控制事件。
+/// 调用者须在访问设备和 TTY 自旋锁期间禁止本核抢占。
+pub fn poll_console_input_once() -> (bool, Option<TtyControlEvent>) {
+    let Some(device) = default_serial_device() else { return (false, None); };
     let mut byte = [0u8; 1];
-    let read = device.lock()
-                     .read(&mut byte)
-                     .ok()?;
-    if read == 0 {
-        return None;
-    }
+    let consumed = {
+        let mut device = device.lock();
+        const POLLIN : i16 = 0x001;
+        if device.poll_revents(POLLIN).is_ok_and(|events| events & POLLIN != 0) {
+            device.read(&mut byte).is_ok_and(|count| count == 1)
+        } else {
+            false
+        }
+    };
+    if !consumed { return (false, None); }
     let (event, echo, echo_len) = tty::feed_input(byte[0]);
     if echo_len != 0 {
         console::write_raw_bytes(&echo[..echo_len]);
     }
-    event
+    (true, event)
 }

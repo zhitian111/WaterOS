@@ -130,3 +130,9 @@ pub fn enable_soft_interrupt() {
 pub fn disable_soft_interrupt() {
     write_csr::<CSR_ECFG>(read_csr::<CSR_ECFG>() & !ECFG_IPI_INTERRUPT_ENABLE);
 }
+
+/// Enable the local external interrupt input after the board controller is ready.
+pub fn enable_external_interrupt() { write_csr::<CSR_ECFG>(read_csr::<CSR_ECFG>() | (1 << 2)); }
+
+/// Mask the local external interrupt input without changing global interrupt state.
+pub fn disable_external_interrupt() { write_csr::<CSR_ECFG>(read_csr::<CSR_ECFG>() & !(1 << 2)); }

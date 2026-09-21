@@ -229,7 +229,11 @@ impl VfsPreparedRead for CharDevPreparedRead {
             if self.nonblocking.load(Ordering::Acquire) {
                 return Err(VfsError::WouldBlock);
             }
-            task::yield_now();
+            // 关中断 syscall 中 yield 可能重新选中自身，永远挡住设备 IRQ。
+            // 未提供等待队列的字符设备必须真正阻塞，让 idle 重新开启中断。
+            if task::sleep_for_ticks(1) == task::TaskWaitResult::Interrupted {
+                return Err(VfsError::Interrupted);
+            }
         }
     }
 }
@@ -399,7 +403,7 @@ impl VfsIoHandle for CharDevHandle {
 // 本变量代码由AI完成
         const POLLIN: i16 = 0x001;
         if events & POLLIN == 0 {
-            return Ok(());
+            return Err(VfsError::Unsupported);
         }
         for _ in 0..timeout_ticks.max(1) {
             if !still_waiting() {
@@ -413,7 +417,16 @@ impl VfsIoHandle for CharDevHandle {
             if readable {
                 return Ok(());
             }
-            task::yield_now();
+            let result = if self.tty_input {
+                tty::wait_for_readable_for_ticks(1)
+            } else {
+                // 同 poll/select/epoll 的无事件源回退一致，不能仅 yield 后
+                // 声称已经等待，否则唯一 runnable syscall 会始终关中断重试。
+                task::sleep_for_ticks(1)
+            };
+            if result == task::TaskWaitResult::Interrupted {
+                return Err(VfsError::Interrupted);
+            }
         }
         Ok(())
     }
