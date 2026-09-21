@@ -27,8 +27,7 @@ use frame_alloctor::{
     frame_ref_count,
 };
 pub(crate) use impl_common::{
-    handle_lazy_file_fault, DeviceVma, LazyFileVma, LazyVmaAccess, LazyVmaSet, SharedAnonVma,
-    SharedFileVma, VmaBacking,
+    handle_vma_fault, VmArea, VmaAccess, VmaBacking, VmaKind, VmaSet, VmaSharing,
 };
 
 /// LoongArch64 PTE 标志位。
@@ -277,24 +276,18 @@ pub struct LoongArch64AddressSpace {
     pub(crate) user_stack_bottom : VirtAddr,
     /// 用户栈保留区上界（不含），栈从该地址向低地址增长。
     pub(crate) user_stack_top : VirtAddr,
-    /// 尚未驻留的文件后备 VMA，缺页时由通用 fault 路径查询。
-    pub(crate) lazy_file_vmas : LazyVmaSet,
-    /// 共享匿名 VMA 元数据；对应物理页引用由叶 PTE/帧分配器维护。
-    pub(crate) shared_anon_vmas : Vec<SharedAnonVma>,
-    /// 共享文件 VMA 元数据；销毁或同步时需要调用后备 loader。
-    pub(crate) shared_file_vmas : Vec<SharedFileVma>,
-    /// 不属于通用帧分配器的外部设备映射。
-    pub(crate) device_vmas : Vec<DeviceVma>,
+    /// 地址空间内所有用户虚拟区间的唯一语义注册表。
+    pub(crate) vmas : VmaSet,
 }
 
 // 地址空间通过 MultiprocessorSafeCell 访问；该锁同时串行化非 Send 的惰性加载器状态和页表修改。
 unsafe impl Send for LoongArch64AddressSpace {}
 unsafe impl Sync for LoongArch64AddressSpace {}
 
-impl LazyVmaAccess for LoongArch64AddressSpace {
-    fn lazy_vma_set(&self) -> &LazyVmaSet { &self.lazy_file_vmas }
+impl VmaAccess for LoongArch64AddressSpace {
+    fn vma_set(&self) -> &VmaSet { &self.vmas }
 
-    fn lazy_vma_set_mut(&mut self) -> &mut LazyVmaSet { &mut self.lazy_file_vmas }
+    fn vma_set_mut(&mut self) -> &mut VmaSet { &mut self.vmas }
 }
 
 impl LoongArch64AddressSpace {
@@ -318,10 +311,7 @@ impl LoongArch64AddressSpace {
                   mmap_base : VirtAddr(0),
                   user_stack_bottom : VirtAddr(0),
                   user_stack_top : VirtAddr(0),
-                  lazy_file_vmas : LazyVmaSet::new(),
-                  shared_anon_vmas : Vec::new(),
-                  shared_file_vmas : Vec::new(),
-                  device_vmas : Vec::new() })
+                  vmas : VmaSet::new() })
     }
 
     /// 创建内核地址空间；ASID 0 不参与用户 ASID 分配与复用。
@@ -337,10 +327,7 @@ impl LoongArch64AddressSpace {
                   mmap_base : VirtAddr(0),
                   user_stack_bottom : VirtAddr(0),
                   user_stack_top : VirtAddr(0),
-                  lazy_file_vmas : LazyVmaSet::new(),
-                  shared_anon_vmas : Vec::new(),
-                  shared_file_vmas : Vec::new(),
-                  device_vmas : Vec::new() })
+                  vmas : VmaSet::new() })
     }
 
     /// ELF 装载完成后初始化用户堆与匿名映射区游标（须在泄漏页表对象前调用一次）。
@@ -350,7 +337,8 @@ impl LoongArch64AddressSpace {
                                    brk_max : VirtAddr,
                                    mmap_anon_cursor : VirtAddr,
                                    stack_bottom : VirtAddr,
-                                   stack_top : VirtAddr) {
+                                   stack_top : VirtAddr)
+                                   -> MmResult<()> {
         self.user_brk_start = brk_start;
         self.user_brk_current_end = brk_current_end;
         self.user_brk_max = brk_max;
@@ -359,6 +347,130 @@ impl LoongArch64AddressSpace {
         self.mmap_base = mmap_anon_cursor;
         self.user_stack_bottom = stack_bottom;
         self.user_stack_top = stack_top;
+        if brk_start.0 < brk_current_end.0 {
+            self.vmas
+                .insert(VmArea::anonymous(brk_start.floor_page()
+                                                   .start_addr(),
+                                          brk_current_end.ceil_page()
+                                                         .start_addr(),
+                                          PagePerm::R | PagePerm::W | PagePerm::U,
+                                          VmaSharing::Private,
+                                          VmaKind::Heap,
+                                          true))?;
+        }
+        if stack_bottom.0 < stack_top.0 {
+            self.vmas
+                .insert(VmArea::anonymous(stack_bottom.floor_page()
+                                                      .start_addr(),
+                                          stack_top.ceil_page()
+                                                   .start_addr(),
+                                          PagePerm::R | PagePerm::W | PagePerm::U,
+                                          VmaSharing::Private,
+                                          VmaKind::Stack,
+                                          true))?;
+        }
+        self.register_untracked_resident_user_leaves()?;
+        Ok(())
+    }
+
+    /// 为 eager ELF/兼容页补建 VMA；lazy ELF、heap 和 stack 已有条目时不会重复登记。
+    fn register_untracked_resident_user_leaves(&mut self) -> MmResult<()> {
+        let mut leaves = Vec::new();
+        unsafe {
+            collect_user_leaf_pages(self.root,
+                                    LOONGARCH64_LEVELS - 1,
+                                    0,
+                                    &mut leaves)
+        };
+        for leaf in leaves {
+            let start = VirtAddr(leaf.addr);
+            if self.vmas
+                   .lookup(start)
+                   .is_some()
+            {
+                continue;
+            }
+            let end = VirtAddr(leaf.addr
+                                   .checked_add(PAGE_SIZE)
+                                   .ok_or(MmError::InvalidAddress)?);
+            self.vmas
+                .insert(VmArea::anonymous(start,
+                                          end,
+                                          leaf.perm,
+                                          VmaSharing::Private,
+                                          VmaKind::Anonymous,
+                                          false))?;
+        }
+        Ok(())
+    }
+
+    /// 为 eager `PT_LOAD` 的已驻留页登记文件段语义；与相邻段共享的页只合并权限。
+    pub(crate) fn register_resident_file_segment(&mut self,
+                                                 segment_start : VirtAddr,
+                                                 segment_end : VirtAddr,
+                                                 perm : PagePerm,
+                                                 file_offset : usize,
+                                                 file_size : usize)
+                                                 -> MmResult<()> {
+        if segment_start.0 >= segment_end.0 {
+            return Ok(());
+        }
+        let first_page = segment_start.floor_page()
+                                      .start_addr();
+        let file_origin = file_offset.checked_sub(segment_start.0 - first_page.0)
+                                     .ok_or(MmError::InvalidAddress)?;
+        let mapped_file_size = file_size.checked_add(segment_start.0 - first_page.0)
+                                        .ok_or(MmError::InvalidAddress)?;
+        let mut page = first_page;
+        let page_end = segment_end.ceil_page()
+                                  .start_addr();
+        while page.0 < page_end.0 {
+            let next = VirtAddr(page.0
+                                    .checked_add(PAGE_SIZE)
+                                    .ok_or(MmError::InvalidAddress)?);
+            if self.translate_addr(page)?
+                   .is_none()
+            {
+                page = next;
+                continue;
+            }
+            if self.vmas
+                   .lookup(page)
+                   .is_some()
+            {
+                self.vmas
+                    .merge_perm(page, next, perm)?;
+                page = next;
+                continue;
+            }
+
+            let run_start = page;
+            let mut run_end = next;
+            while run_end.0 < page_end.0 &&
+                  self.translate_addr(run_end)?
+                      .is_some() &&
+                  self.vmas
+                      .lookup(run_end)
+                      .is_none()
+            {
+                run_end = VirtAddr(run_end.0
+                                          .checked_add(PAGE_SIZE)
+                                          .ok_or(MmError::InvalidAddress)?);
+            }
+            let run_offset = file_origin.checked_add(run_start.0 - first_page.0)
+                                        .ok_or(MmError::InvalidAddress)?;
+            self.vmas
+                .insert(VmArea::file(run_start,
+                                     run_end,
+                                     perm,
+                                     VmaSharing::Private,
+                                     false,
+                                     run_offset,
+                                     mapped_file_size,
+                                     None))?;
+            page = run_end;
+        }
+        Ok(())
     }
 
     pub(crate) fn range_overlaps_stack(&self, start : VirtAddr, end : VirtAddr) -> bool {
@@ -403,18 +515,8 @@ impl LoongArch64AddressSpace {
                                               start : VirtAddr,
                                               end : VirtAddr)
                                               -> MmResult<bool> {
-        if start.0 <
-           self.user_brk_current_end
-               .0 &&
-           end.0 >
-           self.user_brk_start
-               .0
-        {
-            return Ok(true);
-        }
-        if self.lazy_vma_overlaps(start, end) ||
-           self.shared_anon_vma_overlaps(start, end) ||
-           self.device_vma_overlaps(start, end)
+        if self.vmas
+               .overlaps(start, end)
         {
             return Ok(true);
         }
@@ -431,141 +533,73 @@ impl LoongArch64AddressSpace {
         Ok(false)
     }
 
-    pub(crate) fn lazy_vma_overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
-        self.lazy_file_vmas
-            .overlaps(start, end)
-    }
-
-    fn lazy_vma_overlap_end(&self, start : VirtAddr, end : VirtAddr) -> Option<VirtAddr> {
-        self.lazy_file_vmas
-            .overlap_end(start, end)
+    #[allow(dead_code)]
+    pub(crate) fn demand_vma_contains(&self, page : VirtAddr) -> bool {
+        self.vmas
+            .lookup(page)
+            .and_then(|index| self.vmas.get(index))
+            .is_some_and(|vma| vma.demand_paged)
     }
 
     #[allow(dead_code)]
-    pub(crate) fn lazy_vma_contains(&self, page : VirtAddr) -> bool {
-        self.lazy_file_vmas
-            .iter()
-            .any(|vma| vma.contains_page(page))
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn merge_lazy_file_vma_perm(&mut self,
-                                           start : VirtAddr,
-                                           end : VirtAddr,
-                                           perm : PagePerm)
-                                           -> MmResult<()> {
-        self.lazy_file_vmas
+    pub(crate) fn merge_demand_vma_perm(&mut self,
+                                        start : VirtAddr,
+                                        end : VirtAddr,
+                                        perm : PagePerm)
+                                        -> MmResult<()> {
+        self.vmas
             .merge_perm(start, end, perm)
     }
 
-    pub(crate) fn shared_anon_vma_overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
-        self.shared_anon_vmas
-            .iter()
-            .any(|vma| vma.overlaps(start, end))
-    }
-
-    fn shared_anon_vma_overlap_end(&self, start : VirtAddr, end : VirtAddr) -> Option<VirtAddr> {
-        self.shared_anon_vmas
-            .iter()
-            .filter(|vma| vma.overlaps(start, end))
-            .map(|vma| vma.end)
-            .max_by_key(|vma_end| vma_end.0)
-    }
-
     pub(crate) fn shared_vma_contains(&self, page : VirtAddr) -> bool {
-        self.shared_anon_vmas
-            .iter()
-            .any(|vma| vma.contains_page(page))
+        self.vmas
+            .lookup(page)
+            .and_then(|index| self.vmas.get(index))
+            .is_some_and(VmArea::is_shared)
     }
 
     /// 页是否不由物理帧分配器管理，解除 PTE 时不得回收物理页。
-    /// MAP_SHARED 页使用帧引用计数；只有设备映射是外部生命周期。
+    /// 普通 MAP_SHARED 页使用帧引用计数；设备页和 SysV SHM 页由外部对象持有。
     pub(crate) fn non_owned_vma_contains(&self, page : VirtAddr) -> bool {
-        self.device_vmas
-            .iter()
-            .any(|vma| vma.contains_page(page))
+        self.vmas
+            .lookup(page)
+            .and_then(|index| self.vmas.get(index))
+            .is_some_and(VmArea::is_non_owned)
     }
 
     pub(crate) fn device_vma_overlaps(&self, start : VirtAddr, end : VirtAddr) -> bool {
-        self.device_vmas
-            .iter()
-            .any(|vma| vma.overlaps(start, end))
+        self.vmas
+            .overlaps_where(start, end, VmArea::is_device)
     }
 
-    pub(crate) fn register_device_vma(&mut self, vma : DeviceVma) {
-        let position = self.device_vmas
-                           .partition_point(|entry| entry.start.0 < vma.start.0);
-        self.device_vmas
-            .insert(position, vma);
-    }
-
-    pub(crate) fn remove_device_vmas(&mut self, start : VirtAddr, end : VirtAddr) {
-        let mut next = Vec::new();
-        for vma in self.device_vmas
-                       .drain(..)
-        {
-            if !vma.overlaps(start, end) {
-                next.push(vma);
-                continue;
-            }
-            if start.0 > vma.start.0 {
-                next.push(DeviceVma { start : vma.start,
-                                      end : start,
-                                      phys_start : vma.phys_start,
-                                      perm : vma.perm,
-                                      lease : vma.lease.clone() });
-            }
-            if end.0 < vma.end.0 {
-                let skipped_pages = (end.0 - vma.start.0) / PAGE_SIZE;
-                next.push(DeviceVma { start : end,
-                                      end : vma.end,
-                                      phys_start : PhysPageNum(vma.phys_start.0 +
-                                                               skipped_pages),
-                                      perm : vma.perm,
-                                      lease : vma.lease });
-            }
+    pub(crate) fn register_device_vma(&mut self, vma : VmArea) -> MmResult<()> {
+        if !vma.is_device() {
+            return Err(MmError::InvalidAddress);
         }
-        self.device_vmas = next;
+        self.vmas
+            .insert(vma)
     }
 
-    pub(crate) fn protect_device_vmas(&mut self,
-                                      start : VirtAddr,
-                                      end : VirtAddr,
-                                      perm : PagePerm) {
-        let mut next = Vec::new();
-        for vma in self.device_vmas
-                       .drain(..)
-        {
-            if !vma.overlaps(start, end) {
-                next.push(vma);
-                continue;
-            }
-            if start.0 > vma.start.0 {
-                next.push(DeviceVma { start : vma.start,
-                                      end : start,
-                                      phys_start : vma.phys_start,
-                                      perm : vma.perm,
-                                      lease : vma.lease.clone() });
-            }
-            let mid_start = VirtAddr(core::cmp::max(start.0, vma.start.0));
-            let mid_end = VirtAddr(core::cmp::min(end.0, vma.end.0));
-            let mid_pages = (mid_start.0 - vma.start.0) / PAGE_SIZE;
-            next.push(DeviceVma { start : mid_start,
-                                  end : mid_end,
-                                  phys_start : PhysPageNum(vma.phys_start.0 + mid_pages),
-                                  perm,
-                                  lease : vma.lease.clone() });
-            if end.0 < vma.end.0 {
-                let skipped_pages = (end.0 - vma.start.0) / PAGE_SIZE;
-                next.push(DeviceVma { start : end,
-                                      end : vma.end,
-                                      phys_start : PhysPageNum(vma.phys_start.0 +
-                                                               skipped_pages),
-                                      perm : vma.perm,
-                                      lease : vma.lease });
-            }
+    pub(crate) fn register_external_vma(&mut self, vma : VmArea) -> MmResult<()> {
+        if !vma.is_external() {
+            return Err(MmError::InvalidAddress);
         }
-        self.device_vmas = next;
+        self.vmas
+            .insert(vma)
+    }
+
+    pub(crate) fn remove_vmas(&mut self, start : VirtAddr, end : VirtAddr) -> MmResult<()> {
+        self.vmas
+            .remove_range(start, end)
+    }
+
+    pub(crate) fn protect_vmas(&mut self,
+                               start : VirtAddr,
+                               end : VirtAddr,
+                               perm : PagePerm)
+                               -> MmResult<()> {
+        self.vmas
+            .protect_range(start, end, perm)
     }
 
     /// 解除 mmap 区间；共享页和设备页只断开 PTE，其他页正常回收。
@@ -576,12 +610,19 @@ impl LoongArch64AddressSpace {
                                       -> MmResult<bool>
         where A : api_v0::frame_allocator::PhysicalFrameAllocator<FrameId = PhysPageNum>
     {
+        if self.vmas
+               .overlaps_where(start, end, VmArea::is_external)
+        {
+            // SysV SHM 还需要同步更新 registry attachment；普通 MM 路径不能绕过 shmdt。
+            return Err(MmError::Unsupported);
+        }
         let mut changed = false;
         let mut vpn = start.floor_page();
         let vpn_end = end.ceil_page();
         while vpn.0 < vpn_end.0 {
             if self.non_owned_vma_contains(vpn.start_addr()) {
-                changed |= self.unmap_page_to_ppn(vpn)?.is_some();
+                changed |= self.unmap_page_to_ppn(vpn)?
+                               .is_some();
             } else {
                 changed |= self.unmap_page_with_alloc(allocator, vpn)?;
             }
@@ -590,52 +631,46 @@ impl LoongArch64AddressSpace {
         Ok(changed)
     }
 
-    pub(crate) fn register_shared_anon_vma(&mut self, start : VirtAddr, end : VirtAddr) {
-        self.shared_anon_vmas
-            .push(SharedAnonVma { start, end });
-    }
-
-    pub(crate) fn remove_shared_anon_vmas(&mut self, start : VirtAddr, end : VirtAddr) {
-        let mut next = Vec::new();
-        for vma in self.shared_anon_vmas
-                       .drain(..)
-        {
-            if !vma.overlaps(start, end) {
-                next.push(vma);
-                continue;
-            }
-            if start.0 > vma.start.0 {
-                next.push(SharedAnonVma { start : vma.start,
-                                          end : start });
-            }
-            if end.0 < vma.end.0 {
-                next.push(SharedAnonVma { start : end,
-                                          end : vma.end });
-            }
-        }
-        self.shared_anon_vmas = next;
+    pub(crate) fn register_shared_anon_vma(&mut self,
+                                           start : VirtAddr,
+                                           end : VirtAddr,
+                                           perm : PagePerm)
+                                           -> MmResult<()> {
+        self.vmas
+            .insert(VmArea::anonymous(start,
+                                      end,
+                                      perm,
+                                      VmaSharing::Shared,
+                                      VmaKind::Anonymous,
+                                      false))
     }
 
     pub(crate) fn register_shared_file_vma(&mut self,
                                            start : VirtAddr,
                                            end : VirtAddr,
+                                           perm : PagePerm,
                                            file_offset : usize,
-                                           loader : Box<dyn DemandPageLoader>) {
-        self.shared_file_vmas
-            .push(SharedFileVma { start,
-                                  end,
-                                  file_offset,
-                                  backing : VmaBacking::File { loader } });
+                                           loader : Box<dyn DemandPageLoader>)
+                                           -> MmResult<()> {
+        self.vmas
+            .insert(VmArea::file(start,
+                                 end,
+                                 perm,
+                                 VmaSharing::Shared,
+                                 false,
+                                 file_offset,
+                                 0,
+                                 Some(loader)))
     }
 
     pub(crate) fn sync_shared_file_vmas(&mut self,
                                         start : VirtAddr,
                                         end : VirtAddr)
                                         -> MmResult<()> {
-        let mut vmas = core::mem::take(&mut self.shared_file_vmas);
+        let mut vmas = core::mem::replace(&mut self.vmas, VmaSet::new());
         let result = (|| {
-            for vma in &mut vmas {
-                if !vma.overlaps(start, end) {
+            for vma in vmas.iter_mut() {
+                if !vma.is_shared_file() || !vma.overlaps(start, end) {
                     continue;
                 }
                 let mut page = VirtAddr(core::cmp::max(start.0, vma.start.0)).floor_page()
@@ -659,38 +694,8 @@ impl LoongArch64AddressSpace {
             }
             Ok(())
         })();
-        self.shared_file_vmas = vmas;
+        self.vmas = vmas;
         result
-    }
-
-    pub(crate) fn remove_shared_file_vmas(&mut self,
-                                          start : VirtAddr,
-                                          end : VirtAddr)
-                                          -> MmResult<()> {
-        let mut next = Vec::new();
-        for vma in self.shared_file_vmas
-                       .drain(..)
-        {
-            if !vma.overlaps(start, end) {
-                next.push(vma);
-                continue;
-            }
-            if start.0 > vma.start.0 {
-                next.push(SharedFileVma { start : vma.start,
-                                          end : start,
-                                          file_offset : vma.file_offset,
-                                          backing : vma.backing
-                                                       .duplicate()? });
-            }
-            if end.0 < vma.end.0 {
-                next.push(SharedFileVma { start : end,
-                                          end : vma.end,
-                                          file_offset : vma.file_offset + (end.0 - vma.start.0),
-                                          backing : vma.backing });
-            }
-        }
-        self.shared_file_vmas = next;
-        Ok(())
     }
 
     pub(crate) fn find_free_mmap_base_considering_vmas(&self,
@@ -737,8 +742,8 @@ impl LoongArch64AddressSpace {
                            .start_addr();
                 continue;
             }
-            if let Some(jump) = self.lazy_vma_overlap_end(base, end)
-                                    .or_else(|| self.shared_anon_vma_overlap_end(base, end))
+            if let Some(jump) = self.vmas
+                                    .overlap_end(base, end)
             {
                 let jump = VirtAddr(core::cmp::max(jump.0, base.0 + PAGE_SIZE));
                 skipped = skipped.saturating_add((jump.0 - base.0).div_ceil(PAGE_SIZE));
@@ -774,31 +779,38 @@ impl LoongArch64AddressSpace {
         }
     }
 
-    pub(crate) fn register_lazy_file_vma(&mut self,
-                                         start : VirtAddr,
-                                         end : VirtAddr,
-                                         perm : PagePerm,
-                                         file_offset : usize,
-                                         file_size : usize,
-                                         backing : VmaBacking)
-                                         -> MmResult<()> {
+    pub(crate) fn register_demand_vma(&mut self,
+                                      start : VirtAddr,
+                                      end : VirtAddr,
+                                      perm : PagePerm,
+                                      sharing : VmaSharing,
+                                      file_offset : usize,
+                                      file_size : usize,
+                                      backing : VmaBacking)
+                                      -> MmResult<()> {
         self.validate_user_mapping_range(start, end)?;
-        if self.lazy_vma_overlaps(start, end) {
-            return Err(MmError::InvalidAddress);
-        }
         self.ensure_lazy_refill_paths(start, end)?;
-        let position = self.lazy_file_vmas
-                           .partition_point(|vma| vma.start.0 < start.0);
-        self.lazy_file_vmas
-            .insert(position, LazyFileVma { start,
-                                            end,
-                                            perm,
-                                            file_offset,
-                                            file_size,
-                                            backing });
-        self.lazy_file_vmas
-            .sort();
-        Ok(())
+        let vma = match backing {
+            VmaBacking::Anonymous => VmArea::anonymous(start,
+                                                       end,
+                                                       perm,
+                                                       sharing,
+                                                       VmaKind::Anonymous,
+                                                       true),
+            VmaBacking::File { loader } => VmArea::file(start,
+                                                        end,
+                                                        perm,
+                                                        sharing,
+                                                        true,
+                                                        file_offset,
+                                                        file_size,
+                                                        loader),
+            VmaBacking::External | VmaBacking::Device { .. } => {
+                return Err(MmError::InvalidAddress);
+            }
+        };
+        self.vmas
+            .insert(vma)
     }
 
     /// 分配硬件 refill walker 所需的各级目录。
@@ -825,23 +837,6 @@ impl LoongArch64AddressSpace {
             }
             address = next;
         }
-    }
-
-    pub(crate) fn remove_lazy_file_vmas(&mut self,
-                                        start : VirtAddr,
-                                        end : VirtAddr)
-                                        -> MmResult<()> {
-        self.lazy_file_vmas
-            .remove_range(start, end)
-    }
-
-    pub(crate) fn protect_lazy_file_vmas(&mut self,
-                                         start : VirtAddr,
-                                         end : VirtAddr,
-                                         perm : PagePerm)
-                                         -> MmResult<()> {
-        self.lazy_file_vmas
-            .protect_range(start, end, perm)
     }
 
     /// 沿 VPN 三级索引向下 walk，必要时分配中间页表；返回目标叶子 PTE 槽位。
@@ -900,21 +895,15 @@ impl LoongArch64AddressSpace {
     /// 创建 COW 地址空间副本：递归复制三级页表树。
     ///
     /// - 用户页（PTE 中 `PLV == 3`）：共享原物理帧，写页清 `W` 并标记 COW。
+    /// - 共享 VMA 保留原权限；设备 VMA 不参与普通帧引用计数。
     /// - 内核恒等映射页（PLV != 3）：共享原始 PPN，不复制数据帧。
     /// - 含用户映射的中间页表帧：为子地址空间复制页表结构。
-    // 本方法代码由AI完成
     /// 处理一页 COW 写故障并在本方法内刷新本地地址空间转换。
     pub fn fork_cow(&mut self) -> MmResult<LoongArch64AddressSpace> {
         log::trace!("[mm-fork] LoongArch64AddressSpace::fork begin root_ppn={}",
                     self.root.0);
-        let child_lazy_file_vmas = LazyVmaSet::from_vec(self.lazy_file_vmas
-                                                            .iter()
-                                                            .map(LazyFileVma::duplicate)
-                                                            .collect::<MmResult<Vec<_>>>()?);
-        let child_shared_file_vmas = self.shared_file_vmas
-                                         .iter()
-                                         .map(SharedFileVma::duplicate)
-                                         .collect::<MmResult<Vec<_>>>()?;
+        let child_vmas = self.vmas
+                             .duplicate()?;
         let child_asid = crate::asid::allocate_user()?;
         let child_root = match alloc_table_frame_zeroed() {
             Ok(root) => root,
@@ -929,15 +918,13 @@ impl LoongArch64AddressSpace {
                        child_root,
                        LOONGARCH64_LEVELS - 1,
                        0,
-                       &self.shared_anon_vmas,
-                       &self.device_vmas)
+                       &self.vmas)
         } {
             unsafe {
                 destroy_table(child_root,
                               LOONGARCH64_LEVELS - 1,
                               0,
-                              &self.shared_anon_vmas,
-                              &self.device_vmas);
+                              &self.vmas);
             }
             crate::asid::release_user(child_asid);
             return Err(err);
@@ -955,15 +942,9 @@ impl LoongArch64AddressSpace {
                                      mmap_base : self.mmap_base,
                                      user_stack_bottom : self.user_stack_bottom,
                                      user_stack_top : self.user_stack_top,
-                                     lazy_file_vmas : child_lazy_file_vmas,
-                                     shared_anon_vmas : self.shared_anon_vmas
-                                                            .clone(),
-                                     shared_file_vmas : child_shared_file_vmas,
-                                     device_vmas : self.device_vmas
-                                                       .clone() })
+                                     vmas : child_vmas })
     }
 
-    // 本方法代码由AI完成
     /// 处理一页 COW：唯一引用时仅恢复可写位，多引用时复制物理页并替换叶 PTE。
     fn handle_cow_page(&mut self, vpn : VirtPageNum) -> MmResult<bool> {
         let Some((pte, level)) = self.walk_find(vpn)? else {
@@ -994,7 +975,6 @@ impl LoongArch64AddressSpace {
         Ok(true)
     }
 
-    // 本方法代码由AI完成
     /// 处理用户写故障并在本方法内刷新当前地址空间的本地转换。
     pub fn handle_cow_fault(&mut self, fault_addr : VirtAddr) -> MmResult<bool> {
         let changed = self.handle_cow_page(fault_addr.floor_page())?;
@@ -1022,18 +1002,17 @@ impl LoongArch64AddressSpace {
         Ok(level == 0 && flags.is_leaf() && flags.writable() && flags.dirty() && flags.user())
     }
 
-    // 本方法代码由AI完成
     /// 处理惰性 VMA 缺页；成功后由外层负责必要的 TLB 失效。
-    pub fn handle_lazy_page_fault<A>(&mut self,
-                                     allocator : &mut A,
-                                     fault_addr : VirtAddr,
-                                     access : PageFaultAccess)
-                                     -> MmResult<bool>
+    pub fn handle_vma_page_fault<A>(&mut self,
+                                    allocator : &mut A,
+                                    fault_addr : VirtAddr,
+                                    access : PageFaultAccess)
+                                    -> MmResult<bool>
         where A : api_v0::frame_allocator::PhysicalFrameAllocator<FrameId = PhysPageNum>
     {
         let page = fault_addr.floor_page()
                              .start_addr();
-        let handled = handle_lazy_file_fault(self, allocator, fault_addr, access)?;
+        let handled = handle_vma_fault(self, allocator, fault_addr, access)?;
         if handled {
             platform::arch::paging::flush_tlb_local(
                 platform::arch::paging::TlbFlushRange::Page { addr : page.0 });
@@ -1041,9 +1020,16 @@ impl LoongArch64AddressSpace {
         Ok(handled)
     }
 
-    // 本方法代码由AI完成
     /// 确保指定虚拟页可供写入；必要时处理 COW，返回是否改变了页表。
     pub fn ensure_private_for_write(&mut self, vpn : VirtPageNum) -> MmResult<bool> {
+        if self.vmas
+               .lookup(vpn.start_addr())
+               .and_then(|index| self.vmas.get(index))
+               .is_some_and(VmArea::is_shared)
+        {
+            return Ok(self.translate_addr(vpn.start_addr())?
+                          .is_some());
+        }
         if self.handle_cow_page(vpn)? {
             return Ok(true);
         }
@@ -1087,8 +1073,7 @@ impl LoongArch64AddressSpace {
             destroy_table(self.root,
                           LOONGARCH64_LEVELS - 1,
                           0,
-                          &self.shared_anon_vmas,
-                          &self.device_vmas);
+                          &self.vmas);
         }
         self.root = PhysPageNum(0);
     }
@@ -1100,11 +1085,7 @@ impl LoongArch64AddressSpace {
         }
         self.destroy_page_tables();
         // 仅保留旧裸句柄需要的 UserAddressSpaceCell tombstone；映射及其惰性加载器此时都已销毁。
-        drop(self.lazy_file_vmas
-                 .take());
-        drop(core::mem::take(&mut self.shared_anon_vmas));
-        drop(core::mem::take(&mut self.shared_file_vmas));
-        drop(core::mem::take(&mut self.device_vmas));
+        drop(self.vmas.take());
         core::mem::replace(&mut self.asid, crate::asid::KERNEL_ASID)
     }
 }
@@ -1113,11 +1094,7 @@ impl LoongArch64AddressSpace {
 ///
 /// # Safety
 /// 调用方确保 `ppn` 指向有效的 4 KiB 页表帧。
-unsafe fn destroy_table(ppn : PhysPageNum,
-                        level : usize,
-                        vpn_prefix : usize,
-                        shared_anon_vmas : &[SharedAnonVma],
-                        device_vmas : &[DeviceVma]) {
+unsafe fn destroy_table(ppn : PhysPageNum, level : usize, vpn_prefix : usize, vmas : &VmaSet) {
     let table = unsafe { table_mut(ppn) };
     for i in 0..LOONGARCH64_ENTRIES {
         let pte = table[i];
@@ -1132,20 +1109,17 @@ unsafe fn destroy_table(ppn : PhysPageNum,
                     .user()
             {
                 let page = VirtPageNum(vpn_prefix | (i << (level * VPN_INDEX_BITS))).start_addr();
-                let is_device = device_vmas.iter()
-                                           .any(|vma| vma.contains_page(page));
-                if !is_device {
+                let is_non_owned = vmas.lookup(page)
+                                       .and_then(|index| vmas.get(index))
+                                       .is_some_and(VmArea::is_non_owned);
+                if !is_non_owned {
                     let _ = frame_dealloc_result(child_ppn);
                 }
             }
         } else if level > 0 {
             let child_prefix = vpn_prefix | (i << (level * VPN_INDEX_BITS));
             unsafe {
-                destroy_table(child_ppn,
-                              level - 1,
-                              child_prefix,
-                              shared_anon_vmas,
-                              device_vmas);
+                destroy_table(child_ppn, level - 1, child_prefix, vmas);
             }
         }
     }
@@ -1164,8 +1138,7 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
                      child_ppn : PhysPageNum,
                      level : usize,
                      vpn_prefix : usize,
-                     shared_anon_vmas : &[SharedAnonVma],
-                     device_vmas : &[DeviceVma])
+                     vmas : &VmaSet)
                      -> MmResult<()> {
     let parent_table = unsafe { table_mut(parent_ppn) };
     let child_table = unsafe { table_mut(child_ppn) };
@@ -1182,14 +1155,14 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
             let perm = flags.to_page_perm();
             if perm.user() {
                 let page = VirtPageNum(vpn_prefix | (i << (level * VPN_INDEX_BITS))).start_addr();
-                let is_shared_anon = shared_anon_vmas.iter()
-                                                     .any(|vma| vma.contains_page(page));
-                let is_device = device_vmas.iter()
-                                           .any(|vma| vma.contains_page(page));
-                if !is_device {
+                let vma = vmas.lookup(page)
+                              .and_then(|index| vmas.get(index));
+                let is_shared = vma.is_some_and(VmArea::is_shared);
+                let is_non_owned = vma.is_some_and(VmArea::is_non_owned);
+                if !is_non_owned {
                     frame_inc_ref(ppn).map_err(MmError::from)?;
                 }
-                let child_flags = if is_shared_anon || is_device {
+                let child_flags = if is_shared || is_non_owned {
                     flags
                 } else if flags.writable() {
                     let cow_flags = flags.prepare_cow();
@@ -1210,15 +1183,10 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
                            child_sub,
                            level - 1,
                            child_prefix,
-                           shared_anon_vmas,
-                           device_vmas)
+                           vmas)
             } {
                 unsafe {
-                    destroy_table(child_sub,
-                                  level - 1,
-                                  child_prefix,
-                                  shared_anon_vmas,
-                                  device_vmas);
+                    destroy_table(child_sub, level - 1, child_prefix, vmas);
                 }
                 return Err(err);
             }
@@ -1231,7 +1199,6 @@ unsafe fn fork_table(parent_ppn : PhysPageNum,
 impl LoongArch64AddressSpace {
     /// 汇总页表叶子与 VMA 元数据，供 procfs/debugger 只读观察。
     pub(crate) fn user_mapping_snapshot(&self) -> Vec<api_v0::user_mapping::UserMappingSnapshot> {
-        use api_v0::mmap::DemandMappingKind;
         use api_v0::user_mapping::{UserMappingKind, UserMappingSnapshot};
 
         let mut leaves = Vec::new();
@@ -1248,78 +1215,24 @@ impl LoongArch64AddressSpace {
         };
         let mut mappings = Vec::new();
 
-        for vma in self.lazy_file_vmas
-                       .iter()
-        {
-            let kind = match &vma.backing {
-                VmaBacking::Anonymous => UserMappingKind::Anonymous,
-                VmaBacking::File { loader } => match loader.mapping_kind() {
-                    DemandMappingKind::Anonymous => UserMappingKind::Anonymous,
-                    DemandMappingKind::File => UserMappingKind::File,
-                },
+        for vma in self.vmas.iter() {
+            let kind = match vma.kind {
+                VmaKind::Anonymous => UserMappingKind::Anonymous,
+                VmaKind::File => UserMappingKind::File,
+                VmaKind::Heap => UserMappingKind::Heap,
+                VmaKind::Stack => UserMappingKind::Stack,
+                VmaKind::SharedMemory => UserMappingKind::SharedMemory,
+                VmaKind::Device => UserMappingKind::Device,
             };
             mappings.push(UserMappingSnapshot { start : vma.start.0,
                                                 end : vma.end.0,
                                                 perm : vma.perm,
-                                                shared : false,
+                                                shared : vma.is_shared(),
                                                 file_offset : vma.file_offset,
                                                 resident_pages : resident_in(vma.start.0,
                                                                              vma.end.0),
                                                 kind });
         }
-        if self.user_brk_start
-               .0 <
-           self.user_brk_current_end
-               .0
-        {
-            let start = self.user_brk_start
-                            .floor_page()
-                            .start_addr()
-                            .0;
-            let end = self.user_brk_current_end
-                          .ceil_page()
-                          .start_addr()
-                          .0;
-            mappings.push(UserMappingSnapshot { start,
-                                                end,
-                                                perm : PagePerm::R | PagePerm::W | PagePerm::U,
-                                                shared : false,
-                                                file_offset : 0,
-                                                resident_pages : resident_in(start, end),
-                                                kind : UserMappingKind::Heap });
-        }
-        if self.user_stack_bottom
-               .0 <
-           self.user_stack_top
-               .0
-        {
-            let start = self.user_stack_bottom
-                            .floor_page()
-                            .start_addr()
-                            .0;
-            let end = self.user_stack_top
-                          .ceil_page()
-                          .start_addr()
-                          .0;
-            mappings.push(UserMappingSnapshot { start,
-                                                end,
-                                                perm : PagePerm::R | PagePerm::W | PagePerm::U,
-                                                shared : false,
-                                                file_offset : 0,
-                                                resident_pages : resident_in(start, end),
-                                                kind : UserMappingKind::Stack });
-        }
-        for vma in &self.device_vmas {
-            mappings.push(UserMappingSnapshot { start : vma.start.0,
-                                                end : vma.end.0,
-                                                perm : vma.perm,
-                                                shared : true,
-                                                file_offset : 0,
-                                                resident_pages : resident_in(vma.start.0,
-                                                                             vma.end.0),
-                                                kind : UserMappingKind::Device });
-        }
-
         let mut leaf_mappings : Vec<UserMappingSnapshot> = Vec::new();
         for leaf in leaves {
             if mappings.iter()
@@ -1327,19 +1240,8 @@ impl LoongArch64AddressSpace {
             {
                 continue;
             }
-            let page = VirtAddr(leaf.addr);
-            let shared_file = self.shared_file_vmas
-                                  .iter()
-                                  .find(|vma| vma.contains_page(page));
-            let shared = shared_file.is_some() ||
-                         self.shared_anon_vmas
-                             .iter()
-                             .any(|vma| vma.contains_page(page));
-            let (kind, file_offset) = if let Some(vma) = shared_file {
-                (UserMappingKind::File, vma.file_offset + (leaf.addr - vma.start.0))
-            } else {
-                (UserMappingKind::Anonymous, 0)
-            };
+            let shared = false;
+            let (kind, file_offset) = (UserMappingKind::Anonymous, 0);
             if let Some(previous) = leaf_mappings.last_mut() {
                 let offset_contiguous = kind != UserMappingKind::File ||
                                         previous.file_offset + (previous.end - previous.start) ==

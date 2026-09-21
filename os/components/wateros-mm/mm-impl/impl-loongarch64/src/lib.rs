@@ -26,7 +26,7 @@ pub mod user_access;
 pub mod user_aspace;
 mod user_heap_mmap;
 
-use pagetable::VmaBacking;
+use pagetable::{VmaBacking, VmaSharing};
 
 struct WritableFaultTestLoader;
 
@@ -105,12 +105,15 @@ pub fn test_with_range(start_ppn : PhysPageNum, end_ppn : PhysPageNum) {
     let lazy_vpn = VirtPageNum(0x400);
     let lazy_start = lazy_vpn.start_addr();
     let lazy_end = VirtPageNum(lazy_vpn.0 + 1).start_addr();
-    aspace.register_lazy_file_vma(lazy_start,
+    aspace.register_demand_vma(lazy_start,
                                   lazy_end,
                                   PagePerm::R | PagePerm::U,
+                                  VmaSharing::Private,
                                   0,
                                   0,
-                                  VmaBacking::File { loader : Box::new(WritableFaultTestLoader) })
+                                  VmaBacking::File {
+                                      loader : Some(Box::new(WritableFaultTestLoader)),
+                                  })
           .expect("register lazy page");
     let lazy_changed = MmapOps::mprotect(&mut aspace,
                                          lazy_start,
@@ -168,7 +171,6 @@ pub mod kernel_mm_impl {
     ///
     /// 返回 `(子地址空间裸指针, 子地址空间 token)`；`parent_aspace_ptr == 0`
     /// 时返回 [`api_v0::error::MmError::InvalidAddress`]。
-    // 本方法代码由AI完成
     ///
     /// 父地址空间的用户叶页会共享并标记为 COW；内核映射保持共享。返回子地址空间裸句柄后，
     /// 调用方负责在任务退出时调用 `drop_user_aspace`。
@@ -188,7 +190,6 @@ pub mod kernel_mm_impl {
         Ok((crate::user_aspace::into_handle(child), pgdl))
     }
 
-    // 本方法代码由AI完成
     /// 处理用户写故障并在必要时执行 COW；返回值表示是否已修复或已确认并发 CPU 已修复该页。
     pub fn handle_cow_fault(parent_aspace_ptr : usize,
                             fault_addr : usize)
@@ -217,7 +218,5 @@ pub mod kernel_mm_impl {
     /// 销毁用户地址空间：递归释放所有用户页帧和页表帧。
     ///
     /// `aspace_ptr` 来自 `LoadedElf::user_aspace_ptr`，调用后指针失效。
-    // 本方法代码由AI完成
-    /// 销毁用户地址空间：递归释放所有用户页帧和页表帧。
     pub fn drop_user_aspace(aspace_ptr : usize) { crate::user_aspace::destroy(aspace_ptr); }
 }

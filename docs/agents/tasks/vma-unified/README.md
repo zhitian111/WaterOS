@@ -1,9 +1,9 @@
 # VMA 统一路径重构任务
 
-本目录用于从当前 `main` 独立推进 VMA 路径统一，避免与 `perf/kernel-heap-slab`
-分支相互污染。目标是把 Sv39 / LoongArch64 两套高度重复的 VMA 数据结构与
-split/merge/mprotect/mremap 逻辑收口到共享层，先修复 lazy VMA 有序性不变量，
-再逐步向 Linux 的 VMA + page cache 思路靠拢。
+本目录记录 VMA 路径统一工作的任务拆解与历史。当前实现已把 Sv39 / LoongArch64 的
+用户区间语义收口到共享层，以单一、由 `BTreeMap` 建索引、全局有序且无重叠的 `VmaSet`
+管理 ELF、heap、stack、mmap、SysV SHM 和 device；页表只保留驻留、COW 与硬件状态。该索引借鉴
+Linux Maple Tree 的范围映射模型，但不是完整 Maple Tree 或经典线段树。
 
 ## 分支与工作树
 
@@ -16,9 +16,9 @@ split/merge/mprotect/mremap 逻辑收口到共享层，先修复 lazy VMA 有序
 
 1. 双架构共享 VMA 表示和修改路径；
 2. 所有 VMA split/merge/remove/protect/mremap 都经过统一入口；
-3. 保证 `lazy_file_vmas` 始终有序、无重叠；
+3. 保证地址空间唯一 `VmaSet` 始终有序、无重叠；
 4. 重新打开 Sv39 `elf-lazy-map` 并完成双架构功能/性能回归；
-5. 逐步把 loader 从 VMA 中解耦，缺页统一走文件 backing/page cache。
+5. backing 统一为 Anonymous/File/Device，缺页统一走 VMA + backing/page cache。
 
 ## 验收主线
 

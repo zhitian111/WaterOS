@@ -48,9 +48,7 @@ detach 正确链是 registry `attachment_info` 快照 → 解锁 → `unmap_shar
 
 ## fork、exec、exit
 
-`fork_task` 在 registry 锁内 clone 父 attachment、逐段 nattch++、向 child Vec push并返回 pages 快照；遇单段 nattch overflow只跳过该 attachment，不使整个 fork 失败，可能导致子页表与 SHM registry 不完整。Vec/page clone也不可失败。
-
-syscall 随后在 child aspace逐个 replace external mapping；任一失败会 unmap 所有返回项并 `drop_task(child)` 回滚 nattch。若 registry 阶段 heap panic或静默 skip，回滚无法完整执行。应把它改成可失败 reservation transaction，全部元数据预留成功后一次提交。
+`fork_task` 在 registry 锁内 clone 父 attachment、逐段 nattch++ 并向 child Vec push；地址空间 fork 已依据 `External` VMA 复制 PTE，syscall 不再逐项替换或复制 pages 快照。遇单段 nattch overflow仍只跳过该 attachment，不使整个 fork 失败，可能导致子页表与 SHM registry 不完整；Vec clone/push也不可失败。应把 registry 复制改成可失败 reservation transaction，全部元数据预留成功后一次提交。
 
 exec/exit 对旧 aspace先 snapshot attachments，逐个成功 unmap 后 detach。若 aspace handle=0，当前直接 drop_task 元数据；这只在地址空间已经由其它路径彻底销毁、external PTE不会再引用 frame 时安全。
 

@@ -11,7 +11,7 @@
 | `addr.rs` | `VirtAddr`、`PhysAddr`、`VirtPageNum`、`PhysPageNum` | 地址换算、4 KiB 页对齐和页号索引。 |
 | `perm.rs`、`flags.rs` | `PagePerm`、`MapFlags` | 页权限和 mmap 行为标志；不要直接放架构 PTE 位。 |
 | `address_space.rs` | `AddressSpaceId`、`AddressSpaceOps` | 单页 map/unmap/translate 等最小页表操作。 |
-| `mmap.rs` | `MmapRequest`、`MmapKind`、`MmapOps`、`DemandPageLoader` | 匿名/文件/设备映射、fault、`mprotect`、`mremap`、`msync`。 |
+| `mmap.rs` | `MmapRequest`、`MmapKind`、`MmapOps`、`DemandPageLoader` | 匿名/文件/设备/外部页映射、fault、`mprotect`、`mremap`、`msync`。 |
 | `brk.rs` | `BrkRegion`、`HeapBrk` | 进程堆边界和扩缩容契约。 |
 | `user_access.rs` | `UserMemoryOps`、`UserCopyProgress`、`FutexMappingIdentity` | 跨页拷贝、用户原子操作和 futex 身份。 |
 | `user_aspace_lifecycle.rs` | drop、CPU enter/leave 钩子 | task 不依赖具体 MM 实现即可管理地址空间。 |
@@ -26,7 +26,8 @@
 - `PteChange::Changed` 只表示驻留叶 PTE 发生变化；只更新 lazy VMA 元数据应返回 `None`，避免无意义的 TLB shootdown。
 - `DemandPageLoader::load_shared_page` 返回的 PPN 已为调用者持有一个引用；PTE 安装失败时实现必须释放该引用。
 - `DeviceMapping` 的页归驱动所有，VMA 只持有 `lease` 保活。`munmap`/destroy 只能删 PTE，不能回收到普通帧池。
-- `munmap_external` 用于 SysV SHM 等外部所有者。调用者必须先证明目标区间确属该对象。
+- `mmap_external`/`munmap_external` 用于 SysV SHM 等外部所有者。实现只安装/删除 PTE，
+  fork 与销毁不得增减通用 frame 引用；解除前还必须验证整段确属 external VMA。
 - `UserCopyProgress.completed` 是错误发生前已完成的精确前缀，不能在跨页失败后简单返回零。
 - futex 的共享身份必须稳定；私有或可能 COW 的映射返回 `Private`，不能把会变化的物理页号当共享 key。
 
@@ -37,7 +38,7 @@ sys_mmap
   -> 将 Linux prot/flags/fd 转成 MmapRequest + DemandPageLoader
   -> 当前 task 取得 user_aspace_ptr
   -> with_user_aspace_mut_and_flush...
-  -> MmapOps::{mmap_file_lazy,mmap_device,mmap}
+  -> MmapOps::{mmap_file_lazy,mmap_device,mmap_external,mmap}
   -> VMA/PTE 改动
   -> 按 PteChange 做本地及远端 TLB 失效
 ```

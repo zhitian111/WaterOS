@@ -86,15 +86,13 @@ user_brk_start/current/max
 mmap_anon_cursor        私有/共享匿名选址游标
 mmap_file_cursor        文件/设备选址游标
 mmap_base               first-fit arena 下界
-user_stack_bottom/top   可按需补页的保留范围
-lazy_file_vmas          LazyVmaSet：private anon、private/file lazy、ELF lazy
-shared_anon_vmas        MAP_SHARED 匿名和共享文件物理页身份标记
-shared_file_vmas        MAP_SHARED 文件 writeback loader
-device_vmas             外部 PPN、权限和 lease
+user_stack_bottom/top   布局边界；实际栈页仍由 VMA 描述
+vmas                    唯一 VmaSet：ELF、heap、stack、mmap、SysV SHM、device
 ```
 
-共享文件映射会同时出现在 `shared_anon_vmas`（保证 fork/解除时按共享引用处理）和
-`shared_file_vmas`（写回）。设备页只在 `device_vmas`，不能交给 frame allocator。
+`VmArea` 同时保存范围、权限、private/shared、用途、demand/eager 策略和 backing。
+共享文件只登记一次，fork、写回和 futex identity 都从同一条 VMA 判断；设备 VMA 的
+backing 保存物理起点与 lease，页帧不能交给 frame allocator。
 
 `unsafe impl Send/Sync` 的理由同样是“只能经 cell 锁访问”；`DemandPageLoader` 自身没有
 要求 `Send`，所以把地址空间裸引用跨线程传递是未定义行为风险。
@@ -254,14 +252,14 @@ sys_clone/fork
 | --- | --- | --- |
 | 无 U 的内核 trampoline | 不增 | 父子直接共享 |
 | device VMA | 不增通用 frame ref | flags 原样，lease 在 VMA clone |
+| SysV SHM External VMA | 不增通用 frame ref | flags 原样，物理页由 SHM registry 持有 |
 | shared anonymous | 增 ref | 可写仍可写，不 COW |
 | 普通只读/private cache | 增 ref | flags 原样 |
 | 普通可写 private | 增 ref | 父子清 W，置 COW + WAS_WRITABLE |
 
-当前重大缺口：`fork_table` 只接收 `shared_anon_vmas` 和 `device_vmas`，不接收
-`shared_file_vmas`。共享文件映射创建时目前也登记到 shared-anon 列表，所以正常路径可
-借此避开 COW；若未来重构移除这份双重登记，MAP_SHARED writable 会错误进入 COW，父子
-物理页分裂且退出写回互相覆盖。修改这两张表时必须同时回归。
+`fork_table` 接收唯一 `VmaSet`，对每个叶页查询对应 `VmArea`。因此 shared anonymous 与
+shared file 都直接避开 COW，SysV SHM/device 页也由同一查询排除通用帧引用操作，不再依赖双表
+同步。
 
 fork 失败时子树递归销毁并归还 ASID，但父页中已设置的 COW 不回滚。子引用释放后这些
 页可能 refcount=1，父首次写会原地恢复 W；语义可继续运行，但失败 fork 会留下额外 fault。
@@ -293,10 +291,10 @@ drop_user_aspace -> user_aspace::destroy
   -> dropped 原子置位，重复调用直接返回
   -> 取走 tlb_cpus
   -> exclusive_access -> destroy_and_take_asid
-       -> sync 全部 shared_file_vmas；失败只 warn
-       -> destroy_table：用户非设备叶各减一次 ref，内核叶不减
+       -> 遍历 VmaSet 写回全部 shared file；失败只 warn
+       -> destroy_table：用户 owned 叶各减一次 ref，External/Device 与内核叶不减
        -> 释放所有页表帧
-       -> drop VMA loader/lease Vec
+       -> drop VmaSet 中的 loader/lease
   -> local AddressSpace flush + remote shootdown
   -> 成功才 release ASID；失败则永久退休编号
   -> cell tombstone 不释放
@@ -310,23 +308,21 @@ drop_user_aspace -> user_aspace::destroy
 
 ### 8.1 brk
 
-ELF 完成后：`brk_start=current=ceil(image_end)`，`brk_max=mmap_base`。增长时当前实现 eager
-分配新增零页，并检查 stack、kernel window、lazy VMA；中途失败不完整回滚。收缩解除
-尾页并释放。无论是否跨页都调用全地址空间 fence。
-
-另有 `handle_brk_page_fault` 可为范围内缺失页补零页，主要处理被 madvise 丢弃或特殊
-路径形成的洞；execute fault 被拒绝。
+ELF 完成后：`brk_start=current=ceil(image_end)`，`brk_max=mmap_base`。增长时 eager 分配
+新增零页并扩展 `Heap` VMA，收缩同步解除尾页并切分 VMA。madvise 丢弃驻留页后，统一
+VMA fault 路径按 `Heap` VMA 恢复；不存在独立 brk fault 边界旁路。
 
 ### 8.2 mmap 类型
 
 | 请求 | 建立方式 | VMA/所有权 |
 | --- | --- | --- |
-| private anonymous | lazy | `LazyFileVma + Anonymous`，fault 才分配零页 |
-| shared anonymous | eager | 全量零页 + `SharedAnonVma` |
-| legacy file backing slice | eager | 普通 owned 页，无长期 loader |
-| private/lazy file | lazy | `LazyFileVma + File loader` |
-| shared file | eager | `SharedAnonVma + SharedFileVma`，munmap/destroy 写回 |
-| device | eager 外部 PPN | `DeviceVma + lease`，只允许 SHARED、不可 X |
+| private anonymous | lazy | `VmArea(Anonymous, Private, demand)` |
+| shared anonymous | eager | `VmArea(Anonymous, Shared)` |
+| legacy file backing slice | eager | `VmArea(File, loader=None)` |
+| private/lazy file | lazy | `VmArea(File, Private, loader=Some)` |
+| shared file | eager/lazy | 单一 `VmArea(File, Shared)`，munmap/destroy 写回 |
+| SysV SHM | eager 外部 PPN | `VmArea(SharedMemory, Shared, External)`，只由 `shmdt` 更新 registry |
+| device | eager 外部 PPN | `VmArea(Device, Shared, lease)`，只允许 SHARED、不可 X |
 
 非固定 hint 当前不作为 hint 使用：有 `Some(addr)` 但没有 FIXED/FIXED_NOREPLACE 的多数
 路径直接 `InvalidAddress`。`MAP_FIXED` 会先覆盖目标；共享文件目标先写回。操作失败后
@@ -353,21 +349,21 @@ COW fault 不在这个函数内，由 trap 的写故障分类另行调用。stac
 ### 8.4 munmap/msync/mprotect/madvise
 
 - `munmap`：先写回相交 shared file；成功后逐 PTE unmap，device 只断 PTE，其他页减 ref；
-  再切分四类 VMA。后半元数据复制失败时 PTE 已撤销，操作非原子。
-- `munmap_external`：所有叶都只断 PTE不减 ref，调用者必须先证明范围确为 SHM/外部页；
+  最后只执行一次统一 VMA 区间删除。
+- `mmap_external`/`munmap_external`：建立或拆除 `External` VMA，只断 PTE不增减 ref；
+  `munmap_external` 还会验证目标范围完全由 external VMA 覆盖；
   误用会泄漏普通页。
 - `msync`：每个相交 shared file VMA逐驻留页 `write_page`，然后 `flush`；非驻留页不写。
-- `mprotect`：先改 lazy VMA，再逐驻留页；加 W 时非设备页先确保 private。中途 NotMapped
-  可能留下前缀已修改，但 syscall 的 error 包装会保守全量 shootdown。
+- `mprotect`：先验证 `VmaSet::covers`；未驻留 demand 页只改元数据，驻留页同步改 PTE；
+  加 W 时仅 private 非设备页执行 COW 私有化。
 - `MADV_DONTNEED/FREE`：逐页用普通 allocator unmap，但保留 lazy VMA。若范围含 device
   或其他 external PPN，该 helper 没有检查 `non_owned_vma_contains`，存在错误回收风险；
   syscall 层当前用 `madvise_range_shared_or_file` 拒绝相应范围，新增调用者必须保留门禁。
 - `prefault_all_current_user_ranges` 会把所有可访问 lazy VMA、brk 和完整 stack 变驻留，
   大栈会显著增加瞬时物理内存。
 
-`sync_shared_file_vmas` 用 `mem::take` 临时移走 Vec，避免 loader 回调期间借用冲突，并在
-成功/失败后恢复；但 `remove_shared_file_vmas` 与 common 的旧式 drain+duplicate 一样，
-loader 复制失败会破坏 VMA 集合。
+共享文件同步会临时移走整个 `VmaSet`，避免 loader 回调期间借用冲突，并在成功或失败后
+恢复。VMA 切分在提交前完成 fallible loader 复制，不再逐表 drain。
 
 ## 9. ELF、动态解释器和脚本
 
@@ -428,10 +424,8 @@ Linux binfmt_script 风格重写 argv 后递归装载解释器。深度达到 AP
 u32 地址必须 4-byte 对齐且不能跨页；load/CAS 使用 `SeqCst`。CAS 返回观察到的旧值，
 无论比较是否成功。
 
-`futex_mapping_identity_u32` 对 `shared_vma_contains` 返回真时用完整物理地址作为 shared
-key，否则返回 Private。当前 `shared_vma_contains` 只查 `shared_anon_vmas`；共享文件
-正常创建时也会登记该表，所以可以识别。若重构两表关系，必须显式加入
-`shared_file_vmas`，否则不同进程的文件共享 futex 会被错误隔离。
+`futex_mapping_identity_u32` 查询唯一 VMA 的 sharing；shared anonymous/file 都以完整
+物理地址作为 shared key，其余返回 Private。
 
 ## 11. 新增 MM syscall 实例
 
@@ -439,7 +433,7 @@ key，否则返回 Private。当前 `shared_vma_contains` 只查 `shared_anon_vm
 
 1. syscall ABI 检查 `addr` 页对齐、长度溢出、用户输出 vector 长度；
 2. 取得当前 handle，调用 `with_user_aspace_mut`，因为只观察不改 PTE；
-3. 对每页同时查询 `translate_addr` 与四类 VMA，resident 位只由 PTE决定；
+3. 对每页同时查询 `translate_addr` 与唯一 `VmaSet`，resident 位只由 PTE决定；
 4. 释放地址空间锁后用标准 user-copy API写 vector；不要持锁跨 VFS/user copy；
 5. 任一输入页超出 lower canonical 用户区返回统一 errno。
 
@@ -461,7 +455,7 @@ with_user_aspace_mut_and_flush_if_changed(handle, |aspace| {
 ### forkheavy 内核 heap 单调上升
 
 先统计 `into_handle` 与 `destroy` 次数。当前每次 destroy 留下 tombstone cell，属于确定的
-线性 heap 常驻；再分离 VMA loader/Vec 是否已在 `destroy_and_take_asid` 释放，以及全局
+线性 heap 常驻；再分离 VMA loader/B-tree 节点是否已在 `destroy_and_take_asid` 释放，以及全局
 readonly cache 的物理帧常驻。不要只用进程 RSS 判断。
 
 ### 地址空间销毁写回失败
@@ -472,9 +466,9 @@ readonly cache 的物理帧常驻。不要只用进程 RSS 判断。
 
 ### fork 后父子共享映射不一致
 
-同时检查 `shared_anon_vmas`、`shared_file_vmas`、`fork_table` 的分类和 frame refcount。
-共享 writable 必须 flags 原样；private writable 必须父子 COW。检查父 PTE 修改后的全
-shootdown 是否完成。
+检查唯一 VMA 的 `sharing/kind`、`fork_table` 分类和 frame refcount。shared writable
+必须 flags 原样；private writable 必须父子 COW。检查父 PTE 修改后的全 shootdown 是否
+完成。
 
 ### 用户 copy 后其他线程看到旧数据
 
@@ -484,7 +478,7 @@ local fence，是已知缺口；用双 CPU 同地址空间反复读写可复现�
 ### munmap 后物理帧未回收
 
 区分页表中间页（到 destroy 才回收）、cache 自有引用、shared ref、device 外部所有权、
-ASID/cell tombstone。用 frame refcount 跟踪 PPN，不要把所有残留都归因 VMA Vec。
+ASID/cell tombstone。用 frame refcount 跟踪 PPN，不要把所有残留都归因 VMA B-tree。
 
 ### 重复 fault 或权限 fault
 

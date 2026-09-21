@@ -149,6 +149,18 @@ pub trait MmapOps: AddressSpaceOps {
                       -> MmResult<VirtAddr>
         where A : PhysicalFrameAllocator<FrameId = PhysPageNum>;
 
+    /// 将外部子系统拥有的离散物理页建立为一个共享 VMA。
+    ///
+    /// `pages` 必须逐页覆盖向上取整后的请求区间。地址空间只拥有 PTE，不拥有
+    /// 这些物理页；fork、munmap 和销毁均不得增减通用帧分配器引用。失败时实现
+    /// 必须撤销本次已安装的 PTE，但不能回收 `pages` 中的物理页。
+    fn mmap_external<A>(&mut self,
+                        allocator : &mut A,
+                        req : MmapRequest,
+                        pages : &[PhysPageNum])
+                        -> MmResult<VirtAddr>
+        where A : PhysicalFrameAllocator<FrameId = PhysPageNum>;
+
     /// 处理用户页故障。返回 `Ok(true)` 表示已装入/修复该页，可重试用户访问。
     fn handle_page_fault<A>(&mut self,
                             allocator : &mut A,

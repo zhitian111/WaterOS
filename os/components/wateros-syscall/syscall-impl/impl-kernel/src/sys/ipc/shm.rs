@@ -305,12 +305,13 @@ pub(crate) fn sys_shmat(args : SyscallArgs) -> UserRet {
             Err(error) => return UserRet::from_error(shm_error_to_errno(error)),
         }
     };
-    let base = match reserve_attach_va(handle,
-                                       shmaddr,
-                                       shmflg,
-                                       segment.size,
-                                       readonly,
-                                       executable)
+    let base = match map_attach_pages(handle,
+                                      shmaddr,
+                                      shmflg,
+                                      segment.size,
+                                      readonly,
+                                      executable,
+                                      &segment.pages)
     {
         Ok(base) => base,
         Err(error) => {
@@ -324,12 +325,6 @@ pub(crate) fn sys_shmat(args : SyscallArgs) -> UserRet {
                                size : segment.size,
                                readonly,
                                pages : segment.pages };
-    if let Err(error) = replace_range_with_shared(handle, &info, true) {
-        let _ = unmap_range_dealloc(handle, base, info.size);
-        let _ = ipc::shm::registry().lock()
-                                    .cancel_attach_reservation(&reservation);
-        return UserRet::from_error(error);
-    }
 
     match ipc::shm::registry().lock()
                               .finish_attach_with_metadata(&reservation,
@@ -420,31 +415,23 @@ pub(crate) fn drop_task_attachments(task_id : task::TaskId, aspace_handle : usiz
 
 pub(crate) fn fork_task_attachments(parent : task::TaskId,
                                     child : task::TaskId,
-                                    child_aspace_handle : usize)
+                                    _child_aspace_handle : usize)
                                     -> Result<(), ErrNo> {
-    let attached = ipc::shm::registry().lock()
-                                       .fork_task(parent, child);
-    for info in &attached {
-        if let Err(error) = replace_range_with_shared(child_aspace_handle, info, true) {
-            // fork_task 已增加 child 的 nattch；先撤销所有可能已映射的共享页，再删除 child
-            // attachment，确保 IPC_RMID 不能在页表仍引用这些帧时回收它们。
-            for rollback in &attached {
-                let _ = unmap_shared_range(child_aspace_handle, rollback);
-            }
-            let _ = ipc::shm::registry().lock().drop_task(child);
-            return Err(error);
-        }
-    }
+    // 地址空间 fork 已按 External VMA 原样复制 PTE，且不会增减普通 frame 引用；
+    // 此处只复制 SHM registry 的 attachment 关系和 nattch。
+    ipc::shm::registry().lock()
+                        .fork_task(parent, child);
     Ok(())
 }
 
-fn reserve_attach_va(handle : usize,
-                     shmaddr : usize,
-                     flags : usize,
-                     len : usize,
-                     readonly : bool,
-                     executable : bool)
-                     -> Result<usize, ErrNo> {
+fn map_attach_pages(handle : usize,
+                    shmaddr : usize,
+                    flags : usize,
+                    len : usize,
+                    readonly : bool,
+                    executable : bool,
+                    pages : &[mm::api::addr::PhysPageNum])
+                    -> Result<usize, ErrNo> {
     use mm::api::addr::{VirtAddr, PAGE_SIZE};
     use mm::api::flags::MapFlags;
     use mm::api::mmap::{MmapKind, MmapOps, MmapRequest};
@@ -482,47 +469,8 @@ fn reserve_attach_va(handle : usize,
                             kind : MmapKind::Anonymous };
     mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
         let mut alloc = GlobalPhysFrameAllocator;
-        let base = MmapOps::mmap(aspace, &mut alloc, req, None)?;
+        let base = MmapOps::mmap_external(aspace, &mut alloc, req, pages)?;
         Ok(base.0)
-    }).map_err(mm_err_to_errno)
-}
-
-fn replace_range_with_shared(handle : usize,
-                             info : &ShmAttachInfo,
-                             dealloc_old : bool)
-                             -> Result<(), ErrNo> {
-    use mm::api::addr::{VirtAddr, PAGE_SIZE};
-    use mm::api::address_space::AddressSpaceOps;
-    use mm::api::perm::PagePerm;
-    use mm::frame_alloctor::frame_dealloc_result;
-
-    let mut perm = PagePerm::U | PagePerm::R;
-    if !info.readonly {
-        perm |= PagePerm::W;
-    }
-    mm::user_aspace::with_user_aspace_mut_and_flush(handle, |aspace| {
-        let mut failed_deallocations = 0usize;
-        for (index, ppn) in info.pages
-                                .iter()
-                                .copied()
-                                .enumerate()
-        {
-            let vpn = VirtAddr(info.base + index * PAGE_SIZE).floor_page();
-            if let Some(old_ppn) = aspace.unmap_page_to_ppn(vpn)? {
-                if dealloc_old && old_ppn != ppn {
-                    if frame_dealloc_result(old_ppn).is_err() {
-                        failed_deallocations += 1;
-                    }
-                }
-            }
-            aspace.map_page_to_ppn(vpn, ppn, perm)?;
-        }
-        if failed_deallocations != 0 {
-            log::warn!("[shm] replacement found already-free anonymous frames shmid={} failed={}",
-                       info.shmid,
-                       failed_deallocations);
-        }
-        Ok(())
     }).map_err(mm_err_to_errno)
 }
 
@@ -532,18 +480,6 @@ fn unmap_shared_range(handle : usize, info : &ShmAttachInfo) -> Result<(), ErrNo
 
     mm::user_aspace::with_user_aspace_mut_and_flush_if_changed(handle, |aspace| {
         let changed = MmapOps::munmap_external(aspace, VirtAddr(info.base), info.size)?;
-        Ok(((), changed.changed()))
-    }).map_err(mm_err_to_errno)
-}
-
-fn unmap_range_dealloc(handle : usize, base : usize, len : usize) -> Result<(), ErrNo> {
-    use mm::api::addr::VirtAddr;
-    use mm::api::mmap::MmapOps;
-    use mm::frame_alloctor::GlobalPhysFrameAllocator;
-
-    mm::user_aspace::with_user_aspace_mut_and_flush_if_changed(handle, |aspace| {
-        let mut alloc = GlobalPhysFrameAllocator;
-        let changed = MmapOps::munmap(aspace, &mut alloc, VirtAddr(base), len)?;
         Ok(((), changed.changed()))
     }).map_err(mm_err_to_errno)
 }

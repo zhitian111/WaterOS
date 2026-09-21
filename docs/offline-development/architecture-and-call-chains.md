@@ -181,9 +181,11 @@ sequenceDiagram
     M->>A: 按页面所有权/引用计数释放
 ```
 
-设备映射页面不属于普通帧分配器；匿名、私有文件页和共享文件页的 fork/destroy 引用规则不同。
-任何新增 VMA 类型都必须同时审计：fault、fork、mprotect、munmap、mremap、地址空间 destroy、
-用户访问与 `/proc/maps` 快照。
+地址空间使用一个由 `BTreeMap` 索引、有序且无重叠的 `VmaSet` 统一描述匿名、文件、堆、栈、
+SysV SHM 和设备区间；PTE 只表示页面是否驻留及硬件/COW 状态。该结构是 Maple Tree 思路的轻量范围索引，
+不是完整 Linux Maple Tree 或经典线段树。SHM/设备页不属于普通帧分配器；private/shared 的 fork/destroy
+引用规则不同。新增 VMA 属性或 backing 必须同时审计 fault、fork、mprotect、munmap、mremap、
+地址空间 destroy、用户访问与 `/proc/maps` 快照，禁止再增加平行区间表。
 
 ## fork、clone、exec、exit、reap 生命周期
 
@@ -225,4 +227,3 @@ signal、credential 等状态；只释放 TCB 会留下 side table。
 
 普通 Linux generic64 syscall handler、VFS、FS、task 机制原则上不按 ISA 分叉。若通用 handler 出现
 `cfg(target_arch)`，先确认差异是否应该下沉到 platform/MM API。
-

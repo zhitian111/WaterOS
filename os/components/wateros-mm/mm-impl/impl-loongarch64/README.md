@@ -103,15 +103,13 @@ leaf_pte      = data_ppn << 12 | flags
 root, asid
 user_brk_start/current/max
 mmap_anon_cursor, mmap_file_cursor, mmap_base
-user_stack_bottom/top
-lazy_file_vmas
-shared_anon_vmas
-shared_file_vmas
-device_vmas
+user_stack_bottom/top   布局边界
+vmas                    唯一 VmaSet：ELF、heap、stack、mmap、SysV SHM、device
 ```
 
-四类 VMA 的所有权语义与 common 手册一致。共享文件映射同时登记 shared-anon（共享
-PPN/fork 分类）和 shared-file（writeback）；设备 VMA 的 lease 决定外部对象生命周期。
+`VmArea` 同时保存范围、权限、private/shared、用途、demand/eager 策略和 backing。
+共享文件只登记一次，fork 与写回查询同一 VMA；设备 backing 的 lease 决定外部对象
+生命周期。
 
 `unsafe impl Send/Sync` 只因为 `MultiprocessorSafeCell` 串行 loader 和页表。不可把结构
 本身无锁共享给其他 CPU。
@@ -138,12 +136,12 @@ WaterOS 使用零目录。硬件 refill walker 若在高层遇到 0，无法走�
 因此登记 lazy VMA 时先为范围内每个 2 MiB leaf-table span 调一次 `walk_create`：
 
 ```text
-register_lazy_file_vma
+register_demand_vma
   -> validate/overlap
   -> ensure_lazy_refill_paths(start,end)
        -> 对每个 2MiB 边界创建 level2/level1 路径
        -> level0 PTE 保持 0
-  -> 插入 LazyVmaSet
+  -> 插入唯一 VmaSet
 ```
 
 影响：
@@ -249,20 +247,19 @@ tlb_cpus & online - self
 ```text
 fork_user_aspace
   -> with_user_aspace_mut_and_flush(parent)
-  -> duplicate lazy/shared-file loaders
+  -> duplicate 唯一 VmaSet 及其中的 loaders/leases
   -> alloc child ASID/root
   -> fork_table
        kernel PLV0 leaf：不增 ref，直接共享
-       device：不增通用 ref，flags 原样
-       shared-anon：增 ref，flags 原样
+       External/device：不增通用 ref，flags 原样
+       shared VMA：增 ref，flags 原样
        private read-only/cache：增 ref，flags 原样
        private writable：增 ref，父子清 W+D，置 COW 两位
-  -> clone VMA metadata/lease -> child handle
+  -> child 取得复制后的 VmaSet -> child handle
 ```
 
-共享文件正常创建时也登记 `shared_anon_vmas`，所以 fork 避开 COW；重构双表关系时必须
-显式把 shared-file 纳入分类。fork 中途失败销毁子树，但父已经 COW 的页不回滚；refcount
-回到 1 后父首次写可原地恢复。
+shared anonymous/file 都由 `VmArea::is_shared` 避开 COW，SysV SHM/device 也由同一集合识别。fork
+中途失败销毁子树，但父已经 COW 的页不回滚；refcount 回到 1 后父首次写可原地恢复。
 
 ### 8.2 COW fault
 
@@ -288,11 +285,12 @@ trap PME -> kernel_mm_impl::handle_cow_fault
 ### 8.3 destroy
 
 `destroy_and_take_asid` 先写回所有 shared-file；失败只 warn，然后仍销毁页表、释放用户
-非设备叶引用、释放目录、drop loaders/leases。dirty 数据可能因此丢失。随后 local+remote
+owned 用户叶引用、释放目录、drop loaders/leases；External/Device 叶不交给普通 allocator。
+dirty 数据可能因此丢失。随后 local+remote
 All flush；成功归还 ASID，失败永久退休。cell tombstone不回收。
 
-`destroy_table` 以 PLV3 判断用户叶，以 device VMA排除外部 PPN。`shared_anon_vmas` 参数
-当前没有影响释放：共享页每个地址空间各释放自己的一次 ref，这是正确引用语义。
+`destroy_table` 以 PLV3 判断用户叶，并查询唯一 VMA 排除 External/Device PPN。普通共享页仍由每个
+地址空间释放自己持有的一次引用。
 
 ## 9. brk、mmap、fault 与 madvise
 
@@ -300,22 +298,23 @@ All flush；成功归还 ASID，失败永久退休。cell tombstone不回收。
 
 | 类型 | 建立方式 | 元数据 |
 | --- | --- | --- |
-| private anonymous | lazy 数据页 + eager refill目录 | `LazyFileVma::Anonymous` |
-| shared anonymous | eager 零页 | `SharedAnonVma` |
-| private file | lazy/eager | `LazyFileVma` 或普通 owned 页 |
-| shared file | eager | `SharedAnonVma + SharedFileVma` |
-| device | eager 外部 PPN | `DeviceVma + lease`，SHARED且不可 X |
+| private anonymous | lazy 数据页 + eager refill目录 | `VmArea(Anonymous, Private, demand)` |
+| shared anonymous | eager 零页 | `VmArea(Anonymous, Shared)` |
+| private file | lazy/eager | `VmArea(File, Private)` |
+| shared file | eager/lazy | 单一 `VmArea(File, Shared)` |
+| SysV SHM | eager 外部 PPN | `VmArea(SharedMemory, Shared, External)`，物理页归 registry |
+| device | eager 外部 PPN | `VmArea(Device, Shared, lease)`，不可 X |
 
-`brk` 墽长当前 eager 分配零页；stack/brk fault 可补被 madvise 丢弃的洞。fault 顺序是
-stack -> brk -> common lazy。COW由 PME trap 单独处理。
+`brk` 增长 eager 分配零页并扩展 `Heap` VMA；stack/brk/mmap 的缺失页都走统一 VMA fault。
+COW 仍由 PME trap 单独处理。
 
 `MAP_FIXED` 先破坏旧目标，失败无完整 rollback；`FIXED_NOREPLACE` 主要只在匿名路径。
 非固定的非空 hint 多数直接拒绝。选址最多扫描 4 GiB，避开 PTE、stack、lazy和
 shared-anon；LoongArch 用户页表没有 Sv39 kernel trampoline window。
 
-`munmap` 先 shared-file writeback，再删 PTE/VMA；后半 loader duplicate 失败会留下
-PTE/VMA不一致。`mprotect` 先改 lazy metadata，再逐叶，错误可能部分提交。`mremap` 的
-分配复制和 FIXED 事务缺口见 common 手册。
+`munmap` 先 shared-file writeback，再删 PTE，最后统一切分一次 VMA；`mprotect` 先验证
+VMA 连续覆盖，未驻留 demand 页只改 VMA，驻留页同步改 PTE。`mremap` 的分配复制和
+FIXED 驻留页事务缺口见 common 手册。
 
 `MADV_DONTNEED/FREE` helper 用普通 allocator 回收叶；调用前必须用
 `madvise_range_shared_or_file` 排除 shared/device，否则会错误释放外部 PPN。prefault
@@ -399,7 +398,7 @@ munmap、mprotect、madvise、destroy 和 lease/refcount。
 
 ### lazy fault 反复或 refill 异常
 
-确认 `register_lazy_file_vma` 是否执行 `ensure_lazy_refill_paths`，目标 2 MiB span 的两级
+确认 `register_demand_vma` 是否执行 `ensure_lazy_refill_paths`，目标 2 MiB span 的两级
 目录是否为纯 PA，叶是否 0，fault 后叶是否 V|P，local invtlb 是否执行。目录项误设 V
 是 LoongArch 专属高概率错误。
 

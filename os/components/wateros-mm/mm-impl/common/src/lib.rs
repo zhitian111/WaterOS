@@ -26,7 +26,7 @@ use frame_alloctor::{frame_alloc_result, frame_dealloc_result, frame_inc_ref, fr
 use vfs_api::VfsFileContentIdentity;
 
 /// 私有匿名映射的惰性缺页 loader：缺页时不做任何加载，
-/// 直接保留 `handle_lazy_page_fault` 预先清零的页（等价于按需零页）。
+/// 直接保留 VMA 缺页路径预先清零的页（等价于按需零页）。
 ///
 /// 复用文件 lazy VMA 机制，避免匿名 mmap 饥渴分配整段物理帧
 /// （例如 glibc pthread 每线程 8 MiB 栈，批量创建会瞬间耗尽帧池 → `ENOMEM`）。

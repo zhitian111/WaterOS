@@ -98,7 +98,7 @@ cat /proc/meminfo
 - VMA 是否把普通帧误标为外部所有；
 - fork 是否增加共享帧引用；
 - munmap/destroy 是否减少引用并在零时回收；
-- lazy VMA、resident PTE 和共享文件 VMA 三份元数据是否同时删除；
+- 唯一 VMA 是否已切分/删除，resident PTE 是否按该 VMA 的所有权规则解除；
 - TLB flush 是否发生在 PTE 修改之后。
 
 共享文件映射退出时，应区分 VFS `writeback()`（提交脏页）与 `flush()`（持久化/文件系统同步）。
@@ -172,4 +172,3 @@ make check ARCH=la PROFILE=final
 - 跨组件生命周期：完整 profile 自动队列。
 
 最终记录必须包含没有完成的回归。被手工终止的测试不能写“通过”，只能记录已覆盖到的阶段。
-

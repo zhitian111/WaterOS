@@ -113,7 +113,9 @@ rg -n "Vma|mmap|munmap|mprotect|page_fault|lazy|Cow|writeback|drop_user_aspace|s
 rg -n "copy_(to|from)_user|UserMemoryOps|translate" components/wateros-mm components/wateros-syscall
 ```
 
-同一语义的两架构实现必须同时审查。先判断 bug 属于 VMA 元数据、PTE、frame refcount、TLB 还是 VFS file identity。
+同一语义的两架构实现必须同时审查。`mm-impl/common/src/vma.rs` 的唯一、B-tree 索引
+`VmaSet` 是区间语义来源；先判断 bug 属于 VMA 元数据、resident PTE、frame refcount、TLB
+还是 VFS file identity。
 
 ## VFS：路径、fd、OFD 与页缓存
 

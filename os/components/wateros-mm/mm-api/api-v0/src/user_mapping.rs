@@ -21,6 +21,8 @@ pub enum UserMappingKind {
     Heap,
     /// 初始或线程用户栈区，通常向低地址增长。
     Stack,
+    /// 物理页由 SysV SHM 等地址空间外部对象持有的共享映射。
+    SharedMemory,
     /// 驱动租约保护的设备页映射，解除时不能归还给通用帧分配器。
     Device,
     /// 用户/内核切换必须保留的 trampoline 映射，普通 `munmap` 不应删除。

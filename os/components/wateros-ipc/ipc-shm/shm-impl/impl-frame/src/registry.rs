@@ -393,14 +393,14 @@ impl ShmRegistry {
             .collect()
     }
 
-    /// `FLOW:` `fork` 复制父 task 的 attachment 关系并增加每段 `nattch`；调用方负责映射子地址空间。
-    pub fn fork_task(&mut self, parent: TaskId, child: TaskId) -> Vec<ShmAttachInfo> {
+    /// `FLOW:` `fork` 复制父 task 的 attachment 关系并增加每段 `nattch`；地址空间层已随
+    /// External VMA 复制共享 PTE，本方法不重复安装页表映射。
+    pub fn fork_task(&mut self, parent: TaskId, child: TaskId) {
         let parent_attaches = self
             .attachments
             .get(&parent)
             .cloned()
             .unwrap_or_default();
-        let mut child_attaches = Vec::new();
         for attach in parent_attaches {
             let Some(segment) = self
                 .segments
@@ -419,17 +419,7 @@ impl ShmRegistry {
                 .entry(child)
                 .or_insert_with(Vec::new)
                 .push(attach);
-            child_attaches.push(ShmAttachInfo {
-                shmid: attach.shmid,
-                base: attach.base,
-                size: attach.size,
-                readonly: attach.readonly,
-                pages: segment
-                    .pages
-                    .clone(),
-            });
         }
-        child_attaches
     }
 
     /// 线性探测分配未占用 shmid，跳过 0。

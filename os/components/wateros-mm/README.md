@@ -24,7 +24,7 @@
 | 聚合、实现选择和统一初始化 | `src/lib.rs`、`src/kernel_mm.rs` | 再导出 `api`、帧分配器、活动 `user_aspace`；`init_after_boot` 转入活动架构的 `kernel_mm::init`。 |
 | 地址、权限和生命周期契约 | `mm-api/api-v0/src/{addr,perm,address_space,mmap,brk,user_access,user_aspace_lifecycle}.rs` | 定义 newtype、页权限、地址空间/mmap/brk/用户拷贝语义和 task 回调钩子，不编码 PTE。 |
 | 帧分配 | `mm-frame-alloctor/frame-alloctor-impl/impl-stack/src/lib.rs` | 全局栈式帧池、引用计数和保留区；聚合 crate 中的 `OwnedPhysPage` 管一页 RAII。 |
-| 共享按需映射机制 | `mm-impl/common/src/{vma,mapping,fault,cache,elf}.rs` | VMA、匿名零页、ELF 页填充和只读映射页缓存辅助；不是稳定对外 API。 |
+| 统一 VMA 与按需映射机制 | `mm-impl/common/src/{vma,mapping,fault,cache,elf}.rs` | 唯一、以 `BTreeMap` 索引的有序 `VmaSet`，统一匿名/文件/堆/栈/SysV SHM/设备语义、ELF 页填充和只读页缓存辅助；不是稳定对外 API。 |
 | RISC-V 地址空间 | `mm-impl/impl-sv39/src/{pagetable,asid,kernel_global,kernel_elf,user_aspace,user_heap_mmap,user_access}.rs` | Sv39 三级页表、运行时 ASID 位宽、DTB 保留区和 `satp` 路径。 |
 | LoongArch 地址空间 | `mm-impl/impl-loongarch64/src/{pagetable,asid,kernel_global,kernel_elf,user_aspace,user_heap_mmap,user_access}.rs` | LoongArch64 三级页表、固定 10 位 ASID 和 `PGDL` token 路径。 |
 
@@ -38,7 +38,7 @@
 | `OwnedPhysPage` | 调用者栈上持有一个不可复制的 `PhysPageNum` | `alloc_zeroed` 分配且清零；`Drop` 调 `frame_dealloc_result` | 只能借出与 `self` 同寿命的一页切片，正常路径恰好归还一次（`mm-frame-alloctor/src/lib.rs`）。 |
 | 内核地址空间 | `KERNEL_ASPACE: BootOnceCell<KernelAddressSpaceCell>`，内部为 `MultiprocessorSafeCell` | `kernel_global::init` 只允许一次；RAM 上界用 `PHYS_RAM_END_EXCL` Release/Acquire 发布 | 页表根和中间页来自帧池；全局页表在运行期不销毁，LoongArch 路径明确以 `Box::leak` 保证 PGDL 不悬空。 |
 | 用户地址空间 | 各架构 `user_aspace` 将泄漏的地址空间对象登记为 `usize` 句柄 | `with_user_aspace_mut` 先验证句柄和 dropped 状态，再独占访问；task exit 通过 API 注册的释放钩子销毁 | 句柄为零或已销毁均为 `MmError::InvalidAddress`；销毁须递归回收用户映射、页表帧和 ASID。 |
-| 页表、VMA 与 resident PTE | `Sv39AddressSpace` / `LoongArch64AddressSpace` 内部 | 由用户地址空间锁串行；映射变更经带 flush 的包装器完成 | VMA 权限可先于驻留 PTE 改变；访问时才按 VMA 填页。设备映射解除时删除 PTE，不把设备页归入普通帧池。 |
+| 页表、VMA 与 resident PTE | `Sv39AddressSpace` / `LoongArch64AddressSpace` 内部的单一 B-tree `VmaSet` 与页表 | 由用户地址空间锁串行；映射变更经带 flush 的包装器完成 | VMA 有序且全局无重叠，是区间语义唯一来源；PTE 只描述驻留/COW/硬件状态。SysV SHM/设备映射解除时只删除 PTE，不把外部页归入普通帧池。 |
 | ASID 与 TLB 使用者位图 | 每架构 `USER_ASIDS` 互斥分配器；地址空间记录 `tlb_cpus` | ASID 只能在可能缓存其翻译的 CPU 完成失效后释放；远端事务由 shootdown 锁串行 | ASID 0 保留给内核。Sv39 依据硬件 `ASIDLEN` 缩小可用空间，零位时退化为 ASID 0 和全量 fence；LoongArch 固定 10 位。 |
 
 ## 关键链路

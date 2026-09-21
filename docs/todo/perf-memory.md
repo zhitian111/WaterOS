@@ -63,8 +63,8 @@
   - `os/components/wateros-mm/mm-impl/impl-sv39/src/pagetable.rs:666-680,804-837`
   - `os/components/wateros-mm/mm-impl/impl-loongarch64/src/pagetable.rs:718-771`
   - `os/components/wateros-mm/mm-impl/impl-sv39/src/lib.rs:128-141`
-- **当前实现/复杂度**：递归 DFS，每层固定遍历 512 PTE（即使稀疏），叶子/中间表逐帧 `frame_dealloc_result`；O(页表节点数×512) 扫描 + O(映射页+表帧) 次 `with_frame_allocator`；`shared_anon_vmas` 标记页跳过 dealloc。
-- **问题**：exit/reap 路径慢；大量小映射进程 exit 时帧回收延迟；共享匿名页永不回池（见 M-18）；每次 dealloc 触发 M-8 的 O(n) `contains`。
+- **当前实现/复杂度**：递归 DFS，每层固定遍历 512 PTE（即使稀疏），叶子/中间表逐帧 `frame_dealloc_result`；O(页表节点数×512) 扫描 + O(映射页+表帧) 次 `with_frame_allocator`。叶子所有权由统一 `VmaSet` 判断：设备页不进入通用帧回收，共享匿名/文件页按引用计数回收。
+- **问题**：exit/reap 路径慢；大量小映射进程 exit 时帧回收延迟；每次 dealloc 触发 M-8 的 O(n) `contains`。
 - **改进方案**：页表节点引用计数 + 空子树 lazy collapse（与 M-5 统一）；批量 dealloc（局部数组 + 单次持锁）或 per-CPU 延迟回收队列。
 - **预期收益**：高，进程 churn、LTP exit/wait。
 - **架构差异**：逻辑相同；leaf 判定不同（RV `is_leaf_at_level` vs LA `flags.is_leaf()`）。
@@ -99,9 +99,9 @@
 ### M-7. `find_free_mmap_base` 线性探测 + 每候选页 walk 【中高】
 
 - **位置**：`os/components/wateros-mm/mm-impl/common/src/lib.rs:236-275`、`impl-sv39/src/pagetable.rs:417-471`
-- **当前实现/复杂度**：从 cursor 逐页探测，最多 `2^20` 页；每候选对 `n_pages` 调 `translate_addr`（3 级 walk）→ O(skipped×n_pages×3)；considering_vmas 再线性扫 `lazy_file_vmas`/`shared_anon_vmas`。
+- **当前实现/复杂度**：从 cursor 逐页探测，最多 `2^20` 页；每候选对 `n_pages` 调 `translate_addr`（3 级 walk）→ O(skipped×n_pages×3)；统一 `VmaSet` 已用 `BTreeMap` 将首个 VMA 冲突定位降为 O(log n)，但选址主循环仍逐页、逐候选 walk PTE。
 - **问题**：地址空间碎片多、mmap 频繁时 placement 变慢；mremap grow 冲突触发 relocate 加倍。
-- **改进方案**：VMA 区间树/有序链表维护空闲区，first/best-fit O(log n)；probe 用页表 bitmap 或 VMA 重叠检测代替逐页 translate。
+- **改进方案**：在现有 B-tree 范围索引上维护 gap/最大空闲区增强信息，使 first/best-fit O(log n)；probe 用该信息代替逐页 translate。
 - **预期收益**：中高，多 mmap 工作负载。
 - **架构差异**：无。
 - **风险/依赖**：与 lazy VMA 元数据一致性；MAP_FIXED 单独处理。
@@ -165,12 +165,12 @@
 - **架构差异**：无。
 - **风险/依赖**：嵌套 alloc 死锁（ISH-1）；审计日志路径。
 
-### M-14. lazy VMA 管理 Vec 线性扫描 + munmap 分裂 O(n) 且 `duplicate_box` 【中低】
+### M-14. 统一 VMA 已改 B-tree 索引，但文件 split 仍需要 `duplicate_box` 【低中】
 
-- **位置**：`os/components/wateros-mm/mm-impl/impl-sv39/src/pagetable.rs:473-529,716-728`、`user_heap_mmap.rs:436-439`
-- **当前实现/复杂度**：缺页 `lazy_file_vmas.iter().position` O(#VMA)；`remove_lazy_file_vmas` drain 全表，重叠 split 并 `loader.duplicate_box()` 堆分配。
-- **问题**：多 mmap 区进程 fault 慢；munmap 部分区间触发 loader 复制与 Vec 重建。
-- **改进方案**：按起始地址排序 Vec 或 interval tree；VMA 存 `Arc<Loader>` 避免 split 复制；fork 共享 VMA 树。
+- **位置**：`os/components/wateros-mm/mm-impl/common/src/vma.rs`、双架构 `pagetable.rs` / `user_heap_mmap.rs`
+- **当前实现/复杂度**：所有 ELF、heap、stack、mmap、device 区间已收口到按起始地址建立 `BTreeMap` 索引且全局无重叠的 `VmaSet`；点查找与首个 overlap 为 O(log n)，区间修改为 O(log n + k log n)，文件 VMA 分裂仍需 `loader.duplicate_box()`。
+- **问题**：统一模型和 B-tree 消除了多张表漂移与全表搬移，但部分 munmap/mprotect 仍会复制 loader；fork 也会复制整棵元数据树和 loader。
+- **改进方案**：VMA 保存稳定 backing identity/`Arc`，避免 split 复制 loader；需要更高并发时再引入持久化/RCU 友好的 Maple Tree 类节点并让 fork 共享只读树。
 - **预期收益**：中低，多映射进程。
 - **架构差异**：无。
 
@@ -203,17 +203,17 @@
 - **预期收益**：低中，fork/map 频繁时累积明显。
 - **架构差异**：无。
 
-### M-18. MAP_SHARED 匿名 fork 不 inc_ref，munmap/destroy 语义不一致（回收隐患）【性能低 / 正确性 P0】
+### M-18. MAP_SHARED 匿名页引用生命周期【已修复，保留回归项】
 
 - **位置**：
   - `os/components/wateros-mm/mm-impl/impl-sv39/src/pagetable.rs:822-827,871-876`
   - `os/components/wateros-mm/mm-impl/impl-sv39/src/user_heap_mmap.rs:179-182`
   - `os/components/wateros-mm/mm-api/api-v0/src/address_space.rs:81-92`
   - LA 同逻辑 `impl-loongarch64/.../pagetable.rs:757-761,804-806`
-- **当前实现/复杂度**：共享 anon eager 映射 + `register_shared_anon_vma`；fork 对 shared 不 `frame_inc_ref`；munmap 无条件 dealloc；destroy 对 shared 页跳过 dealloc → 永久占帧。
-- **问题**：UAF 风险 + 帧池只减不增；性能表现为「可用内存虚低」，长测 OOM。
-- **改进方案**：shared 页统一 refcount；destroy/munmap 按 ref 释放；或 MAP_SHARED 走 shmem 帧池。
-- **预期收益**：性能低 / 正确性 P0；修复后帧回收率恢复。
+- **当前实现/复杂度**：共享匿名页由统一 VMA 标记；fork 增加 frame 引用但不设置 COW，munmap/destroy 都释放当前地址空间的一份引用。设备/外部页另走不回收普通 frame 的路径。
+- **回归重点**：持续检查 fork 后共享可见性、父子退出顺序、frame refcount 回到基线，以及 SysV SHM 的 external-unmap 契约。
+- **后续方案**：若引入真正的 shmem backing，应把共享匿名页的对象 identity 与 page cache 生命周期纳入 VMA backing。
+- **预期收益**：当前正确性闭环已恢复；后续工作主要改善跨独立 mmap 的共享对象语义。
 - **架构差异**：RV/LA 同逻辑。
 - **风险/依赖**：与 T-PF-02/03 审计任务绑定。
 

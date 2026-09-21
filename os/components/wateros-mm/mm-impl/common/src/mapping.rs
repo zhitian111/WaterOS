@@ -98,6 +98,39 @@ pub fn map_zeroed_range_with_alloc<S, A>(aspace : &mut S,
     Ok(())
 }
 
+/// 将一组外部拥有的离散物理页依次安装到 `[start, end)`。
+///
+/// 失败时只撤销本次已经安装的 PTE；物理页生命周期始终由调用方管理。
+pub fn map_external_pages<S>(aspace : &mut S,
+                             start : VirtAddr,
+                             end : VirtAddr,
+                             perm : PagePerm,
+                             pages : &[PhysPageNum])
+                             -> MmResult<()>
+    where S : AddressSpaceOps
+{
+    if start.0 >= end.0 || start.0 % PAGE_SIZE != 0 || end.0 % PAGE_SIZE != 0 {
+        return Err(MmError::InvalidAddress);
+    }
+    let page_count = (end.0 - start.0) / PAGE_SIZE;
+    if pages.len() != page_count {
+        return Err(MmError::InvalidAddress);
+    }
+    let mut vpn = start.floor_page();
+    for &ppn in pages {
+        if let Err(error) = aspace.map_page_to_ppn(vpn, ppn, perm) {
+            let mut rollback = start.floor_page();
+            while rollback.0 < vpn.0 {
+                let _ = aspace.unmap_page_to_ppn(rollback);
+                rollback = VirtPageNum(rollback.0 + 1);
+            }
+            return Err(error);
+        }
+        vpn = VirtPageNum(vpn.0 + 1);
+    }
+    Ok(())
+}
+
 /// 将一个虚拟页映射到新分配的清零帧；映射失败时调用方需依据分配器契约处理已取帧。
 pub fn map_zeroed_page_with_alloc<S, A>(aspace : &mut S,
                                         allocator : &mut A,

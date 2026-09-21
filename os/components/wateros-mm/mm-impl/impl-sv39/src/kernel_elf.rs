@@ -29,7 +29,7 @@ use frame_alloctor::{
 use fs::api::{FsError, SharedFs};
 use impl_common::{
     entry_file_offset, finalize_elf_read, rd_u16, rd_u32, rd_u64, ElfSegmentLoadParams, VmaBacking,
-    PT_LOAD,
+    VmaSharing, PT_LOAD,
 };
 
 use crate::pagetable::Sv39AddressSpace;
@@ -692,9 +692,9 @@ fn prefault_elf_entry_page(aspace : &mut Sv39AddressSpace,
         return Ok(());
     }
     let mut allocator = GlobalPhysFrameAllocator;
-    if !aspace.handle_lazy_page_fault(&mut allocator,
-                                      page,
-                                      PageFaultAccess::Execute)
+    if !aspace.handle_vma_page_fault(&mut allocator,
+                                     page,
+                                     PageFaultAccess::Execute)
               .map_err(LoadElfError::Mm)?
     {
         return Err(LoadElfError::Parse);
@@ -817,7 +817,8 @@ pub fn from_elf_path(path : &str) -> Result<LoadedElf, LoadElfError> {
                             brk_max,
                             mmap_base,
                             VirtAddr(stack_bottom),
-                            VirtAddr(ELF_STACK_TOP + PAGE_SIZE));
+                            VirtAddr(ELF_STACK_TOP + PAGE_SIZE))
+          .map_err(LoadElfError::Mm)?;
 
     // 使用 path-based 验证
     verify_mapped_entry_from_path_at(&mut aspace,
@@ -1103,12 +1104,13 @@ fn register_lazy_segment_run(aspace : &mut Sv39AddressSpace,
                                                     filesz,
                                                     run_start.0,
                                                     !perm.writable())?);
-    aspace.register_lazy_file_vma(run_start,
-                                  run_end,
-                                  perm,
-                                  vma_file_origin,
-                                  vma_file_size,
-                                  VmaBacking::File { loader })
+    aspace.register_demand_vma(run_start,
+                               run_end,
+                               perm,
+                               VmaSharing::Private,
+                               vma_file_origin,
+                               vma_file_size,
+                               VmaBacking::File { loader : Some(loader) })
           .map_err(LoadElfError::Mm)
 }
 
@@ -1146,7 +1148,7 @@ fn map_segment_from_path_lazy(aspace : &mut Sv39AddressSpace,
             if aspace.translate_addr(page_va)
                      .map_err(LoadElfError::Mm)?
                      .is_some() ||
-               aspace.lazy_vma_contains(page_va)
+               aspace.demand_vma_contains(page_va)
             {
                 register_lazy_segment_run(aspace, path, run_start, page_va, vbase, fo, filesz,
                                           perm)?;
@@ -1166,8 +1168,8 @@ fn map_segment_from_path_lazy(aspace : &mut Sv39AddressSpace,
             let merged = old | perm;
             aspace.protect_page(vpn, merged)
                   .map_err(LoadElfError::Mm)?;
-        } else if aspace.lazy_vma_contains(page_va) {
-            aspace.merge_lazy_file_vma_perm(page_va, page_end, perm)
+        } else if aspace.demand_vma_contains(page_va) {
+            aspace.merge_demand_vma_perm(page_va, page_end, perm)
                   .map_err(LoadElfError::Mm)?;
         } else if lazy_run_start.is_none() {
             lazy_run_start = Some(page_va);
@@ -1191,14 +1193,14 @@ fn map_segment_from_path_lazy(aspace : &mut Sv39AddressSpace,
 
 /// 从文件系统路径映射 PT_LOAD 段（单段），避免整文件读取。
 #[cfg(not(feature = "elf-lazy-map"))]
-fn map_segment_from_path_eager<A : AddressSpaceOps>(aspace : &mut A,
-                                                    path : &str,
-                                                    p_vaddr : u64,
-                                                    p_offset : u64,
-                                                    p_filesz : u64,
-                                                    p_memsz : u64,
-                                                    perm : PagePerm)
-                                                    -> Result<(), LoadElfError> {
+fn map_segment_from_path_eager(aspace : &mut Sv39AddressSpace,
+                               path : &str,
+                               p_vaddr : u64,
+                               p_offset : u64,
+                               p_filesz : u64,
+                               p_memsz : u64,
+                               perm : PagePerm)
+                               -> Result<(), LoadElfError> {
     let vbase = p_vaddr as usize;
     let memsz = p_memsz as usize;
     let filesz = p_filesz as usize;
@@ -1280,7 +1282,8 @@ fn map_segment_from_path_eager<A : AddressSpaceOps>(aspace : &mut A,
         }
         vpn = VirtPageNum(vpn.0 + 1);
     }
-    Ok(())
+    aspace.register_resident_file_segment(va_start, va_end, perm, fo, filesz)
+          .map_err(LoadElfError::Mm)
 }
 
 fn map_segment_from_path(aspace : &mut Sv39AddressSpace,
@@ -1309,21 +1312,22 @@ fn flush_lazy_bss_run(aspace : &mut Sv39AddressSpace,
     let Some((start, end, perm)) = run.take() else {
         return Ok(());
     };
-    aspace.register_lazy_file_vma(VirtAddr(start),
-                                  VirtAddr(end),
-                                  perm,
-                                  0,
-                                  0,
-                                  VmaBacking::Anonymous)
+    aspace.register_demand_vma(VirtAddr(start),
+                               VirtAddr(end),
+                               perm,
+                               VmaSharing::Private,
+                               0,
+                               0,
+                               VmaBacking::Anonymous)
           .map_err(LoadElfError::Mm)
 }
 
 fn eager_map_available_bss_pages(aspace : &mut Sv39AddressSpace,
-                                  phdrs : &[u8],
-                                  phentsize : usize,
-                                  phnum : usize,
-                                  load_bias : usize)
-                                  -> Result<(), LoadElfError> {
+                                 phdrs : &[u8],
+                                 phentsize : usize,
+                                 phnum : usize,
+                                 load_bias : usize)
+                                 -> Result<(), LoadElfError> {
     for i in 0..phnum {
         #[cfg(not(feature = "elf-lazy-map"))]
         let mut lazy_run : Option<(usize, usize, PagePerm)> = None;
@@ -1336,8 +1340,8 @@ fn eager_map_available_bss_pages(aspace : &mut Sv39AddressSpace,
         {
             continue;
         }
-        let segment_base = load_bias.checked_add(rd_u64(phdrs, ph + 16)
-                                                     .ok_or(LoadElfError::Parse)? as usize)
+        let segment_base = load_bias.checked_add(rd_u64(phdrs, ph + 16).ok_or(LoadElfError::Parse)?
+                                                 as usize)
                                     .ok_or(LoadElfError::Parse)?;
         let filesz = rd_u64(phdrs, ph + 32).ok_or(LoadElfError::Parse)? as usize;
         let memsz = rd_u64(phdrs, ph + 40).ok_or(LoadElfError::Parse)? as usize;
@@ -1379,17 +1383,16 @@ fn eager_map_available_bss_pages(aspace : &mut Sv39AddressSpace,
                 {
                     continue;
                 }
-                let other_base = load_bias.checked_add(rd_u64(phdrs, other + 16)
-                                                           .ok_or(LoadElfError::Parse)? as usize)
-                                          .ok_or(LoadElfError::Parse)?;
-                let other_filesz = rd_u64(phdrs, other + 32)
-                    .ok_or(LoadElfError::Parse)? as usize;
-                let other_memsz = rd_u64(phdrs, other + 40)
-                    .ok_or(LoadElfError::Parse)? as usize;
+                let other_base =
+                    load_bias.checked_add(rd_u64(phdrs, other + 16).ok_or(LoadElfError::Parse)?
+                                          as usize)
+                             .ok_or(LoadElfError::Parse)?;
+                let other_filesz = rd_u64(phdrs, other + 32).ok_or(LoadElfError::Parse)? as usize;
+                let other_memsz = rd_u64(phdrs, other + 40).ok_or(LoadElfError::Parse)? as usize;
                 let other_file_end = other_base.checked_add(other_filesz)
-                                                    .ok_or(LoadElfError::Parse)?;
+                                               .ok_or(LoadElfError::Parse)?;
                 let other_mem_end = other_base.checked_add(other_memsz)
-                                                   .ok_or(LoadElfError::Parse)?;
+                                              .ok_or(LoadElfError::Parse)?;
                 if page < other_mem_end && other_base < page_end {
                     let flags = rd_u32(phdrs, other + 4).ok_or(LoadElfError::Parse)?;
                     merged_perm |= perm_from_pf(flags);
@@ -1411,7 +1414,7 @@ fn eager_map_available_bss_pages(aspace : &mut Sv39AddressSpace,
                     return Ok(());
                     #[cfg(not(feature = "elf-lazy-map"))]
                     {
-                        if aspace.lazy_vma_contains(VirtAddr(page)) {
+                        if aspace.demand_vma_contains(VirtAddr(page)) {
                             flush_lazy_bss_run(aspace, &mut lazy_run)?;
                         } else if let Some((_, run_end, run_perm)) = lazy_run.as_mut() {
                             if *run_end == page && *run_perm == merged_perm {
@@ -1430,8 +1433,8 @@ fn eager_map_available_bss_pages(aspace : &mut Sv39AddressSpace,
                 #[cfg(not(feature = "elf-lazy-map"))]
                 flush_lazy_bss_run(aspace, &mut lazy_run)?;
                 if let Err(error) = aspace.map_page_to_ppn(VirtAddr(page).floor_page(),
-                                                            ppn,
-                                                            merged_perm)
+                                                           ppn,
+                                                           merged_perm)
                 {
                     let _ = frame_dealloc_result(ppn);
                     return Err(LoadElfError::Mm(error));
@@ -1485,7 +1488,11 @@ fn map_load_segments_from_path_at(aspace : &mut Sv39AddressSpace,
         min_vaddr = cmp::min(min_vaddr, biased_vaddr);
         max_vaddr = cmp::max(max_vaddr, end);
     }
-    eager_map_available_bss_pages(aspace, phdrs, e_phentsize, e_phnum, load_bias)?;
+    eager_map_available_bss_pages(aspace,
+                                  phdrs,
+                                  e_phentsize,
+                                  e_phnum,
+                                  load_bias)?;
     if min_vaddr == usize::MAX {
         Err(LoadElfError::Parse)
     } else {
@@ -1586,6 +1593,12 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
                     perm)?;
         let base = p_vaddr as usize;
         let end = base + (p_memsz as usize);
+        aspace.register_resident_file_segment(VirtAddr(base),
+                                              VirtAddr(end),
+                                              perm,
+                                              p_offset as usize,
+                                              p_filesz as usize)
+              .map_err(LoadElfError::Mm)?;
         min_vaddr = cmp::min(min_vaddr, base);
         max_vaddr = cmp::max(max_vaddr, end);
     }
@@ -1630,7 +1643,8 @@ pub fn from_elf_bytes(data : &[u8]) -> Result<LoadedElf, LoadElfError> {
                             brk_max,
                             mmap_base,
                             VirtAddr(stack_bottom),
-                            VirtAddr(ELF_STACK_TOP + PAGE_SIZE));
+                            VirtAddr(ELF_STACK_TOP + PAGE_SIZE))
+          .map_err(LoadElfError::Mm)?;
 
     verify_mapped_entry(&aspace, e_entry, data)?;
 

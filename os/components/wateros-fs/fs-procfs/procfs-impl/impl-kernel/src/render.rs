@@ -622,6 +622,7 @@ fn mapping_path(mapping : &mm_api_v0::user_mapping::UserMappingSnapshot,
     match mapping.kind {
         UserMappingKind::Heap => String::from("[heap]"),
         UserMappingKind::Stack => String::from("[stack]"),
+        UserMappingKind::SharedMemory => String::from("[shm]"),
         UserMappingKind::Device => String::from("[device]"),
         UserMappingKind::KernelTrampoline => String::from("[wateros-trampoline]"),
         UserMappingKind::File => {

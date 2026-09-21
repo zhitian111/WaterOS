@@ -1,4 +1,3 @@
-//! 本模块代码由AI完成
 //! LoongArch64 用户缓冲区 [`api_v0::user_access::UserMemoryOps`]。
 
 use api_v0::addr::{PhysAddr, VirtAddr, PAGE_SIZE};
@@ -58,9 +57,10 @@ pub fn debug_probe_user_virt(handle : usize, va : VirtAddr) -> MmResult<UserVirt
         let pa = aspace.translate_addr(va)?;
         let perm = aspace.leaf_page_perm(va.floor_page())?;
         let page = va.floor_page().start_addr();
-        let lazy_perm = aspace.lazy_file_vmas
-                               .iter()
-                               .find(|vma| vma.contains_page(page))
+        let lazy_perm = aspace.vmas
+                               .lookup(page)
+                               .and_then(|index| aspace.vmas.get(index))
+                               .filter(|vma| vma.demand_paged)
                                .map(|vma| vma.perm);
         Ok(UserVirtProbe { pa,
                            perm,

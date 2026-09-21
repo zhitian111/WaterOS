@@ -88,15 +88,10 @@ PTE 仍引用时返回 frame allocator。
 
 ## 7. fork 事务
 
-`fork_task(parent, child)` 复制 attachment 元数据并为每段增加 `nattch`，返回 MM 映射快照。
-调用者随后在子地址空间逐项映射。任一项失败时必须：
-
-1. 撤销子地址空间中所有可能已映射的共享范围；
-2. 再 `drop_task(child)` 回滚所有 child attachment/nattch；
-3. 最后继续销毁子地址空间。
-
-先回滚 registry 再 unmap 与 shmdt 一样存在 use-after-free 风险。fork 复制失败必须是全有或
-全无，不能让部分 attachment 留在子表中。
+地址空间 fork 根据 `External` VMA 原样复制共享 PTE，且不增减通用 frame 引用；随后
+`fork_task(parent, child)` 只复制 attachment 元数据并为每段增加 `nattch`，不再重复替换
+子地址空间 PTE。registry 当前对 `nattch` overflow 采用跳过策略，仍可能让子页表与 attachment
+表不完整；后续应把元数据复制改成全有或全无的可失败事务。
 
 ## 8. 锁顺序和内存分配
 
@@ -134,4 +129,3 @@ PTE 仍引用时返回 frame allocator。
 
 回归应覆盖 create/get/excl/private、两阶段 attach 每种失败点、RMID-before/after-attach、shmdt、
 fork 成功/中途失败、exec/exit、多 CPU 并发和 frame 统计回落，并运行双架构 `make check`。
-

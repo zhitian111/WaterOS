@@ -398,9 +398,9 @@ Nano-X ioctl(FBIOPAN_DISPLAY)
 
 重点函数：
 
-- `register_device_vma()`
-- `remove_device_vmas()`
-- `protect_device_vmas()`
+- `VmaSet::insert(VmArea::device(...))`
+- `remove_vmas()`
+- `protect_vmas()`
 - `device_vma_overlaps()`
 - `unmap_mmap_range()`
 - `map_page_to_ppn()`
