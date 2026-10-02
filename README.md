@@ -432,7 +432,7 @@ make run ARCH=rv PROFILE=pre EXTRA_FEATURES=display-demo
 | `make configure` | 重新扫描 feature 树并生成 `config.conf`、`feature-tree.txt` |
 | `make fmt` | 使用 Taplo 和 rustfmt 格式化 Cargo manifest 与 Rust 源码 |
 | `make version` | 打印由版本号、提交数量、分支和日期组成的开发版本信息 |
-| `make stat` | 打印版本，并统计仓库文本规模和贡献情况 |
+| `make stat [DIR=.]` | 默认统计整个仓库的开发历史贡献度（有效新增字符占比），排除导出历史、文档和 vendor；带进度条与结果条形图，DETAILS=1 查看明细，详见 [统计口径](os/scripts/README.md#历史改动统计) |
 
 构建结果使用 `kernel-{架构}-{阶段}` 命名，例如 `kernel-rv-pre` 和
 `kernel-la-final`。`make all` 额外生成的 `kernel-rv`、`kernel-la` 指向当前两架构的

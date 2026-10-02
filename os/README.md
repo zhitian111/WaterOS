@@ -276,3 +276,11 @@ workload。仅通过 Cargo check 不能证明运行时行为正确。
 - 保留工作区中与当前任务无关的已有修改。
 
 更完整的代码导航和验证矩阵见项目的 `AGENTS.md`。
+
+### 历史贡献度统计
+
+`make stat` 默认统计整个仓库的开发历史，按有效新增字符占比显示四位作者的贡献度和
+条形图，统计过程中显示进度条。排除 GitLab 重写导出历史、OuterSystems、文档及 vendor。
+`make stat DIR=.` 只统计 os/，`make stat DIR=components` 指定子目录；
+`DETAILS=1` 查看新增、删除、总改动及领域明细。
+具体口径、排除规则和限制见 [脚本说明](scripts/README.md#历史改动统计)。

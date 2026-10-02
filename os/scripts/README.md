@@ -243,3 +243,76 @@ make -n run ARCH=la PROFILE=final
 `source/console.bash`，Python 使用 `source/logging_utils.py`；帮助文本、分析表格和机器
 可读结果保持原始格式，不混入日志前缀。完整约定见
 [`docs/tools/scripts/README.md#日志规范`](../../docs/tools/scripts/README.md#日志规范)。
+
+## 历史改动统计
+
+```bash
+make stat                       # 默认整个仓库
+make stat DIR=.                 # 只统计 os/
+make stat DIR=components         # 相对于执行 make 的 os/ 目录
+make stat DIR=..                 # 显式指定整个仓库
+make stat DIR=.. DETAILS=1       # 新增/删除/总改动及领域明细
+python3 scripts/maintenance/stat_contribute.py --help
+python3 scripts/tests/test_stat_contribute.py
+```
+
+脚本统计本地开发分支、远程跟踪分支和标签可达的历史，包含备份/实验分支；
+排除 refs/remotes/gitlab/ 导出引用，并无条件排除 OuterSystems 提交。不包含
+stash、reflog、悬空提交或网络上尚未获取的提交，不会自动 fetch。启动时固定引用对象，
+明细模式报告引用数量和快照摘要。浅克隆会报错。计入以下作者邮箱（可由 `.mailmap` 归并）：
+`2367651943@qq.com`（zhitian111）、`1592858973@qq.com`（kasss233）、
+`2076567173@qq.com`（cesllill）、`lixianli@example.com`（lixianlilili）。
+原始作者名 OuterSystems（不区分大小写）排除，即使导出提交从其他引用可达也不计入。
+GitLab 的按周重写历史不是独立工作，不能靠提交级 patch-id 完整去重。
+其他作者不参与百分比分母。
+
+指定目录必须位于仓库内，可以指定已删除的历史目录。范围按各提交中的路径筛选，
+不会追溯文件迁入该目录之前的改动。脚本和 make stat 默认统计整个仓库；
+指定目录相对于调用者当前目录解析。
+
+采用功能文件白名单：源码/测试、脚本、配置和移植补丁，分别输出分类明细；未知文件不计入。
+同时按 `os/`（内核及内核工具）、`user/`（用户态及移植）、其余路径（仓库工具/配置）
+输出领域汇总，所有领域等权计入所选目录的总表。默认范围为整个仓库，DIR=. 可只统计 os/。
+具体扩展名和特殊文件名位于脚本的 `CODE_SUFFIXES`、`SCRIPT_SUFFIXES`、
+`CONFIG_SUFFIXES`、`CONFIG_NAMES`。JSON/YAML 等配置还须通过目录排除规则。
+用户态纳入 build.py、package.toml、C/Java 程序与测试、patches/ 下的 .patch/.diff、
+scripts/bin/sbin/init.d 下的无后缀启动脚本、包 config/ 下的维护配置、
+rootfs 的 profile/hosts/inittab/passwd/group/wateros-release，以及 pacman 包的 mirrorlist
+和 archriscv 启动入口。硬件启动纳入 DTS/DTSI、U-Boot .cmd 和已知 uEnv.txt，此外
+纳入 .cnf 和 Java .MF 清单。预编译 .class/.jar 的 Base64、ROM、资源和成绩计算脚本排除。
+用户态还必须通过 `user_owned_path` 所有权规则：顶层只计 tools/tests/configs/rootfs 和
+Makefile/.gitignore；packages 内仅计 build.py/package.toml、patches/scripts/tools/config，
+以及已核对的 mGBA/WaterFM 前端、operator-tools 冒烟源码、OpenJDK 自有探针和 pacman
+运行配置。packages 内任意 src/upstream/assets 等目录不会因源码或配置后缀自动入选。
+完整自动生成的 BusyBox wateros_defconfig 排除；其构建适配逻辑 build.py 保留。
+新增自有源码路径须补充 `PACKAGE_OWN_SOURCES` 或已有明确职责目录，不能泛化为
+“包内全部源码”。本规则按已核对的工程职责筛选，不能自动证明每一行的原始来源。
+
+补丁文件只累计维护差异中以 +/- 开头的载荷字符，去掉该标记；上游上下文、补丁头、
+hunk 定位信息不计入。新增/删除仍表示补丁文件本身的维护操作，不是对上游应用补丁
+之后的源码新增/删除统计。不同时统计 vendor 内的已应用版本，因此不会与它重复累计。
+`EXCLUDED_DIRS` 排除 vendor、third_party、third-party、thirdparty、external、
+文档、导出、审计、日志、agent 数据、编辑器配置及构建目录；`ltp_log*` 全部排除。
+`EXCLUDED_FILES` 排除锁文件及当前配置生成物。**vendor 的新增、修改和删除均不计入**。
+不在这些路径中的第三方复制代码、未声明的生成文件不能自动辨认，需补充明确排除规则。
+
+默认输出仅显示“贡献度”、作者百分比和条形图。贡献度定义为去重功能补丁的有效
+新增字符数占比，以纳入作者的新增字符总量为分母，按新增量排序；不使用固定比例。
+极小的非零占比保留最小可见条形，准确数值以百分比为准。统计过程在 stderr 显示进度条；
+终端内原位刷新，重定向时每约 10% 输出一行，不污染 stdout 结果。
+`DETAILS=1`（直接脚本使用 `--details`）显示新增/删除行数、字符数、各自占比、总占比
+及领域/文件类别明细。总字符量为新增加删除；修改一行同时统计旧行和新行的完整字符。
+历史新增即使后来被删除仍保留，删除归属于删除提交作者。源文件注释仍计入。
+百分比衡量历史文本改动量，不代表工作价值或实际工时。
+
+同一哈希跨分支只遍历一次；仅对所选目录中纳入统计的功能文件差异计算稳定 Git
+`patch-id`，相同补丁（如 cherry-pick/rebase 的重复副本）只计一次。归属采用逆拓扑
+遍历中第一个符合条件的作者。OuterSystems 不参与统计。发生冲突或修改过的补丁可能
+获得不同 patch-id，因而仍会分别统计；备份分支中有差异的旧补丁也可能被计入。
+
+忽略空白差异和空白行，Git 识别到的纯重命名不计改动；换行重排、跨文件复制和拆分
+仍可能累计。合并提交本身排除，冲突解决改动不计入。报告显示遍历提交、排除作者、
+合并提交、重复补丁和实际计入补丁数；这些计数有交集，不可直接相加。
+Git 二进制差异以及包含 NUL 或无法解码为 UTF-8 的变更行不计字符。
+
+`make stat` 不再调用当前工作树文本规模扫描；`stat_texts.bash` 保留供单独使用。

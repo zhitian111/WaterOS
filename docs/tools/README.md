@@ -19,6 +19,8 @@
 - 分阶段 QEMU 测例及日志判读：[`run_testsuits_qemu.md`](../agents/tasks/run_testsuits_qemu.md)
   和 [`analyze_kernel_log.md`](../agents/tasks/analyze_kernel_log.md)。
 
+- 开发历史贡献度（有效新增字符占比）、进度条和结果条形图：[`统计口径`](../../os/scripts/README.md#历史改动统计)。
+
 ## 使用约定
 
 优先从 `os/` 运行 `make` 目标；只有 Makefile 未覆盖的场景才直接执行脚本。涉及磁盘

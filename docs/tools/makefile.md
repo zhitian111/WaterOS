@@ -150,3 +150,12 @@ python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 
 内核构建或运行行为发生变化时，还应按改动范围执行对应架构的 `make check`、构建和 QEMU
 workload。dry-run 只能证明命令展开正确，不能代替实际构建与运行验证。
+
+## 历史贡献度统计
+
+`make stat` 默认统计整个仓库；`make stat DIR=.` 只统计 os/。显式目录相对于调用者的
+os/ 目录解析。Python 脚本遍历本地开发分支、远程跟踪分支和标签，排除 GitLab 重写
+导出历史、OuterSystems、文档和 vendor。四位作者的贡献度定义为有效新增字符占比，
+稳定 patch-id 去重后显示贡献度条形图；stderr 显示进度条。
+`DETAILS=1` 查看新增、删除、总改动及领域明细。
+完整口径和限制见 [脚本说明](../../os/scripts/README.md#历史改动统计)。

@@ -175,6 +175,7 @@ WARN_CMD = printf '%b[Makefile]%b\t%b[WARN]%b\t%s\n' "$(COLOR_ANSI_PURPLE)" "$(C
 ERROR_CMD = printf '%b[Makefile]%b\t%b[ERROR]%b\t%s exit_code=%s\n' "$(COLOR_ANSI_PURPLE)" "$(COLOR_ANSI_CLEAR)" "$(COLOR_ANSI_RED)" "$(COLOR_ANSI_CLEAR)" '$(subst ",,$(strip $(1)))' '$(2)' >&2
 
 help:
+	@echo "  make stat [DIR=..]                  全部开发分支贡献度（默认整个仓库，DETAILS=1 查看明细）"
 	@echo "WaterOS 统一入口（默认 ARCH=rv PROFILE=pre SMP=8 SNAPSHOT=1）"
 	@echo "  make build ARCH=rv PROFILE=pre       构建内核"
 	@echo "  make check ARCH=la PROFILE=final     检查内核"
@@ -294,14 +295,8 @@ version:
 	$(call INFO, "当前版本信息如下：")
 	@echo -e "$(COLOR_ANSI_CYAN)WaterOS\t$(COLOR_ANSI_WHITE)--version\t$(VERSION)"
 
-stat: version
-	$(call INFO, "开始统计项目状态信息...")
-	$(call INFO, "开始统计项目文本文件字符数...")
-	@bash ./scripts/maintenance/stat_texts.bash
-	$(call INFO, "项目文本文件字符数统计完成！")
-	$(call INFO, "开始统计项目贡献度...")
-	@bash ./scripts/maintenance/stat_contribute.bash
-	$(call INFO, "项目贡献度统计完成！")
+stat:
+	@python3 ./scripts/maintenance/stat_contribute.py "$(if $(DIR),$(DIR),..)" $(if $(filter 1,$(DETAILS)),--details,)
 
 configure: ./config.conf ./feature-tree.txt
 
